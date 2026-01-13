@@ -1,0 +1,113 @@
+import React, { useState, useEffect } from "react";
+import { TouchableOpacity, Text, View, ActivityIndicator } from "react-native";
+import { RefreshCw, Check, AlertCircle } from "lucide-react-native";
+import { useNetworkStatus } from "@/hooks/useNetworkStatus";
+import { formatDistanceToNow } from "date-fns";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+
+interface SyncButtonProps {
+  onSync: () => Promise<void>;
+  pendingCount?: number;
+}
+
+export default function SyncButton({
+  onSync,
+  pendingCount = 0,
+}: SyncButtonProps) {
+  const { isConnected } = useNetworkStatus();
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [syncStatus, setSyncStatus] = useState<"idle" | "success" | "error">(
+    "idle"
+  );
+  const [lastSyncTime, setLastSyncTime] = useState<Date | null>(null);
+
+  useEffect(() => {
+    loadLastSyncTime();
+  }, []);
+
+  const loadLastSyncTime = async () => {
+    try {
+      const timestamp = await AsyncStorage.getItem("last_sync_time");
+      if (timestamp) {
+        setLastSyncTime(new Date(parseInt(timestamp)));
+      }
+    } catch (error) {
+      console.error("Failed to load last sync time:", error);
+    }
+  };
+
+  const handleSync = async () => {
+    if (!isConnected || isSyncing) return;
+
+    setIsSyncing(true);
+    setSyncStatus("idle");
+
+    try {
+      await onSync();
+      const now = new Date();
+      setLastSyncTime(now);
+      await AsyncStorage.setItem("last_sync_time", now.getTime().toString());
+      setSyncStatus("success");
+
+      // Reset status after 2 seconds
+      setTimeout(() => setSyncStatus("idle"), 2000);
+    } catch (error) {
+      console.error("Sync failed:", error);
+      setSyncStatus("error");
+      setTimeout(() => setSyncStatus("idle"), 3000);
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const getSyncIcon = () => {
+    if (isSyncing) {
+      return <ActivityIndicator size="small" color="white" />;
+    }
+    if (syncStatus === "success") {
+      return <Check size={18} color="white" />;
+    }
+    if (syncStatus === "error") {
+      return <AlertCircle size={18} color="white" />;
+    }
+    return <RefreshCw size={18} color="white" />;
+  };
+
+  const getButtonColor = () => {
+    if (syncStatus === "success") return "bg-green-600";
+    if (syncStatus === "error") return "bg-red-600";
+    if (!isConnected) return "bg-gray-400";
+    return "bg-red-600";
+  };
+
+  return (
+    <View>
+      <TouchableOpacity
+        onPress={handleSync}
+        disabled={!isConnected || isSyncing}
+        className={`${getButtonColor()} px-3 py-2 rounded-lg flex-row items-center active:opacity-80`}
+        style={{
+          opacity: !isConnected ? 0.5 : 1,
+        }}
+      >
+        {getSyncIcon()}
+        <Text className="text-white font-semibold text-sm ml-2">
+          {isSyncing ? "Syncing..." : "Sync"}
+        </Text>
+        {pendingCount > 0 && (
+          <View className="bg-white rounded-full w-5 h-5 items-center justify-center ml-2">
+            <Text className="text-red-600 font-bold text-xs">
+              {pendingCount}
+            </Text>
+          </View>
+        )}
+      </TouchableOpacity>
+
+      {lastSyncTime && (
+        <Text className="text-xs text-gray-500 mt-1 text-center">
+          Last synced {formatDistanceToNow(lastSyncTime, { addSuffix: true })}
+        </Text>
+      )}
+    </View>
+  );
+}

@@ -3,7 +3,7 @@ import { router } from "expo-router";
 import { View, ActivityIndicator } from "react-native";
 import { useAuth } from "@/contexts/AuthContext";
 
-export default function TabsIndex() {
+export default function Index() {
   const { user, isLoading } = useAuth();
 
   useEffect(() => {
@@ -17,7 +17,7 @@ export default function TabsIndex() {
   }, [user, isLoading]);
 
   return (
-    <View className="flex-1 items-center justify-center bg-gray-50">
+    <View className="flex-1 items-center justify-center bg-gray-50 dark:bg-slate-950">
       <ActivityIndicator size="large" color="#dc2626" />
     </View>
   );
