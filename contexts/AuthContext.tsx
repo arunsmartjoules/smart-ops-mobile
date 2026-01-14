@@ -2,6 +2,10 @@ import React, { createContext, useContext, useEffect, useState } from "react";
 import { router } from "expo-router";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { authEvents } from "../utils/authEvents";
+import {
+  registerForPushNotifications,
+  unregisterPushToken,
+} from "../services/NotificationService";
 
 const BACKEND_URL =
   process.env.EXPO_PUBLIC_BACKEND_URL || "http://192.168.31.152:3420";
@@ -116,6 +120,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       setToken(token);
       setUser(user);
 
+      // Register for push notifications (don't block login if it fails)
+      registerForPushNotifications(user.user_id, token).catch((error) => {
+        console.log("Failed to register for push notifications:", error);
+      });
+
       return { error: null };
     } catch (error: any) {
       return { error: error.message };
@@ -158,6 +167,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     try {
       const savedToken = await AsyncStorage.getItem("auth_token");
       if (savedToken) {
+        // Unregister push token
+        await unregisterPushToken(savedToken).catch((error) => {
+          console.log("Failed to unregister push token:", error);
+        });
+
         await fetch(`${BACKEND_URL}/api/auth/logout`, {
           method: "POST",
           headers: {
