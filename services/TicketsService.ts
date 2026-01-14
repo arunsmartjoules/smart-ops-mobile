@@ -1,5 +1,6 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import logger from "../utils/logger";
+import { authEvents } from "../utils/authEvents";
 
 const BACKEND_URL =
   process.env.EXPO_PUBLIC_BACKEND_URL || "http://192.168.31.152:3420";
@@ -44,6 +45,7 @@ const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
 
     if (response.status === 401) {
       result.error = "Session expired. Please sign in again.";
+      authEvents.emitUnauthorized();
     }
   }
 

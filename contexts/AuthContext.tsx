@@ -1,5 +1,7 @@
 import React, { createContext, useContext, useEffect, useState } from "react";
+import { router } from "expo-router";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { authEvents } from "../utils/authEvents";
 
 const BACKEND_URL =
   process.env.EXPO_PUBLIC_BACKEND_URL || "http://192.168.31.152:3420";
@@ -80,6 +82,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     };
 
     loadSession();
+  }, []);
+
+  useEffect(() => {
+    const unsubscribe = authEvents.subscribe(() => {
+      console.log("Global 401 Unauthorized event received. Signing out.");
+      signOut();
+    });
+    return unsubscribe;
   }, []);
 
   const signIn = async (email: string, password: string) => {
@@ -163,6 +173,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       await AsyncStorage.removeItem("auth_user");
       setToken(null);
       setUser(null);
+      router.replace("/sign-in");
     }
   };
 

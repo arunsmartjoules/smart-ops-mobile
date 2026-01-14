@@ -59,6 +59,44 @@ export default function AttendancePage() {
   const [earlyCheckoutHours, setEarlyCheckoutHours] = useState("");
   const [currentTime, setCurrentTime] = useState(new Date());
 
+  const fetchData = React.useCallback(async () => {
+    if (!user?.id) return;
+    try {
+      const [today, history] = await Promise.all([
+        AttendanceService.getTodayAttendance(user.id),
+        AttendanceService.getAttendanceHistory(user.id),
+      ]);
+
+      let finalToday = today;
+
+      // Client-side fallback: if today check fails but history has a record for today, use it.
+      if (!finalToday && history.data && history.data.length > 0) {
+        const latest = history.data[0];
+        const istDate = new Intl.DateTimeFormat("en-CA", {
+          timeZone: "Asia/Kolkata",
+          year: "numeric",
+          month: "2-digit",
+          day: "2-digit",
+        }).format(new Date());
+
+        if (latest.date === istDate) {
+          finalToday = latest;
+        }
+      }
+
+      setTodayAttendance(finalToday);
+      setAttendanceHistory(history.data);
+    } catch (error: any) {
+      logger.error("Fetch attendance data error", {
+        module: "ATTENDANCE_SCREEN",
+        error: error.message,
+        userId: user?.id,
+      });
+    } finally {
+      setLoading(false);
+    }
+  }, [user?.id]);
+
   useEffect(() => {
     fetchData();
     // Only request location if not WFH
@@ -67,7 +105,7 @@ export default function AttendancePage() {
     if (!isWFH) {
       requestLocationPermission();
     }
-  }, []);
+  }, [fetchData]);
 
   // Update current time every minute for the live timer
   useEffect(() => {
@@ -136,44 +174,6 @@ export default function AttendancePage() {
         userId: user?.id,
       });
       setLocationError("Location initialization failed");
-    }
-  };
-
-  const fetchData = async () => {
-    if (!user?.id) return;
-    try {
-      const [today, history] = await Promise.all([
-        AttendanceService.getTodayAttendance(user.id),
-        AttendanceService.getAttendanceHistory(user.id),
-      ]);
-
-      let finalToday = today;
-
-      // Client-side fallback: if today check fails but history has a record for today, use it.
-      if (!finalToday && history.data && history.data.length > 0) {
-        const latest = history.data[0];
-        const istDate = new Intl.DateTimeFormat("en-CA", {
-          timeZone: "Asia/Kolkata",
-          year: "numeric",
-          month: "2-digit",
-          day: "2-digit",
-        }).format(new Date());
-
-        if (latest.date === istDate) {
-          finalToday = latest;
-        }
-      }
-
-      setTodayAttendance(finalToday);
-      setAttendanceHistory(history.data);
-    } catch (error: any) {
-      logger.error("Fetch attendance data error", {
-        module: "ATTENDANCE_SCREEN",
-        error: error.message,
-        userId: user?.id,
-      });
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -409,7 +409,9 @@ export default function AttendancePage() {
             <ArrowLeft size={18} color="#64748b" />
           </TouchableOpacity>
           <View>
-            <Text className="text-slate-900 dark:text-slate-50 text-xl font-bold">Attendance</Text>
+            <Text className="text-slate-900 dark:text-slate-50 text-xl font-bold">
+              Attendance
+            </Text>
             <Text className="text-slate-400 dark:text-slate-500 text-xs">
               {format(new Date(), "MMMM yyyy")}
             </Text>

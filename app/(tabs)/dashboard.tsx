@@ -86,7 +86,7 @@ export default function Dashboard() {
   );
   const [loadingAttendance, setLoadingAttendance] = useState(true);
 
-  const fetchAttendance = async () => {
+  const fetchAttendance = React.useCallback(async () => {
     if (user?.id) {
       try {
         const data = await AttendanceService.getTodayAttendance(user.id);
@@ -124,12 +124,12 @@ export default function Dashboard() {
         setLoadingAttendance(false);
       }
     }
-  };
+  }, [user?.id]);
 
   useFocusEffect(
     React.useCallback(() => {
       fetchAttendance();
-    }, [user?.id])
+    }, [fetchAttendance])
   );
 
   const onRefresh = React.useCallback(async () => {
@@ -139,7 +139,7 @@ export default function Dashboard() {
     setTimeout(() => {
       setRefreshing(false);
     }, 1000);
-  }, []);
+  }, [fetchAttendance]);
 
   const getStatusColor = () => {
     if (!todayAttendance) return ["#64748b", "#475569"]; // Neutral gray for not checked in
