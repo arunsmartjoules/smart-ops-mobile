@@ -34,8 +34,11 @@ import AttendanceService, {
 } from "@/services/AttendanceService";
 import logger from "../utils/logger";
 import { format, differenceInMinutes, parseISO } from "date-fns";
+import { useNetworkStatus } from "@/hooks/useNetworkStatus";
+import { WifiOff } from "lucide-react-native";
 
 export default function AttendancePage() {
+  const { isConnected } = useNetworkStatus();
   const { user } = useAuth();
   const [refreshing, setRefreshing] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -274,7 +277,14 @@ export default function AttendancePage() {
         location?.coords.longitude
       );
       if (res.success) {
-        Alert.alert("Success", "Checked in successfully!");
+        if (res.isOffline) {
+          Alert.alert(
+            "Saved Locally",
+            "You are currently offline. Your check-in has been saved on your device and will be synced automatically when internet is available."
+          );
+        } else {
+          Alert.alert("Success", "Checked in successfully!");
+        }
         setIsSiteModalVisible(false);
         fetchData();
       } else {
@@ -399,6 +409,16 @@ export default function AttendancePage() {
   return (
     <View className="flex-1 bg-slate-50 dark:bg-slate-950">
       <SafeAreaView className="flex-1">
+        {/* Offline Banner */}
+        {!isConnected && (
+          <View className="bg-amber-500 py-1.5 px-4 flex-row items-center justify-center">
+            <WifiOff size={14} color="white" />
+            <Text className="text-white text-xs font-bold ml-2">
+              Offline Mode — Punches will be saved locally
+            </Text>
+          </View>
+        )}
+
         {/* Header */}
         <View className="px-5 pt-2 pb-3 flex-row items-center">
           <TouchableOpacity

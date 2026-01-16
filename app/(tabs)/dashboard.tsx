@@ -26,6 +26,8 @@ import AttendanceService, {
   type AttendanceLog,
 } from "@/services/AttendanceService";
 import { format } from "date-fns";
+import { useNetworkStatus } from "@/hooks/useNetworkStatus";
+import { WifiOff } from "lucide-react-native";
 
 // Quick Stats Data
 const quickStats = [
@@ -79,6 +81,7 @@ const taskListData = [
 ];
 
 export default function Dashboard() {
+  const { isConnected } = useNetworkStatus();
   const [refreshing, setRefreshing] = useState(false);
   const { user } = useAuth();
   const [todayAttendance, setTodayAttendance] = useState<AttendanceLog | null>(
@@ -163,6 +166,16 @@ export default function Dashboard() {
   return (
     <View className="flex-1 bg-slate-50 dark:bg-slate-950">
       <SafeAreaView className="flex-1">
+        {/* Offline Banner */}
+        {!isConnected && (
+          <View className="bg-amber-500 py-1.5 px-4 flex-row items-center justify-center">
+            <WifiOff size={14} color="white" />
+            <Text className="text-white text-xs font-bold ml-2">
+              Offline Mode — Using cached data
+            </Text>
+          </View>
+        )}
+
         {/* Header */}
         <View className="px-5 pt-2 pb-3">
           <View className="flex-row items-center justify-between">
@@ -176,6 +189,7 @@ export default function Dashboard() {
             </View>
             <View className="flex-row items-center gap-3">
               <TouchableOpacity
+                onPress={() => router.push("/notifications")}
                 className="w-10 h-10 rounded-full bg-white dark:bg-slate-900 items-center justify-center"
                 style={{
                   shadowColor: "#000",

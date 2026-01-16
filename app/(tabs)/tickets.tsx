@@ -1249,7 +1249,6 @@ export default function Tickets() {
     if (selectedSiteId) {
       console.log("[Tickets] Site ready, triggering fetch");
       resetAndFetch();
-      fetchAssets();
       fetchStats();
       loadAreasAndCategories();
     }

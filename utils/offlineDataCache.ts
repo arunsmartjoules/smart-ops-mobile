@@ -5,6 +5,7 @@ const CACHE_AREAS_PREFIX = "@cache_areas_";
 const CACHE_CATEGORIES_KEY = "@cache_categories";
 const CACHE_SITES_PREFIX = "@cache_sites_";
 const CACHE_TICKETS_PREFIX = "@cache_tickets_";
+const CACHE_ATTENDANCE_PREFIX = "@cache_attendance_";
 const CACHE_METADATA_KEY = "@cache_metadata";
 
 export interface Area {
@@ -25,6 +26,7 @@ export interface CacheMetadata {
   categories: string | null; // timestamp
   sites: { [userId: string]: string }; // userId -> timestamp
   tickets: { [siteId: string]: string }; // siteId -> timestamp
+  attendance: { [userId: string]: string }; // userId -> timestamp
 }
 
 // Get cache metadata
@@ -33,10 +35,22 @@ async function getCacheMetadata(): Promise<CacheMetadata> {
     const data = await AsyncStorage.getItem(CACHE_METADATA_KEY);
     return data
       ? JSON.parse(data)
-      : { areas: {}, categories: null, sites: {}, tickets: {} };
+      : {
+          areas: {},
+          categories: null,
+          sites: {},
+          tickets: {},
+          attendance: {},
+        };
   } catch (error) {
     console.error("Error getting cache metadata:", error);
-    return { areas: {}, categories: null, sites: {}, tickets: {} };
+    return {
+      areas: {},
+      categories: null,
+      sites: {},
+      tickets: {},
+      attendance: {},
+    };
   }
 }
 
@@ -179,6 +193,51 @@ export async function getTicketsCacheAge(
   return Date.now() - new Date(metadata.tickets[siteId]).getTime();
 }
 
+// ===== ATTENDANCE =====
+
+export async function cacheAttendance(
+  userId: string,
+  data: { today: any; history: any[] }
+): Promise<void> {
+  try {
+    await AsyncStorage.setItem(
+      `${CACHE_ATTENDANCE_PREFIX}${userId}`,
+      JSON.stringify(data)
+    );
+    const metadata = await getCacheMetadata();
+    await updateCacheMetadata({
+      attendance: {
+        ...metadata.attendance,
+        [userId]: new Date().toISOString(),
+      },
+    });
+  } catch (error) {
+    console.error("Error caching attendance:", error);
+  }
+}
+
+export async function getCachedAttendance(
+  userId: string
+): Promise<{ today: any; history: any[] } | null> {
+  try {
+    const data = await AsyncStorage.getItem(
+      `${CACHE_ATTENDANCE_PREFIX}${userId}`
+    );
+    return data ? JSON.parse(data) : null;
+  } catch (error) {
+    console.error("Error getting cached attendance:", error);
+    return null;
+  }
+}
+
+export async function getAttendanceCacheAge(
+  userId: string
+): Promise<number | null> {
+  const metadata = await getCacheMetadata();
+  if (!metadata.attendance[userId]) return null;
+  return Date.now() - new Date(metadata.attendance[userId]).getTime();
+}
+
 // ===== CLEAR ALL CACHE =====
 
 export async function clearAllCache(): Promise<void> {
@@ -189,6 +248,7 @@ export async function clearAllCache(): Promise<void> {
         key.startsWith(CACHE_AREAS_PREFIX) ||
         key.startsWith(CACHE_SITES_PREFIX) ||
         key.startsWith(CACHE_TICKETS_PREFIX) ||
+        key.startsWith(CACHE_ATTENDANCE_PREFIX) ||
         key === CACHE_CATEGORIES_KEY ||
         key === CACHE_METADATA_KEY
     );
@@ -212,6 +272,7 @@ export async function getCacheSize(): Promise<{
         key.startsWith(CACHE_AREAS_PREFIX) ||
         key.startsWith(CACHE_SITES_PREFIX) ||
         key.startsWith(CACHE_TICKETS_PREFIX) ||
+        key.startsWith(CACHE_ATTENDANCE_PREFIX) ||
         key === CACHE_CATEGORIES_KEY
     );
 

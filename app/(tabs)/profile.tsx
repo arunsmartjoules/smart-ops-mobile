@@ -267,7 +267,9 @@ export default function Profile() {
               <TouchableOpacity
                 key={index}
                 onPress={() => {
-                  if (item.label === "Privacy & Security") {
+                  if (item.label === "Notifications") {
+                    router.push("/notification-settings");
+                  } else if (item.label === "Privacy & Security") {
                     router.push("/privacy-security");
                   } else if (item.label === "Offline & Sync") {
                     router.push("/app-settings");

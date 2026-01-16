@@ -10,6 +10,7 @@ export const unstable_settings = {
 };
 
 export default function RootLayout() {
+  console.log("RootLayout: Rendering");
   return (
     <SafeAreaProvider>
       <AuthProvider>
@@ -37,6 +38,14 @@ export default function RootLayout() {
             />
             <Stack.Screen
               name="app-settings"
+              options={{ headerShown: false }}
+            />
+            <Stack.Screen
+              name="notification-settings"
+              options={{ headerShown: false }}
+            />
+            <Stack.Screen
+              name="notifications"
               options={{ headerShown: false }}
             />
           </Stack>

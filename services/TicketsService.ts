@@ -1,6 +1,14 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import logger from "../utils/logger";
 import { authEvents } from "../utils/authEvents";
+import {
+  cacheTickets,
+  getCachedTickets,
+  cacheAreas,
+  getCachedAreas,
+  cacheCategories,
+  getCachedCategories,
+} from "../utils/offlineDataCache";
 
 const BACKEND_URL =
   process.env.EXPO_PUBLIC_BACKEND_URL || "http://192.168.31.152:3420";
@@ -19,37 +27,51 @@ const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
     ...options.headers,
   };
 
-  const response = await fetch(`${BACKEND_URL}${endpoint}`, {
-    ...options,
-    headers,
-  });
+  try {
+    const response = await fetch(`${BACKEND_URL}${endpoint}`, {
+      ...options,
+      headers,
+    });
 
-  const result = await response.json();
+    const result = await response.json();
 
-  if (!response.ok) {
-    if (response.status >= 500) {
-      logger.error(`API Error (${response.status}) on ${endpoint}`, {
-        module: "TICKETS_SERVICE",
-        error: result.error,
-        status: response.status,
-        endpoint,
-      });
-    } else {
-      logger.warn(`API Warning (${response.status}) on ${endpoint}`, {
-        module: "TICKETS_SERVICE",
-        error: result.error,
-        status: response.status,
-        endpoint,
-      });
+    if (!response.ok) {
+      if (response.status >= 500) {
+        logger.error(`API Error (${response.status}) on ${endpoint}`, {
+          module: "TICKETS_SERVICE",
+          error: result.error,
+          status: response.status,
+          endpoint,
+        });
+      } else {
+        logger.warn(`API Warning (${response.status}) on ${endpoint}`, {
+          module: "TICKETS_SERVICE",
+          error: result.error,
+          status: response.status,
+          endpoint,
+        });
+      }
+
+      if (response.status === 401) {
+        result.error = "Session expired. Please sign in again.";
+        authEvents.emitUnauthorized();
+      }
     }
 
-    if (response.status === 401) {
-      result.error = "Session expired. Please sign in again.";
-      authEvents.emitUnauthorized();
-    }
+    return result;
+  } catch (error: any) {
+    logger.warn(`Network Error on ${endpoint}`, {
+      module: "TICKETS_SERVICE",
+      error: error.message,
+      endpoint,
+    });
+
+    return {
+      success: false,
+      error: "Network unavailable. Using offline data.",
+      isNetworkError: true,
+    };
   }
-
-  return result;
 };
 
 // Types
@@ -87,9 +109,34 @@ export const TicketsService = {
     params.append("page", page.toString());
     params.append("limit", limit.toString());
 
-    return await apiFetch(
+    const result = await apiFetch(
       `/api/complaints/site/${siteId}?${params.toString()}`
     );
+
+    if (result.success) {
+      // Background: update cache if first page and no search/filter (standard view)
+      if (page === 1 && !status && !fromDate && !toDate && !search) {
+        cacheTickets(siteId, result.data);
+      }
+      return result;
+    }
+
+    // Fallback to cache if network error
+    if (
+      result.isNetworkError &&
+      page === 1 &&
+      !status &&
+      !fromDate &&
+      !toDate &&
+      !search
+    ) {
+      const cached = await getCachedTickets(siteId);
+      if (cached && cached.length > 0) {
+        return { success: true, data: cached, isFromCache: true };
+      }
+    }
+
+    return result;
   },
 
   /**
@@ -116,7 +163,18 @@ export const TicketsService = {
    * Get assets for a site
    */
   async getAssets(siteId: string) {
-    return await apiFetch(`/api/assets/site/${siteId}`);
+    const result = await apiFetch(`/api/assets/site/${siteId}`);
+    if (result.success) {
+      cacheAreas(siteId, result.data);
+      return result;
+    }
+    if (result.isNetworkError) {
+      const cached = await getCachedAreas(siteId);
+      if (cached && cached.length > 0) {
+        return { success: true, data: cached, isFromCache: true };
+      }
+    }
+    return result;
   },
 
   /**
@@ -130,7 +188,18 @@ export const TicketsService = {
    * Get complaint categories
    */
   async getComplaintCategories() {
-    return await apiFetch(`/api/complaint-categories`);
+    const result = await apiFetch(`/api/complaint-categories`);
+    if (result.success) {
+      cacheCategories(result.data);
+      return result;
+    }
+    if (result.isNetworkError) {
+      const cached = await getCachedCategories();
+      if (cached && cached.length > 0) {
+        return { success: true, data: cached, isFromCache: true };
+      }
+    }
+    return result;
   },
 };
 

@@ -106,7 +106,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         body: JSON.stringify({ email, password }),
       });
 
-      const result = await response.json();
+      let result;
+      try {
+        result = await response.json();
+      } catch (e) {
+        return {
+          error: `Server error (${response.status}). Please try again later.`,
+        };
+      }
 
       if (!result.success) {
         return { error: result.error || "Login failed" };
@@ -142,7 +149,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         body: JSON.stringify({ email, password, name }),
       });
 
-      const result = await response.json();
+      let result;
+      try {
+        result = await response.json();
+      } catch (e) {
+        return {
+          error: `Server error (${response.status}). Please try again later.`,
+        };
+      }
 
       if (!result.success) {
         return { error: result.error || "Signup failed" };
@@ -205,7 +219,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         body: JSON.stringify({ email, employeeCode, newPassword }),
       });
 
-      const result = await response.json();
+      let result;
+      try {
+        result = await response.json();
+      } catch (e) {
+        return {
+          error: `Server error (${response.status}). Please try again later.`,
+        };
+      }
 
       if (!result.success) {
         return { error: result.error || "Reset failed" };
@@ -235,7 +256,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         },
       });
 
-      const result = await response.json();
+      let result;
+      try {
+        result = await response.json();
+      } catch (e) {
+        console.error("Failed to parse profile JSON", e);
+        return;
+      }
 
       if (result.success && result.data) {
         const updatedUser = {

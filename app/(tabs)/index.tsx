@@ -1,13 +1,15 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { router } from "expo-router";
 import { View, ActivityIndicator } from "react-native";
 import { useAuth } from "@/contexts/AuthContext";
 
 export default function TabsIndex() {
   const { user, isLoading } = useAuth();
+  const hasRedirected = useRef(false);
 
   useEffect(() => {
-    if (!isLoading) {
+    if (!isLoading && !hasRedirected.current) {
+      hasRedirected.current = true;
       if (user) {
         router.replace("/(tabs)/dashboard");
       } else {
