@@ -1,4 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import logger from "./logger";
 
 const OFFLINE_TICKET_KEY = "@offline_ticket_updates";
 const TICKET_SYNC_STATUS_KEY = "@ticket_sync_status";
@@ -47,8 +48,12 @@ export async function saveOfflineTicketUpdate(
       JSON.stringify([...existing, newRecord])
     );
     await updateTicketPendingCount();
-  } catch (error) {
-    console.error("Error saving offline ticket update:", error);
+  } catch (error: any) {
+    logger.error("Error saving offline ticket update", {
+      module: "OFFLINE_TICKET_STORAGE",
+      error: error.message,
+      ticketId,
+    });
     throw error;
   }
 }
@@ -60,8 +65,11 @@ export async function getOfflineTicketUpdates(): Promise<
   try {
     const data = await AsyncStorage.getItem(OFFLINE_TICKET_KEY);
     return data ? JSON.parse(data) : [];
-  } catch (error) {
-    console.error("Error getting offline ticket updates:", error);
+  } catch (error: any) {
+    logger.error("Error getting offline ticket updates", {
+      module: "OFFLINE_TICKET_STORAGE",
+      error: error.message,
+    });
     return [];
   }
 }
@@ -84,8 +92,11 @@ export async function markTicketUpdatesAsSynced(ids: string[]): Promise<void> {
     await AsyncStorage.setItem(OFFLINE_TICKET_KEY, JSON.stringify(updated));
     await updateTicketPendingCount();
     await updateTicketLastSynced();
-  } catch (error) {
-    console.error("Error marking ticket updates as synced:", error);
+  } catch (error: any) {
+    logger.error("Error marking ticket updates as synced", {
+      module: "OFFLINE_TICKET_STORAGE",
+      error: error.message,
+    });
     throw error;
   }
 }
@@ -95,8 +106,11 @@ export async function clearSyncedTicketUpdates(): Promise<void> {
   try {
     const pending = await getPendingTicketUpdates();
     await AsyncStorage.setItem(OFFLINE_TICKET_KEY, JSON.stringify(pending));
-  } catch (error) {
-    console.error("Error clearing synced ticket updates:", error);
+  } catch (error: any) {
+    logger.error("Error clearing synced ticket updates", {
+      module: "OFFLINE_TICKET_STORAGE",
+      error: error.message,
+    });
     throw error;
   }
 }
@@ -106,8 +120,11 @@ export async function clearAllOfflineTicketData(): Promise<void> {
   try {
     await AsyncStorage.removeItem(OFFLINE_TICKET_KEY);
     await updateTicketPendingCount();
-  } catch (error) {
-    console.error("Error clearing all offline ticket data:", error);
+  } catch (error: any) {
+    logger.error("Error clearing all offline ticket data", {
+      module: "OFFLINE_TICKET_STORAGE",
+      error: error.message,
+    });
     throw error;
   }
 }
@@ -124,8 +141,11 @@ export async function getTicketSyncStatus(): Promise<TicketSyncStatus> {
       pendingCount: 0,
       autoSyncEnabled: true,
     };
-  } catch (error) {
-    console.error("Error getting ticket sync status:", error);
+  } catch (error: any) {
+    logger.error("Error getting ticket sync status", {
+      module: "OFFLINE_TICKET_STORAGE",
+      error: error.message,
+    });
     return {
       lastSynced: null,
       pendingCount: 0,
@@ -204,7 +224,12 @@ export async function syncPendingTicketUpdates(
       } else {
         failed++;
       }
-    } catch (error) {
+    } catch (error: any) {
+      logger.error("Individual ticket sync failure", {
+        module: "OFFLINE_TICKET_STORAGE",
+        error: error.message,
+        ticketId: record.ticket_id,
+      });
       failed++;
     }
   }

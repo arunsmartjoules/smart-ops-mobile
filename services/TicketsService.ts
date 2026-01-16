@@ -15,7 +15,15 @@ const BACKEND_URL =
 
 // Helper to get the token
 const getToken = async (): Promise<string | null> => {
-  return await AsyncStorage.getItem("auth_token");
+  try {
+    return await AsyncStorage.getItem("auth_token");
+  } catch (error: any) {
+    logger.error("Failed to get auth token from storage", {
+      module: "TICKETS_SERVICE",
+      error: error.message,
+    });
+    return null;
+  }
 };
 
 // Helper for API requests with auth

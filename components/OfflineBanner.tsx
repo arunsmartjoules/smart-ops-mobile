@@ -3,7 +3,7 @@ import { View, Text } from "react-native";
 import { WifiOff } from "lucide-react-native";
 import { useNetworkStatus } from "@/hooks/useNetworkStatus";
 
-export default function OfflineBanner() {
+const OfflineBanner = React.memo(() => {
   const { isConnected } = useNetworkStatus();
 
   if (isConnected) {
@@ -21,4 +21,6 @@ export default function OfflineBanner() {
       </View>
     </View>
   );
-}
+});
+
+export default OfflineBanner;

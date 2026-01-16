@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
 import {
   ScrollView,
   Text,
@@ -144,24 +144,24 @@ export default function Dashboard() {
     }, 1000);
   }, [fetchAttendance]);
 
-  const getStatusColor = () => {
+  const getStatusColor = useMemo(() => {
     if (!todayAttendance) return ["#64748b", "#475569"]; // Neutral gray for not checked in
     if (todayAttendance.check_out_time) return ["#16a34a", "#15803d"]; // Green for completed
     return ["#dc2626", "#991b1b"]; // Red for currently checked in
-  };
+  }, [todayAttendance]);
 
-  const getStatusText = () => {
+  const getStatusText = useMemo(() => {
     if (!todayAttendance) return "Not Checked In";
     if (todayAttendance.check_out_time) return "Shift Completed";
     return "Checked In";
-  };
+  }, [todayAttendance]);
 
-  const getStatusSubtext = () => {
+  const getStatusSubtext = useMemo(() => {
     if (!todayAttendance) return "Tap to start shift";
     if (todayAttendance.check_out_time)
       return `Out: ${format(new Date(todayAttendance.check_out_time), "h:mm a")}`;
     return `In: ${format(new Date(todayAttendance.check_in_time!), "h:mm a")}`;
-  };
+  }, [todayAttendance]);
 
   return (
     <View className="flex-1 bg-slate-50 dark:bg-slate-950">
@@ -227,12 +227,12 @@ export default function Dashboard() {
           activeOpacity={0.9}
         >
           <LinearGradient
-            colors={getStatusColor() as any}
+            colors={getStatusColor as any}
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 1 }}
             className="rounded-2xl p-4"
             style={{
-              shadowColor: getStatusColor()[0],
+              shadowColor: getStatusColor[0],
               shadowOffset: { width: 0, height: 4 },
               shadowOpacity: 0.2,
               shadowRadius: 12,
@@ -253,14 +253,14 @@ export default function Dashboard() {
                     Today's Status
                   </Text>
                   <Text className="text-white text-lg font-bold">
-                    {getStatusText()}
+                    {getStatusText}
                   </Text>
                 </View>
               </View>
               <View className="flex-row items-center">
                 <View className="bg-white/20 px-3 py-2 rounded-xl mr-2">
                   <Text className="text-white font-semibold text-xs">
-                    {getStatusSubtext()}
+                    {getStatusSubtext}
                   </Text>
                 </View>
                 <ChevronRight size={18} color="rgba(255,255,255,0.7)" />

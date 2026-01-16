@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import {
   View,
   Text,
@@ -36,6 +36,95 @@ import logger from "../utils/logger";
 import { format, differenceInMinutes, parseISO } from "date-fns";
 import { useNetworkStatus } from "@/hooks/useNetworkStatus";
 import { WifiOff } from "lucide-react-native";
+
+// --- Memoized Components ---
+
+const HistoryItem = React.memo(
+  ({
+    log,
+    getDuration,
+  }: {
+    log: AttendanceLog;
+    getDuration: (log: AttendanceLog) => string;
+  }) => {
+    return (
+      <View
+        className="bg-white dark:bg-slate-900 rounded-2xl p-4"
+        style={{
+          shadowColor: "#000",
+          shadowOffset: { width: 0, height: 2 },
+          shadowOpacity: 0.05,
+          shadowRadius: 8,
+          elevation: 2,
+        }}
+      >
+        <View className="flex-row items-center justify-between mb-3">
+          <View className="flex-row items-center">
+            <View className="w-8 h-8 rounded-lg bg-red-50 items-center justify-center mr-2">
+              <Calendar size={16} color="#dc2626" />
+            </View>
+            <View>
+              <Text className="text-slate-900 dark:text-slate-50 font-semibold">
+                {format(parseISO(log.date), "EEE, d MMM")}
+              </Text>
+            </View>
+          </View>
+          <View className="bg-slate-100 px-2 py-1 rounded-lg">
+            <Text className="text-slate-600 text-xs font-medium">
+              {getDuration(log)}
+            </Text>
+          </View>
+        </View>
+
+        <View className="gap-2">
+          <View className="flex-row items-center bg-slate-50 rounded-xl p-3">
+            <View className="w-8 h-8 rounded-lg bg-green-100 items-center justify-center mr-3">
+              <LogIn size={16} color="#22c55e" />
+            </View>
+            <View className="flex-1">
+              <Text className="text-slate-700 dark:text-slate-300 font-medium text-sm">
+                Check In
+              </Text>
+              <View className="flex-row items-center mt-0.5">
+                <Clock size={10} color="#94a3b8" />
+                <Text className="text-slate-400 dark:text-slate-500 text-xs ml-1">
+                  {format(new Date(log.check_in_time!), "h:mm a")}
+                </Text>
+              </View>
+            </View>
+          </View>
+
+          {log.check_out_time && (
+            <View className="flex-row items-center bg-slate-50 rounded-xl p-3">
+              <View className="w-8 h-8 rounded-lg bg-orange-100 items-center justify-center mr-3">
+                <LogOut size={16} color="#f97316" />
+              </View>
+              <View className="flex-1">
+                <Text className="text-slate-700 dark:text-slate-300 font-medium text-sm">
+                  Check Out
+                </Text>
+                <View className="flex-row items-center mt-0.5">
+                  <Clock size={10} color="#94a3b8" />
+                  <Text className="text-slate-400 dark:text-slate-500 text-xs ml-1">
+                    {format(new Date(log.check_out_time), "h:mm a")}
+                  </Text>
+                </View>
+              </View>
+            </View>
+          )}
+        </View>
+
+        {log.status === "Leave" && (
+          <View className="mt-2 bg-red-50 p-2 rounded-lg">
+            <Text className="text-red-500 text-xs text-center font-bold">
+              LEAVE
+            </Text>
+          </View>
+        )}
+      </View>
+    );
+  }
+);
 
 export default function AttendancePage() {
   const { isConnected } = useNetworkStatus();
@@ -123,7 +212,7 @@ export default function AttendancePage() {
     };
   }, [todayAttendance]);
 
-  const requestLocationPermission = async () => {
+  const requestLocationPermission = useCallback(async () => {
     try {
       // 1. Check if location services are enabled
       const enabled = await Location.hasServicesEnabledAsync();
@@ -178,9 +267,9 @@ export default function AttendancePage() {
       });
       setLocationError("Location initialization failed");
     }
-  };
+  }, [user?.id, user?.work_location_type]);
 
-  const onRefresh = async () => {
+  const onRefresh = useCallback(async () => {
     setRefreshing(true);
     await fetchData();
     // Refresh location too if not WFH
@@ -193,9 +282,9 @@ export default function AttendancePage() {
       } catch (e) {}
     }
     setRefreshing(false);
-  };
+  }, [fetchData, user?.work_location_type]);
 
-  const handleCheckInPress = async () => {
+  const handleCheckInPress = useCallback(async () => {
     const isWFH =
       user?.work_location_type === "WHF" || user?.work_location_type === "WFH";
 
@@ -266,36 +355,39 @@ export default function AttendancePage() {
     } finally {
       setValidatingLocation(false);
     }
-  };
+  }, [user, location, requestLocationPermission]);
 
-  const performCheckIn = async (siteId: string) => {
-    try {
-      const res = await AttendanceService.checkIn(
-        user!.id,
-        siteId,
-        location?.coords.latitude,
-        location?.coords.longitude
-      );
-      if (res.success) {
-        if (res.isOffline) {
-          Alert.alert(
-            "Saved Locally",
-            "You are currently offline. Your check-in has been saved on your device and will be synced automatically when internet is available."
-          );
+  const performCheckIn = useCallback(
+    async (siteId: string) => {
+      try {
+        const res = await AttendanceService.checkIn(
+          user!.id,
+          siteId,
+          location?.coords.latitude,
+          location?.coords.longitude
+        );
+        if (res.success) {
+          if (res.isOffline) {
+            Alert.alert(
+              "Saved Locally",
+              "You are currently offline. Your check-in has been saved on your device and will be synced automatically when internet is available."
+            );
+          } else {
+            Alert.alert("Success", "Checked in successfully!");
+          }
+          setIsSiteModalVisible(false);
+          fetchData();
         } else {
-          Alert.alert("Success", "Checked in successfully!");
+          Alert.alert("Failed", res.error || "Check-in failed");
         }
-        setIsSiteModalVisible(false);
-        fetchData();
-      } else {
-        Alert.alert("Failed", res.error || "Check-in failed");
+      } catch (error: any) {
+        Alert.alert("Error", error.message);
       }
-    } catch (error: any) {
-      Alert.alert("Error", error.message);
-    }
-  };
+    },
+    [user?.id, location, fetchData]
+  );
 
-  const handleCheckOutPress = async () => {
+  const handleCheckOutPress = useCallback(async () => {
     if (!todayAttendance) return;
 
     // Refresh location for checkout
@@ -332,11 +424,6 @@ export default function AttendancePage() {
         currentLoc?.coords.longitude
       );
 
-      // If server says early checkout required logic is handled here?
-      // Actually my backend returns 400 if reason missing for early checkout
-      // BUT I modified the backend to check for remarks only if < 8 hours.
-      // So if I send empty remarks, and it's early, it fails with 400.
-
       if (res.success) {
         Alert.alert("Success", "Checked out successfully!");
         fetchData();
@@ -359,9 +446,9 @@ export default function AttendancePage() {
     } finally {
       setValidatingLocation(false);
     }
-  };
+  }, [todayAttendance, location, fetchData]);
 
-  const submitEarlyCheckout = async () => {
+  const submitEarlyCheckout = useCallback(async () => {
     if (!checkoutReason.trim()) {
       Alert.alert("Required", "Please provide a reason for early checkout");
       return;
@@ -386,25 +473,25 @@ export default function AttendancePage() {
     } catch (error: any) {
       Alert.alert("Error", error.message);
     }
-  };
+  }, [todayAttendance, location, checkoutReason, fetchData]);
 
   // Helper to calculate duration
-  const getDuration = (log: AttendanceLog) => {
-    const start = new Date(log.check_in_time!);
-    const end = log.check_out_time ? new Date(log.check_out_time) : currentTime;
+  const getDuration = useCallback(
+    (log: AttendanceLog) => {
+      const start = new Date(log.check_in_time!);
+      const end = log.check_out_time
+        ? new Date(log.check_out_time)
+        : currentTime;
 
-    // If it's a past record that is somehow missing checkout and not today,
-    // we shouldn't show a timer based on 'now'.
-    // But since this is primarily for todayAttendance or completed logs, this is fine.
+      const minutes = differenceInMinutes(end, start);
+      if (minutes < 0) return "0h 0m";
 
-    const minutes = differenceInMinutes(end, start);
-
-    if (minutes < 0) return "0h 0m";
-
-    const hours = Math.floor(minutes / 60);
-    const mins = minutes % 60;
-    return `${hours}h ${mins}m`;
-  };
+      const hours = Math.floor(minutes / 60);
+      const mins = minutes % 60;
+      return `${hours}h ${mins}m`;
+    },
+    [currentTime]
+  );
 
   return (
     <View className="flex-1 bg-slate-50 dark:bg-slate-950">
@@ -580,82 +667,7 @@ export default function AttendancePage() {
           ) : (
             <View className="gap-3">
               {attendanceHistory.map((log) => (
-                <View
-                  key={log.id}
-                  className="bg-white dark:bg-slate-900 rounded-2xl p-4"
-                  style={{
-                    shadowColor: "#000",
-                    shadowOffset: { width: 0, height: 2 },
-                    shadowOpacity: 0.05,
-                    shadowRadius: 8,
-                    elevation: 2,
-                  }}
-                >
-                  <View className="flex-row items-center justify-between mb-3">
-                    <View className="flex-row items-center">
-                      <View className="w-8 h-8 rounded-lg bg-red-50 items-center justify-center mr-2">
-                        <Calendar size={16} color="#dc2626" />
-                      </View>
-                      <View>
-                        <Text className="text-slate-900 dark:text-slate-50 font-semibold">
-                          {format(parseISO(log.date), "EEE, d MMM")}
-                        </Text>
-                        {/* <Text className="text-slate-400 dark:text-slate-500 text-xs">{log.status}</Text> */}
-                      </View>
-                    </View>
-                    <View className="bg-slate-100 px-2 py-1 rounded-lg">
-                      <Text className="text-slate-600 text-xs font-medium">
-                        {getDuration(log)}
-                      </Text>
-                    </View>
-                  </View>
-
-                  <View className="gap-2">
-                    <View className="flex-row items-center bg-slate-50 rounded-xl p-3">
-                      <View className="w-8 h-8 rounded-lg bg-green-100 items-center justify-center mr-3">
-                        <LogIn size={16} color="#22c55e" />
-                      </View>
-                      <View className="flex-1">
-                        <Text className="text-slate-700 dark:text-slate-300 font-medium text-sm">
-                          Check In
-                        </Text>
-                        <View className="flex-row items-center mt-0.5">
-                          <Clock size={10} color="#94a3b8" />
-                          <Text className="text-slate-400 dark:text-slate-500 text-xs ml-1">
-                            {format(new Date(log.check_in_time!), "h:mm a")}
-                          </Text>
-                        </View>
-                      </View>
-                    </View>
-
-                    {log.check_out_time && (
-                      <View className="flex-row items-center bg-slate-50 rounded-xl p-3">
-                        <View className="w-8 h-8 rounded-lg bg-orange-100 items-center justify-center mr-3">
-                          <LogOut size={16} color="#f97316" />
-                        </View>
-                        <View className="flex-1">
-                          <Text className="text-slate-700 dark:text-slate-300 font-medium text-sm">
-                            Check Out
-                          </Text>
-                          <View className="flex-row items-center mt-0.5">
-                            <Clock size={10} color="#94a3b8" />
-                            <Text className="text-slate-400 dark:text-slate-500 text-xs ml-1">
-                              {format(new Date(log.check_out_time), "h:mm a")}
-                            </Text>
-                          </View>
-                        </View>
-                      </View>
-                    )}
-                  </View>
-
-                  {log.status === "Leave" && (
-                    <View className="mt-2 bg-red-50 p-2 rounded-lg">
-                      <Text className="text-red-500 text-xs text-center font-bold">
-                        LEAVE
-                      </Text>
-                    </View>
-                  )}
-                </View>
+                <HistoryItem key={log.id} log={log} getDuration={getDuration} />
               ))}
             </View>
           )}

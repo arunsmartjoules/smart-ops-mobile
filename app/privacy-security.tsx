@@ -1,5 +1,5 @@
-// @ts-nocheck
-import React, { useState } from "react";
+import React, { useState, useCallback } from "react";
+import logger from "./../utils/logger";
 
 import {
   View,
@@ -38,7 +38,7 @@ export default function PrivacySecurity() {
   const [isLoading, setIsLoading] = useState(false);
   const [successMessage, setSuccessMessage] = useState("");
 
-  const handleChangePassword = async () => {
+  const handleChangePassword = useCallback(async () => {
     // Validation
     if (!currentPassword || !newPassword || !confirmPassword) {
       Alert.alert("Error", "Please fill in all fields");
@@ -80,14 +80,35 @@ export default function PrivacySecurity() {
           setSuccessMessage("");
         }, 3000);
       } else {
+        logger.warn("Change password logic failure", {
+          module: "PRIVACY_SECURITY",
+          error: result.error,
+        });
         Alert.alert("Error", result.error || "Failed to change password");
       }
     } catch (error: any) {
+      logger.error("Change password network/exception error", {
+        module: "PRIVACY_SECURITY",
+        error: error.message,
+      });
       Alert.alert("Error", error.message || "Network error. Please try again.");
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [currentPassword, newPassword, confirmPassword, token]);
+
+  const toggleCurrentPassword = useCallback(
+    () => setShowCurrentPassword((prev) => !prev),
+    []
+  );
+  const toggleNewPassword = useCallback(
+    () => setShowNewPassword((prev) => !prev),
+    []
+  );
+  const toggleConfirmPassword = useCallback(
+    () => setShowConfirmPassword((prev) => !prev),
+    []
+  );
 
   return (
     <View className="flex-1 bg-slate-50 dark:bg-slate-950">
@@ -179,9 +200,7 @@ export default function PrivacySecurity() {
                     value={currentPassword}
                     onChangeText={setCurrentPassword}
                   />
-                  <TouchableOpacity
-                    onPress={() => setShowCurrentPassword(!showCurrentPassword)}
-                  >
+                  <TouchableOpacity onPress={toggleCurrentPassword}>
                     {showCurrentPassword ? (
                       <EyeOff size={18} color="#64748b" />
                     ) : (
@@ -206,9 +225,7 @@ export default function PrivacySecurity() {
                     value={newPassword}
                     onChangeText={setNewPassword}
                   />
-                  <TouchableOpacity
-                    onPress={() => setShowNewPassword(!showNewPassword)}
-                  >
+                  <TouchableOpacity onPress={toggleNewPassword}>
                     {showNewPassword ? (
                       <EyeOff size={18} color="#64748b" />
                     ) : (
@@ -233,9 +250,7 @@ export default function PrivacySecurity() {
                     value={confirmPassword}
                     onChangeText={setConfirmPassword}
                   />
-                  <TouchableOpacity
-                    onPress={() => setShowConfirmPassword(!showConfirmPassword)}
-                  >
+                  <TouchableOpacity onPress={toggleConfirmPassword}>
                     {showConfirmPassword ? (
                       <EyeOff size={18} color="#64748b" />
                     ) : (

@@ -16,7 +16,15 @@ import {
 
 // Helper to get the token
 const getToken = async (): Promise<string | null> => {
-  return await AsyncStorage.getItem("auth_token");
+  try {
+    return await AsyncStorage.getItem("auth_token");
+  } catch (error: any) {
+    logger.error("Failed to get auth token from storage", {
+      module: "ATTENDANCE_SERVICE",
+      error: error.message,
+    });
+    return null;
+  }
 };
 
 // Helper for API requests with auth
@@ -162,6 +170,11 @@ export const AttendanceService = {
     if (result.success) {
       return result.data;
     }
+    logger.error("Location validation logic failure", {
+      module: "ATTENDANCE_SERVICE",
+      userId,
+      error: result.error,
+    });
     throw new Error(result.error || "Failed to validate location");
   },
 

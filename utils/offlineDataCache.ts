@@ -1,4 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import logger from "./logger";
 
 // Cache keys
 const CACHE_AREAS_PREFIX = "@cache_areas_";
@@ -42,8 +43,11 @@ async function getCacheMetadata(): Promise<CacheMetadata> {
           tickets: {},
           attendance: {},
         };
-  } catch (error) {
-    console.error("Error getting cache metadata:", error);
+  } catch (error: any) {
+    logger.error("Error getting cache metadata", {
+      module: "OFFLINE_DATA_CACHE",
+      error: error.message,
+    });
     return {
       areas: {},
       categories: null,
@@ -77,8 +81,12 @@ export async function cacheAreas(siteId: string, areas: Area[]): Promise<void> {
     await updateCacheMetadata({
       areas: { ...metadata.areas, [siteId]: new Date().toISOString() },
     });
-  } catch (error) {
-    console.error("Error caching areas:", error);
+  } catch (error: any) {
+    logger.error("Error caching areas", {
+      module: "OFFLINE_DATA_CACHE",
+      error: error.message,
+      siteId,
+    });
   }
 }
 
@@ -86,8 +94,12 @@ export async function getCachedAreas(siteId: string): Promise<Area[]> {
   try {
     const data = await AsyncStorage.getItem(`${CACHE_AREAS_PREFIX}${siteId}`);
     return data ? JSON.parse(data) : [];
-  } catch (error) {
-    console.error("Error getting cached areas:", error);
+  } catch (error: any) {
+    logger.error("Error getting cached areas", {
+      module: "OFFLINE_DATA_CACHE",
+      error: error.message,
+      siteId,
+    });
     return [];
   }
 }
@@ -107,8 +119,11 @@ export async function cacheCategories(categories: Category[]): Promise<void> {
       JSON.stringify(categories)
     );
     await updateCacheMetadata({ categories: new Date().toISOString() });
-  } catch (error) {
-    console.error("Error caching categories:", error);
+  } catch (error: any) {
+    logger.error("Error caching categories", {
+      module: "OFFLINE_DATA_CACHE",
+      error: error.message,
+    });
   }
 }
 
@@ -116,8 +131,11 @@ export async function getCachedCategories(): Promise<Category[]> {
   try {
     const data = await AsyncStorage.getItem(CACHE_CATEGORIES_KEY);
     return data ? JSON.parse(data) : [];
-  } catch (error) {
-    console.error("Error getting cached categories:", error);
+  } catch (error: any) {
+    logger.error("Error getting cached categories", {
+      module: "OFFLINE_DATA_CACHE",
+      error: error.message,
+    });
     return [];
   }
 }
@@ -140,8 +158,12 @@ export async function cacheSites(userId: string, sites: any[]): Promise<void> {
     await updateCacheMetadata({
       sites: { ...metadata.sites, [userId]: new Date().toISOString() },
     });
-  } catch (error) {
-    console.error("Error caching sites:", error);
+  } catch (error: any) {
+    logger.error("Error caching sites", {
+      module: "OFFLINE_DATA_CACHE",
+      error: error.message,
+      userId,
+    });
   }
 }
 
@@ -149,8 +171,12 @@ export async function getCachedSites(userId: string): Promise<any[]> {
   try {
     const data = await AsyncStorage.getItem(`${CACHE_SITES_PREFIX}${userId}`);
     return data ? JSON.parse(data) : [];
-  } catch (error) {
-    console.error("Error getting cached sites:", error);
+  } catch (error: any) {
+    logger.error("Error getting cached sites", {
+      module: "OFFLINE_DATA_CACHE",
+      error: error.message,
+      userId,
+    });
     return [];
   }
 }
@@ -170,8 +196,12 @@ export async function cacheTickets(
     await updateCacheMetadata({
       tickets: { ...metadata.tickets, [siteId]: new Date().toISOString() },
     });
-  } catch (error) {
-    console.error("Error caching tickets:", error);
+  } catch (error: any) {
+    logger.error("Error caching tickets", {
+      module: "OFFLINE_DATA_CACHE",
+      error: error.message,
+      siteId,
+    });
   }
 }
 
@@ -179,8 +209,12 @@ export async function getCachedTickets(siteId: string): Promise<any[]> {
   try {
     const data = await AsyncStorage.getItem(`${CACHE_TICKETS_PREFIX}${siteId}`);
     return data ? JSON.parse(data) : [];
-  } catch (error) {
-    console.error("Error getting cached tickets:", error);
+  } catch (error: any) {
+    logger.error("Error getting cached tickets", {
+      module: "OFFLINE_DATA_CACHE",
+      error: error.message,
+      siteId,
+    });
     return [];
   }
 }
@@ -211,8 +245,12 @@ export async function cacheAttendance(
         [userId]: new Date().toISOString(),
       },
     });
-  } catch (error) {
-    console.error("Error caching attendance:", error);
+  } catch (error: any) {
+    logger.error("Error caching attendance", {
+      module: "OFFLINE_DATA_CACHE",
+      error: error.message,
+      userId,
+    });
   }
 }
 
@@ -224,8 +262,12 @@ export async function getCachedAttendance(
       `${CACHE_ATTENDANCE_PREFIX}${userId}`
     );
     return data ? JSON.parse(data) : null;
-  } catch (error) {
-    console.error("Error getting cached attendance:", error);
+  } catch (error: any) {
+    logger.error("Error getting cached attendance", {
+      module: "OFFLINE_DATA_CACHE",
+      error: error.message,
+      userId,
+    });
     return null;
   }
 }
@@ -253,8 +295,11 @@ export async function clearAllCache(): Promise<void> {
         key === CACHE_METADATA_KEY
     );
     await AsyncStorage.multiRemove(cacheKeys);
-  } catch (error) {
-    console.error("Error clearing cache:", error);
+  } catch (error: any) {
+    logger.error("Error clearing cache", {
+      module: "OFFLINE_DATA_CACHE",
+      error: error.message,
+    });
     throw error;
   }
 }
@@ -285,8 +330,11 @@ export async function getCacheSize(): Promise<{
     }
 
     return { items: cacheKeys.length, bytes: totalBytes };
-  } catch (error) {
-    console.error("Error calculating cache size:", error);
+  } catch (error: any) {
+    logger.error("Error calculating cache size", {
+      module: "OFFLINE_DATA_CACHE",
+      error: error.message,
+    });
     return { items: 0, bytes: 0 };
   }
 }

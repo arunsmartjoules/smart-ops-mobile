@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import {
   View,
   Text,
@@ -208,837 +208,661 @@ const TicketItem = ({
 };
 
 // Standalone Detail Modal to stabilize the tree and context
-const TicketDetailModal = ({
-  visible,
-  ticket,
-  onClose,
-  updateStatus,
-  setUpdateStatus,
-  updateRemarks,
-  setUpdateRemarks,
-  updateArea,
-  setUpdateArea,
-  updateCategory,
-  setUpdateCategory,
-  isUpdating,
-  handleUpdateStatus,
-  areaOptions,
-  categoryOptions,
-  areasLoading,
-}: {
-  visible: boolean;
-  ticket: Ticket | null;
-  onClose: () => void;
-  updateStatus: string;
-  setUpdateStatus: (s: string) => void;
-  updateRemarks: string;
-  setUpdateRemarks: (s: string) => void;
-  updateArea: string;
-  setUpdateArea: (s: string) => void;
-  updateCategory: string;
-  setUpdateCategory: (s: string) => void;
-  isUpdating: boolean;
-  handleUpdateStatus: () => void;
-  areaOptions: SelectOption[];
-  categoryOptions: SelectOption[];
-  areasLoading?: boolean;
-}) => {
-  if (!ticket) return null;
+const TicketDetailModal = React.memo(
+  ({
+    visible,
+    ticket,
+    onClose,
+    updateStatus,
+    setUpdateStatus,
+    updateRemarks,
+    setUpdateRemarks,
+    updateArea,
+    setUpdateArea,
+    updateCategory,
+    setUpdateCategory,
+    isUpdating,
+    handleUpdateStatus,
+    areaOptions,
+    categoryOptions,
+    areasLoading,
+  }: {
+    visible: boolean;
+    ticket: Ticket | null;
+    onClose: () => void;
+    updateStatus: string;
+    setUpdateStatus: (s: string) => void;
+    updateRemarks: string;
+    setUpdateRemarks: (s: string) => void;
+    updateArea: string;
+    setUpdateArea: (s: string) => void;
+    updateCategory: string;
+    setUpdateCategory: (s: string) => void;
+    isUpdating: boolean;
+    handleUpdateStatus: () => void;
+    areaOptions: SelectOption[];
+    categoryOptions: SelectOption[];
+    areasLoading?: boolean;
+  }) => {
+    if (!ticket) return null;
 
-  console.log("[TicketDetailModal] Rendering ticket:", {
-    id: ticket.ticket_id,
-    no: ticket.ticket_no,
-    title: ticket.title,
-    site: ticket.site_name,
-    status: ticket.status,
-  });
-
-  return (
-    <Modal visible={visible} animationType="slide" transparent={true}>
-      <View
-        style={{
-          flex: 1,
-          backgroundColor: "rgba(0,0,0,0.6)",
-          justifyContent: "flex-end",
-        }}
-      >
+    return (
+      <Modal visible={visible} animationType="slide" transparent={true}>
         <View
           style={{
-            backgroundColor: "#ffffff",
-            borderTopLeftRadius: 40,
-            borderTopRightRadius: 40,
-            padding: 24,
-            height: 700,
-            shadowColor: "#000",
-            shadowOffset: { width: 0, height: -10 },
-            shadowOpacity: 0.1,
-            shadowRadius: 20,
-            elevation: 12,
+            flex: 1,
+            backgroundColor: "rgba(0,0,0,0.6)",
+            justifyContent: "flex-end",
           }}
         >
           <View
             style={{
-              flexDirection: "row",
-              alignItems: "center",
-              justifyContent: "space-between",
-              marginBottom: 16,
+              backgroundColor: "#ffffff",
+              borderTopLeftRadius: 40,
+              borderTopRightRadius: 40,
+              padding: 24,
+              height: 700,
+              shadowColor: "#000",
+              shadowOffset: { width: 0, height: -10 },
+              shadowOpacity: 0.1,
+              shadowRadius: 20,
+              elevation: 12,
             }}
           >
             <View
               style={{
-                backgroundColor: "#fef2f2",
-                paddingHorizontal: 12,
-                paddingVertical: 6,
-                borderRadius: 999,
+                flexDirection: "row",
+                alignItems: "center",
+                justifyContent: "space-between",
+                marginBottom: 16,
               }}
             >
-              <Text
+              <View
                 style={{
-                  color: "#dc2626",
-                  fontWeight: "900",
-                  fontSize: 10,
-                  textTransform: "uppercase",
-                  letterSpacing: 1.5,
+                  backgroundColor: "#fef2f2",
+                  paddingHorizontal: 12,
+                  paddingVertical: 6,
+                  borderRadius: 999,
                 }}
               >
-                {ticket.ticket_no}
-              </Text>
-            </View>
-            <TouchableOpacity
-              onPress={onClose}
-              style={{
-                width: 40,
-                height: 40,
-                backgroundColor: "#f8fafc",
-                borderRadius: 20,
-                alignItems: "center",
-                justifyContent: "center",
-              }}
-            >
-              <X size={20} color="#94a3b8" />
-            </TouchableOpacity>
-          </View>
-
-          {/* Title in Header Area for Guaranteed Visibility */}
-          <Text
-            className="text-slate-900 dark:text-slate-50"
-            style={{
-              fontSize: 22,
-              fontWeight: "900",
-              lineHeight: 28,
-              marginBottom: 20,
-            }}
-          >
-            {ticket.title}
-          </Text>
-
-          <View style={{ flex: 1 }}>
-            <ScrollView
-              showsVerticalScrollIndicator={false}
-              contentContainerStyle={{ paddingBottom: 100 }}
-            >
-              <View>
-                <View
-                  className="bg-slate-50 dark:bg-slate-800"
+                <Text
                   style={{
-                    borderRadius: 24,
-                    padding: 24,
-                    marginBottom: 32,
+                    color: "#dc2626",
+                    fontWeight: "900",
+                    fontSize: 10,
+                    textTransform: "uppercase",
+                    letterSpacing: 1.5,
                   }}
                 >
+                  {ticket.ticket_no}
+                </Text>
+              </View>
+              <TouchableOpacity
+                onPress={onClose}
+                style={{
+                  width: 40,
+                  height: 40,
+                  backgroundColor: "#f8fafc",
+                  borderRadius: 20,
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+              >
+                <X size={20} color="#94a3b8" />
+              </TouchableOpacity>
+            </View>
+
+            {/* Title in Header Area for Guaranteed Visibility */}
+            <Text
+              className="text-slate-900 dark:text-slate-50"
+              style={{
+                fontSize: 22,
+                fontWeight: "900",
+                lineHeight: 28,
+                marginBottom: 20,
+              }}
+            >
+              {ticket.title}
+            </Text>
+
+            <View style={{ flex: 1 }}>
+              <ScrollView
+                showsVerticalScrollIndicator={false}
+                contentContainerStyle={{ paddingBottom: 100 }}
+              >
+                <View>
                   <View
+                    className="bg-slate-50 dark:bg-slate-800"
                     style={{
-                      flexDirection: "row",
-                      alignItems: "center",
-                      marginBottom: 20,
+                      borderRadius: 24,
+                      padding: 24,
+                      marginBottom: 32,
                     }}
                   >
-                    <View
-                      className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800"
-                      style={{
-                        width: 40,
-                        height: 40,
-                        borderRadius: 16,
-                        alignItems: "center",
-                        justifyContent: "center",
-                        marginRight: 16,
-                      }}
-                    >
-                      <LayoutIcon size={18} color="#ef4444" />
-                    </View>
-                    <View style={{ flex: 1 }}>
-                      <Text
-                        className="text-slate-400 dark:text-slate-500"
-                        style={{
-                          fontSize: 10,
-                          fontWeight: "900",
-                          textTransform: "uppercase",
-                          letterSpacing: 1.5,
-                        }}
-                      >
-                        Site Name
-                      </Text>
-                      <Text
-                        className="text-slate-900 dark:text-slate-50"
-                        style={{
-                          fontWeight: "700",
-                          fontSize: 14,
-                          marginTop: 2,
-                        }}
-                      >
-                        {ticket.site_name || "N/A"}
-                      </Text>
-                    </View>
-                  </View>
-
-                  <View
-                    style={{
-                      flexDirection: "row",
-                      alignItems: "center",
-                      marginBottom: 20,
-                    }}
-                  >
-                    <View
-                      className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800"
-                      style={{
-                        width: 40,
-                        height: 40,
-                        borderRadius: 16,
-                        alignItems: "center",
-                        justifyContent: "center",
-                        marginRight: 16,
-                      }}
-                    >
-                      <MapPin size={18} color="#ef4444" />
-                    </View>
-                    <View style={{ flex: 1 }}>
-                      <Text
-                        className="text-slate-400 dark:text-slate-500"
-                        style={{
-                          fontSize: 10,
-                          fontWeight: "900",
-                          textTransform: "uppercase",
-                          letterSpacing: 1.5,
-                        }}
-                      >
-                        Location
-                      </Text>
-                      <Text
-                        className="text-slate-900 dark:text-slate-50"
-                        style={{
-                          fontWeight: "700",
-                          fontSize: 14,
-                          marginTop: 2,
-                        }}
-                      >
-                        {ticket.location || "General Area"}
-                      </Text>
-                    </View>
-                  </View>
-
-                  <View
-                    style={{
-                      flexDirection: "row",
-                      alignItems: "center",
-                      marginBottom: 20,
-                    }}
-                  >
-                    <View
-                      className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800"
-                      style={{
-                        width: 40,
-                        height: 40,
-                        borderRadius: 16,
-                        alignItems: "center",
-                        justifyContent: "center",
-                        marginRight: 16,
-                      }}
-                    >
-                      <Briefcase size={18} color="#3b82f6" />
-                    </View>
-                    <View style={{ flex: 1 }}>
-                      <Text
-                        className="text-slate-400 dark:text-slate-500"
-                        style={{
-                          fontSize: 10,
-                          fontWeight: "900",
-                          textTransform: "uppercase",
-                          letterSpacing: 1.5,
-                        }}
-                      >
-                        Created By
-                      </Text>
-                      <Text
-                        className="text-slate-900 dark:text-slate-50"
-                        style={{
-                          fontWeight: "700",
-                          fontSize: 14,
-                          marginTop: 2,
-                        }}
-                      >
-                        {ticket.created_user || "N/A"}
-                      </Text>
-                    </View>
-                  </View>
-
-                  {/* Site Code field */}
-                  <View
-                    style={{
-                      flexDirection: "row",
-                      alignItems: "center",
-                      marginBottom: 20,
-                    }}
-                  >
-                    <View
-                      className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800"
-                      style={{
-                        width: 40,
-                        height: 40,
-                        borderRadius: 16,
-                        alignItems: "center",
-                        justifyContent: "center",
-                        marginRight: 16,
-                      }}
-                    >
-                      <LayoutIcon size={18} color="#10b981" />
-                    </View>
-                    <View style={{ flex: 1 }}>
-                      <Text
-                        className="text-slate-400 dark:text-slate-500"
-                        style={{
-                          fontSize: 10,
-                          fontWeight: "900",
-                          textTransform: "uppercase",
-                          letterSpacing: 1.5,
-                        }}
-                      >
-                        Site Code
-                      </Text>
-                      <Text
-                        className="text-slate-900 dark:text-slate-50"
-                        style={{
-                          fontWeight: "700",
-                          fontSize: 14,
-                          marginTop: 2,
-                        }}
-                      >
-                        {ticket.site_code || "N/A"}
-                      </Text>
-                    </View>
-                  </View>
-
-                  {/* Created Date & Time */}
-                  <View
-                    style={{
-                      flexDirection: "row",
-                      alignItems: "center",
-                      marginBottom: ticket.customer_inputs ? 20 : 0,
-                    }}
-                  >
-                    <View
-                      className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800"
-                      style={{
-                        width: 40,
-                        height: 40,
-                        borderRadius: 16,
-                        alignItems: "center",
-                        justifyContent: "center",
-                        marginRight: 16,
-                      }}
-                    >
-                      <Calendar size={18} color="#8b5cf6" />
-                    </View>
-                    <View style={{ flex: 1 }}>
-                      <Text
-                        className="text-slate-400 dark:text-slate-500"
-                        style={{
-                          fontSize: 10,
-                          fontWeight: "900",
-                          textTransform: "uppercase",
-                          letterSpacing: 1.5,
-                        }}
-                      >
-                        Created Date & Time
-                      </Text>
-                      <Text
-                        className="text-slate-900 dark:text-slate-50"
-                        style={{
-                          fontWeight: "700",
-                          fontSize: 14,
-                          marginTop: 2,
-                        }}
-                      >
-                        {ticket.created_at
-                          ? format(
-                              new Date(ticket.created_at),
-                              "dd MMM yyyy, HH:mm"
-                            )
-                          : "N/A"}
-                      </Text>
-                    </View>
-                  </View>
-
-                  {ticket.customer_inputs && (
                     <View
                       style={{
                         flexDirection: "row",
                         alignItems: "center",
+                        marginBottom: 20,
                       }}
                     >
                       <View
+                        className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800"
                         style={{
                           width: 40,
                           height: 40,
                           borderRadius: 16,
-                          backgroundColor: "#ffffff",
                           alignItems: "center",
                           justifyContent: "center",
                           marginRight: 16,
-                          borderWidth: 1,
-                          borderColor: "#f1f5f9",
                         }}
                       >
-                        <Layers size={18} color="#f59e0b" />
+                        <LayoutIcon size={18} color="#ef4444" />
                       </View>
                       <View style={{ flex: 1 }}>
                         <Text
+                          className="text-slate-400 dark:text-slate-500"
                           style={{
-                            color: "#94a3b8",
                             fontSize: 10,
                             fontWeight: "900",
                             textTransform: "uppercase",
                             letterSpacing: 1.5,
                           }}
                         >
-                          Customer Inputs
+                          Site Name
                         </Text>
                         <Text
+                          className="text-slate-900 dark:text-slate-50"
                           style={{
-                            color: "#0f172a",
                             fontWeight: "700",
                             fontSize: 14,
                             marginTop: 2,
                           }}
                         >
-                          {ticket.customer_inputs}
+                          {ticket.site_name || "N/A"}
                         </Text>
                       </View>
                     </View>
-                  )}
-                </View>
 
-                <Text
-                  style={{
-                    color: "#0f172a",
-                    fontWeight: "900",
-                    fontSize: 14,
-                    textTransform: "uppercase",
-                    letterSpacing: 1.5,
-                    marginBottom: 16,
-                    marginLeft: 4,
-                  }}
-                >
-                  Status Transition
-                </Text>
-                <View
-                  style={{
-                    flexDirection: "row",
-                    flexWrap: "wrap",
-                    gap: 8,
-                    marginBottom: 24,
-                  }}
-                >
-                  {[
-                    "Inprogress",
-                    "Hold",
-                    "Waiting",
-                    "Resolved",
-                    "Cancelled",
-                  ].map((s) => (
-                    <TouchableOpacity
-                      key={s}
-                      onPress={() => setUpdateStatus(s)}
+                    <View
                       style={{
-                        paddingHorizontal: 20,
-                        paddingVertical: 12,
-                        borderRadius: 16,
-                        borderWidth: 1,
-                        backgroundColor:
-                          updateStatus === s ? "#dc2626" : "#ffffff",
-                        borderColor: updateStatus === s ? "#dc2626" : "#e2e8f0",
+                        flexDirection: "row",
+                        alignItems: "center",
+                        marginBottom: 20,
                       }}
                     >
-                      <Text
+                      <View
+                        className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800"
                         style={{
-                          fontSize: 12,
-                          fontWeight: "700",
-                          color: updateStatus === s ? "#ffffff" : "#475569",
+                          width: 40,
+                          height: 40,
+                          borderRadius: 16,
+                          alignItems: "center",
+                          justifyContent: "center",
+                          marginRight: 16,
                         }}
                       >
-                        {s}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
+                        <MapPin size={18} color="#ef4444" />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text
+                          className="text-slate-400 dark:text-slate-500"
+                          style={{
+                            fontSize: 10,
+                            fontWeight: "900",
+                            textTransform: "uppercase",
+                            letterSpacing: 1.5,
+                          }}
+                        >
+                          Location
+                        </Text>
+                        <Text
+                          className="text-slate-900 dark:text-slate-50"
+                          style={{
+                            fontWeight: "700",
+                            fontSize: 14,
+                            marginTop: 2,
+                          }}
+                        >
+                          {ticket.location || "General Area"}
+                        </Text>
+                      </View>
+                    </View>
 
-                {updateStatus === "Inprogress" && (
-                  <View style={{ marginBottom: 32 }}>
-                    <SearchableSelect
-                      label="Select Area"
-                      placeholder="Choose an area..."
-                      value={updateArea}
-                      options={areaOptions}
-                      onChange={setUpdateArea}
-                      loading={areasLoading}
-                      searchPlaceholder="Search areas..."
-                      emptyMessage="No areas found"
-                    />
-
-                    <SearchableSelect
-                      label="Select Category"
-                      placeholder="Choose a category..."
-                      value={updateCategory}
-                      options={categoryOptions}
-                      onChange={setUpdateCategory}
-                      searchPlaceholder="Search categories..."
-                      emptyMessage="No categories found"
-                    />
-                  </View>
-                )}
-
-                {["Hold", "Cancelled", "Waiting"].includes(updateStatus) && (
-                  <View style={{ marginBottom: 24 }}>
-                    <Text
-                      className="text-slate-400 dark:text-slate-500"
+                    <View
                       style={{
-                        fontSize: 10,
-                        fontWeight: "900",
-                        textTransform: "uppercase",
-                        letterSpacing: 1.5,
-                        marginBottom: 12,
-                        marginLeft: 4,
+                        flexDirection: "row",
+                        alignItems: "center",
+                        marginBottom: 20,
                       }}
                     >
-                      Mandatory Remarks
-                    </Text>
-                    <TextInput
-                      style={{
-                        backgroundColor: "#f8fafc",
-                        borderWidth: 1,
-                        borderColor: "#e2e8f0",
-                        borderRadius: 24,
-                        padding: 20,
-                        height: 128,
-                        fontWeight: "700",
-                        textAlignVertical: "top",
-                      }}
-                      className="bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-50 border-slate-200 dark:border-slate-700"
-                      placeholder="Why is it on hold? What is the roadblock?"
-                      multiline
-                      value={updateRemarks}
-                      onChangeText={setUpdateRemarks}
-                    />
-                  </View>
-                )}
+                      <View
+                        className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800"
+                        style={{
+                          width: 40,
+                          height: 40,
+                          borderRadius: 16,
+                          alignItems: "center",
+                          justifyContent: "center",
+                          marginRight: 16,
+                        }}
+                      >
+                        <Briefcase size={18} color="#3b82f6" />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text
+                          className="text-slate-400 dark:text-slate-500"
+                          style={{
+                            fontSize: 10,
+                            fontWeight: "900",
+                            textTransform: "uppercase",
+                            letterSpacing: 1.5,
+                          }}
+                        >
+                          Created By
+                        </Text>
+                        <Text
+                          className="text-slate-900 dark:text-slate-50"
+                          style={{
+                            fontWeight: "700",
+                            fontSize: 14,
+                            marginTop: 2,
+                          }}
+                        >
+                          {ticket.created_user || "N/A"}
+                        </Text>
+                      </View>
+                    </View>
 
-                <TouchableOpacity
-                  onPress={handleUpdateStatus}
-                  disabled={isUpdating}
-                  style={{
-                    backgroundColor: "#dc2626",
-                    borderRadius: 28,
-                    paddingVertical: 20,
-                    alignItems: "center",
-                    shadowColor: "#dc2626",
-                    shadowOffset: { width: 0, height: 10 },
-                    shadowOpacity: 0.2,
-                    shadowRadius: 20,
-                    elevation: 8,
-                  }}
-                >
-                  {isUpdating ? (
-                    <ActivityIndicator color="white" size="small" />
-                  ) : (
-                    <Text
+                    {/* Site Code field */}
+                    <View
                       style={{
-                        color: "#ffffff",
-                        fontWeight: "900",
-                        textTransform: "uppercase",
-                        letterSpacing: 1.5,
-                        fontSize: 14,
+                        flexDirection: "row",
+                        alignItems: "center",
+                        marginBottom: 20,
                       }}
                     >
-                      Update Information
-                    </Text>
+                      <View
+                        className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800"
+                        style={{
+                          width: 40,
+                          height: 40,
+                          borderRadius: 16,
+                          alignItems: "center",
+                          justifyContent: "center",
+                          marginRight: 16,
+                        }}
+                      >
+                        <LayoutIcon size={18} color="#10b981" />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text
+                          className="text-slate-400 dark:text-slate-500"
+                          style={{
+                            fontSize: 10,
+                            fontWeight: "900",
+                            textTransform: "uppercase",
+                            letterSpacing: 1.5,
+                          }}
+                        >
+                          Site Code
+                        </Text>
+                        <Text
+                          className="text-slate-900 dark:text-slate-50"
+                          style={{
+                            fontWeight: "700",
+                            fontSize: 14,
+                            marginTop: 2,
+                          }}
+                        >
+                          {ticket.site_code || "N/A"}
+                        </Text>
+                      </View>
+                    </View>
+
+                    {/* Created Date & Time */}
+                    <View
+                      style={{
+                        flexDirection: "row",
+                        alignItems: "center",
+                        marginBottom: ticket.customer_inputs ? 20 : 0,
+                      }}
+                    >
+                      <View
+                        className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800"
+                        style={{
+                          width: 40,
+                          height: 40,
+                          borderRadius: 16,
+                          alignItems: "center",
+                          justifyContent: "center",
+                          marginRight: 16,
+                        }}
+                      >
+                        <Calendar size={18} color="#8b5cf6" />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text
+                          className="text-slate-400 dark:text-slate-500"
+                          style={{
+                            fontSize: 10,
+                            fontWeight: "900",
+                            textTransform: "uppercase",
+                            letterSpacing: 1.5,
+                          }}
+                        >
+                          Created Date & Time
+                        </Text>
+                        <Text
+                          className="text-slate-900 dark:text-slate-50"
+                          style={{
+                            fontWeight: "700",
+                            fontSize: 14,
+                            marginTop: 2,
+                          }}
+                        >
+                          {ticket.created_at
+                            ? format(
+                                new Date(ticket.created_at),
+                                "dd MMM yyyy, HH:mm"
+                              )
+                            : "N/A"}
+                        </Text>
+                      </View>
+                    </View>
+
+                    {ticket.customer_inputs && (
+                      <View
+                        style={{
+                          flexDirection: "row",
+                          alignItems: "center",
+                        }}
+                      >
+                        <View
+                          style={{
+                            width: 40,
+                            height: 40,
+                            borderRadius: 16,
+                            backgroundColor: "#ffffff",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            marginRight: 16,
+                            borderWidth: 1,
+                            borderColor: "#f1f5f9",
+                          }}
+                        >
+                          <Layers size={18} color="#f59e0b" />
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text
+                            style={{
+                              color: "#94a3b8",
+                              fontSize: 10,
+                              fontWeight: "900",
+                              textTransform: "uppercase",
+                              letterSpacing: 1.5,
+                            }}
+                          >
+                            Customer Inputs
+                          </Text>
+                          <Text
+                            style={{
+                              color: "#0f172a",
+                              fontWeight: "700",
+                              fontSize: 14,
+                              marginTop: 2,
+                            }}
+                          >
+                            {ticket.customer_inputs}
+                          </Text>
+                        </View>
+                      </View>
+                    )}
+                  </View>
+
+                  <Text
+                    style={{
+                      color: "#0f172a",
+                      fontWeight: "900",
+                      fontSize: 14,
+                      textTransform: "uppercase",
+                      letterSpacing: 1.5,
+                      marginBottom: 16,
+                      marginLeft: 4,
+                    }}
+                  >
+                    Status Transition
+                  </Text>
+                  <View
+                    style={{
+                      flexDirection: "row",
+                      flexWrap: "wrap",
+                      gap: 8,
+                      marginBottom: 24,
+                    }}
+                  >
+                    {[
+                      "Inprogress",
+                      "Hold",
+                      "Waiting",
+                      "Resolved",
+                      "Cancelled",
+                    ].map((s) => (
+                      <TouchableOpacity
+                        key={s}
+                        onPress={() => setUpdateStatus(s)}
+                        style={{
+                          paddingHorizontal: 20,
+                          paddingVertical: 12,
+                          borderRadius: 16,
+                          borderWidth: 1,
+                          backgroundColor:
+                            updateStatus === s ? "#dc2626" : "#ffffff",
+                          borderColor:
+                            updateStatus === s ? "#dc2626" : "#e2e8f0",
+                        }}
+                      >
+                        <Text
+                          style={{
+                            fontSize: 12,
+                            fontWeight: "700",
+                            color: updateStatus === s ? "#ffffff" : "#475569",
+                          }}
+                        >
+                          {s}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+
+                  {updateStatus === "Inprogress" && (
+                    <View style={{ marginBottom: 32 }}>
+                      <SearchableSelect
+                        label="Select Area"
+                        placeholder="Choose an area..."
+                        value={updateArea}
+                        options={areaOptions}
+                        onChange={setUpdateArea}
+                        loading={areasLoading}
+                        searchPlaceholder="Search areas..."
+                        emptyMessage="No areas found"
+                      />
+
+                      <SearchableSelect
+                        label="Select Category"
+                        placeholder="Choose a category..."
+                        value={updateCategory}
+                        options={categoryOptions}
+                        onChange={setUpdateCategory}
+                        searchPlaceholder="Search categories..."
+                        emptyMessage="No categories found"
+                      />
+                    </View>
                   )}
-                </TouchableOpacity>
-              </View>
-            </ScrollView>
+
+                  {["Hold", "Cancelled", "Waiting"].includes(updateStatus) && (
+                    <View style={{ marginBottom: 24 }}>
+                      <Text
+                        className="text-slate-400 dark:text-slate-500"
+                        style={{
+                          fontSize: 10,
+                          fontWeight: "900",
+                          textTransform: "uppercase",
+                          letterSpacing: 1.5,
+                          marginBottom: 12,
+                          marginLeft: 4,
+                        }}
+                      >
+                        Mandatory Remarks
+                      </Text>
+                      <TextInput
+                        style={{
+                          backgroundColor: "#f8fafc",
+                          borderWidth: 1,
+                          borderColor: "#e2e8f0",
+                          borderRadius: 24,
+                          padding: 20,
+                          height: 128,
+                          fontWeight: "700",
+                          textAlignVertical: "top",
+                        }}
+                        className="bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-50 border-slate-200 dark:border-slate-700"
+                        placeholder="Why is it on hold? What is the roadblock?"
+                        multiline
+                        value={updateRemarks}
+                        onChangeText={setUpdateRemarks}
+                      />
+                    </View>
+                  )}
+
+                  <TouchableOpacity
+                    onPress={handleUpdateStatus}
+                    disabled={isUpdating}
+                    style={{
+                      backgroundColor: "#dc2626",
+                      borderRadius: 28,
+                      paddingVertical: 20,
+                      alignItems: "center",
+                      shadowColor: "#dc2626",
+                      shadowOffset: { width: 0, height: 10 },
+                      shadowOpacity: 0.2,
+                      shadowRadius: 20,
+                      elevation: 8,
+                    }}
+                  >
+                    {isUpdating ? (
+                      <ActivityIndicator color="white" size="small" />
+                    ) : (
+                      <Text
+                        style={{
+                          color: "#ffffff",
+                          fontWeight: "900",
+                          textTransform: "uppercase",
+                          letterSpacing: 1.5,
+                          fontSize: 14,
+                        }}
+                      >
+                        Update Information
+                      </Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              </ScrollView>
+            </View>
           </View>
         </View>
-      </View>
-    </Modal>
-  );
-};
+      </Modal>
+    );
+  }
+);
 
 // Standalone Filter Modal
-const AdvancedFilterModal = ({
-  visible,
-  onClose,
-  tempSearch,
-  setTempSearch,
-  tempFromDate,
-  setTempFromDate,
-  tempToDate,
-  setTempToDate,
-  sites,
-  selectedSiteId,
-  setSelectedSiteId,
-  user,
-  statusFilter,
-  setStatusFilter,
-  applyAdvancedFilters,
-}: {
-  visible: boolean;
-  onClose: () => void;
-  tempSearch: string;
-  setTempSearch: (s: string) => void;
-  tempFromDate: string | null;
-  setTempFromDate: (s: string | null) => void;
-  tempToDate: string | null;
-  setTempToDate: (s: string | null) => void;
-  sites: Site[];
-  selectedSiteId: string;
-  setSelectedSiteId: (s: string) => void;
-  user: any;
-  statusFilter: string;
-  setStatusFilter: (s: string) => void;
-  applyAdvancedFilters: () => void;
-}) => {
-  return (
-    <Modal visible={visible} animationType="slide" transparent={true}>
-      <View
-        style={{
-          flex: 1,
-          backgroundColor: "rgba(0,0,0,0.6)",
-          justifyContent: "flex-end",
-        }}
-      >
+const AdvancedFilterModal = React.memo(
+  ({
+    visible,
+    onClose,
+    tempSearch,
+    setTempSearch,
+    tempFromDate,
+    setTempFromDate,
+    tempToDate,
+    setTempToDate,
+    sites,
+    selectedSiteId,
+    setSelectedSiteId,
+    user,
+    statusFilter,
+    setStatusFilter,
+    applyAdvancedFilters,
+  }: {
+    visible: boolean;
+    onClose: () => void;
+    tempSearch: string;
+    setTempSearch: (s: string) => void;
+    tempFromDate: string | null;
+    setTempFromDate: (s: string | null) => void;
+    tempToDate: string | null;
+    setTempToDate: (s: string | null) => void;
+    sites: Site[];
+    selectedSiteId: string;
+    setSelectedSiteId: (s: string) => void;
+    user: any;
+    statusFilter: string;
+    setStatusFilter: (s: string) => void;
+    applyAdvancedFilters: () => void;
+  }) => {
+    return (
+      <Modal visible={visible} animationType="slide" transparent={true}>
         <View
           style={{
-            backgroundColor: "#ffffff",
-            borderTopLeftRadius: 40,
-            borderTopRightRadius: 40,
-            padding: 32,
-            maxHeight: "80%",
+            flex: 1,
+            backgroundColor: "rgba(0,0,0,0.6)",
+            justifyContent: "flex-end",
           }}
         >
           <View
             style={{
-              flexDirection: "row",
-              alignItems: "center",
-              justifyContent: "space-between",
-              marginBottom: 32,
+              backgroundColor: "#ffffff",
+              borderTopLeftRadius: 40,
+              borderTopRightRadius: 40,
+              padding: 32,
+              maxHeight: "80%",
             }}
           >
-            <Text
+            <View
               style={{
-                color: "#0f172a",
-                fontSize: 24,
-                fontWeight: "900",
-                letterSpacing: -0.5,
-              }}
-            >
-              Filter Tickets
-            </Text>
-            <TouchableOpacity
-              onPress={onClose}
-              style={{
-                width: 40,
-                height: 40,
-                backgroundColor: "#f8fafc",
-                borderRadius: 20,
+                flexDirection: "row",
                 alignItems: "center",
-                justifyContent: "center",
+                justifyContent: "space-between",
+                marginBottom: 32,
               }}
             >
-              <X size={20} color="#94a3b8" />
-            </TouchableOpacity>
-          </View>
-
-          <View style={{ gap: 24 }}>
-            <View>
               <Text
                 style={{
-                  color: "#94a3b8",
-                  fontSize: 10,
+                  color: "#0f172a",
+                  fontSize: 24,
                   fontWeight: "900",
-                  textTransform: "uppercase",
-                  letterSpacing: 1.5,
-                  marginBottom: 12,
-                  marginLeft: 4,
+                  letterSpacing: -0.5,
                 }}
               >
-                Search Keywords
+                Filter Tickets
               </Text>
-              <View
+              <TouchableOpacity
+                onPress={onClose}
                 style={{
-                  flexDirection: "row",
-                  alignItems: "center",
+                  width: 40,
+                  height: 40,
                   backgroundColor: "#f8fafc",
-                  borderRadius: 16,
-                  paddingHorizontal: 20,
-                  paddingVertical: 16,
-                  borderWidth: 1,
-                  borderColor: "#f1f5f9",
+                  borderRadius: 20,
+                  alignItems: "center",
+                  justifyContent: "center",
                 }}
               >
-                <SearchIcon size={20} color="#94a3b8" />
-                <TextInput
-                  placeholder="Ticket #, Title, description..."
-                  style={{
-                    flex: 1,
-                    marginLeft: 12,
-                    color: "#0f172a",
-                    fontWeight: "700",
-                  }}
-                  value={tempSearch}
-                  onChangeText={setTempSearch}
-                />
-              </View>
+                <X size={20} color="#94a3b8" />
+              </TouchableOpacity>
             </View>
 
-            <View>
-              <Text
-                style={{
-                  color: "#94a3b8",
-                  fontSize: 10,
-                  fontWeight: "900",
-                  textTransform: "uppercase",
-                  letterSpacing: 1.5,
-                  marginBottom: 12,
-                  marginLeft: 4,
-                }}
-              >
-                Date Range
-              </Text>
-              <View style={{ flexDirection: "row", gap: 8, marginBottom: 12 }}>
-                {[
-                  {
-                    label: "Today",
-                    value: format(new Date(), "yyyy-MM-dd"),
-                  },
-                  {
-                    label: "7 Days",
-                    value: format(
-                      new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
-                      "yyyy-MM-dd"
-                    ),
-                  },
-                  {
-                    label: "30 Days",
-                    value: format(
-                      new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
-                      "yyyy-MM-dd"
-                    ),
-                  },
-                ].map((preset) => (
-                  <TouchableOpacity
-                    key={preset.label}
-                    onPress={() => {
-                      setTempFromDate(preset.value);
-                      setTempToDate(format(new Date(), "yyyy-MM-dd"));
-                    }}
-                    style={{
-                      paddingHorizontal: 16,
-                      paddingVertical: 8,
-                      borderRadius: 12,
-                      borderWidth: 1,
-                      backgroundColor:
-                        tempFromDate === preset.value ? "#fef2f2" : "#f8fafc",
-                      borderColor:
-                        tempFromDate === preset.value ? "#fecaca" : "#f1f5f9",
-                    }}
-                  >
-                    <Text
-                      style={{
-                        fontSize: 11,
-                        fontWeight: "700",
-                        color:
-                          tempFromDate === preset.value ? "#dc2626" : "#64748b",
-                      }}
-                    >
-                      {preset.label}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-                <TouchableOpacity
-                  onPress={() => {
-                    setTempFromDate(null);
-                    setTempToDate(null);
-                  }}
-                  style={{
-                    paddingHorizontal: 16,
-                    paddingVertical: 8,
-                    borderRadius: 12,
-                    borderWidth: 1,
-                    backgroundColor: "#f8fafc",
-                    borderColor: "#f1f5f9",
-                  }}
-                >
-                  <Text
-                    style={{
-                      fontSize: 11,
-                      fontWeight: "700",
-                      color: "#64748b",
-                    }}
-                  >
-                    Clear
-                  </Text>
-                </TouchableOpacity>
-              </View>
-
-              {tempFromDate && (
-                <View
-                  style={{
-                    backgroundColor: "#f8fafc",
-                    borderRadius: 16,
-                    padding: 16,
-                    borderWidth: 1,
-                    borderColor: "#f1f5f9",
-                  }}
-                >
-                  <View
-                    style={{
-                      flexDirection: "row",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                    }}
-                  >
-                    <View
-                      style={{ flexDirection: "row", alignItems: "center" }}
-                    >
-                      <Calendar size={16} color="#dc2626" />
-                      <Text
-                        style={{
-                          color: "#475569",
-                          fontSize: 12,
-                          fontWeight: "700",
-                          marginLeft: 8,
-                        }}
-                      >
-                        {format(new Date(tempFromDate), "dd MMM")} -{" "}
-                        {tempToDate
-                          ? format(new Date(tempToDate), "dd MMM, yyyy")
-                          : "Present"}
-                      </Text>
-                    </View>
-                  </View>
-                </View>
-              )}
-            </View>
-
-            {sites.length > 0 && (
+            <View style={{ gap: 24 }}>
               <View>
                 <Text
                   style={{
@@ -1051,119 +875,296 @@ const AdvancedFilterModal = ({
                     marginLeft: 4,
                   }}
                 >
-                  Change Site
+                  Search Keywords
                 </Text>
                 <View
-                  style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    backgroundColor: "#f8fafc",
+                    borderRadius: 16,
+                    paddingHorizontal: 20,
+                    paddingVertical: 16,
+                    borderWidth: 1,
+                    borderColor: "#f1f5f9",
+                  }}
                 >
-                  {sites.map((s) => (
+                  <SearchIcon size={20} color="#94a3b8" />
+                  <TextInput
+                    placeholder="Ticket #, Title, description..."
+                    style={{
+                      flex: 1,
+                      marginLeft: 12,
+                      color: "#0f172a",
+                      fontWeight: "700",
+                    }}
+                    value={tempSearch}
+                    onChangeText={setTempSearch}
+                  />
+                </View>
+              </View>
+
+              <View>
+                <Text
+                  style={{
+                    color: "#94a3b8",
+                    fontSize: 10,
+                    fontWeight: "900",
+                    textTransform: "uppercase",
+                    letterSpacing: 1.5,
+                    marginBottom: 12,
+                    marginLeft: 4,
+                  }}
+                >
+                  Date Range
+                </Text>
+                <View
+                  style={{ flexDirection: "row", gap: 8, marginBottom: 12 }}
+                >
+                  {[
+                    {
+                      label: "Today",
+                      value: format(new Date(), "yyyy-MM-dd"),
+                    },
+                    {
+                      label: "7 Days",
+                      value: format(
+                        new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
+                        "yyyy-MM-dd"
+                      ),
+                    },
+                    {
+                      label: "30 Days",
+                      value: format(
+                        new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
+                        "yyyy-MM-dd"
+                      ),
+                    },
+                  ].map((preset) => (
                     <TouchableOpacity
-                      key={s.site_id}
+                      key={preset.label}
                       onPress={() => {
-                        const siteCode = s.site_code || "";
-                        setSelectedSiteId(siteCode);
-                        if (user?.id) {
-                          AsyncStorage.setItem(
-                            `last_site_${user.id}`,
-                            siteCode
-                          );
-                        }
+                        setTempFromDate(preset.value);
+                        setTempToDate(format(new Date(), "yyyy-MM-dd"));
                       }}
                       style={{
                         paddingHorizontal: 16,
-                        paddingVertical: 12,
-                        borderRadius: 16,
+                        paddingVertical: 8,
+                        borderRadius: 12,
                         borderWidth: 1,
                         backgroundColor:
-                          selectedSiteId === s.site_code
-                            ? "#fef2f2"
-                            : "#ffffff",
+                          tempFromDate === preset.value ? "#fef2f2" : "#f8fafc",
                         borderColor:
-                          selectedSiteId === s.site_code
-                            ? "#fecaca"
-                            : "#e2e8f0",
+                          tempFromDate === preset.value ? "#fecaca" : "#f1f5f9",
                       }}
                     >
                       <Text
                         style={{
-                          fontSize: 12,
+                          fontSize: 11,
                           fontWeight: "700",
                           color:
-                            selectedSiteId === s.site_code
+                            tempFromDate === preset.value
                               ? "#dc2626"
                               : "#64748b",
                         }}
                       >
-                        {s.name}
+                        {preset.label}
                       </Text>
                     </TouchableOpacity>
                   ))}
+                  <TouchableOpacity
+                    onPress={() => {
+                      setTempFromDate(null);
+                      setTempToDate(null);
+                    }}
+                    style={{
+                      paddingHorizontal: 16,
+                      paddingVertical: 8,
+                      borderRadius: 12,
+                      borderWidth: 1,
+                      backgroundColor: "#f8fafc",
+                      borderColor: "#f1f5f9",
+                    }}
+                  >
+                    <Text
+                      style={{
+                        fontSize: 11,
+                        fontWeight: "700",
+                        color: "#64748b",
+                      }}
+                    >
+                      Clear
+                    </Text>
+                  </TouchableOpacity>
                 </View>
-              </View>
-            )}
-          </View>
 
-          <View style={{ flexDirection: "row", gap: 16, marginTop: 40 }}>
-            <TouchableOpacity
-              onPress={() => {
-                setTempSearch("");
-                setTempFromDate(null);
-                setTempToDate(null);
-                setStatusFilter("Open");
-              }}
-              style={{
-                flex: 1,
-                backgroundColor: "#f1f5f9",
-                borderRadius: 24,
-                paddingVertical: 16,
-                alignItems: "center",
-              }}
-            >
-              <Text
+                {tempFromDate && (
+                  <View
+                    style={{
+                      backgroundColor: "#f8fafc",
+                      borderRadius: 16,
+                      padding: 16,
+                      borderWidth: 1,
+                      borderColor: "#f1f5f9",
+                    }}
+                  >
+                    <View
+                      style={{
+                        flexDirection: "row",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                      }}
+                    >
+                      <View
+                        style={{ flexDirection: "row", alignItems: "center" }}
+                      >
+                        <Calendar size={16} color="#dc2626" />
+                        <Text
+                          style={{
+                            color: "#475569",
+                            fontSize: 12,
+                            fontWeight: "700",
+                            marginLeft: 8,
+                          }}
+                        >
+                          {format(new Date(tempFromDate), "dd MMM")} -{" "}
+                          {tempToDate
+                            ? format(new Date(tempToDate), "dd MMM, yyyy")
+                            : "Present"}
+                        </Text>
+                      </View>
+                    </View>
+                  </View>
+                )}
+              </View>
+
+              {sites.length > 0 && (
+                <View>
+                  <Text
+                    style={{
+                      color: "#94a3b8",
+                      fontSize: 10,
+                      fontWeight: "900",
+                      textTransform: "uppercase",
+                      letterSpacing: 1.5,
+                      marginBottom: 12,
+                      marginLeft: 4,
+                    }}
+                  >
+                    Change Site
+                  </Text>
+                  <View
+                    style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}
+                  >
+                    {sites.map((s) => (
+                      <TouchableOpacity
+                        key={s.site_id}
+                        onPress={() => {
+                          const siteCode = s.site_code || "";
+                          setSelectedSiteId(siteCode);
+                          if (user?.id) {
+                            AsyncStorage.setItem(
+                              `last_site_${user.id}`,
+                              siteCode
+                            );
+                          }
+                        }}
+                        style={{
+                          paddingHorizontal: 16,
+                          paddingVertical: 12,
+                          borderRadius: 16,
+                          borderWidth: 1,
+                          backgroundColor:
+                            selectedSiteId === s.site_code
+                              ? "#fef2f2"
+                              : "#ffffff",
+                          borderColor:
+                            selectedSiteId === s.site_code
+                              ? "#fecaca"
+                              : "#e2e8f0",
+                        }}
+                      >
+                        <Text
+                          style={{
+                            fontSize: 12,
+                            fontWeight: "700",
+                            color:
+                              selectedSiteId === s.site_code
+                                ? "#dc2626"
+                                : "#64748b",
+                          }}
+                        >
+                          {s.name}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </View>
+              )}
+            </View>
+
+            <View style={{ flexDirection: "row", gap: 16, marginTop: 40 }}>
+              <TouchableOpacity
+                onPress={() => {
+                  setTempSearch("");
+                  setTempFromDate(null);
+                  setTempToDate(null);
+                  setStatusFilter("Open");
+                }}
                 style={{
-                  color: "#64748b",
-                  fontWeight: "900",
-                  textTransform: "uppercase",
-                  letterSpacing: 1.5,
-                  fontSize: 12,
+                  flex: 1,
+                  backgroundColor: "#f1f5f9",
+                  borderRadius: 24,
+                  paddingVertical: 16,
+                  alignItems: "center",
                 }}
               >
-                Reset
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              onPress={applyAdvancedFilters}
-              style={{
-                flex: 2,
-                backgroundColor: "#dc2626",
-                borderRadius: 24,
-                paddingVertical: 16,
-                alignItems: "center",
-                shadowColor: "#dc2626",
-                shadowOffset: { width: 0, height: 8 },
-                shadowOpacity: 0.2,
-                shadowRadius: 16,
-                elevation: 8,
-              }}
-            >
-              <Text
+                <Text
+                  style={{
+                    color: "#64748b",
+                    fontWeight: "900",
+                    textTransform: "uppercase",
+                    letterSpacing: 1.5,
+                    fontSize: 12,
+                  }}
+                >
+                  Reset
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={applyAdvancedFilters}
                 style={{
-                  color: "#ffffff",
-                  fontWeight: "900",
-                  textTransform: "uppercase",
-                  letterSpacing: 1.5,
-                  fontSize: 12,
+                  flex: 2,
+                  backgroundColor: "#dc2626",
+                  borderRadius: 24,
+                  paddingVertical: 16,
+                  alignItems: "center",
+                  shadowColor: "#dc2626",
+                  shadowOffset: { width: 0, height: 8 },
+                  shadowOpacity: 0.2,
+                  shadowRadius: 16,
+                  elevation: 8,
                 }}
               >
-                Apply Filters
-              </Text>
-            </TouchableOpacity>
+                <Text
+                  style={{
+                    color: "#ffffff",
+                    fontWeight: "900",
+                    textTransform: "uppercase",
+                    letterSpacing: 1.5,
+                    fontSize: 12,
+                  }}
+                >
+                  Apply Filters
+                </Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
-      </View>
-    </Modal>
-  );
-};
+      </Modal>
+    );
+  }
+);
 
 export default function Tickets() {
   const { user, isLoading } = useAuth();
@@ -1207,6 +1208,23 @@ export default function Tickets() {
 
   // Network status for offline support
   const { isConnected } = useNetworkStatus();
+
+  // Memoized callbacks to prevent unnecessary re-renders
+  const handleCloseDetail = useCallback(() => {
+    setIsDetailVisible(false);
+  }, []);
+
+  // Memoized callback for closing filters modal
+  const handleCloseFilters = useCallback(() => {
+    setShowFiltersModal(false);
+  }, []);
+
+  // Memoized keyExtractor for FlatList
+  const keyExtractor = useCallback((item: Ticket) => {
+    return (
+      item.ticket_id?.toString() || item.ticket_no || Math.random().toString()
+    );
+  }, []);
 
   // Track the last requested page to prevent duplicate requests
   const lastRequestedPageRef = React.useRef(0);
@@ -1801,7 +1819,7 @@ export default function Tickets() {
 
         <AdvancedFilterModal
           visible={showFiltersModal}
-          onClose={() => setShowFiltersModal(false)}
+          onClose={handleCloseFilters}
           tempSearch={tempSearch}
           setTempSearch={setTempSearch}
           tempFromDate={tempFromDate}
@@ -1820,7 +1838,7 @@ export default function Tickets() {
         <TicketDetailModal
           visible={isDetailVisible}
           ticket={selectedTicket}
-          onClose={() => setIsDetailVisible(false)}
+          onClose={handleCloseDetail}
           updateStatus={updateStatus}
           setUpdateStatus={setUpdateStatus}
           updateRemarks={updateRemarks}

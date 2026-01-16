@@ -1,4 +1,11 @@
-import React, { createContext, useContext, useEffect, useState } from "react";
+import React, {
+  createContext,
+  useContext,
+  useEffect,
+  useState,
+  useCallback,
+  useMemo,
+} from "react";
 import { router } from "expo-router";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { authEvents } from "../utils/authEvents";
@@ -6,6 +13,7 @@ import {
   registerForPushNotifications,
   unregisterPushToken,
 } from "../services/NotificationService";
+import logger from "../utils/logger";
 
 const BACKEND_URL =
   process.env.EXPO_PUBLIC_BACKEND_URL || "http://192.168.31.152:3420";
@@ -78,8 +86,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
           setToken(savedToken);
           setUser(JSON.parse(savedUser));
         }
-      } catch (e) {
-        console.error("Failed to load session", e);
+      } catch (error: any) {
+        logger.error("Failed to load session from storage", {
+          module: "AUTH_CONTEXT",
+          error: error.message,
+        });
       } finally {
         setIsLoading(false);
       }
@@ -96,7 +107,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     return unsubscribe;
   }, []);
 
-  const signIn = async (email: string, password: string) => {
+  const signIn = useCallback(async (email: string, password: string) => {
     try {
       const response = await fetch(`${BACKEND_URL}/api/auth/login`, {
         method: "POST",
@@ -110,12 +121,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       try {
         result = await response.json();
       } catch (e) {
+        logger.error("Login JSON parse error", {
+          module: "AUTH_CONTEXT",
+          status: response.status,
+          email,
+        });
         return {
           error: `Server error (${response.status}). Please try again later.`,
         };
       }
 
       if (!result.success) {
+        logger.warn("Login failed: logic error", {
+          module: "AUTH_CONTEXT",
+          error: result.error,
+          email,
+        });
         return { error: result.error || "Login failed" };
       }
 
@@ -129,14 +150,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
 
       // Register for push notifications (don't block login if it fails)
       registerForPushNotifications(user.user_id, token).catch((error) => {
-        console.log("Failed to register for push notifications:", error);
+        logger.warn("Push registration background failure", {
+          module: "AUTH_CONTEXT",
+          error: error.message,
+          userId: user.user_id,
+        });
       });
 
       return { error: null };
     } catch (error: any) {
+      logger.error("Login network/exception error", {
+        module: "AUTH_CONTEXT",
+        error: error.message,
+        email,
+      });
       return { error: error.message };
     }
-  };
+  }, []);
 
   const signUp = async (email: string, password: string, name: string) => {
     try {
@@ -177,13 +207,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     }
   };
 
-  const signOut = async () => {
+  const signOut = useCallback(async () => {
     try {
       const savedToken = await AsyncStorage.getItem("auth_token");
       if (savedToken) {
         // Unregister push token
         await unregisterPushToken(savedToken).catch((error) => {
-          console.log("Failed to unregister push token:", error);
+          logger.warn("SignOut: push unregistration failure", {
+            module: "AUTH_CONTEXT",
+            error: error.message,
+          });
         });
 
         await fetch(`${BACKEND_URL}/api/auth/logout`, {
@@ -194,8 +227,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
           },
         });
       }
-    } catch (error) {
-      console.error("Logout API call failed", error);
+    } catch (error: any) {
+      logger.error("Logout API call exception", {
+        module: "AUTH_CONTEXT",
+        error: error.message,
+      });
     } finally {
       await AsyncStorage.removeItem("auth_token");
       await AsyncStorage.removeItem("auth_user");
@@ -203,7 +239,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       setUser(null);
       router.replace("/sign-in");
     }
-  };
+  }, []);
 
   const resetPassword = async (
     email: string,
@@ -239,12 +275,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     }
   };
 
-  const refreshProfile = async () => {
+  const refreshProfile = useCallback(async () => {
     try {
       const savedToken = await AsyncStorage.getItem("auth_token");
 
       if (!savedToken) {
-        console.log("No token available for refresh");
         return;
       }
 
@@ -259,8 +294,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       let result;
       try {
         result = await response.json();
-      } catch (e) {
-        console.error("Failed to parse profile JSON", e);
+      } catch (error: any) {
+        logger.error("Refresh profile JSON parse error", {
+          module: "AUTH_CONTEXT",
+          status: response.status,
+          error: error.message,
+        });
         return;
       }
 
@@ -281,21 +320,36 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         await AsyncStorage.setItem("auth_user", JSON.stringify(updatedUser));
         setUser(updatedUser);
       }
-    } catch (error) {
-      console.error("Failed to refresh profile", error);
+    } catch (error: any) {
+      logger.error("Failed to refresh profile", {
+        module: "AUTH_CONTEXT",
+        error: error.message,
+      });
     }
-  };
+  }, []);
 
-  const value = {
-    user,
-    token,
-    isLoading,
-    signIn,
-    signUp,
-    signOut,
-    resetPassword,
-    refreshProfile,
-  };
+  const value = useMemo(
+    () => ({
+      user,
+      token,
+      isLoading,
+      signIn,
+      signUp,
+      signOut,
+      resetPassword,
+      refreshProfile,
+    }),
+    [
+      user,
+      token,
+      isLoading,
+      signIn,
+      signUp,
+      signOut,
+      resetPassword,
+      refreshProfile,
+    ]
+  );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };

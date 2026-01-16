@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import {
   View,
   Text,
@@ -18,6 +18,7 @@ import {
   requestPermissions,
 } from "@/services/NotificationService";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import logger from "./../utils/logger";
 
 export default function NotificationSettingsPage() {
   const { token } = useAuth();
@@ -32,19 +33,18 @@ export default function NotificationSettingsPage() {
     checkSystemPermissions();
   }, []);
 
-  const checkSystemPermissions = async () => {
+  const checkSystemPermissions = useCallback(async () => {
     // This doesn't request permissions, just checks current status
     const hasPermission = await requestPermissions();
     setHasSystemPermission(hasPermission);
-  };
+  }, []);
 
-  const loadPreferences = async () => {
+  const loadPreferences = useCallback(async () => {
     try {
       setLoading(true);
 
       // Only attempt to fetch if token exists
       if (!token) {
-        console.log("No auth token available, skipping preference fetch");
         return;
       }
 
@@ -55,56 +55,65 @@ export default function NotificationSettingsPage() {
           result.data.attendance_notifications_enabled ?? true
         );
       }
-    } catch (error) {
-      // Silently handle network errors - backend might not be reachable
-      console.log(
-        "Could not load notification preferences (backend may be offline)"
-      );
+    } catch (error: any) {
+      logger.error("Load notification preferences error", {
+        module: "NOTIFICATION_SETTINGS",
+        error: error.message,
+      });
       // Set defaults
       setAttendanceNotificationsEnabled(true);
     } finally {
       setLoading(false);
     }
-  };
+  }, [token]);
 
-  const handleToggleAttendanceNotifications = async (value: boolean) => {
-    if (!hasSystemPermission && value) {
-      // User is trying to enable, but no system permission
-      Alert.alert(
-        "Permission Required",
-        "Please enable notifications in your device settings first.",
-        [{ text: "OK" }]
-      );
-      return;
-    }
-
-    // If no token, only update local state
-    if (!token) {
-      setAttendanceNotificationsEnabled(value);
-      return;
-    }
-
-    try {
-      setSaving(true);
-      setAttendanceNotificationsEnabled(value);
-
-      const result = await updateNotificationPreferences(token, {
-        attendance_notifications_enabled: value,
-      });
-
-      if (!result.success) {
-        // Revert on failure
-        setAttendanceNotificationsEnabled(!value);
-        Alert.alert("Info", "Preference saved locally (backend offline)");
+  const handleToggleAttendanceNotifications = useCallback(
+    async (value: boolean) => {
+      if (!hasSystemPermission && value) {
+        // User is trying to enable, but no system permission
+        Alert.alert(
+          "Permission Required",
+          "Please enable notifications in your device settings first.",
+          [{ text: "OK" }]
+        );
+        return;
       }
-    } catch (error) {
-      // Network error - keep local state but inform user
-      console.log("Backend offline, preference saved locally");
-      // Don't revert - keep the toggle state the user selected
-    } finally {
-      setSaving(false);
-    }
-  };
+
+      // If no token, only update local state
+      if (!token) {
+        setAttendanceNotificationsEnabled(value);
+        return;
+      }
+
+      try {
+        setSaving(true);
+        setAttendanceNotificationsEnabled(value);
+
+        const result = await updateNotificationPreferences(token, {
+          attendance_notifications_enabled: value,
+        });
+
+        if (!result.success) {
+          logger.warn("Update notification preferences failed on server", {
+            module: "NOTIFICATION_SETTINGS",
+            token: token.substring(0, 10),
+          });
+          // Revert on failure
+          setAttendanceNotificationsEnabled(!value);
+          Alert.alert("Info", "Preference saved locally (backend offline)");
+        }
+      } catch (error: any) {
+        logger.error("Update notification preferences error", {
+          module: "NOTIFICATION_SETTINGS",
+          error: error.message,
+        });
+        // Don't revert - keep the toggle state the user selected
+      } finally {
+        setSaving(false);
+      }
+    },
+    [hasSystemPermission, token]
+  );
 
   return (
     <View className="flex-1 bg-slate-50 dark:bg-slate-950">

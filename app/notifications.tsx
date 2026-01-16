@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useCallback, useMemo, memo } from "react";
 import {
   View,
   Text,
@@ -59,21 +59,21 @@ export default function NotificationsPage() {
     }, 1000);
   }, []);
 
-  const markAsRead = (id: number) => {
+  const markAsRead = useCallback((id: number) => {
     setNotifications((prev) =>
       prev.map((n) => (n.id === id ? { ...n, read: true } : n))
     );
-  };
+  }, []);
 
-  const markAllAsRead = () => {
+  const markAllAsRead = useCallback(() => {
     setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
-  };
+  }, []);
 
-  const deleteNotification = (id: number) => {
+  const deleteNotification = useCallback((id: number) => {
     setNotifications((prev) => prev.filter((n) => n.id !== id));
-  };
+  }, []);
 
-  const getNotificationColor = (type: string) => {
+  const getNotificationColor = useCallback((type: string) => {
     switch (type) {
       case "attendance":
         return { bg: "bg-red-50 dark:bg-red-900/20", color: "#dc2626" };
@@ -84,9 +84,9 @@ export default function NotificationsPage() {
       default:
         return { bg: "bg-slate-50 dark:bg-slate-800", color: "#64748b" };
     }
-  };
+  }, []);
 
-  const formatTimestamp = (date: Date) => {
+  const formatTimestamp = useCallback((date: Date) => {
     const now = new Date();
     const diff = now.getTime() - date.getTime();
     const minutes = Math.floor(diff / 60000);
@@ -97,9 +97,70 @@ export default function NotificationsPage() {
     if (hours < 24) return `${hours}h ago`;
     if (days === 1) return "Yesterday";
     return format(date, "MMM d");
-  };
+  }, []);
 
-  const unreadCount = notifications.filter((n) => !n.read).length;
+  // Memoized Notification Item Component
+  const NotificationItem = memo(
+    ({
+      notification,
+      onMarkAsRead,
+      onDelete,
+    }: {
+      notification: any;
+      onMarkAsRead: (id: number) => void;
+      onDelete: (id: number) => void;
+    }) => {
+      const colors = getNotificationColor(notification.type);
+      return (
+        <TouchableOpacity
+          onPress={() => onMarkAsRead(notification.id)}
+          className={`bg-white dark:bg-slate-900 rounded-2xl p-4 ${
+            !notification.read ? "border-l-4 border-red-500" : ""
+          }`}
+          style={{
+            shadowColor: "#000",
+            shadowOffset: { width: 0, height: 1 },
+            shadowOpacity: 0.05,
+            shadowRadius: 4,
+            elevation: 2,
+          }}
+        >
+          <View className="flex-row items-start">
+            <View
+              className={`w-10 h-10 rounded-xl items-center justify-center mr-3 ${colors.bg}`}
+            >
+              <Bell size={18} color={colors.color} />
+            </View>
+            <View className="flex-1">
+              <Text className="text-slate-900 dark:text-slate-50 font-bold text-sm">
+                {notification.title}
+              </Text>
+              <Text className="text-slate-600 dark:text-slate-400 text-xs mt-1">
+                {notification.message}
+              </Text>
+              <Text className="text-slate-400 dark:text-slate-500 text-xs mt-2">
+                {formatTimestamp(notification.timestamp)}
+              </Text>
+            </View>
+            <TouchableOpacity
+              onPress={() => onDelete(notification.id)}
+              className="ml-2 p-2"
+            >
+              <Trash2 size={16} color="#94a3b8" />
+            </TouchableOpacity>
+          </View>
+          {!notification.read && (
+            <View className="absolute top-4 right-4 w-2 h-2 bg-red-500 rounded-full" />
+          )}
+        </TouchableOpacity>
+      );
+    }
+  );
+
+  const unreadCount = useMemo(
+    () => notifications.filter((n) => !n.read).length,
+    [notifications]
+  );
 
   return (
     <View className="flex-1 bg-slate-50 dark:bg-slate-950">
@@ -159,53 +220,14 @@ export default function NotificationsPage() {
             </View>
           ) : (
             <View className="gap-2 pb-6">
-              {notifications.map((notification) => {
-                const colors = getNotificationColor(notification.type);
-                return (
-                  <TouchableOpacity
-                    key={notification.id}
-                    onPress={() => markAsRead(notification.id)}
-                    className={`bg-white dark:bg-slate-900 rounded-2xl p-4 ${
-                      !notification.read ? "border-l-4 border-red-500" : ""
-                    }`}
-                    style={{
-                      shadowColor: "#000",
-                      shadowOffset: { width: 0, height: 1 },
-                      shadowOpacity: 0.05,
-                      shadowRadius: 4,
-                      elevation: 2,
-                    }}
-                  >
-                    <View className="flex-row items-start">
-                      <View
-                        className={`w-10 h-10 rounded-xl items-center justify-center mr-3 ${colors.bg}`}
-                      >
-                        <Bell size={18} color={colors.color} />
-                      </View>
-                      <View className="flex-1">
-                        <Text className="text-slate-900 dark:text-slate-50 font-bold text-sm">
-                          {notification.title}
-                        </Text>
-                        <Text className="text-slate-600 dark:text-slate-400 text-xs mt-1">
-                          {notification.message}
-                        </Text>
-                        <Text className="text-slate-400 dark:text-slate-500 text-xs mt-2">
-                          {formatTimestamp(notification.timestamp)}
-                        </Text>
-                      </View>
-                      <TouchableOpacity
-                        onPress={() => deleteNotification(notification.id)}
-                        className="ml-2 p-2"
-                      >
-                        <Trash2 size={16} color="#94a3b8" />
-                      </TouchableOpacity>
-                    </View>
-                    {!notification.read && (
-                      <View className="absolute top-4 right-4 w-2 h-2 bg-red-500 rounded-full" />
-                    )}
-                  </TouchableOpacity>
-                );
-              })}
+              {notifications.map((notification) => (
+                <NotificationItem
+                  key={notification.id}
+                  notification={notification}
+                  onMarkAsRead={markAsRead}
+                  onDelete={deleteNotification}
+                />
+              ))}
             </View>
           )}
         </ScrollView>

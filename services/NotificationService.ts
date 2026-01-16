@@ -3,6 +3,7 @@ import * as Notifications from "expo-notifications";
 import { Platform } from "react-native";
 import Constants from "expo-constants";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import logger from "@/utils/logger";
 
 const API_URL =
   (process.env.EXPO_PUBLIC_BACKEND_URL || "http://10.0.2.2:3420") + "/api";
@@ -23,7 +24,9 @@ Notifications.setNotificationHandler({
  */
 export const requestPermissions = async (): Promise<boolean> => {
   if (!Device.isDevice) {
-    console.log("Must use physical device for Push Notifications");
+    logger.warn("Push Notifications attempted on non-physical device", {
+      module: "NOTIFICATION_SERVICE",
+    });
     return false;
   }
 
@@ -36,7 +39,9 @@ export const requestPermissions = async (): Promise<boolean> => {
   }
 
   if (finalStatus !== "granted") {
-    console.log("Failed to get push token for push notification!");
+    logger.error("Failed to get push token: permission not granted", {
+      module: "NOTIFICATION_SERVICE",
+    });
     return false;
   }
 
@@ -56,8 +61,11 @@ export const getPushToken = async (): Promise<string | null> => {
     });
 
     return token.data;
-  } catch (error) {
-    console.error("Error getting push token:", error);
+  } catch (error: any) {
+    logger.error("Error getting push token", {
+      module: "NOTIFICATION_SERVICE",
+      error: error.message,
+    });
     return null;
   }
 };
@@ -116,7 +124,10 @@ export const registerForPushNotifications = async (
       return { success: false, error: data.error };
     }
   } catch (error: any) {
-    console.error("Error registering for push notifications:", error);
+    logger.error("Error registering for push notifications", {
+      module: "NOTIFICATION_SERVICE",
+      error: error.message,
+    });
     return { success: false, error: error.message };
   }
 };
@@ -140,8 +151,11 @@ export const unregisterPushToken = async (authToken: string): Promise<void> => {
     });
 
     await AsyncStorage.removeItem("pushToken");
-  } catch (error) {
-    console.error("Error unregistering push token:", error);
+  } catch (error: any) {
+    logger.error("Error unregistering push token", {
+      module: "NOTIFICATION_SERVICE",
+      error: error.message,
+    });
   }
 };
 
@@ -202,9 +216,12 @@ export const getNotificationPreferences = async (authToken: string) => {
 
     const data = await response.json();
     return data;
-  } catch (error) {
-    console.error("Error getting notification preferences:", error);
-    return { success: false, error };
+  } catch (error: any) {
+    logger.error("Error getting notification preferences", {
+      module: "NOTIFICATION_SERVICE",
+      error: error.message,
+    });
+    return { success: false, error: error.message };
   }
 };
 
@@ -227,9 +244,12 @@ export const updateNotificationPreferences = async (
 
     const data = await response.json();
     return data;
-  } catch (error) {
-    console.error("Error updating notification preferences:", error);
-    return { success: false, error };
+  } catch (error: any) {
+    logger.error("Error updating notification preferences", {
+      module: "NOTIFICATION_SERVICE",
+      error: error.message,
+    });
+    return { success: false, error: error.message };
   }
 };
 

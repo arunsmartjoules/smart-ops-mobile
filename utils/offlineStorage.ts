@@ -1,4 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import logger from "./logger";
 
 const OFFLINE_ATTENDANCE_KEY = "@offline_attendance";
 const SYNC_STATUS_KEY = "@sync_status";
@@ -39,8 +40,11 @@ export async function saveOfflineAttendance(
       JSON.stringify([...existing, newRecord])
     );
     await updatePendingCount();
-  } catch (error) {
-    console.error("Error saving offline attendance:", error);
+  } catch (error: any) {
+    logger.error("Error saving offline attendance", {
+      module: "OFFLINE_STORAGE",
+      error: error.message,
+    });
     throw error;
   }
 }
@@ -52,8 +56,11 @@ export async function getOfflineAttendance(): Promise<
   try {
     const data = await AsyncStorage.getItem(OFFLINE_ATTENDANCE_KEY);
     return data ? JSON.parse(data) : [];
-  } catch (error) {
-    console.error("Error getting offline attendance:", error);
+  } catch (error: any) {
+    logger.error("Error getting offline attendance", {
+      module: "OFFLINE_STORAGE",
+      error: error.message,
+    });
     return [];
   }
 }
@@ -76,8 +83,11 @@ export async function markAsSynced(ids: string[]): Promise<void> {
     await AsyncStorage.setItem(OFFLINE_ATTENDANCE_KEY, JSON.stringify(updated));
     await updatePendingCount();
     await updateLastSynced();
-  } catch (error) {
-    console.error("Error marking records as synced:", error);
+  } catch (error: any) {
+    logger.error("Error marking records as synced", {
+      module: "OFFLINE_STORAGE",
+      error: error.message,
+    });
     throw error;
   }
 }
@@ -87,8 +97,11 @@ export async function clearSyncedRecords(): Promise<void> {
   try {
     const pending = await getPendingAttendance();
     await AsyncStorage.setItem(OFFLINE_ATTENDANCE_KEY, JSON.stringify(pending));
-  } catch (error) {
-    console.error("Error clearing synced records:", error);
+  } catch (error: any) {
+    logger.error("Error clearing synced records", {
+      module: "OFFLINE_STORAGE",
+      error: error.message,
+    });
     throw error;
   }
 }
@@ -98,8 +111,11 @@ export async function clearAllOfflineData(): Promise<void> {
   try {
     await AsyncStorage.removeItem(OFFLINE_ATTENDANCE_KEY);
     await updatePendingCount();
-  } catch (error) {
-    console.error("Error clearing all offline data:", error);
+  } catch (error: any) {
+    logger.error("Error clearing all offline data", {
+      module: "OFFLINE_STORAGE",
+      error: error.message,
+    });
     throw error;
   }
 }
@@ -116,8 +132,11 @@ export async function getSyncStatus(): Promise<SyncStatus> {
       pendingCount: 0,
       autoSyncEnabled: true,
     };
-  } catch (error) {
-    console.error("Error getting sync status:", error);
+  } catch (error: any) {
+    logger.error("Error getting sync status", {
+      module: "OFFLINE_STORAGE",
+      error: error.message,
+    });
     return {
       lastSynced: null,
       pendingCount: 0,
@@ -199,7 +218,12 @@ export async function syncPendingRecords(
       } else {
         failed++;
       }
-    } catch (error) {
+    } catch (error: any) {
+      logger.error("Individual record sync failure", {
+        module: "OFFLINE_STORAGE",
+        error: error.message,
+        recordId: record.id,
+      });
       failed++;
     }
   }

@@ -1,8 +1,16 @@
-import React, { createContext, useContext, useEffect, useState } from "react";
+import React, {
+  createContext,
+  useContext,
+  useEffect,
+  useState,
+  useCallback,
+  useMemo,
+} from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useColorScheme as useNativeWindColorScheme } from "nativewind";
 import { useColorScheme as useSystemColorScheme } from "react-native";
 import { StatusBar } from "expo-status-bar";
+import logger from "@/utils/logger";
 
 type Theme = "light" | "dark" | "system";
 
@@ -45,7 +53,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     applyTheme(theme);
   }, [theme, systemColorScheme, isReady]);
 
-  const loadTheme = async () => {
+  const loadTheme = useCallback(async () => {
     try {
       const savedTheme = await AsyncStorage.getItem("user-theme");
       if (
@@ -55,27 +63,43 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
       ) {
         setThemeState(savedTheme);
       }
-    } catch (error) {
-      console.error("Failed to load theme preference", error);
+    } catch (error: any) {
+      logger.error("Failed to load theme preference", {
+        module: "THEME_CONTEXT",
+        error: error.message,
+      });
     } finally {
       setIsReady(true);
     }
-  };
+  }, []);
 
-  const setTheme = async (newTheme: Theme) => {
+  const setTheme = useCallback(async (newTheme: Theme) => {
     setThemeState(newTheme);
     try {
       await AsyncStorage.setItem("user-theme", newTheme);
-    } catch (error) {
-      console.error("Failed to save theme preference", error);
+    } catch (error: any) {
+      logger.error("Failed to save theme preference", {
+        module: "THEME_CONTEXT",
+        error: error.message,
+        theme: newTheme,
+      });
     }
-  };
+  }, []);
 
   const isDark =
     theme === "dark" || (theme === "system" && systemColorScheme === "dark");
 
+  const value = useMemo(
+    () => ({
+      theme,
+      setTheme,
+      isDark,
+    }),
+    [theme, setTheme, isDark]
+  );
+
   return (
-    <ThemeContext.Provider value={{ theme, setTheme, isDark }}>
+    <ThemeContext.Provider value={value}>
       <StatusBar style={isDark ? "light" : "dark"} />
       {children}
     </ThemeContext.Provider>

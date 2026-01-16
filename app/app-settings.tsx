@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import {
   View,
   Text,
@@ -51,6 +51,7 @@ import {
   formatBytes,
 } from "@/utils/offlineDataCache";
 import { useNetworkStatus } from "@/hooks/useNetworkStatus";
+import logger from "./../utils/logger";
 
 const API_URL =
   process.env.EXPO_PUBLIC_BACKEND_URL || "http://192.168.31.152:3420";
@@ -83,36 +84,39 @@ export default function AppSettings() {
     loadAllStatus();
   }, []);
 
-  const loadAllStatus = async () => {
+  const loadAllStatus = useCallback(async () => {
     setIsLoading(true);
     try {
       // Load attendance status
       const attStatus = await getSyncStatus();
       const attPending = await getPendingAttendance();
-      setAttendanceSyncStatus({
+      setAttendanceSyncStatus((prev) => ({
         ...attStatus,
         pendingCount: attPending.length,
-      });
+      }));
 
       // Load ticket status
       const ticketStatus = await getTicketSyncStatus();
       const ticketPending = await getPendingTicketUpdates();
-      setTicketSyncStatus({
+      setTicketSyncStatus((prev) => ({
         ...ticketStatus,
         pendingCount: ticketPending.length,
-      });
+      }));
 
       // Load cache size
       const cache = await getCacheSize();
       setCacheSize(cache);
-    } catch (error) {
-      console.error("Error loading sync status:", error);
+    } catch (error: any) {
+      logger.error("Error loading sync status", {
+        module: "APP_SETTINGS",
+        error: error.message,
+      });
     } finally {
       setIsLoading(false);
     }
-  };
+  }, []);
 
-  const handleSyncAll = async () => {
+  const handleSyncAll = useCallback(async () => {
     if (!token) {
       Alert.alert("Error", "Please sign in to sync data");
       return;
@@ -147,13 +151,17 @@ export default function AppSettings() {
         Alert.alert("No Data", "No pending records to sync.");
       }
     } catch (error: any) {
+      logger.error("Manual sync all failed", {
+        module: "APP_SETTINGS",
+        error: error.message,
+      });
       Alert.alert("Sync Error", error.message || "Failed to sync data");
     } finally {
       setIsSyncing(false);
     }
-  };
+  }, [token, isConnected, loadAllStatus]);
 
-  const handleClearAllData = async () => {
+  const handleClearAllData = useCallback(async () => {
     Alert.alert(
       "Clear All Offline Data",
       "This will permanently delete ALL local data including pending records. This cannot be undone!",
@@ -169,36 +177,48 @@ export default function AppSettings() {
               await clearAllCache();
               await loadAllStatus();
               Alert.alert("Success", "All local data cleared");
-            } catch (error) {
+            } catch (error: any) {
+              logger.error("Clear all offline data failed", {
+                module: "APP_SETTINGS",
+                error: error.message,
+              });
               Alert.alert("Error", "Failed to clear local data");
             }
           },
         },
       ]
     );
-  };
+  }, [loadAllStatus]);
 
-  const handleToggleAutoSync = async (
-    module: "attendance" | "tickets",
-    enabled: boolean
-  ) => {
-    try {
-      if (module === "attendance") {
-        await setAutoSyncEnabled(enabled);
-        setAttendanceSyncStatus((prev) => ({
-          ...prev,
-          autoSyncEnabled: enabled,
-        }));
-      } else {
-        await setTicketAutoSyncEnabled(enabled);
-        setTicketSyncStatus((prev) => ({ ...prev, autoSyncEnabled: enabled }));
+  const handleToggleAutoSync = useCallback(
+    async (module: "attendance" | "tickets", enabled: boolean) => {
+      try {
+        if (module === "attendance") {
+          await setAutoSyncEnabled(enabled);
+          setAttendanceSyncStatus((prev) => ({
+            ...prev,
+            autoSyncEnabled: enabled,
+          }));
+        } else {
+          await setTicketAutoSyncEnabled(enabled);
+          setTicketSyncStatus((prev) => ({
+            ...prev,
+            autoSyncEnabled: enabled,
+          }));
+        }
+      } catch (error: any) {
+        logger.error("Toggle auto-sync failed", {
+          module: "APP_SETTINGS",
+          subModule: module,
+          error: error.message,
+        });
+        Alert.alert("Error", "Failed to update auto-sync setting");
       }
-    } catch (error) {
-      Alert.alert("Error", "Failed to update auto-sync setting");
-    }
-  };
+    },
+    []
+  );
 
-  const formatLastSynced = (dateString: string | null) => {
+  const formatLastSynced = useCallback((dateString: string | null) => {
     if (!dateString) return "Never";
     const date = new Date(dateString);
     const now = new Date();
@@ -210,10 +230,12 @@ export default function AppSettings() {
     if (diffMins < 60) return `${diffMins}m ago`;
     if (diffHours < 24) return `${diffHours}h ago`;
     return date.toLocaleDateString();
-  };
+  }, []);
 
-  const totalPending =
-    attendanceSyncStatus.pendingCount + ticketSyncStatus.pendingCount;
+  const totalPending = useMemo(
+    () => attendanceSyncStatus.pendingCount + ticketSyncStatus.pendingCount,
+    [attendanceSyncStatus.pendingCount, ticketSyncStatus.pendingCount]
+  );
 
   return (
     <View className="flex-1 bg-slate-50 dark:bg-slate-950">

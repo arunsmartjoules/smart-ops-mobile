@@ -69,8 +69,6 @@
     "doctor": {
       "reactNativeDirectoryCheck": {
         "exclude": [
-          "@nozbe/watermelondb",
-          "@nozbe/simdjson",
           "react-native-vector-icons"
         ]
       }

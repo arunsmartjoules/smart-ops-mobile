@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useMemo, useCallback } from "react";
 import {
   View,
   Text,
@@ -151,18 +151,92 @@ export default function AllTasks() {
     }, 2000);
   }, []);
 
-  const filteredTasks = allTasks.filter((task) => {
-    if (selectedType !== "all" && task.type !== selectedType) return false;
-    if (selectedDate === "today") {
-      return task.date === "2024-12-16";
-    } else if (selectedDate === "week") {
-      return ["2024-12-16", "2024-12-17", "2024-12-18"].includes(task.date);
-    }
-    return true;
-  });
+  const filteredTasks = useMemo(() => {
+    return allTasks.filter((task) => {
+      if (selectedType !== "all" && task.type !== selectedType) return false;
+      if (selectedDate === "today") {
+        return task.date === "2024-12-16";
+      } else if (selectedDate === "week") {
+        return ["2024-12-16", "2024-12-17", "2024-12-18"].includes(task.date);
+      }
+      return true;
+    });
+  }, [selectedType, selectedDate]);
 
-  const activeFiltersCount =
-    (selectedType !== "all" ? 1 : 0) + (selectedDate !== "all" ? 1 : 0);
+  const activeFiltersCount = useMemo(
+    () => (selectedType !== "all" ? 1 : 0) + (selectedDate !== "all" ? 1 : 0),
+    [selectedType, selectedDate]
+  );
+
+  const handleTypeSelect = useCallback((type: string) => {
+    setSelectedType(type);
+  }, []);
+
+  const handleDateSelect = useCallback((date: string) => {
+    setSelectedDate(date);
+  }, []);
+
+  const handleClearFilters = useCallback(() => {
+    setSelectedType("all");
+    setSelectedDate("all");
+  }, []);
+
+  const handleToggleFilters = useCallback(() => {
+    setShowFilters((prev) => !prev);
+  }, []);
+
+  const keyExtractor = useCallback((item: Task) => item.id.toString(), []);
+
+  const renderItem = useCallback(
+    ({ item }: { item: Task }) => (
+      <TouchableOpacity
+        className="bg-white dark:bg-slate-900 rounded-xl p-3 flex-row items-center"
+        style={{
+          shadowColor: "#000",
+          shadowOffset: { width: 0, height: 1 },
+          shadowOpacity: 0.05,
+          shadowRadius: 4,
+          elevation: 2,
+        }}
+      >
+        <View
+          className="w-10 h-10 rounded-lg items-center justify-center mr-3"
+          style={{ backgroundColor: item.bgColor }}
+        >
+          <View
+            className="w-2 h-2 rounded-full"
+            style={{ backgroundColor: item.color }}
+          />
+        </View>
+        <View className="flex-1">
+          <Text
+            className="text-slate-900 dark:text-slate-50 font-semibold text-sm"
+            numberOfLines={1}
+          >
+            {item.title}
+          </Text>
+          <View className="flex-row items-center mt-0.5">
+            <View
+              className="px-1.5 py-0.5 rounded mr-2"
+              style={{ backgroundColor: item.bgColor }}
+            >
+              <Text
+                style={{ color: item.color }}
+                className="text-xs font-medium"
+              >
+                {item.type}
+              </Text>
+            </View>
+            <Text className="text-slate-400 dark:text-slate-500 text-xs">
+              Due: {item.due}
+            </Text>
+          </View>
+        </View>
+        <ChevronRight size={18} color="#94a3b8" />
+      </TouchableOpacity>
+    ),
+    []
+  );
 
   return (
     <View className="flex-1 bg-slate-50 dark:bg-slate-950">
@@ -193,7 +267,7 @@ export default function AllTasks() {
             </View>
           </View>
           <TouchableOpacity
-            onPress={() => setShowFilters(!showFilters)}
+            onPress={handleToggleFilters}
             style={{
               shadowColor: activeFiltersCount > 0 ? "#dc2626" : "#000",
               shadowOffset: { width: 0, height: 2 },
@@ -250,7 +324,7 @@ export default function AllTasks() {
                   {taskTypes.map((type) => (
                     <TouchableOpacity
                       key={type.value}
-                      onPress={() => setSelectedType(type.value)}
+                      onPress={() => handleTypeSelect(type.value)}
                     >
                       {selectedType === type.value ? (
                         <LinearGradient
@@ -289,7 +363,7 @@ export default function AllTasks() {
                 {dateFilters.map((date) => (
                   <TouchableOpacity
                     key={date.value}
-                    onPress={() => setSelectedDate(date.value)}
+                    onPress={() => handleDateSelect(date.value)}
                   >
                     {selectedDate === date.value ? (
                       <LinearGradient
@@ -322,10 +396,7 @@ export default function AllTasks() {
               {/* Clear Filters */}
               {activeFiltersCount > 0 && (
                 <TouchableOpacity
-                  onPress={() => {
-                    setSelectedType("all");
-                    setSelectedDate("all");
-                  }}
+                  onPress={handleClearFilters}
                   className="flex-row items-center justify-center mt-4 py-2"
                 >
                   <X size={14} color="#dc2626" />
@@ -341,62 +412,18 @@ export default function AllTasks() {
         {/* Task List */}
         <FlatList
           data={filteredTasks}
-          keyExtractor={(item) => item.id.toString()}
+          keyExtractor={keyExtractor}
           refreshing={refreshing}
           onRefresh={onRefresh}
-          renderItem={({ item }: { item: Task }) => (
-            <TouchableOpacity
-              className="bg-white dark:bg-slate-900 rounded-xl p-3 flex-row items-center"
-              style={{
-                shadowColor: "#000",
-                shadowOffset: { width: 0, height: 1 },
-                shadowOpacity: 0.05,
-                shadowRadius: 4,
-                elevation: 2,
-              }}
-            >
-              <View
-                className="w-10 h-10 rounded-lg items-center justify-center mr-3"
-                style={{ backgroundColor: item.bgColor }}
-              >
-                <View
-                  className="w-2 h-2 rounded-full"
-                  style={{ backgroundColor: item.color }}
-                />
-              </View>
-              <View className="flex-1">
-                <Text
-                  className="text-slate-900 dark:text-slate-50 font-semibold text-sm"
-                  numberOfLines={1}
-                >
-                  {item.title}
-                </Text>
-                <View className="flex-row items-center mt-0.5">
-                  <View
-                    className="px-1.5 py-0.5 rounded mr-2"
-                    style={{ backgroundColor: item.bgColor }}
-                  >
-                    <Text
-                      style={{ color: item.color }}
-                      className="text-xs font-medium"
-                    >
-                      {item.type}
-                    </Text>
-                  </View>
-                  <Text className="text-slate-400 dark:text-slate-500 text-xs">
-                    Due: {item.due}
-                  </Text>
-                </View>
-              </View>
-              <ChevronRight size={18} color="#94a3b8" />
-            </TouchableOpacity>
-          )}
+          renderItem={renderItem}
           contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 40 }}
           ItemSeparatorComponent={() => <View className="h-2" />}
           showsVerticalScrollIndicator={false}
           ListEmptyComponent={
             <View className="items-center py-12">
-              <Text className="text-slate-400 dark:text-slate-500 text-base">No tasks found</Text>
+              <Text className="text-slate-400 dark:text-slate-500 text-base">
+                No tasks found
+              </Text>
               <Text className="text-slate-300 text-sm mt-1">
                 Try adjusting your filters
               </Text>

@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useCallback } from "react";
 import { View, Text, TouchableOpacity } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
@@ -38,10 +38,10 @@ export default function Profile() {
     }, [refreshProfile])
   );
 
-  const handleLogout = async () => {
+  const handleLogout = useCallback(async () => {
     await signOut();
     router.replace("/sign-in");
-  };
+  }, [signOut]);
 
   return (
     <View className="flex-1 bg-slate-50 dark:bg-slate-950">
