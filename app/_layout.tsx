@@ -4,50 +4,33 @@ import "./global.css";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { ThemeProvider } from "@/contexts/ThemeContext";
 import { SafeAreaProvider } from "react-native-safe-area-context";
-
-export const unstable_settings = {
-  anchor: "(tabs)",
-};
+import { useEffect } from "react";
+import { syncManager } from "@/services/SyncManager";
 
 export default function RootLayout() {
-  console.log("RootLayout: Rendering");
+  useEffect(() => {
+    syncManager.initialize();
+    return () => {
+      syncManager.cleanup();
+    };
+  }, []);
+
   return (
     <SafeAreaProvider>
       <AuthProvider>
         <ThemeProvider>
-          <Stack>
-            <Stack.Screen name="index" options={{ headerShown: false }} />
-            <Stack.Screen
-              name="sign-in"
-              options={{ title: "Sign In", headerShown: false }}
-            />
-            <Stack.Screen
-              name="sign-up"
-              options={{ title: "Sign Up", headerShown: false }}
-            />
-            <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-            <Stack.Screen
-              name="forgot-password"
-              options={{ headerShown: false }}
-            />
-            <Stack.Screen name="all-tasks" options={{ headerShown: false }} />
-            <Stack.Screen name="attendance" options={{ headerShown: false }} />
-            <Stack.Screen
-              name="privacy-security"
-              options={{ headerShown: false }}
-            />
-            <Stack.Screen
-              name="app-settings"
-              options={{ headerShown: false }}
-            />
-            <Stack.Screen
-              name="notification-settings"
-              options={{ headerShown: false }}
-            />
-            <Stack.Screen
-              name="notifications"
-              options={{ headerShown: false }}
-            />
+          <Stack screenOptions={{ headerShown: false }}>
+            <Stack.Screen name="index" />
+            <Stack.Screen name="sign-in" />
+            <Stack.Screen name="sign-up" />
+            <Stack.Screen name="(tabs)" />
+            <Stack.Screen name="forgot-password" />
+            <Stack.Screen name="all-tasks" />
+            <Stack.Screen name="attendance" />
+            <Stack.Screen name="privacy-security" />
+            <Stack.Screen name="app-settings" />
+            <Stack.Screen name="notification-settings" />
+            <Stack.Screen name="notifications" />
           </Stack>
         </ThemeProvider>
       </AuthProvider>

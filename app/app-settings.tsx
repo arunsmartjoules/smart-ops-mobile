@@ -51,7 +51,7 @@ import {
   formatBytes,
 } from "@/utils/offlineDataCache";
 import { useNetworkStatus } from "@/hooks/useNetworkStatus";
-import logger from "./../utils/logger";
+import logger from "@/utils/logger";
 
 const API_URL =
   process.env.EXPO_PUBLIC_BACKEND_URL || "http://192.168.31.152:3420";

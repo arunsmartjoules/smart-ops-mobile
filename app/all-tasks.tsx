@@ -1,4 +1,10 @@
-import React, { useState, useMemo, useCallback } from "react";
+import React, {
+  useState,
+  useMemo,
+  useCallback,
+  useRef,
+  useEffect,
+} from "react";
 import {
   View,
   Text,
@@ -143,10 +149,21 @@ export default function AllTasks() {
   const [showFilters, setShowFilters] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
+  // Ref for timeout cleanup
+  const refreshTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (refreshTimeoutRef.current) clearTimeout(refreshTimeoutRef.current);
+    };
+  }, []);
+
   const onRefresh = React.useCallback(() => {
     setRefreshing(true);
-    // Simulate API call
-    setTimeout(() => {
+    // Simulate API call (with cleanup)
+    if (refreshTimeoutRef.current) clearTimeout(refreshTimeoutRef.current);
+    refreshTimeoutRef.current = setTimeout(() => {
       setRefreshing(false);
     }, 2000);
   }, []);
@@ -165,7 +182,7 @@ export default function AllTasks() {
 
   const activeFiltersCount = useMemo(
     () => (selectedType !== "all" ? 1 : 0) + (selectedDate !== "all" ? 1 : 0),
-    [selectedType, selectedDate]
+    [selectedType, selectedDate],
   );
 
   const handleTypeSelect = useCallback((type: string) => {
@@ -235,7 +252,7 @@ export default function AllTasks() {
         <ChevronRight size={18} color="#94a3b8" />
       </TouchableOpacity>
     ),
-    []
+    [],
   );
 
   return (

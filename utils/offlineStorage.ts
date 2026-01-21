@@ -1,5 +1,6 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import logger from "./logger";
+import { syncWithRetry, fetchWithTimeout } from "./apiHelper";
 
 const OFFLINE_ATTENDANCE_KEY = "@offline_attendance";
 const SYNC_STATUS_KEY = "@sync_status";
@@ -25,7 +26,7 @@ export interface SyncStatus {
 
 // Save attendance record offline
 export async function saveOfflineAttendance(
-  record: Omit<OfflineAttendanceRecord, "id" | "created_at" | "synced">
+  record: Omit<OfflineAttendanceRecord, "id" | "created_at" | "synced">,
 ): Promise<void> {
   try {
     const existing = await getOfflineAttendance();
@@ -37,7 +38,7 @@ export async function saveOfflineAttendance(
     };
     await AsyncStorage.setItem(
       OFFLINE_ATTENDANCE_KEY,
-      JSON.stringify([...existing, newRecord])
+      JSON.stringify([...existing, newRecord]),
     );
     await updatePendingCount();
   } catch (error: any) {
@@ -78,7 +79,7 @@ export async function markAsSynced(ids: string[]): Promise<void> {
   try {
     const all = await getOfflineAttendance();
     const updated = all.map((record) =>
-      ids.includes(record.id) ? { ...record, synced: true } : record
+      ids.includes(record.id) ? { ...record, synced: true } : record,
     );
     await AsyncStorage.setItem(OFFLINE_ATTENDANCE_KEY, JSON.stringify(updated));
     await updatePendingCount();
@@ -152,7 +153,7 @@ export async function updateLastSynced(): Promise<void> {
     JSON.stringify({
       ...status,
       lastSynced: new Date().toISOString(),
-    })
+    }),
   );
 }
 
@@ -164,7 +165,7 @@ export async function updatePendingCount(): Promise<void> {
     JSON.stringify({
       ...status,
       pendingCount: pending.length,
-    })
+    }),
   );
 }
 
@@ -175,14 +176,14 @@ export async function setAutoSyncEnabled(enabled: boolean): Promise<void> {
     JSON.stringify({
       ...status,
       autoSyncEnabled: enabled,
-    })
+    }),
   );
 }
 
 // Sync pending records with server
-export async function syncPendingRecords(
+export async function syncPendingAttendance(
   token: string,
-  apiUrl: string
+  apiUrl: string,
 ): Promise<{ synced: number; failed: number }> {
   const pending = await getPendingAttendance();
   if (pending.length === 0) {
@@ -195,22 +196,24 @@ export async function syncPendingRecords(
 
   for (const record of pending) {
     try {
-      const response = await fetch(`${apiUrl}/api/attendance`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          user_id: record.user_id,
-          site_id: record.site_id,
-          punch_type: record.punch_type,
-          timestamp: record.timestamp,
-          latitude: record.latitude,
-          longitude: record.longitude,
-          selfie_url: record.selfie_url,
+      const response = await syncWithRetry(() =>
+        fetchWithTimeout(`${apiUrl}/api/attendance`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            user_id: record.user_id,
+            site_id: record.site_id,
+            punch_type: record.punch_type,
+            timestamp: record.timestamp,
+            latitude: record.latitude,
+            longitude: record.longitude,
+            selfie_url: record.selfie_url,
+          }),
         }),
-      });
+      );
 
       if (response.ok) {
         syncedIds.push(record.id);
@@ -233,7 +236,7 @@ export async function syncPendingRecords(
 
     // Log sync activity to backend
     try {
-      await fetch(`${apiUrl}/api/logs`, {
+      await fetchWithTimeout(`${apiUrl}/api/logs`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -246,7 +249,10 @@ export async function syncPendingRecords(
         }),
       });
     } catch (logError) {
-      console.log("Failed to log sync activity:", logError);
+      logger.warn("Failed to log sync activity", {
+        module: "OFFLINE_STORAGE",
+        error: logError,
+      });
     }
   }
 

@@ -1,5 +1,8 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import logger from "./logger";
+import { syncWithRetry, fetchWithTimeout } from "./apiHelper";
+import { detectConflict, resolveConflict } from "./syncConflictResolver";
+import TicketsService from "../services/TicketsService";
 
 const OFFLINE_TICKET_KEY = "@offline_ticket_updates";
 const TICKET_SYNC_STATUS_KEY = "@ticket_sync_status";
@@ -30,7 +33,7 @@ export async function saveOfflineTicketUpdate(
   ticketId: string,
   ticketNo: string,
   action: OfflineTicketUpdate["action"],
-  payload: OfflineTicketUpdate["payload"]
+  payload: OfflineTicketUpdate["payload"],
 ): Promise<void> {
   try {
     const existing = await getOfflineTicketUpdates();
@@ -45,7 +48,7 @@ export async function saveOfflineTicketUpdate(
     };
     await AsyncStorage.setItem(
       OFFLINE_TICKET_KEY,
-      JSON.stringify([...existing, newRecord])
+      JSON.stringify([...existing, newRecord]),
     );
     await updateTicketPendingCount();
   } catch (error: any) {
@@ -87,7 +90,7 @@ export async function markTicketUpdatesAsSynced(ids: string[]): Promise<void> {
   try {
     const all = await getOfflineTicketUpdates();
     const updated = all.map((record) =>
-      ids.includes(record.id) ? { ...record, synced: true } : record
+      ids.includes(record.id) ? { ...record, synced: true } : record,
     );
     await AsyncStorage.setItem(OFFLINE_TICKET_KEY, JSON.stringify(updated));
     await updateTicketPendingCount();
@@ -161,7 +164,7 @@ export async function updateTicketLastSynced(): Promise<void> {
     JSON.stringify({
       ...status,
       lastSynced: new Date().toISOString(),
-    })
+    }),
   );
 }
 
@@ -173,12 +176,12 @@ export async function updateTicketPendingCount(): Promise<void> {
     JSON.stringify({
       ...status,
       pendingCount: pending.length,
-    })
+    }),
   );
 }
 
 export async function setTicketAutoSyncEnabled(
-  enabled: boolean
+  enabled: boolean,
 ): Promise<void> {
   const status = await getTicketSyncStatus();
   await AsyncStorage.setItem(
@@ -186,14 +189,14 @@ export async function setTicketAutoSyncEnabled(
     JSON.stringify({
       ...status,
       autoSyncEnabled: enabled,
-    })
+    }),
   );
 }
 
 // Sync pending ticket updates with server
 export async function syncPendingTicketUpdates(
   token: string,
-  apiUrl: string
+  apiUrl: string,
 ): Promise<{ synced: number; failed: number }> {
   const pending = await getPendingTicketUpdates();
   if (pending.length === 0) {
@@ -206,23 +209,79 @@ export async function syncPendingTicketUpdates(
 
   for (const record of pending) {
     try {
-      const response = await fetch(
-        `${apiUrl}/api/complaints/${record.ticket_id}`,
-        {
-          method: "PUT",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify(record.payload),
-        }
+      // 1. Fetch current server state
+      const serverTicketResult = await TicketsService.getTicketById(
+        record.ticket_id,
       );
 
-      if (response.ok) {
-        syncedIds.push(record.id);
-        synced++;
-      } else {
-        failed++;
+      let shouldSync = true;
+      let syncPayload = record.payload;
+
+      // Only check conflict if we successfully got server state
+      if (serverTicketResult.success && serverTicketResult.data) {
+        const serverTicket = serverTicketResult.data;
+
+        // 2. Check for conflict
+        const hasConflict = detectConflict(
+          record.payload,
+          serverTicket,
+          record.created_at,
+        );
+
+        if (hasConflict) {
+          logger.warn("Sync conflict detected", {
+            module: "OFFLINE_TICKET_STORAGE",
+            ticketId: record.ticket_id,
+          });
+
+          // 3. Resolve conflict (Default: Server Wins)
+          const resolution = resolveConflict(
+            {
+              localData: record.payload,
+              serverData: serverTicket,
+              localUpdatedAt: record.created_at,
+              serverUpdatedAt: serverTicket.updated_at,
+            },
+            "server_wins",
+          );
+
+          if (resolution.strategy === "server_wins") {
+            logger.info(
+              "Conflict resolved: Server Wins. Discarding local update.",
+              {
+                module: "OFFLINE_TICKET_STORAGE",
+                ticketId: record.ticket_id,
+              },
+            );
+            // Mark as synced (discarded) without sending to server
+            syncedIds.push(record.id);
+            synced++;
+            shouldSync = false;
+          }
+        }
+      }
+
+      if (shouldSync) {
+        const response = await syncWithRetry(() =>
+          fetchWithTimeout(
+            `${apiUrl}/api/complaints/${record.ticket_id || record.ticket_no}`,
+            {
+              method: "PUT",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${token}`,
+              },
+              body: JSON.stringify(syncPayload),
+            },
+          ),
+        );
+
+        if (response.ok) {
+          syncedIds.push(record.id);
+          synced++;
+        } else {
+          failed++;
+        }
       }
     } catch (error: any) {
       logger.error("Individual ticket sync failure", {
@@ -239,7 +298,7 @@ export async function syncPendingTicketUpdates(
 
     // Log sync activity to backend
     try {
-      await fetch(`${apiUrl}/api/logs`, {
+      await fetchWithTimeout(`${apiUrl}/api/logs`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -252,7 +311,10 @@ export async function syncPendingTicketUpdates(
         }),
       });
     } catch (logError) {
-      console.log("Failed to log ticket sync activity:", logError);
+      logger.warn("Failed to log ticket sync activity", {
+        module: "OFFLINE_TICKET_STORAGE",
+        error: logError,
+      });
     }
   }
 

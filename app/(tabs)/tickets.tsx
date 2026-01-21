@@ -1,1169 +1,232 @@
-import React, { useState, useEffect, useCallback, useMemo } from "react";
+import React, {
+  useState,
+  useEffect,
+  useCallback,
+  useMemo,
+  useRef,
+} from "react";
 import {
   View,
   Text,
   TouchableOpacity,
-  ActivityIndicator,
+  ScrollView,
   FlatList,
   RefreshControl,
-  Modal,
-  TextInput,
-  Alert,
+  ActivityIndicator,
   Dimensions,
-  ScrollView,
+  Alert,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as Haptics from "expo-haptics";
 import {
   Ticket as TicketIcon,
+  Search,
   Filter,
-  Search as SearchIcon,
-  Calendar,
+  ArrowUpDown,
+  TrendingUp,
+  CheckCircle,
   X,
+  ChevronRight,
   MapPin,
   Clock,
   Briefcase,
   Layers,
-  ChevronRight,
-  TrendingUp,
-  Layout as LayoutIcon,
-  CheckCircle,
+  Layout,
+  Calendar,
 } from "lucide-react-native";
 import { format } from "date-fns";
 import { useAuth } from "@/contexts/AuthContext";
-import TicketsService, { type Ticket } from "@/services/TicketsService";
-import { AttendanceService, type Site } from "@/services/AttendanceService";
-import { Pressable } from "react-native";
+import { useNetworkStatus } from "@/hooks/useNetworkStatus";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import SearchableSelect, {
   type SelectOption,
 } from "@/components/SearchableSelect";
-import { useNetworkStatus } from "@/hooks/useNetworkStatus";
+import { TicketsService, type Ticket } from "@/services/TicketsService";
+import { AttendanceService, type Site } from "@/services/AttendanceService";
 import {
   saveOfflineTicketUpdate,
-  getPendingTicketUpdates,
+  syncPendingTicketUpdates,
 } from "@/utils/offlineTicketStorage";
 import {
-  cacheTickets,
-  getCachedTickets,
+  getCachedSites,
+  cacheSites,
   cacheAreas,
   getCachedAreas,
+  cacheTickets,
+  getCachedTickets,
 } from "@/utils/offlineDataCache";
+import logger from "@/utils/logger";
+import TicketDetailModal from "@/components/TicketDetailModal";
+import AdvancedFilterModal from "@/components/AdvancedFilterModal";
 
 const { width } = Dimensions.get("window");
 
 // Separate component for Ticket Item to stabilize the tree
-const TicketItem = ({
-  item,
-  onPress,
-}: {
-  item: Ticket;
-  onPress: (item: Ticket) => void;
-}) => {
-  return (
-    <TouchableOpacity
-      onPress={() => {
-        onPress(item);
-      }}
-      activeOpacity={0.7}
-      className="bg-white dark:bg-slate-900 rounded-2xl p-5 mb-4"
-      style={{
-        shadowColor: "#000",
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.06,
-        shadowRadius: 12,
-        elevation: 3,
-      }}
-    >
-      <View
-        style={{
-          flexDirection: "row",
-          justifyContent: "space-between",
-          alignItems: "flex-start",
-          marginBottom: 12,
-        }}
-      >
-        <View style={{ flex: 1, marginRight: 16 }}>
-          <View
-            style={{
-              flexDirection: "row",
-              alignItems: "center",
-              marginBottom: 6,
-            }}
-          >
-            <Text
-              style={{
-                fontSize: 10,
-                fontWeight: "900",
-                color: "#dc2626",
-                textTransform: "uppercase",
-                letterSpacing: 1.5,
-              }}
-            >
-              {item.ticket_no}
-            </Text>
-            <View
-              style={{
-                marginHorizontal: 8,
-                width: 4,
-                height: 4,
-                borderRadius: 2,
-                backgroundColor: "#e2e8f0",
-              }}
-            />
-            <Text
-              style={{
-                fontSize: 10,
-                fontWeight: "900",
-                color: "#94a3b8",
-                textTransform: "uppercase",
-                letterSpacing: 1.5,
-              }}
-            >
-              {item.site_id}
-            </Text>
-          </View>
-          <Text
-            className="text-slate-900 dark:text-slate-50"
-            style={{
-              fontWeight: "700",
-              fontSize: 18,
-              lineHeight: 28,
-            }}
-            numberOfLines={2}
-          >
-            {item.title}
-          </Text>
-        </View>
-        <View style={{ flexDirection: "row", alignItems: "center" }}>
-          <View
-            style={{
-              paddingHorizontal: 12,
-              paddingVertical: 4,
-              borderRadius: 999,
-              backgroundColor:
-                item.status === "Open"
-                  ? "#fef2f2"
-                  : item.status === "Inprogress"
-                    ? "#eff6ff"
-                    : "#f0fdf4",
-            }}
-          >
-            <Text
-              style={{
-                fontSize: 10,
-                fontWeight: "900",
-                textTransform: "uppercase",
-                color:
-                  item.status === "Open"
-                    ? "#dc2626"
-                    : item.status === "Inprogress"
-                      ? "#2563eb"
-                      : "#16a34a",
-              }}
-            >
-              {item.status}
-            </Text>
-          </View>
-          <View style={{ marginLeft: 8 }}>
-            <ChevronRight size={16} color="#94a3b8" />
-          </View>
-        </View>
-      </View>
-
-      <View
-        className="border-t border-slate-100 dark:border-slate-800"
-        style={{
-          flexDirection: "row",
-          flexWrap: "wrap",
-          paddingTop: 16,
-          marginTop: 8,
-        }}
-      >
-        <View
-          style={{ width: "50%", flexDirection: "row", alignItems: "center" }}
-        >
-          <MapPin size={12} color="#94a3b8" style={{ marginRight: 6 }} />
-          <Text
-            className="text-slate-600 dark:text-slate-400"
-            style={{ fontSize: 11, fontWeight: "500" }}
-            numberOfLines={1}
-          >
-            {item.area_asset || item.location || "N/A"}
-          </Text>
-        </View>
-        <View
-          style={{ width: "50%", flexDirection: "row", alignItems: "center" }}
-        >
-          <Clock size={12} color="#94a3b8" style={{ marginRight: 6 }} />
-          <Text
-            className="text-slate-600 dark:text-slate-400"
-            style={{ fontSize: 11, fontWeight: "500" }}
-          >
-            {format(new Date(item.created_at), "dd MMM, yy")}
-          </Text>
-        </View>
-      </View>
-    </TouchableOpacity>
-  );
-};
-
-// Standalone Detail Modal to stabilize the tree and context
-const TicketDetailModal = React.memo(
+const TicketItem = React.memo(
   ({
-    visible,
-    ticket,
-    onClose,
-    updateStatus,
-    setUpdateStatus,
-    updateRemarks,
-    setUpdateRemarks,
-    updateArea,
-    setUpdateArea,
-    updateCategory,
-    setUpdateCategory,
-    isUpdating,
-    handleUpdateStatus,
-    areaOptions,
-    categoryOptions,
-    areasLoading,
+    item,
+    onPress,
+    onLongPress,
   }: {
-    visible: boolean;
-    ticket: Ticket | null;
-    onClose: () => void;
-    updateStatus: string;
-    setUpdateStatus: (s: string) => void;
-    updateRemarks: string;
-    setUpdateRemarks: (s: string) => void;
-    updateArea: string;
-    setUpdateArea: (s: string) => void;
-    updateCategory: string;
-    setUpdateCategory: (s: string) => void;
-    isUpdating: boolean;
-    handleUpdateStatus: () => void;
-    areaOptions: SelectOption[];
-    categoryOptions: SelectOption[];
-    areasLoading?: boolean;
+    item: Ticket;
+    onPress: (item: Ticket) => void;
+    onLongPress: (item: Ticket) => void;
   }) => {
-    if (!ticket) return null;
+    const handlePress = useCallback(() => {
+      onPress(item);
+    }, [item, onPress]);
+
+    const handleLongPress = useCallback(() => {
+      onLongPress(item);
+    }, [item, onLongPress]);
 
     return (
-      <Modal visible={visible} animationType="slide" transparent={true}>
+      <TouchableOpacity
+        onPress={handlePress}
+        onLongPress={handleLongPress}
+        delayLongPress={500}
+        activeOpacity={0.7}
+        className="bg-white dark:bg-slate-900 rounded-2xl p-5 mb-4"
+        style={{
+          shadowColor: "#000",
+          shadowOffset: { width: 0, height: 2 },
+          shadowOpacity: 0.06,
+          shadowRadius: 12,
+          elevation: 3,
+        }}
+      >
         <View
           style={{
-            flex: 1,
-            backgroundColor: "rgba(0,0,0,0.6)",
-            justifyContent: "flex-end",
+            flexDirection: "row",
+            justifyContent: "space-between",
+            alignItems: "flex-start",
+            marginBottom: 12,
           }}
         >
-          <View
-            style={{
-              backgroundColor: "#ffffff",
-              borderTopLeftRadius: 40,
-              borderTopRightRadius: 40,
-              padding: 24,
-              height: 700,
-              shadowColor: "#000",
-              shadowOffset: { width: 0, height: -10 },
-              shadowOpacity: 0.1,
-              shadowRadius: 20,
-              elevation: 12,
-            }}
-          >
+          <View style={{ flex: 1, marginRight: 16 }}>
             <View
               style={{
                 flexDirection: "row",
                 alignItems: "center",
-                justifyContent: "space-between",
-                marginBottom: 16,
-              }}
-            >
-              <View
-                style={{
-                  backgroundColor: "#fef2f2",
-                  paddingHorizontal: 12,
-                  paddingVertical: 6,
-                  borderRadius: 999,
-                }}
-              >
-                <Text
-                  style={{
-                    color: "#dc2626",
-                    fontWeight: "900",
-                    fontSize: 10,
-                    textTransform: "uppercase",
-                    letterSpacing: 1.5,
-                  }}
-                >
-                  {ticket.ticket_no}
-                </Text>
-              </View>
-              <TouchableOpacity
-                onPress={onClose}
-                style={{
-                  width: 40,
-                  height: 40,
-                  backgroundColor: "#f8fafc",
-                  borderRadius: 20,
-                  alignItems: "center",
-                  justifyContent: "center",
-                }}
-              >
-                <X size={20} color="#94a3b8" />
-              </TouchableOpacity>
-            </View>
-
-            {/* Title in Header Area for Guaranteed Visibility */}
-            <Text
-              className="text-slate-900 dark:text-slate-50"
-              style={{
-                fontSize: 22,
-                fontWeight: "900",
-                lineHeight: 28,
-                marginBottom: 20,
-              }}
-            >
-              {ticket.title}
-            </Text>
-
-            <View style={{ flex: 1 }}>
-              <ScrollView
-                showsVerticalScrollIndicator={false}
-                contentContainerStyle={{ paddingBottom: 100 }}
-              >
-                <View>
-                  <View
-                    className="bg-slate-50 dark:bg-slate-800"
-                    style={{
-                      borderRadius: 24,
-                      padding: 24,
-                      marginBottom: 32,
-                    }}
-                  >
-                    <View
-                      style={{
-                        flexDirection: "row",
-                        alignItems: "center",
-                        marginBottom: 20,
-                      }}
-                    >
-                      <View
-                        className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800"
-                        style={{
-                          width: 40,
-                          height: 40,
-                          borderRadius: 16,
-                          alignItems: "center",
-                          justifyContent: "center",
-                          marginRight: 16,
-                        }}
-                      >
-                        <LayoutIcon size={18} color="#ef4444" />
-                      </View>
-                      <View style={{ flex: 1 }}>
-                        <Text
-                          className="text-slate-400 dark:text-slate-500"
-                          style={{
-                            fontSize: 10,
-                            fontWeight: "900",
-                            textTransform: "uppercase",
-                            letterSpacing: 1.5,
-                          }}
-                        >
-                          Site Name
-                        </Text>
-                        <Text
-                          className="text-slate-900 dark:text-slate-50"
-                          style={{
-                            fontWeight: "700",
-                            fontSize: 14,
-                            marginTop: 2,
-                          }}
-                        >
-                          {ticket.site_name || "N/A"}
-                        </Text>
-                      </View>
-                    </View>
-
-                    <View
-                      style={{
-                        flexDirection: "row",
-                        alignItems: "center",
-                        marginBottom: 20,
-                      }}
-                    >
-                      <View
-                        className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800"
-                        style={{
-                          width: 40,
-                          height: 40,
-                          borderRadius: 16,
-                          alignItems: "center",
-                          justifyContent: "center",
-                          marginRight: 16,
-                        }}
-                      >
-                        <MapPin size={18} color="#ef4444" />
-                      </View>
-                      <View style={{ flex: 1 }}>
-                        <Text
-                          className="text-slate-400 dark:text-slate-500"
-                          style={{
-                            fontSize: 10,
-                            fontWeight: "900",
-                            textTransform: "uppercase",
-                            letterSpacing: 1.5,
-                          }}
-                        >
-                          Location
-                        </Text>
-                        <Text
-                          className="text-slate-900 dark:text-slate-50"
-                          style={{
-                            fontWeight: "700",
-                            fontSize: 14,
-                            marginTop: 2,
-                          }}
-                        >
-                          {ticket.location || "General Area"}
-                        </Text>
-                      </View>
-                    </View>
-
-                    <View
-                      style={{
-                        flexDirection: "row",
-                        alignItems: "center",
-                        marginBottom: 20,
-                      }}
-                    >
-                      <View
-                        className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800"
-                        style={{
-                          width: 40,
-                          height: 40,
-                          borderRadius: 16,
-                          alignItems: "center",
-                          justifyContent: "center",
-                          marginRight: 16,
-                        }}
-                      >
-                        <Briefcase size={18} color="#3b82f6" />
-                      </View>
-                      <View style={{ flex: 1 }}>
-                        <Text
-                          className="text-slate-400 dark:text-slate-500"
-                          style={{
-                            fontSize: 10,
-                            fontWeight: "900",
-                            textTransform: "uppercase",
-                            letterSpacing: 1.5,
-                          }}
-                        >
-                          Created By
-                        </Text>
-                        <Text
-                          className="text-slate-900 dark:text-slate-50"
-                          style={{
-                            fontWeight: "700",
-                            fontSize: 14,
-                            marginTop: 2,
-                          }}
-                        >
-                          {ticket.created_user || "N/A"}
-                        </Text>
-                      </View>
-                    </View>
-
-                    {/* Site Code field */}
-                    <View
-                      style={{
-                        flexDirection: "row",
-                        alignItems: "center",
-                        marginBottom: 20,
-                      }}
-                    >
-                      <View
-                        className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800"
-                        style={{
-                          width: 40,
-                          height: 40,
-                          borderRadius: 16,
-                          alignItems: "center",
-                          justifyContent: "center",
-                          marginRight: 16,
-                        }}
-                      >
-                        <LayoutIcon size={18} color="#10b981" />
-                      </View>
-                      <View style={{ flex: 1 }}>
-                        <Text
-                          className="text-slate-400 dark:text-slate-500"
-                          style={{
-                            fontSize: 10,
-                            fontWeight: "900",
-                            textTransform: "uppercase",
-                            letterSpacing: 1.5,
-                          }}
-                        >
-                          Site Code
-                        </Text>
-                        <Text
-                          className="text-slate-900 dark:text-slate-50"
-                          style={{
-                            fontWeight: "700",
-                            fontSize: 14,
-                            marginTop: 2,
-                          }}
-                        >
-                          {ticket.site_code || "N/A"}
-                        </Text>
-                      </View>
-                    </View>
-
-                    {/* Created Date & Time */}
-                    <View
-                      style={{
-                        flexDirection: "row",
-                        alignItems: "center",
-                        marginBottom: ticket.customer_inputs ? 20 : 0,
-                      }}
-                    >
-                      <View
-                        className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800"
-                        style={{
-                          width: 40,
-                          height: 40,
-                          borderRadius: 16,
-                          alignItems: "center",
-                          justifyContent: "center",
-                          marginRight: 16,
-                        }}
-                      >
-                        <Calendar size={18} color="#8b5cf6" />
-                      </View>
-                      <View style={{ flex: 1 }}>
-                        <Text
-                          className="text-slate-400 dark:text-slate-500"
-                          style={{
-                            fontSize: 10,
-                            fontWeight: "900",
-                            textTransform: "uppercase",
-                            letterSpacing: 1.5,
-                          }}
-                        >
-                          Created Date & Time
-                        </Text>
-                        <Text
-                          className="text-slate-900 dark:text-slate-50"
-                          style={{
-                            fontWeight: "700",
-                            fontSize: 14,
-                            marginTop: 2,
-                          }}
-                        >
-                          {ticket.created_at
-                            ? format(
-                                new Date(ticket.created_at),
-                                "dd MMM yyyy, HH:mm"
-                              )
-                            : "N/A"}
-                        </Text>
-                      </View>
-                    </View>
-
-                    {ticket.customer_inputs && (
-                      <View
-                        style={{
-                          flexDirection: "row",
-                          alignItems: "center",
-                        }}
-                      >
-                        <View
-                          style={{
-                            width: 40,
-                            height: 40,
-                            borderRadius: 16,
-                            backgroundColor: "#ffffff",
-                            alignItems: "center",
-                            justifyContent: "center",
-                            marginRight: 16,
-                            borderWidth: 1,
-                            borderColor: "#f1f5f9",
-                          }}
-                        >
-                          <Layers size={18} color="#f59e0b" />
-                        </View>
-                        <View style={{ flex: 1 }}>
-                          <Text
-                            style={{
-                              color: "#94a3b8",
-                              fontSize: 10,
-                              fontWeight: "900",
-                              textTransform: "uppercase",
-                              letterSpacing: 1.5,
-                            }}
-                          >
-                            Customer Inputs
-                          </Text>
-                          <Text
-                            style={{
-                              color: "#0f172a",
-                              fontWeight: "700",
-                              fontSize: 14,
-                              marginTop: 2,
-                            }}
-                          >
-                            {ticket.customer_inputs}
-                          </Text>
-                        </View>
-                      </View>
-                    )}
-                  </View>
-
-                  <Text
-                    style={{
-                      color: "#0f172a",
-                      fontWeight: "900",
-                      fontSize: 14,
-                      textTransform: "uppercase",
-                      letterSpacing: 1.5,
-                      marginBottom: 16,
-                      marginLeft: 4,
-                    }}
-                  >
-                    Status Transition
-                  </Text>
-                  <View
-                    style={{
-                      flexDirection: "row",
-                      flexWrap: "wrap",
-                      gap: 8,
-                      marginBottom: 24,
-                    }}
-                  >
-                    {[
-                      "Inprogress",
-                      "Hold",
-                      "Waiting",
-                      "Resolved",
-                      "Cancelled",
-                    ].map((s) => (
-                      <TouchableOpacity
-                        key={s}
-                        onPress={() => setUpdateStatus(s)}
-                        style={{
-                          paddingHorizontal: 20,
-                          paddingVertical: 12,
-                          borderRadius: 16,
-                          borderWidth: 1,
-                          backgroundColor:
-                            updateStatus === s ? "#dc2626" : "#ffffff",
-                          borderColor:
-                            updateStatus === s ? "#dc2626" : "#e2e8f0",
-                        }}
-                      >
-                        <Text
-                          style={{
-                            fontSize: 12,
-                            fontWeight: "700",
-                            color: updateStatus === s ? "#ffffff" : "#475569",
-                          }}
-                        >
-                          {s}
-                        </Text>
-                      </TouchableOpacity>
-                    ))}
-                  </View>
-
-                  {updateStatus === "Inprogress" && (
-                    <View style={{ marginBottom: 32 }}>
-                      <SearchableSelect
-                        label="Select Area"
-                        placeholder="Choose an area..."
-                        value={updateArea}
-                        options={areaOptions}
-                        onChange={setUpdateArea}
-                        loading={areasLoading}
-                        searchPlaceholder="Search areas..."
-                        emptyMessage="No areas found"
-                      />
-
-                      <SearchableSelect
-                        label="Select Category"
-                        placeholder="Choose a category..."
-                        value={updateCategory}
-                        options={categoryOptions}
-                        onChange={setUpdateCategory}
-                        searchPlaceholder="Search categories..."
-                        emptyMessage="No categories found"
-                      />
-                    </View>
-                  )}
-
-                  {["Hold", "Cancelled", "Waiting"].includes(updateStatus) && (
-                    <View style={{ marginBottom: 24 }}>
-                      <Text
-                        className="text-slate-400 dark:text-slate-500"
-                        style={{
-                          fontSize: 10,
-                          fontWeight: "900",
-                          textTransform: "uppercase",
-                          letterSpacing: 1.5,
-                          marginBottom: 12,
-                          marginLeft: 4,
-                        }}
-                      >
-                        Mandatory Remarks
-                      </Text>
-                      <TextInput
-                        style={{
-                          backgroundColor: "#f8fafc",
-                          borderWidth: 1,
-                          borderColor: "#e2e8f0",
-                          borderRadius: 24,
-                          padding: 20,
-                          height: 128,
-                          fontWeight: "700",
-                          textAlignVertical: "top",
-                        }}
-                        className="bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-50 border-slate-200 dark:border-slate-700"
-                        placeholder="Why is it on hold? What is the roadblock?"
-                        multiline
-                        value={updateRemarks}
-                        onChangeText={setUpdateRemarks}
-                      />
-                    </View>
-                  )}
-
-                  <TouchableOpacity
-                    onPress={handleUpdateStatus}
-                    disabled={isUpdating}
-                    style={{
-                      backgroundColor: "#dc2626",
-                      borderRadius: 28,
-                      paddingVertical: 20,
-                      alignItems: "center",
-                      shadowColor: "#dc2626",
-                      shadowOffset: { width: 0, height: 10 },
-                      shadowOpacity: 0.2,
-                      shadowRadius: 20,
-                      elevation: 8,
-                    }}
-                  >
-                    {isUpdating ? (
-                      <ActivityIndicator color="white" size="small" />
-                    ) : (
-                      <Text
-                        style={{
-                          color: "#ffffff",
-                          fontWeight: "900",
-                          textTransform: "uppercase",
-                          letterSpacing: 1.5,
-                          fontSize: 14,
-                        }}
-                      >
-                        Update Information
-                      </Text>
-                    )}
-                  </TouchableOpacity>
-                </View>
-              </ScrollView>
-            </View>
-          </View>
-        </View>
-      </Modal>
-    );
-  }
-);
-
-// Standalone Filter Modal
-const AdvancedFilterModal = React.memo(
-  ({
-    visible,
-    onClose,
-    tempSearch,
-    setTempSearch,
-    tempFromDate,
-    setTempFromDate,
-    tempToDate,
-    setTempToDate,
-    sites,
-    selectedSiteId,
-    setSelectedSiteId,
-    user,
-    statusFilter,
-    setStatusFilter,
-    applyAdvancedFilters,
-  }: {
-    visible: boolean;
-    onClose: () => void;
-    tempSearch: string;
-    setTempSearch: (s: string) => void;
-    tempFromDate: string | null;
-    setTempFromDate: (s: string | null) => void;
-    tempToDate: string | null;
-    setTempToDate: (s: string | null) => void;
-    sites: Site[];
-    selectedSiteId: string;
-    setSelectedSiteId: (s: string) => void;
-    user: any;
-    statusFilter: string;
-    setStatusFilter: (s: string) => void;
-    applyAdvancedFilters: () => void;
-  }) => {
-    return (
-      <Modal visible={visible} animationType="slide" transparent={true}>
-        <View
-          style={{
-            flex: 1,
-            backgroundColor: "rgba(0,0,0,0.6)",
-            justifyContent: "flex-end",
-          }}
-        >
-          <View
-            style={{
-              backgroundColor: "#ffffff",
-              borderTopLeftRadius: 40,
-              borderTopRightRadius: 40,
-              padding: 32,
-              maxHeight: "80%",
-            }}
-          >
-            <View
-              style={{
-                flexDirection: "row",
-                alignItems: "center",
-                justifyContent: "space-between",
-                marginBottom: 32,
+                marginBottom: 6,
               }}
             >
               <Text
                 style={{
-                  color: "#0f172a",
-                  fontSize: 24,
+                  fontSize: 10,
                   fontWeight: "900",
-                  letterSpacing: -0.5,
+                  color: "#dc2626",
+                  textTransform: "uppercase",
+                  letterSpacing: 1.5,
                 }}
               >
-                Filter Tickets
+                {item.ticket_no}
               </Text>
-              <TouchableOpacity
-                onPress={onClose}
+              <View
                 style={{
-                  width: 40,
-                  height: 40,
-                  backgroundColor: "#f8fafc",
-                  borderRadius: 20,
-                  alignItems: "center",
-                  justifyContent: "center",
+                  marginHorizontal: 8,
+                  width: 4,
+                  height: 4,
+                  borderRadius: 2,
+                  backgroundColor: "#e2e8f0",
+                }}
+              />
+              <Text
+                style={{
+                  fontSize: 10,
+                  fontWeight: "900",
+                  color: "#94a3b8",
+                  textTransform: "uppercase",
+                  letterSpacing: 1.5,
                 }}
               >
-                <X size={20} color="#94a3b8" />
-              </TouchableOpacity>
+                {item.site_id}
+              </Text>
             </View>
-
-            <View style={{ gap: 24 }}>
-              <View>
-                <Text
-                  style={{
-                    color: "#94a3b8",
-                    fontSize: 10,
-                    fontWeight: "900",
-                    textTransform: "uppercase",
-                    letterSpacing: 1.5,
-                    marginBottom: 12,
-                    marginLeft: 4,
-                  }}
-                >
-                  Search Keywords
-                </Text>
-                <View
-                  style={{
-                    flexDirection: "row",
-                    alignItems: "center",
-                    backgroundColor: "#f8fafc",
-                    borderRadius: 16,
-                    paddingHorizontal: 20,
-                    paddingVertical: 16,
-                    borderWidth: 1,
-                    borderColor: "#f1f5f9",
-                  }}
-                >
-                  <SearchIcon size={20} color="#94a3b8" />
-                  <TextInput
-                    placeholder="Ticket #, Title, description..."
-                    style={{
-                      flex: 1,
-                      marginLeft: 12,
-                      color: "#0f172a",
-                      fontWeight: "700",
-                    }}
-                    value={tempSearch}
-                    onChangeText={setTempSearch}
-                  />
-                </View>
-              </View>
-
-              <View>
-                <Text
-                  style={{
-                    color: "#94a3b8",
-                    fontSize: 10,
-                    fontWeight: "900",
-                    textTransform: "uppercase",
-                    letterSpacing: 1.5,
-                    marginBottom: 12,
-                    marginLeft: 4,
-                  }}
-                >
-                  Date Range
-                </Text>
-                <View
-                  style={{ flexDirection: "row", gap: 8, marginBottom: 12 }}
-                >
-                  {[
-                    {
-                      label: "Today",
-                      value: format(new Date(), "yyyy-MM-dd"),
-                    },
-                    {
-                      label: "7 Days",
-                      value: format(
-                        new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
-                        "yyyy-MM-dd"
-                      ),
-                    },
-                    {
-                      label: "30 Days",
-                      value: format(
-                        new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
-                        "yyyy-MM-dd"
-                      ),
-                    },
-                  ].map((preset) => (
-                    <TouchableOpacity
-                      key={preset.label}
-                      onPress={() => {
-                        setTempFromDate(preset.value);
-                        setTempToDate(format(new Date(), "yyyy-MM-dd"));
-                      }}
-                      style={{
-                        paddingHorizontal: 16,
-                        paddingVertical: 8,
-                        borderRadius: 12,
-                        borderWidth: 1,
-                        backgroundColor:
-                          tempFromDate === preset.value ? "#fef2f2" : "#f8fafc",
-                        borderColor:
-                          tempFromDate === preset.value ? "#fecaca" : "#f1f5f9",
-                      }}
-                    >
-                      <Text
-                        style={{
-                          fontSize: 11,
-                          fontWeight: "700",
-                          color:
-                            tempFromDate === preset.value
-                              ? "#dc2626"
-                              : "#64748b",
-                        }}
-                      >
-                        {preset.label}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                  <TouchableOpacity
-                    onPress={() => {
-                      setTempFromDate(null);
-                      setTempToDate(null);
-                    }}
-                    style={{
-                      paddingHorizontal: 16,
-                      paddingVertical: 8,
-                      borderRadius: 12,
-                      borderWidth: 1,
-                      backgroundColor: "#f8fafc",
-                      borderColor: "#f1f5f9",
-                    }}
-                  >
-                    <Text
-                      style={{
-                        fontSize: 11,
-                        fontWeight: "700",
-                        color: "#64748b",
-                      }}
-                    >
-                      Clear
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-
-                {tempFromDate && (
-                  <View
-                    style={{
-                      backgroundColor: "#f8fafc",
-                      borderRadius: 16,
-                      padding: 16,
-                      borderWidth: 1,
-                      borderColor: "#f1f5f9",
-                    }}
-                  >
-                    <View
-                      style={{
-                        flexDirection: "row",
-                        alignItems: "center",
-                        justifyContent: "space-between",
-                      }}
-                    >
-                      <View
-                        style={{ flexDirection: "row", alignItems: "center" }}
-                      >
-                        <Calendar size={16} color="#dc2626" />
-                        <Text
-                          style={{
-                            color: "#475569",
-                            fontSize: 12,
-                            fontWeight: "700",
-                            marginLeft: 8,
-                          }}
-                        >
-                          {format(new Date(tempFromDate), "dd MMM")} -{" "}
-                          {tempToDate
-                            ? format(new Date(tempToDate), "dd MMM, yyyy")
-                            : "Present"}
-                        </Text>
-                      </View>
-                    </View>
-                  </View>
-                )}
-              </View>
-
-              {sites.length > 0 && (
-                <View>
-                  <Text
-                    style={{
-                      color: "#94a3b8",
-                      fontSize: 10,
-                      fontWeight: "900",
-                      textTransform: "uppercase",
-                      letterSpacing: 1.5,
-                      marginBottom: 12,
-                      marginLeft: 4,
-                    }}
-                  >
-                    Change Site
-                  </Text>
-                  <View
-                    style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}
-                  >
-                    {sites.map((s) => (
-                      <TouchableOpacity
-                        key={s.site_id}
-                        onPress={() => {
-                          const siteCode = s.site_code || "";
-                          setSelectedSiteId(siteCode);
-                          if (user?.id) {
-                            AsyncStorage.setItem(
-                              `last_site_${user.id}`,
-                              siteCode
-                            );
-                          }
-                        }}
-                        style={{
-                          paddingHorizontal: 16,
-                          paddingVertical: 12,
-                          borderRadius: 16,
-                          borderWidth: 1,
-                          backgroundColor:
-                            selectedSiteId === s.site_code
-                              ? "#fef2f2"
-                              : "#ffffff",
-                          borderColor:
-                            selectedSiteId === s.site_code
-                              ? "#fecaca"
-                              : "#e2e8f0",
-                        }}
-                      >
-                        <Text
-                          style={{
-                            fontSize: 12,
-                            fontWeight: "700",
-                            color:
-                              selectedSiteId === s.site_code
-                                ? "#dc2626"
-                                : "#64748b",
-                          }}
-                        >
-                          {s.name}
-                        </Text>
-                      </TouchableOpacity>
-                    ))}
-                  </View>
-                </View>
-              )}
+            <Text
+              className="text-slate-900 dark:text-slate-50"
+              style={{
+                fontWeight: "700",
+                fontSize: 18,
+                lineHeight: 28,
+              }}
+              numberOfLines={2}
+            >
+              {item.title}
+            </Text>
+          </View>
+          <View style={{ flexDirection: "row", alignItems: "center" }}>
+            <View
+              style={{
+                paddingHorizontal: 12,
+                paddingVertical: 4,
+                borderRadius: 999,
+                backgroundColor:
+                  item.status === "Open"
+                    ? "#fef2f2"
+                    : item.status === "Inprogress"
+                      ? "#eff6ff"
+                      : "#f0fdf4",
+              }}
+            >
+              <Text
+                style={{
+                  fontSize: 10,
+                  fontWeight: "900",
+                  textTransform: "uppercase",
+                  color:
+                    item.status === "Open"
+                      ? "#dc2626"
+                      : item.status === "Inprogress"
+                        ? "#2563eb"
+                        : "#16a34a",
+                }}
+              >
+                {item.status}
+              </Text>
             </View>
-
-            <View style={{ flexDirection: "row", gap: 16, marginTop: 40 }}>
-              <TouchableOpacity
-                onPress={() => {
-                  setTempSearch("");
-                  setTempFromDate(null);
-                  setTempToDate(null);
-                  setStatusFilter("Open");
-                }}
-                style={{
-                  flex: 1,
-                  backgroundColor: "#f1f5f9",
-                  borderRadius: 24,
-                  paddingVertical: 16,
-                  alignItems: "center",
-                }}
-              >
-                <Text
-                  style={{
-                    color: "#64748b",
-                    fontWeight: "900",
-                    textTransform: "uppercase",
-                    letterSpacing: 1.5,
-                    fontSize: 12,
-                  }}
-                >
-                  Reset
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={applyAdvancedFilters}
-                style={{
-                  flex: 2,
-                  backgroundColor: "#dc2626",
-                  borderRadius: 24,
-                  paddingVertical: 16,
-                  alignItems: "center",
-                  shadowColor: "#dc2626",
-                  shadowOffset: { width: 0, height: 8 },
-                  shadowOpacity: 0.2,
-                  shadowRadius: 16,
-                  elevation: 8,
-                }}
-              >
-                <Text
-                  style={{
-                    color: "#ffffff",
-                    fontWeight: "900",
-                    textTransform: "uppercase",
-                    letterSpacing: 1.5,
-                    fontSize: 12,
-                  }}
-                >
-                  Apply Filters
-                </Text>
-              </TouchableOpacity>
+            <View style={{ marginLeft: 8 }}>
+              <ChevronRight size={16} color="#94a3b8" />
             </View>
           </View>
         </View>
-      </Modal>
+
+        <View
+          className="border-t border-slate-100 dark:border-slate-800"
+          style={{
+            flexDirection: "row",
+            flexWrap: "wrap",
+            paddingTop: 16,
+            marginTop: 8,
+          }}
+        >
+          <View
+            style={{ width: "50%", flexDirection: "row", alignItems: "center" }}
+          >
+            <MapPin size={12} color="#94a3b8" style={{ marginRight: 6 }} />
+            <Text
+              className="text-slate-600 dark:text-slate-400"
+              style={{ fontSize: 11, fontWeight: "500" }}
+              numberOfLines={1}
+            >
+              {item.area_asset || item.location || "N/A"}
+            </Text>
+          </View>
+          <View
+            style={{ width: "50%", flexDirection: "row", alignItems: "center" }}
+          >
+            <Clock size={12} color="#94a3b8" style={{ marginRight: 6 }} />
+            <Text
+              className="text-slate-600 dark:text-slate-400"
+              style={{ fontSize: 11, fontWeight: "500" }}
+            >
+              {format(new Date(item.created_at), "dd MMM, yy")}
+            </Text>
+          </View>
+        </View>
+      </TouchableOpacity>
     );
-  }
+  },
 );
 
 export default function Tickets() {
@@ -1230,24 +293,26 @@ export default function Tickets() {
   const lastRequestedPageRef = React.useRef(0);
 
   useEffect(() => {
-    console.log(
-      "[Tickets] Modal Visible State:",
+    logger.debug("Modal Visible State", {
+      module: "TICKETS",
       isDetailVisible,
-      "Selected Ticket:",
-      selectedTicket?.ticket_id
-    );
+      ticketId: selectedTicket?.ticket_id,
+    });
   }, [isDetailVisible, selectedTicket]);
 
   useEffect(() => {
-    console.log("[Tickets] User state update:", user?.user_id || user?.id);
+    logger.debug("User state update", {
+      module: "TICKETS",
+      userId: user?.user_id || user?.id,
+    });
 
     // Safety timeout: ensure loading stops after 8 seconds no matter what
     const safetyTimer = setTimeout(() => {
       setLoading((prev) => {
         if (prev)
-          console.log(
-            "[Tickets] Safety timeout triggered - forcing loading to false"
-          );
+          logger.debug("Safety timeout triggered - forcing loading to false", {
+            module: "TICKETS",
+          });
         return false;
       });
     }, 8000);
@@ -1265,7 +330,7 @@ export default function Tickets() {
 
   useEffect(() => {
     if (selectedSiteId) {
-      console.log("[Tickets] Site ready, triggering fetch");
+      logger.debug("Site ready, triggering fetch", { module: "TICKETS" });
       resetAndFetch();
       fetchStats();
       loadAreasAndCategories();
@@ -1287,7 +352,7 @@ export default function Tickets() {
             label: a.asset_name,
             description:
               `${a.asset_type || ""} ${a.location ? `- ${a.location}` : ""}`.trim(),
-          }))
+          })),
         );
       }
 
@@ -1319,7 +384,10 @@ export default function Tickets() {
         }
       }
     } catch (error) {
-      console.error("[Tickets] Error loading areas/categories:", error);
+      logger.warn("Error loading areas/categories", {
+        module: "TICKETS",
+        error,
+      });
     } finally {
       setAreasLoading(false);
     }
@@ -1329,12 +397,11 @@ export default function Tickets() {
     setLoading(true);
     try {
       // Load from cache first
-      const cachedSites = await AsyncStorage.getItem(`sites_${userId}`);
+      const cachedSites = await getCachedSites(userId);
       const lastSiteId = await AsyncStorage.getItem(`last_site_${userId}`);
 
-      if (cachedSites) {
-        const parsedSites = JSON.parse(cachedSites);
-        setSites(parsedSites);
+      if (cachedSites.length > 0) {
+        setSites(cachedSites);
         if (lastSiteId) {
           setSelectedSiteId(lastSiteId);
         }
@@ -1344,14 +411,19 @@ export default function Tickets() {
       const isAdmin = user?.role === "admin" || user?.role === "Admin";
 
       if (isAdmin) {
-        console.log("[Tickets] Admin user detected, fetching all sites");
+        logger.debug("Admin user detected, fetching all sites", {
+          module: "TICKETS",
+        });
         userSites = await AttendanceService.getAllSites();
       } else {
-        console.log("[Tickets] Fetching sites for:", userId);
+        logger.debug("Fetching sites for user", { module: "TICKETS", userId });
         userSites = await AttendanceService.getUserSites(userId);
       }
 
-      console.log("[Tickets] Sites response:", userSites.length);
+      logger.debug("Sites response", {
+        module: "TICKETS",
+        count: userSites.length,
+      });
 
       let finalSites = [];
 
@@ -1377,9 +449,9 @@ export default function Tickets() {
       }
 
       // Save to cache
-      await AsyncStorage.setItem(`sites_${userId}`, JSON.stringify(finalSites));
+      await cacheSites(userId, finalSites);
     } catch (error) {
-      console.error("[Tickets] loadSites error:", error);
+      logger.warn("loadSites error", { module: "TICKETS", error });
       setLoading(false);
     }
   };
@@ -1392,7 +464,7 @@ export default function Tickets() {
         setStats(res.data);
         await AsyncStorage.setItem(
           `stats_${selectedSiteId}`,
-          JSON.stringify(res.data)
+          JSON.stringify(res.data),
         );
       }
     } catch (e) {}
@@ -1406,7 +478,7 @@ export default function Tickets() {
         setAssets(res.data);
         await AsyncStorage.setItem(
           `assets_${selectedSiteId}`,
-          JSON.stringify(res.data)
+          JSON.stringify(res.data),
         );
       }
     } catch (e) {}
@@ -1422,10 +494,9 @@ export default function Tickets() {
       if (reset) {
         setLoading(true);
         // Load from cache first for reset
-        const cacheKey = `tickets_${selectedSiteId}_${statusFilter}`;
-        const cachedData = await AsyncStorage.getItem(cacheKey);
-        if (cachedData) {
-          setTickets(JSON.parse(cachedData));
+        const cachedTickets = await getCachedTickets(selectedSiteId);
+        if (cachedTickets.length > 0) {
+          setTickets(cachedTickets);
         }
       } else {
         setIsFetchingMore(true);
@@ -1447,20 +518,28 @@ export default function Tickets() {
           const newTickets = res.data || [];
           if (reset) {
             setTickets(newTickets);
-            // Save to cache
-            const cacheKey = `tickets_${selectedSiteId}_${statusFilter}`;
-            await AsyncStorage.setItem(cacheKey, JSON.stringify(newTickets));
+            // Cache page 1
+            await cacheTickets(selectedSiteId, newTickets);
           } else {
-            setTickets((prev) => [...prev, ...newTickets]);
+            setTickets((prev) => {
+              // Avoid duplicates
+              const existingIds = new Set(prev.map((t) => t.ticket_id));
+              const uniqueNew = newTickets.filter(
+                (t: Ticket) => !existingIds.has(t.ticket_id),
+              );
+              return [...prev, ...uniqueNew];
+            });
           }
           setHasMore(newTickets.length === PAGE_SIZE);
         } else {
           // API call failed, stop pagination
-          console.error("[Tickets] API call failed, stopping pagination");
+          logger.debug("API call failed, stopping pagination", {
+            module: "TICKETS",
+          });
           setHasMore(false);
         }
       } catch (error) {
-        console.error("[Tickets] fetchTickets error:", error);
+        logger.warn("fetchTickets error", { module: "TICKETS", error });
         // On error, stop pagination to prevent infinite loops
         setHasMore(false);
       } finally {
@@ -1469,7 +548,7 @@ export default function Tickets() {
         setRefreshing(false);
       }
     },
-    [selectedSiteId, statusFilter, searchQuery, fromDate, toDate]
+    [selectedSiteId, statusFilter, searchQuery, fromDate, toDate],
   );
 
   const resetAndFetch = useCallback(() => {
@@ -1490,11 +569,17 @@ export default function Tickets() {
 
     // Additional safeguard: check if we've already requested this page
     if (nextPage <= lastRequestedPageRef.current) {
-      console.log("[Tickets] Skipping duplicate request for page:", nextPage);
+      logger.debug("Skipping duplicate request for page", {
+        module: "TICKETS",
+        nextPage,
+      });
       return;
     }
 
-    console.log("[Tickets] handleLoadMore triggered - page:", nextPage);
+    logger.debug("handleLoadMore triggered", {
+      module: "TICKETS",
+      page: nextPage,
+    });
     lastRequestedPageRef.current = nextPage;
     setPage(nextPage);
     fetchTickets(nextPage);
@@ -1506,16 +591,15 @@ export default function Tickets() {
     resetAndFetch();
   };
 
-  const handleTicketPress = (ticket: Ticket) => {
-    console.log(
-      "[Tickets] Ticket pressed:",
-      ticket.ticket_id,
-      "Status:",
-      ticket.status
-    );
-    if (ticket.status !== "Open") {
-      // Don't show the update modal for non-open tickets as per user request
-      return;
+  const handleTicketPress = useCallback((ticket: Ticket) => {
+    logger.debug("Ticket pressed", {
+      module: "TICKETS",
+      ticketId: ticket.ticket_id,
+      status: ticket.status,
+    });
+    if (ticket.status !== "Open" && ticket.status !== "Inprogress") {
+      // Still allow viewing some details, but not updates for terminal statuses
+      // return;
     }
     setSelectedTicket(ticket);
     setUpdateStatus(ticket.status);
@@ -1523,13 +607,39 @@ export default function Tickets() {
     setUpdateArea(ticket.area_asset || "");
     setUpdateCategory(ticket.category || "");
     setIsDetailVisible(true);
-  };
+  }, []);
+
+  const handleTicketLongPress = useCallback((ticket: Ticket) => {
+    if (ticket.status !== "Open") return;
+
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    logger.debug("Ticket long pressed", {
+      module: "TICKETS",
+      ticketId: ticket.ticket_id,
+    });
+
+    setSelectedTicket(ticket);
+    setUpdateStatus("Cancelled");
+    setUpdateRemarks(""); // Clear remarks to force user input
+    setIsDetailVisible(true);
+  }, []);
+
+  const renderTicketItem = useCallback(
+    ({ item }: { item: Ticket }) => (
+      <TicketItem
+        item={item}
+        onPress={handleTicketPress}
+        onLongPress={handleTicketLongPress}
+      />
+    ),
+    [handleTicketPress, handleTicketLongPress],
+  );
 
   const handleUpdateStatus = async () => {
     if (!selectedTicket) return;
 
-    const needsRemarks = ["Hold", "Cancelled", "Waiting"].includes(
-      updateStatus
+    const needsRemarks = ["Hold", "Cancelled", "Waiting", "Resolved"].includes(
+      updateStatus,
     );
     if (needsRemarks && !updateRemarks.trim()) {
       Alert.alert("Required", "Please provide remarks for this status update.");
@@ -1548,8 +658,8 @@ export default function Tickets() {
       if (isConnected) {
         // Online: Update directly
         const res = await TicketsService.updateTicket(
-          selectedTicket.ticket_id,
-          payload
+          selectedTicket.ticket_id || selectedTicket.ticket_no,
+          payload,
         );
         if (res.success) {
           Alert.alert("Success", "Ticket updated successfully");
@@ -1565,20 +675,20 @@ export default function Tickets() {
           selectedTicket.ticket_id,
           selectedTicket.ticket_no,
           "update_details",
-          payload
+          payload,
         );
         Alert.alert(
           "Saved Offline",
           "Your update has been saved and will sync when you're back online.",
-          [{ text: "OK" }]
+          [{ text: "OK" }],
         );
         setIsDetailVisible(false);
 
         // Update local ticket in list to reflect change
         setTickets((prev) =>
           prev.map((t) =>
-            t.ticket_id === selectedTicket.ticket_id ? { ...t, ...payload } : t
-          )
+            t.ticket_id === selectedTicket.ticket_id ? { ...t, ...payload } : t,
+          ),
         );
       }
     } catch (error: any) {
@@ -1765,9 +875,7 @@ export default function Tickets() {
         <View className="flex-1">
           <FlatList
             data={tickets}
-            renderItem={({ item }) => (
-              <TicketItem item={item} onPress={handleTicketPress} />
-            )}
+            renderItem={renderTicketItem}
             keyExtractor={(item, index) => item.ticket_id || `ticket-${index}`}
             ListEmptyComponent={
               !loading ? (
@@ -1817,42 +925,46 @@ export default function Tickets() {
           </View>
         )}
 
-        <AdvancedFilterModal
-          visible={showFiltersModal}
-          onClose={handleCloseFilters}
-          tempSearch={tempSearch}
-          setTempSearch={setTempSearch}
-          tempFromDate={tempFromDate}
-          setTempFromDate={setTempFromDate}
-          tempToDate={tempToDate}
-          setTempToDate={setTempToDate}
-          sites={sites}
-          selectedSiteId={selectedSiteId}
-          setSelectedSiteId={setSelectedSiteId}
-          user={user}
-          statusFilter={statusFilter}
-          setStatusFilter={setStatusFilter}
-          applyAdvancedFilters={applyAdvancedFilters}
-        />
+        {showFiltersModal && (
+          <AdvancedFilterModal
+            visible={showFiltersModal}
+            onClose={handleCloseFilters}
+            tempSearch={tempSearch}
+            setTempSearch={setTempSearch}
+            tempFromDate={tempFromDate}
+            setTempFromDate={setTempFromDate}
+            tempToDate={tempToDate}
+            setTempToDate={setTempToDate}
+            sites={sites}
+            selectedSiteId={selectedSiteId}
+            setSelectedSiteId={setSelectedSiteId}
+            user={user}
+            statusFilter={statusFilter}
+            setStatusFilter={setStatusFilter}
+            applyAdvancedFilters={applyAdvancedFilters}
+          />
+        )}
 
-        <TicketDetailModal
-          visible={isDetailVisible}
-          ticket={selectedTicket}
-          onClose={handleCloseDetail}
-          updateStatus={updateStatus}
-          setUpdateStatus={setUpdateStatus}
-          updateRemarks={updateRemarks}
-          setUpdateRemarks={setUpdateRemarks}
-          updateArea={updateArea}
-          setUpdateArea={setUpdateArea}
-          updateCategory={updateCategory}
-          setUpdateCategory={setUpdateCategory}
-          isUpdating={isUpdating}
-          handleUpdateStatus={handleUpdateStatus}
-          areaOptions={areaOptions}
-          categoryOptions={categoryOptions}
-          areasLoading={areasLoading}
-        />
+        {isDetailVisible && (
+          <TicketDetailModal
+            visible={isDetailVisible}
+            ticket={selectedTicket}
+            onClose={handleCloseDetail}
+            updateStatus={updateStatus}
+            setUpdateStatus={setUpdateStatus}
+            updateRemarks={updateRemarks}
+            setUpdateRemarks={setUpdateRemarks}
+            updateArea={updateArea}
+            setUpdateArea={setUpdateArea}
+            updateCategory={updateCategory}
+            setUpdateCategory={setUpdateCategory}
+            isUpdating={isUpdating}
+            handleUpdateStatus={handleUpdateStatus}
+            areaOptions={areaOptions}
+            categoryOptions={categoryOptions}
+            areasLoading={areasLoading}
+          />
+        )}
       </SafeAreaView>
     </View>
   );

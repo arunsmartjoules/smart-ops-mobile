@@ -9,37 +9,45 @@ import {
   cacheCategories,
   getCachedCategories,
 } from "../utils/offlineDataCache";
+import { authService } from "../services/AuthService";
+import { fetchWithTimeout } from "../utils/apiHelper";
 
 const BACKEND_URL =
   process.env.EXPO_PUBLIC_BACKEND_URL || "http://192.168.31.152:3420";
 
-// Helper to get the token
-const getToken = async (): Promise<string | null> => {
-  try {
-    return await AsyncStorage.getItem("auth_token");
-  } catch (error: any) {
-    logger.error("Failed to get auth token from storage", {
-      module: "TICKETS_SERVICE",
-      error: error.message,
-    });
-    return null;
-  }
-};
-
-// Helper for API requests with auth
+// Helper for API requests with auth and retry logic
 const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
-  const token = await getToken();
-  const headers: HeadersInit = {
+  // Get valid token (will refresh if needed)
+  let token = await authService.getValidToken();
+
+  const getHeaders = (t: string | null) => ({
     "Content-Type": "application/json",
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...(t ? { Authorization: `Bearer ${t}` } : {}),
     ...options.headers,
-  };
+  });
 
   try {
-    const response = await fetch(`${BACKEND_URL}${endpoint}`, {
+    let response = await fetchWithTimeout(`${BACKEND_URL}${endpoint}`, {
       ...options,
-      headers,
+      headers: getHeaders(token),
     });
+
+    // If 401, try refresh once
+    if (response.status === 401) {
+      logger.debug(`401 on ${endpoint}, attempting refresh`, {
+        module: "TICKETS_SERVICE",
+      });
+      const newToken = await authService.refreshToken();
+
+      if (newToken) {
+        token = newToken;
+        // Retry with new token
+        response = await fetchWithTimeout(`${BACKEND_URL}${endpoint}`, {
+          ...options,
+          headers: getHeaders(token),
+        });
+      }
+    }
 
     const result = await response.json();
 
@@ -118,7 +126,7 @@ export const TicketsService = {
     params.append("limit", limit.toString());
 
     const result = await apiFetch(
-      `/api/complaints/site/${siteId}?${params.toString()}`
+      `/api/complaints/site/${siteId}?${params.toString()}`,
     );
 
     if (result.success) {
@@ -145,6 +153,13 @@ export const TicketsService = {
     }
 
     return result;
+  },
+
+  /**
+   * Get ticket by ID
+   */
+  async getTicketById(ticketId: string) {
+    return await apiFetch(`/api/complaints/${ticketId}`);
   },
 
   /**

@@ -60,12 +60,12 @@ async function getCacheMetadata(): Promise<CacheMetadata> {
 
 // Update cache metadata
 async function updateCacheMetadata(
-  updates: Partial<CacheMetadata>
+  updates: Partial<CacheMetadata>,
 ): Promise<void> {
   const current = await getCacheMetadata();
   await AsyncStorage.setItem(
     CACHE_METADATA_KEY,
-    JSON.stringify({ ...current, ...updates })
+    JSON.stringify({ ...current, ...updates }),
   );
 }
 
@@ -75,7 +75,7 @@ export async function cacheAreas(siteId: string, areas: Area[]): Promise<void> {
   try {
     await AsyncStorage.setItem(
       `${CACHE_AREAS_PREFIX}${siteId}`,
-      JSON.stringify(areas)
+      JSON.stringify(areas),
     );
     const metadata = await getCacheMetadata();
     await updateCacheMetadata({
@@ -116,7 +116,7 @@ export async function cacheCategories(categories: Category[]): Promise<void> {
   try {
     await AsyncStorage.setItem(
       CACHE_CATEGORIES_KEY,
-      JSON.stringify(categories)
+      JSON.stringify(categories),
     );
     await updateCacheMetadata({ categories: new Date().toISOString() });
   } catch (error: any) {
@@ -152,7 +152,7 @@ export async function cacheSites(userId: string, sites: any[]): Promise<void> {
   try {
     await AsyncStorage.setItem(
       `${CACHE_SITES_PREFIX}${userId}`,
-      JSON.stringify(sites)
+      JSON.stringify(sites),
     );
     const metadata = await getCacheMetadata();
     await updateCacheMetadata({
@@ -185,12 +185,12 @@ export async function getCachedSites(userId: string): Promise<any[]> {
 
 export async function cacheTickets(
   siteId: string,
-  tickets: any[]
+  tickets: any[],
 ): Promise<void> {
   try {
     await AsyncStorage.setItem(
       `${CACHE_TICKETS_PREFIX}${siteId}`,
-      JSON.stringify(tickets)
+      JSON.stringify(tickets),
     );
     const metadata = await getCacheMetadata();
     await updateCacheMetadata({
@@ -220,7 +220,7 @@ export async function getCachedTickets(siteId: string): Promise<any[]> {
 }
 
 export async function getTicketsCacheAge(
-  siteId: string
+  siteId: string,
 ): Promise<number | null> {
   const metadata = await getCacheMetadata();
   if (!metadata.tickets[siteId]) return null;
@@ -231,12 +231,12 @@ export async function getTicketsCacheAge(
 
 export async function cacheAttendance(
   userId: string,
-  data: { today: any; history: any[] }
+  data: { today: any; history: any[] },
 ): Promise<void> {
   try {
     await AsyncStorage.setItem(
       `${CACHE_ATTENDANCE_PREFIX}${userId}`,
-      JSON.stringify(data)
+      JSON.stringify(data),
     );
     const metadata = await getCacheMetadata();
     await updateCacheMetadata({
@@ -255,11 +255,11 @@ export async function cacheAttendance(
 }
 
 export async function getCachedAttendance(
-  userId: string
+  userId: string,
 ): Promise<{ today: any; history: any[] } | null> {
   try {
     const data = await AsyncStorage.getItem(
-      `${CACHE_ATTENDANCE_PREFIX}${userId}`
+      `${CACHE_ATTENDANCE_PREFIX}${userId}`,
     );
     return data ? JSON.parse(data) : null;
   } catch (error: any) {
@@ -273,7 +273,7 @@ export async function getCachedAttendance(
 }
 
 export async function getAttendanceCacheAge(
-  userId: string
+  userId: string,
 ): Promise<number | null> {
   const metadata = await getCacheMetadata();
   if (!metadata.attendance[userId]) return null;
@@ -292,7 +292,7 @@ export async function clearAllCache(): Promise<void> {
         key.startsWith(CACHE_TICKETS_PREFIX) ||
         key.startsWith(CACHE_ATTENDANCE_PREFIX) ||
         key === CACHE_CATEGORIES_KEY ||
-        key === CACHE_METADATA_KEY
+        key === CACHE_METADATA_KEY,
     );
     await AsyncStorage.multiRemove(cacheKeys);
   } catch (error: any) {
@@ -318,12 +318,13 @@ export async function getCacheSize(): Promise<{
         key.startsWith(CACHE_SITES_PREFIX) ||
         key.startsWith(CACHE_TICKETS_PREFIX) ||
         key.startsWith(CACHE_ATTENDANCE_PREFIX) ||
-        key === CACHE_CATEGORIES_KEY
+        key === CACHE_CATEGORIES_KEY,
     );
 
     let totalBytes = 0;
-    for (const key of cacheKeys) {
-      const value = await AsyncStorage.getItem(key);
+    const records = await AsyncStorage.multiGet(cacheKeys);
+
+    for (const [, value] of records) {
       if (value) {
         totalBytes += value.length * 2; // UTF-16 characters = 2 bytes each
       }

@@ -6,7 +6,6 @@ import React, {
   useCallback,
   useMemo,
 } from "react";
-import { router } from "expo-router";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { authEvents } from "../utils/authEvents";
 import {
@@ -14,6 +13,9 @@ import {
   unregisterPushToken,
 } from "../services/NotificationService";
 import logger from "../utils/logger";
+import { SecureStorage, SECURE_KEYS } from "../utils/secureStorage";
+import { performLogoutCleanup } from "../services/CleanupService";
+import { syncManager } from "../services/SyncManager";
 
 const BACKEND_URL =
   process.env.EXPO_PUBLIC_BACKEND_URL || "http://192.168.31.152:3420";
@@ -38,13 +40,13 @@ interface AuthContextType {
   signUp: (
     email: string,
     password: string,
-    name: string
+    name: string,
   ) => Promise<{ error: any }>;
   signOut: () => Promise<void>;
   resetPassword: (
     email: string,
     employeeCode: string,
-    newPassword: string
+    newPassword: string,
   ) => Promise<{ error: any }>;
   refreshProfile: () => Promise<void>;
 }
@@ -79,7 +81,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     // Get initial session from storage
     const loadSession = async () => {
       try {
-        const savedToken = await AsyncStorage.getItem("auth_token");
+        const savedToken = await SecureStorage.getItem(SECURE_KEYS.AUTH_TOKEN);
         const savedUser = await AsyncStorage.getItem("auth_user");
 
         if (savedToken && savedUser) {
@@ -101,7 +103,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
 
   useEffect(() => {
     const unsubscribe = authEvents.subscribe(() => {
-      console.log("Global 401 Unauthorized event received. Signing out.");
+      logger.warn("Global 401 Unauthorized event received. Signing out.");
       signOut();
     });
     return unsubscribe;
@@ -142,7 +144,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
 
       const { token, user } = result.data;
 
-      await AsyncStorage.setItem("auth_token", token);
+      await SecureStorage.setItem(SECURE_KEYS.AUTH_TOKEN, token);
       await AsyncStorage.setItem("auth_user", JSON.stringify(user));
 
       setToken(token);
@@ -170,7 +172,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const signUp = async (email: string, password: string, name: string) => {
     try {
-      console.log(`Calling Signup API: ${BACKEND_URL}/api/auth/signup`);
+      logger.debug(`Calling Signup API: ${BACKEND_URL}/api/auth/signup`);
       const response = await fetch(`${BACKEND_URL}/api/auth/signup`, {
         method: "POST",
         headers: {
@@ -202,14 +204,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
 
       return { error: null };
     } catch (error: any) {
-      console.log("Error from frontend", error);
+      logger.error("Error from signup frontend", error);
       return { error: error.message };
     }
   };
 
   const signOut = useCallback(async () => {
     try {
-      const savedToken = await AsyncStorage.getItem("auth_token");
+      const savedToken = await SecureStorage.getItem(SECURE_KEYS.AUTH_TOKEN);
       if (savedToken) {
         // Unregister push token
         await unregisterPushToken(savedToken).catch((error) => {
@@ -233,18 +235,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         error: error.message,
       });
     } finally {
-      await AsyncStorage.removeItem("auth_token");
-      await AsyncStorage.removeItem("auth_user");
+      // 1. Cleanup sync manager
+      syncManager.cleanup();
+
+      // 2. Perform comprehensive data cleanup
+      await performLogoutCleanup();
+
+      // 3. Reset state
       setToken(null);
       setUser(null);
-      router.replace("/sign-in");
+      // Navigation will be handled by the consuming component (e.g., index.tsx)
+      // which already redirects to sign-in when user is null
     }
   }, []);
 
   const resetPassword = async (
     email: string,
     employeeCode: string,
-    newPassword: string
+    newPassword: string,
   ) => {
     try {
       const response = await fetch(`${BACKEND_URL}/api/auth/reset-password`, {
@@ -270,14 +278,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
 
       return { error: null };
     } catch (error: any) {
-      console.log("Error from frontend", error);
+      logger.error("Error from reset password frontend", error);
       return { error: error.message };
     }
   };
 
   const refreshProfile = useCallback(async () => {
     try {
-      const savedToken = await AsyncStorage.getItem("auth_token");
+      const savedToken = await SecureStorage.getItem(SECURE_KEYS.AUTH_TOKEN);
 
       if (!savedToken) {
         return;
@@ -348,7 +356,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       signOut,
       resetPassword,
       refreshProfile,
-    ]
+    ],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

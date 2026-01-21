@@ -11,11 +11,10 @@ import {
   Ticket,
   User,
 } from "lucide-react-native";
-import { useColorScheme } from "nativewind";
+import { useTheme } from "@/contexts/ThemeContext";
 
 export default function TabLayout() {
-  const { colorScheme } = useColorScheme();
-  const isDark = colorScheme === "dark";
+  const { isDark } = useTheme();
 
   return (
     <Tabs

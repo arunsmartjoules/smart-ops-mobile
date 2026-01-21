@@ -4,8 +4,12 @@ import { Platform } from "react-native";
 const BACKEND_URL =
   process.env.EXPO_PUBLIC_BACKEND_URL || "http://192.168.31.152:3420";
 
+// Check if we're in production mode
+const IS_PRODUCTION = process.env.NODE_ENV === "production";
+
 /**
  * Enhanced logging utility that captures user context and sends errors to the backend.
+ * In production mode, info and debug logs are suppressed to avoid performance overhead.
  */
 export const logger = {
   async getContext() {
@@ -25,10 +29,15 @@ export const logger = {
   },
 
   async log(
-    level: "info" | "warn" | "error",
+    level: "info" | "warn" | "error" | "debug",
     message: string,
     metadata: any = {}
   ) {
+    // Skip info and debug logs in production
+    if (IS_PRODUCTION && (level === "info" || level === "debug")) {
+      return;
+    }
+
     const context = await this.getContext();
     const timestamp = new Date().toISOString();
 
@@ -84,6 +93,13 @@ export const logger = {
 
   error(message: string, metadata?: any) {
     this.log("error", message, metadata);
+  },
+
+  /**
+   * Debug log - only outputs in development
+   */
+  debug(message: string, metadata?: any) {
+    this.log("debug", message, metadata);
   },
 };
 

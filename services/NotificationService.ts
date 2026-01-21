@@ -4,6 +4,7 @@ import { Platform } from "react-native";
 import Constants from "expo-constants";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import logger from "@/utils/logger";
+import { fetchWithTimeout } from "@/utils/apiHelper";
 
 const API_URL =
   (process.env.EXPO_PUBLIC_BACKEND_URL || "http://10.0.2.2:3420") + "/api";
@@ -75,7 +76,7 @@ export const getPushToken = async (): Promise<string | null> => {
  */
 export const registerForPushNotifications = async (
   userId: string,
-  authToken: string
+  authToken: string,
 ): Promise<{ success: boolean; error?: string }> => {
   try {
     const hasPermission = await requestPermissions();
@@ -101,18 +102,21 @@ export const registerForPushNotifications = async (
     const platform = Platform.OS;
 
     // Register with backend
-    const response = await fetch(`${API_URL}/notifications/register-token`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${authToken}`,
+    const response = await fetchWithTimeout(
+      `${API_URL}/notifications/register-token`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${authToken}`,
+        },
+        body: JSON.stringify({
+          pushToken,
+          deviceId,
+          platform,
+        }),
       },
-      body: JSON.stringify({
-        pushToken,
-        deviceId,
-        platform,
-      }),
-    });
+    );
 
     const data = await response.json();
 
@@ -141,7 +145,7 @@ export const unregisterPushToken = async (authToken: string): Promise<void> => {
 
     if (!pushToken) return;
 
-    await fetch(`${API_URL}/notifications/token`, {
+    await fetchWithTimeout(`${API_URL}/notifications/token`, {
       method: "DELETE",
       headers: {
         "Content-Type": "application/json",
@@ -180,20 +184,20 @@ const getDeviceId = async (): Promise<string> => {
  */
 export const setupNotificationHandlers = (
   onNotificationReceived?: (notification: Notifications.Notification) => void,
-  onNotificationTapped?: (response: Notifications.NotificationResponse) => void
+  onNotificationTapped?: (response: Notifications.NotificationResponse) => void,
 ) => {
   // Handle notification received while app is in foreground
   const receivedSubscription = Notifications.addNotificationReceivedListener(
     (notification) => {
-      console.log("Notification received:", notification);
+      logger.debug("Notification received:", notification);
       onNotificationReceived?.(notification);
-    }
+    },
   );
 
   // Handle notification tapped
   const responseSubscription =
     Notifications.addNotificationResponseReceivedListener((response) => {
-      console.log("Notification tapped:", response);
+      logger.debug("Notification tapped:", response);
       onNotificationTapped?.(response);
     });
 
@@ -208,11 +212,14 @@ export const setupNotificationHandlers = (
  */
 export const getNotificationPreferences = async (authToken: string) => {
   try {
-    const response = await fetch(`${API_URL}/notifications/preferences`, {
-      headers: {
-        Authorization: `Bearer ${authToken}`,
+    const response = await fetchWithTimeout(
+      `${API_URL}/notifications/preferences`,
+      {
+        headers: {
+          Authorization: `Bearer ${authToken}`,
+        },
       },
-    });
+    );
 
     const data = await response.json();
     return data;
@@ -230,17 +237,20 @@ export const getNotificationPreferences = async (authToken: string) => {
  */
 export const updateNotificationPreferences = async (
   authToken: string,
-  preferences: { attendance_notifications_enabled: boolean }
+  preferences: { attendance_notifications_enabled: boolean },
 ) => {
   try {
-    const response = await fetch(`${API_URL}/notifications/preferences`, {
-      method: "PUT",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${authToken}`,
+    const response = await fetchWithTimeout(
+      `${API_URL}/notifications/preferences`,
+      {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${authToken}`,
+        },
+        body: JSON.stringify(preferences),
       },
-      body: JSON.stringify(preferences),
-    });
+    );
 
     const data = await response.json();
     return data;

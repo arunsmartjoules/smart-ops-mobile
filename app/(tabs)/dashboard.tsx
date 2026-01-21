@@ -1,4 +1,10 @@
-import React, { useState, useEffect, useMemo, useCallback } from "react";
+import React, {
+  useState,
+  useEffect,
+  useMemo,
+  useCallback,
+  useRef,
+} from "react";
 import {
   ScrollView,
   Text,
@@ -28,13 +34,6 @@ import AttendanceService, {
 import { format } from "date-fns";
 import { useNetworkStatus } from "@/hooks/useNetworkStatus";
 import { WifiOff } from "lucide-react-native";
-
-// Quick Stats Data
-const quickStats = [
-  { label: "Tickets", value: "14", color: "#ef4444", icon: Ticket },
-  { label: "PMs Due", value: "3", color: "#3b82f6", icon: ListChecks },
-  { label: "Logs", value: "2", color: "#f59e0b", icon: Activity },
-];
 
 // Task List Data
 const taskListData = [
@@ -85,9 +84,19 @@ export default function Dashboard() {
   const [refreshing, setRefreshing] = useState(false);
   const { user } = useAuth();
   const [todayAttendance, setTodayAttendance] = useState<AttendanceLog | null>(
-    null
+    null,
   );
   const [loadingAttendance, setLoadingAttendance] = useState(true);
+
+  // Ref for timeout cleanup
+  const refreshTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (refreshTimeoutRef.current) clearTimeout(refreshTimeoutRef.current);
+    };
+  }, []);
 
   const fetchAttendance = React.useCallback(async () => {
     if (user?.id) {
@@ -101,7 +110,7 @@ export default function Dashboard() {
           const history = await AttendanceService.getAttendanceHistory(
             user.id,
             1,
-            5
+            5,
           );
           if (history.data && history.data.length > 0) {
             const latest = history.data[0];
@@ -129,17 +138,43 @@ export default function Dashboard() {
     }
   }, [user?.id]);
 
+  const navigateToNotifications = useCallback(() => {
+    router.push("/notifications");
+  }, []);
+
+  const navigateToProfile = useCallback(() => {
+    router.push("/profile");
+  }, []);
+
+  const navigateToAttendance = useCallback(() => {
+    router.push("/attendance");
+  }, []);
+
+  const navigateToAllTasks = useCallback(() => {
+    router.push("/all-tasks");
+  }, []);
+
+  const dashboardStats = useMemo(
+    () => [
+      { label: "Tickets", value: "14", color: "#ef4444", icon: Ticket },
+      { label: "PMs Due", value: "3", color: "#3b82f6", icon: ListChecks },
+      { label: "Logs", value: "2", color: "#f59e0b", icon: Activity },
+    ],
+    [],
+  );
+
   useFocusEffect(
     React.useCallback(() => {
       fetchAttendance();
-    }, [fetchAttendance])
+    }, [fetchAttendance]),
   );
 
   const onRefresh = React.useCallback(async () => {
     setRefreshing(true);
     await fetchAttendance();
-    // Simulate other API calls
-    setTimeout(() => {
+    // Simulate other API calls (with cleanup)
+    if (refreshTimeoutRef.current) clearTimeout(refreshTimeoutRef.current);
+    refreshTimeoutRef.current = setTimeout(() => {
       setRefreshing(false);
     }, 1000);
   }, [fetchAttendance]);
@@ -180,7 +215,7 @@ export default function Dashboard() {
         <View className="px-5 pt-2 pb-3">
           <View className="flex-row items-center justify-between">
             <View>
-              <Text className="text-slate-400 dark:text-slate-500 text-sm font-medium">
+              <Text className="text-slate-400 dark:text-slate-50 text-sm font-medium">
                 Welcome back
               </Text>
               <Text className="text-slate-900 dark:text-slate-50 text-2xl font-bold mt-0.5">
@@ -189,7 +224,7 @@ export default function Dashboard() {
             </View>
             <View className="flex-row items-center gap-3">
               <TouchableOpacity
-                onPress={() => router.push("/notifications")}
+                onPress={navigateToNotifications}
                 className="w-10 h-10 rounded-full bg-white dark:bg-slate-900 items-center justify-center"
                 style={{
                   shadowColor: "#000",
@@ -202,7 +237,7 @@ export default function Dashboard() {
                 <Bell size={18} color="#64748b" />
                 <View className="absolute top-2 right-2 w-2 h-2 bg-red-500 rounded-full border border-white" />
               </TouchableOpacity>
-              <TouchableOpacity onPress={() => router.push("/profile")}>
+              <TouchableOpacity onPress={navigateToProfile}>
                 <LinearGradient
                   colors={["#dc2626", "#b91c1c"]}
                   style={{
@@ -223,7 +258,7 @@ export default function Dashboard() {
         {/* Status Card */}
         <TouchableOpacity
           className="px-5 mb-3"
-          onPress={() => router.push("/attendance")}
+          onPress={navigateToAttendance}
           activeOpacity={0.9}
         >
           <LinearGradient
@@ -272,7 +307,7 @@ export default function Dashboard() {
         {/* Quick Stats */}
         <View className="px-5 mb-3">
           <View className="flex-row gap-2">
-            {quickStats.map((stat, index) => {
+            {dashboardStats.map((stat, index) => {
               let bgClass = "bg-slate-50 dark:bg-slate-800";
               let iconColor = "#94a3b8";
 
@@ -331,7 +366,7 @@ export default function Dashboard() {
               </Text>
               <TouchableOpacity
                 className="flex-row items-center"
-                onPress={() => router.push("/all-tasks")}
+                onPress={navigateToAllTasks}
               >
                 <Text className="text-red-600 text-xs font-semibold mr-1">
                   View All

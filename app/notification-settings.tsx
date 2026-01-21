@@ -18,7 +18,7 @@ import {
   requestPermissions,
 } from "@/services/NotificationService";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import logger from "./../utils/logger";
+import logger from "@/utils/logger";
 
 export default function NotificationSettingsPage() {
   const { token } = useAuth();

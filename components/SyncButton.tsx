@@ -1,4 +1,11 @@
-import React, { useState, useEffect, useCallback, useMemo, memo } from "react";
+import React, {
+  useState,
+  useEffect,
+  useCallback,
+  useMemo,
+  memo,
+  useRef,
+} from "react";
 import { TouchableOpacity, Text, View, ActivityIndicator } from "react-native";
 import { RefreshCw, Check, AlertCircle } from "lucide-react-native";
 import { useNetworkStatus } from "@/hooks/useNetworkStatus";
@@ -15,9 +22,21 @@ const SyncButton = memo(({ onSync, pendingCount = 0 }: SyncButtonProps) => {
   const { isConnected } = useNetworkStatus();
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncStatus, setSyncStatus] = useState<"idle" | "success" | "error">(
-    "idle"
+    "idle",
   );
   const [lastSyncTime, setLastSyncTime] = useState<Date | null>(null);
+
+  // Refs for timeout cleanup to prevent memory leaks
+  const successTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const errorTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Cleanup timeouts on unmount
+  useEffect(() => {
+    return () => {
+      if (successTimeoutRef.current) clearTimeout(successTimeoutRef.current);
+      if (errorTimeoutRef.current) clearTimeout(errorTimeoutRef.current);
+    };
+  }, []);
 
   useEffect(() => {
     loadLastSyncTime();
@@ -47,15 +66,19 @@ const SyncButton = memo(({ onSync, pendingCount = 0 }: SyncButtonProps) => {
       await AsyncStorage.setItem("last_sync_time", now.getTime().toString());
       setSyncStatus("success");
 
-      // Reset status after 2 seconds
-      setTimeout(() => setSyncStatus("idle"), 2000);
+      // Reset status after 2 seconds (with cleanup)
+      if (successTimeoutRef.current) clearTimeout(successTimeoutRef.current);
+      successTimeoutRef.current = setTimeout(() => setSyncStatus("idle"), 2000);
     } catch (error: any) {
       logger.error("Sync button operation failed", {
         error: error.message,
         pendingCount,
       });
       setSyncStatus("error");
-      setTimeout(() => setSyncStatus("idle"), 3000);
+
+      // Reset status after 3 seconds (with cleanup)
+      if (errorTimeoutRef.current) clearTimeout(errorTimeoutRef.current);
+      errorTimeoutRef.current = setTimeout(() => setSyncStatus("idle"), 3000);
     } finally {
       setIsSyncing(false);
     }

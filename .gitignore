@@ -42,3 +42,8 @@ app-example
 # generated native folders
 /ios
 /android
+
+# Log files
+*.log
+trace.log
+trace_*.log

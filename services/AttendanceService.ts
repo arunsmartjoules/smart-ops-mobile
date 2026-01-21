@@ -5,6 +5,7 @@ import {
   cacheAttendance,
   getCachedAttendance,
 } from "../utils/offlineDataCache";
+import { authService } from "../services/AuthService";
 
 const BACKEND_URL =
   process.env.EXPO_PUBLIC_BACKEND_URL || "http://192.168.31.152:3420";
@@ -13,34 +14,41 @@ import {
   saveOfflineAttendance,
   getPendingAttendance,
 } from "../utils/offlineStorage";
+import { fetchWithTimeout } from "../utils/apiHelper";
 
-// Helper to get the token
-const getToken = async (): Promise<string | null> => {
-  try {
-    return await AsyncStorage.getItem("auth_token");
-  } catch (error: any) {
-    logger.error("Failed to get auth token from storage", {
-      module: "ATTENDANCE_SERVICE",
-      error: error.message,
-    });
-    return null;
-  }
-};
-
-// Helper for API requests with auth
+// Helper for API requests with auth and retry logic
 const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
-  const token = await getToken();
-  const headers: HeadersInit = {
+  // Get valid token (will refresh if needed)
+  let token = await authService.getValidToken();
+
+  const getHeaders = (t: string | null) => ({
     "Content-Type": "application/json",
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...(t ? { Authorization: `Bearer ${t}` } : {}),
     ...options.headers,
-  };
+  });
 
   try {
-    const response = await fetch(`${BACKEND_URL}${endpoint}`, {
+    let response = await fetchWithTimeout(`${BACKEND_URL}${endpoint}`, {
       ...options,
-      headers,
+      headers: getHeaders(token),
     });
+
+    // If 401, try refresh once
+    if (response.status === 401) {
+      logger.debug(`401 on ${endpoint}, attempting refresh`, {
+        module: "ATTENDANCE_SERVICE",
+      });
+      const newToken = await authService.refreshToken();
+
+      if (newToken) {
+        token = newToken;
+        // Retry with new token
+        response = await fetchWithTimeout(`${BACKEND_URL}${endpoint}`, {
+          ...options,
+          headers: getHeaders(token),
+        });
+      }
+    }
 
     const result = await response.json();
 
@@ -158,14 +166,14 @@ export const AttendanceService = {
   async validateLocation(
     userId: string,
     latitude?: number,
-    longitude?: number
+    longitude?: number,
   ): Promise<LocationValidationResult> {
     const params = new URLSearchParams();
     if (latitude) params.append("latitude", latitude.toString());
     if (longitude) params.append("longitude", longitude.toString());
 
     const result = await apiFetch(
-      `/api/attendance/validate-location/${userId}?${params.toString()}`
+      `/api/attendance/validate-location/${userId}?${params.toString()}`,
     );
     if (result.success) {
       return result.data;
@@ -208,7 +216,7 @@ export const AttendanceService = {
     siteId: string,
     latitude?: number,
     longitude?: number,
-    address?: string
+    address?: string,
   ): Promise<{
     success: boolean;
     data?: AttendanceLog;
@@ -266,7 +274,7 @@ export const AttendanceService = {
     latitude?: number,
     longitude?: number,
     address?: string,
-    remarks?: string
+    remarks?: string,
   ): Promise<{
     success: boolean;
     data?: AttendanceLog;
@@ -315,10 +323,10 @@ export const AttendanceService = {
   async getAttendanceHistory(
     userId: string,
     page: number = 1,
-    limit: number = 30
+    limit: number = 30,
   ): Promise<{ data: AttendanceLog[]; pagination: any }> {
     const result = await apiFetch(
-      `/api/attendance/user/${userId}?page=${page}&limit=${limit}`
+      `/api/attendance/user/${userId}?page=${page}&limit=${limit}`,
     );
     if (result.success) {
       // If first page, update the 'history' part of the cache

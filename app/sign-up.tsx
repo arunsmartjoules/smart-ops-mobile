@@ -13,6 +13,7 @@ import { Mail, Lock, User, Zap } from "lucide-react-native";
 import { router } from "expo-router";
 import { useAuth } from "@/contexts/AuthContext";
 import { showAlert } from "@/utils/alert";
+import logger from "@/utils/logger";
 
 export default function SignUp() {
   const [name, setName] = useState("");
@@ -31,7 +32,7 @@ export default function SignUp() {
     if (!email.toLowerCase().endsWith("@smartjoules.in")) {
       showAlert(
         "Invalid Email Domain",
-        "Please use a SmartJoules email address (@smartjoules.in) to sign up."
+        "Please use a SmartJoules email address (@smartjoules.in) to sign up.",
       );
       return;
     }
@@ -46,7 +47,7 @@ export default function SignUp() {
     setLoading(false);
 
     if (error) {
-      console.log(error);
+      logger.error("Sign up failure", { error });
       const errorMsg =
         typeof error === "string"
           ? error
@@ -61,7 +62,7 @@ export default function SignUp() {
             text: "Sign In Now",
             onPress: () => router.replace("/sign-in"),
           },
-        ]
+        ],
       );
     }
   };

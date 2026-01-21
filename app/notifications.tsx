@@ -1,4 +1,11 @@
-import React, { useState, useCallback, useMemo, memo } from "react";
+import React, {
+  useState,
+  useCallback,
+  useMemo,
+  memo,
+  useRef,
+  useEffect,
+} from "react";
 import {
   View,
   Text,
@@ -51,17 +58,28 @@ export default function NotificationsPage() {
   const [notifications, setNotifications] = useState(mockNotifications);
   const [refreshing, setRefreshing] = useState(false);
 
+  // Ref for timeout cleanup
+  const refreshTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (refreshTimeoutRef.current) clearTimeout(refreshTimeoutRef.current);
+    };
+  }, []);
+
   const onRefresh = React.useCallback(() => {
     setRefreshing(true);
-    // Simulate fetching notifications
-    setTimeout(() => {
+    // Simulate fetching notifications (with cleanup)
+    if (refreshTimeoutRef.current) clearTimeout(refreshTimeoutRef.current);
+    refreshTimeoutRef.current = setTimeout(() => {
       setRefreshing(false);
     }, 1000);
   }, []);
 
   const markAsRead = useCallback((id: number) => {
     setNotifications((prev) =>
-      prev.map((n) => (n.id === id ? { ...n, read: true } : n))
+      prev.map((n) => (n.id === id ? { ...n, read: true } : n)),
     );
   }, []);
 
@@ -154,12 +172,12 @@ export default function NotificationsPage() {
           )}
         </TouchableOpacity>
       );
-    }
+    },
   );
 
   const unreadCount = useMemo(
     () => notifications.filter((n) => !n.read).length,
-    [notifications]
+    [notifications],
   );
 
   return (

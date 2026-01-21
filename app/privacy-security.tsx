@@ -1,5 +1,5 @@
-import React, { useState, useCallback } from "react";
-import logger from "./../utils/logger";
+import React, { useState, useCallback, useRef, useEffect } from "react";
+import logger from "@/utils/logger";
 
 import {
   View,
@@ -37,6 +37,16 @@ export default function PrivacySecurity() {
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [successMessage, setSuccessMessage] = useState("");
+
+  // Ref for timeout cleanup
+  const successTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (successTimeoutRef.current) clearTimeout(successTimeoutRef.current);
+    };
+  }, []);
 
   const handleChangePassword = useCallback(async () => {
     // Validation
@@ -76,7 +86,10 @@ export default function PrivacySecurity() {
         setCurrentPassword("");
         setNewPassword("");
         setConfirmPassword("");
-        setTimeout(() => {
+
+        // Clear success message after 3 seconds (with cleanup)
+        if (successTimeoutRef.current) clearTimeout(successTimeoutRef.current);
+        successTimeoutRef.current = setTimeout(() => {
           setSuccessMessage("");
         }, 3000);
       } else {
@@ -99,15 +112,15 @@ export default function PrivacySecurity() {
 
   const toggleCurrentPassword = useCallback(
     () => setShowCurrentPassword((prev) => !prev),
-    []
+    [],
   );
   const toggleNewPassword = useCallback(
     () => setShowNewPassword((prev) => !prev),
-    []
+    [],
   );
   const toggleConfirmPassword = useCallback(
     () => setShowConfirmPassword((prev) => !prev),
-    []
+    [],
   );
 
   return (

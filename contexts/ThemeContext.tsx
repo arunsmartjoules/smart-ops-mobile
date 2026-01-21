@@ -7,8 +7,7 @@ import React, {
   useMemo,
 } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useColorScheme as useNativeWindColorScheme } from "nativewind";
-import { useColorScheme as useSystemColorScheme } from "react-native";
+import { useColorScheme as useSystemColorScheme, Platform } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import logger from "@/utils/logger";
 
@@ -29,7 +28,6 @@ const ThemeContext = createContext<ThemeContextType>({
 export const useTheme = () => useContext(ThemeContext);
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const { colorScheme, setColorScheme } = useNativeWindColorScheme();
   const systemColorScheme = useSystemColorScheme();
   const [theme, setThemeState] = useState<Theme>("system");
   const [isReady, setIsReady] = useState(false);
@@ -38,19 +36,25 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     loadTheme();
   }, []);
 
+  // Apply theme to document for web
   useEffect(() => {
     if (!isReady) return;
 
-    const applyTheme = (newTheme: Theme) => {
-      if (newTheme === "system") {
-        const systemTheme = systemColorScheme === "dark" ? "dark" : "light";
-        setColorScheme(systemTheme);
-      } else {
-        setColorScheme(newTheme);
-      }
-    };
+    const effectiveTheme =
+      theme === "system"
+        ? systemColorScheme === "dark"
+          ? "dark"
+          : "light"
+        : theme;
 
-    applyTheme(theme);
+    // For web, apply dark class to document
+    if (Platform.OS === "web" && typeof document !== "undefined") {
+      if (effectiveTheme === "dark") {
+        document.documentElement.classList.add("dark");
+      } else {
+        document.documentElement.classList.remove("dark");
+      }
+    }
   }, [theme, systemColorScheme, isReady]);
 
   const loadTheme = useCallback(async () => {

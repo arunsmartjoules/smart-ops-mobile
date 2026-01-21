@@ -10,6 +10,7 @@ import {
   Modal,
   TextInput,
   Platform,
+  AppState,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
@@ -32,7 +33,7 @@ import AttendanceService, {
   type Site,
   type LocationValidationResult,
 } from "@/services/AttendanceService";
-import logger from "../utils/logger";
+import logger from "@/utils/logger";
 import { format, differenceInMinutes, parseISO } from "date-fns";
 import { useNetworkStatus } from "@/hooks/useNetworkStatus";
 import { WifiOff } from "lucide-react-native";
@@ -123,7 +124,39 @@ const HistoryItem = React.memo(
         )}
       </View>
     );
-  }
+  },
+);
+
+const SiteItem = React.memo(
+  ({ site, onSelect }: { site: Site; onSelect: (id: string) => void }) => {
+    const handleSelect = useCallback(() => {
+      onSelect(site.site_id);
+    }, [site.site_id, onSelect]);
+
+    return (
+      <TouchableOpacity
+        onPress={handleSelect}
+        className="bg-slate-50 border border-slate-200 p-4 rounded-xl mb-3 flex-row items-center"
+      >
+        <View className="w-10 h-10 rounded-full bg-red-100 items-center justify-center mr-3">
+          <LucideMap size={20} color="#dc2626" />
+        </View>
+        <View className="flex-1">
+          <Text className="font-bold text-slate-900 dark:text-slate-50 dark:bg-slate-800">
+            {site.name}
+          </Text>
+          <Text className="text-slate-500 text-xs">{site.address}</Text>
+        </View>
+        {site.distance !== undefined && (
+          <View className="bg-green-100 px-2 py-1 rounded">
+            <Text className="text-green-700 text-xs font-bold">
+              {site.distance}m
+            </Text>
+          </View>
+        )}
+      </TouchableOpacity>
+    );
+  },
 );
 
 export default function AttendancePage() {
@@ -132,13 +165,13 @@ export default function AttendancePage() {
   const [refreshing, setRefreshing] = useState(false);
   const [loading, setLoading] = useState(true);
   const [attendanceHistory, setAttendanceHistory] = useState<AttendanceLog[]>(
-    []
+    [],
   );
   const [todayAttendance, setTodayAttendance] = useState<AttendanceLog | null>(
-    null
+    null,
   );
   const [location, setLocation] = useState<Location.LocationObject | null>(
-    null
+    null,
   );
   const [locationError, setLocationError] = useState<string | null>(null);
 
@@ -199,15 +232,42 @@ export default function AttendancePage() {
     }
   }, [fetchData]);
 
-  // Update current time every minute for the live timer
+  // Update current time every minute for the live timer with AppState handling
   useEffect(() => {
-    let interval: any;
+    let interval: any = null;
+
+    const handleAppStateChange = (nextAppState: string) => {
+      if (nextAppState === "active") {
+        if (todayAttendance && !todayAttendance.check_out_time) {
+          if (!interval) {
+            setCurrentTime(new Date());
+            interval = setInterval(() => {
+              setCurrentTime(new Date());
+            }, 60000);
+          }
+        }
+      } else {
+        if (interval) {
+          clearInterval(interval);
+          interval = null;
+        }
+      }
+    };
+
+    const subscription = AppState.addEventListener(
+      "change",
+      handleAppStateChange,
+    );
+
     if (todayAttendance && !todayAttendance.check_out_time) {
+      setCurrentTime(new Date());
       interval = setInterval(() => {
         setCurrentTime(new Date());
-      }, 60000); // Update every minute
+      }, 60000);
     }
+
     return () => {
+      subscription.remove();
       if (interval) clearInterval(interval);
     };
   }, [todayAttendance]);
@@ -220,7 +280,7 @@ export default function AttendancePage() {
         setLocationError("Location services are disabled");
         Alert.alert(
           "GPS Disabled",
-          "Please enable GPS/Location services in your device settings to check in."
+          "Please enable GPS/Location services in your device settings to check in.",
         );
         return;
       }
@@ -235,7 +295,7 @@ export default function AttendancePage() {
         if (!isWFH) {
           Alert.alert(
             "Permission Denied",
-            "Location permission is required for attendance."
+            "Location permission is required for attendance.",
           );
         }
         return;
@@ -245,7 +305,7 @@ export default function AttendancePage() {
       try {
         let location = await Location.getCurrentPositionAsync({
           accuracy: Location.Accuracy.Balanced,
-          timeInterval: 5000,
+          // Remove timeInterval as it might be specific to watchPosition
         });
         setLocation(location);
         setLocationError(null);
@@ -277,7 +337,9 @@ export default function AttendancePage() {
       user?.work_location_type === "WHF" || user?.work_location_type === "WFH";
     if (!isWFH) {
       try {
-        let location = await Location.getCurrentPositionAsync({});
+        let location = await Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.Balanced,
+        });
         setLocation(location);
       } catch (e) {}
     }
@@ -313,7 +375,7 @@ export default function AttendancePage() {
       const validation = await AttendanceService.validateLocation(
         user!.id,
         location?.coords.latitude,
-        location?.coords.longitude
+        location?.coords.longitude,
       );
 
       if (validation.isValid) {
@@ -329,7 +391,7 @@ export default function AttendancePage() {
                 onPress: () =>
                   performCheckIn(validation.allowedSites[0]?.site_id || "WFH"),
               },
-            ]
+            ],
           );
         } else if (validation.allowedSites.length === 1) {
           // Auto-select the only available site
@@ -364,13 +426,13 @@ export default function AttendancePage() {
           user!.id,
           siteId,
           location?.coords.latitude,
-          location?.coords.longitude
+          location?.coords.longitude,
         );
         if (res.success) {
           if (res.isOffline) {
             Alert.alert(
               "Saved Locally",
-              "You are currently offline. Your check-in has been saved on your device and will be synced automatically when internet is available."
+              "You are currently offline. Your check-in has been saved on your device and will be synced automatically when internet is available.",
             );
           } else {
             Alert.alert("Success", "Checked in successfully!");
@@ -384,7 +446,7 @@ export default function AttendancePage() {
         Alert.alert("Error", error.message);
       }
     },
-    [user?.id, location, fetchData]
+    [user?.id, location, fetchData],
   );
 
   const handleCheckOutPress = useCallback(async () => {
@@ -410,7 +472,7 @@ export default function AttendancePage() {
         setValidatingLocation(false);
         Alert.alert(
           "Location Error",
-          "Could not get current location for checkout. Please check GPS settings."
+          "Could not get current location for checkout. Please check GPS settings.",
         );
         return;
       }
@@ -421,7 +483,7 @@ export default function AttendancePage() {
       const res = await AttendanceService.checkOut(
         todayAttendance.id,
         currentLoc?.coords.latitude,
-        currentLoc?.coords.longitude
+        currentLoc?.coords.longitude,
       );
 
       if (res.success) {
@@ -460,7 +522,7 @@ export default function AttendancePage() {
         location?.coords.latitude,
         location?.coords.longitude,
         undefined,
-        checkoutReason
+        checkoutReason,
       );
 
       if (res.success) {
@@ -490,7 +552,7 @@ export default function AttendancePage() {
       const mins = minutes % 60;
       return `${hours}h ${mins}m`;
     },
-    [currentTime]
+    [currentTime],
   );
 
   return (
@@ -590,7 +652,7 @@ export default function AttendancePage() {
                     <Text className="text-white font-mono font-bold">
                       {format(
                         new Date(todayAttendance.check_in_time!),
-                        "h:mm a"
+                        "h:mm a",
                       )}
                     </Text>
                   </View>
@@ -608,7 +670,7 @@ export default function AttendancePage() {
                     <Text className="text-white font-mono font-bold">
                       {format(
                         new Date(todayAttendance.check_out_time),
-                        "h:mm a"
+                        "h:mm a",
                       )}
                     </Text>
                   </View>
@@ -674,112 +736,99 @@ export default function AttendancePage() {
         </ScrollView>
 
         {/* Early Checkout Reason Modal */}
-        <Modal
-          visible={isCheckoutModalVisible}
-          transparent={true}
-          animationType="fade"
-          onRequestClose={() => setIsCheckoutModalVisible(false)}
-        >
-          <View className="flex-1 bg-black/50 justify-center px-5">
-            <View className="bg-white dark:bg-slate-900 rounded-2xl p-5">
-              <View className="flex-row items-center mb-4">
-                <AlertTriangle
-                  size={24}
-                  color="#f59e0b"
-                  style={{ marginRight: 12 }}
+        {isCheckoutModalVisible && (
+          <Modal
+            visible={isCheckoutModalVisible}
+            transparent={true}
+            animationType="fade"
+            onRequestClose={() => setIsCheckoutModalVisible(false)}
+          >
+            <View className="flex-1 bg-black/50 justify-center px-5">
+              <View className="bg-white dark:bg-slate-900 rounded-2xl p-5">
+                <View className="flex-row items-center mb-4">
+                  <AlertTriangle
+                    size={24}
+                    color="#f59e0b"
+                    style={{ marginRight: 12 }}
+                  />
+                  <View className="flex-1">
+                    <Text className="text-lg font-bold text-slate-900 dark:text-slate-50 dark:bg-slate-800">
+                      Early Checkout
+                    </Text>
+                    <Text className="text-slate-500 text-sm mt-1">
+                      You worked {earlyCheckoutHours} hours (less than 7h).
+                      Please provide a reason.
+                    </Text>
+                  </View>
+                </View>
+
+                <TextInput
+                  className="bg-slate-50 border border-slate-200 rounded-xl p-3 h-24 text-slate-900 mb-4"
+                  placeholder="Enter reason here..."
+                  multiline
+                  textAlignVertical="top"
+                  value={checkoutReason}
+                  onChangeText={setCheckoutReason}
                 />
-                <View className="flex-1">
-                  <Text className="text-lg font-bold text-slate-900 dark:text-slate-50 dark:bg-slate-800">
-                    Early Checkout
-                  </Text>
-                  <Text className="text-slate-500 text-sm mt-1">
-                    You worked {earlyCheckoutHours} hours (less than 7h). Please
-                    provide a reason.
-                  </Text>
+
+                <View className="flex-row gap-3">
+                  <TouchableOpacity
+                    onPress={() => setIsCheckoutModalVisible(false)}
+                    className="flex-1 py-3 items-center"
+                  >
+                    <Text className="text-slate-500 font-bold">Cancel</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={submitEarlyCheckout}
+                    className="flex-1 bg-red-600 rounded-xl py-3 items-center"
+                  >
+                    <Text className="text-white font-bold">Submit</Text>
+                  </TouchableOpacity>
                 </View>
               </View>
-
-              <TextInput
-                className="bg-slate-50 border border-slate-200 rounded-xl p-3 h-24 text-slate-900 mb-4"
-                placeholder="Enter reason here..."
-                multiline
-                textAlignVertical="top"
-                value={checkoutReason}
-                onChangeText={setCheckoutReason}
-              />
-
-              <View className="flex-row gap-3">
-                <TouchableOpacity
-                  onPress={() => setIsCheckoutModalVisible(false)}
-                  className="flex-1 py-3 items-center"
-                >
-                  <Text className="text-slate-500 font-bold">Cancel</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  onPress={submitEarlyCheckout}
-                  className="flex-1 bg-red-600 rounded-xl py-3 items-center"
-                >
-                  <Text className="text-white font-bold">Submit</Text>
-                </TouchableOpacity>
-              </View>
             </View>
-          </View>
-        </Modal>
+          </Modal>
+        )}
 
         {/* Site Selection Modal */}
-        <Modal
-          visible={isSiteModalVisible}
-          transparent={true}
-          animationType="slide"
-          onRequestClose={() => setIsSiteModalVisible(false)}
-        >
-          <View className="flex-1 bg-black/50 justify-end">
-            <View className="bg-white dark:bg-slate-900 rounded-t-3xl p-5 max-h-[80%]">
-              <View className="flex-row items-center justify-between mb-5">
-                <Text className="text-xl font-bold text-slate-900 dark:text-slate-50 dark:bg-slate-800">
-                  Select Site
-                </Text>
-                <TouchableOpacity onPress={() => setIsSiteModalVisible(false)}>
-                  <X size={24} color="#94a3b8" />
-                </TouchableOpacity>
-              </View>
-
-              <Text className="text-slate-500 mb-4">
-                Multiple sites are within range. Please select where you are
-                checking in.
-              </Text>
-
-              <ScrollView className="mb-4">
-                {availableSites.map((site) => (
+        {isSiteModalVisible && (
+          <Modal
+            visible={isSiteModalVisible}
+            transparent={true}
+            animationType="slide"
+            onRequestClose={() => setIsSiteModalVisible(false)}
+          >
+            <View className="flex-1 bg-black/50 justify-end">
+              <View className="bg-white dark:bg-slate-900 rounded-t-3xl p-5 max-h-[80%]">
+                <View className="flex-row items-center justify-between mb-5">
+                  <Text className="text-xl font-bold text-slate-900 dark:text-slate-50 dark:bg-slate-800">
+                    Select Site
+                  </Text>
                   <TouchableOpacity
-                    key={site.site_id}
-                    onPress={() => performCheckIn(site.site_id)}
-                    className="bg-slate-50 border border-slate-200 p-4 rounded-xl mb-3 flex-row items-center"
+                    onPress={() => setIsSiteModalVisible(false)}
                   >
-                    <View className="w-10 h-10 rounded-full bg-red-100 items-center justify-center mr-3">
-                      <LucideMap size={20} color="#dc2626" />
-                    </View>
-                    <View className="flex-1">
-                      <Text className="font-bold text-slate-900 dark:text-slate-50 dark:bg-slate-800">
-                        {site.name}
-                      </Text>
-                      <Text className="text-slate-500 text-xs">
-                        {site.address}
-                      </Text>
-                    </View>
-                    {site.distance !== undefined && (
-                      <View className="bg-green-100 px-2 py-1 rounded">
-                        <Text className="text-green-700 text-xs font-bold">
-                          {site.distance}m
-                        </Text>
-                      </View>
-                    )}
+                    <X size={24} color="#94a3b8" />
                   </TouchableOpacity>
-                ))}
-              </ScrollView>
+                </View>
+
+                <Text className="text-slate-500 mb-4">
+                  Multiple sites are within range. Please select where you are
+                  checking in.
+                </Text>
+
+                <ScrollView className="mb-4">
+                  {availableSites.map((site) => (
+                    <SiteItem
+                      key={site.site_id}
+                      site={site}
+                      onSelect={performCheckIn}
+                    />
+                  ))}
+                </ScrollView>
+              </View>
             </View>
-          </View>
-        </Modal>
+          </Modal>
+        )}
       </SafeAreaView>
     </View>
   );
