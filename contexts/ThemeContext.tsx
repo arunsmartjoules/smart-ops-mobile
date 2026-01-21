@@ -8,6 +8,7 @@ import React, {
 } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useColorScheme as useSystemColorScheme, Platform } from "react-native";
+import { useColorScheme as useNativeWindColorScheme } from "nativewind";
 import { StatusBar } from "expo-status-bar";
 import logger from "@/utils/logger";
 
@@ -29,6 +30,7 @@ export const useTheme = () => useContext(ThemeContext);
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const systemColorScheme = useSystemColorScheme();
+  const { setColorScheme } = useNativeWindColorScheme();
   const [theme, setThemeState] = useState<Theme>("system");
   const [isReady, setIsReady] = useState(false);
 
@@ -36,9 +38,12 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     loadTheme();
   }, []);
 
-  // Apply theme to document for web
+  // Apply theme to both Web (DOM) and Native (NativeWind)
   useEffect(() => {
     if (!isReady) return;
+
+    // Sync with NativeWind
+    setColorScheme(theme);
 
     const effectiveTheme =
       theme === "system"
@@ -47,7 +52,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
           : "light"
         : theme;
 
-    // For web, apply dark class to document
+    // For web, apply dark class to document manually (NativeWind might handle this too, but safety first)
     if (Platform.OS === "web" && typeof document !== "undefined") {
       if (effectiveTheme === "dark") {
         document.documentElement.classList.add("dark");
@@ -55,7 +60,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
         document.documentElement.classList.remove("dark");
       }
     }
-  }, [theme, systemColorScheme, isReady]);
+  }, [theme, systemColorScheme, isReady, setColorScheme]);
 
   const loadTheme = useCallback(async () => {
     try {
@@ -65,7 +70,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
         savedTheme === "dark" ||
         savedTheme === "system"
       ) {
-        setThemeState(savedTheme);
+        setThemeState(savedTheme as Theme);
       }
     } catch (error: any) {
       logger.error("Failed to load theme preference", {

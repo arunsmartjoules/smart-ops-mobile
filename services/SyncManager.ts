@@ -2,6 +2,7 @@ import NetInfo, { NetInfoState } from "@react-native-community/netinfo";
 import { AppState, AppStateStatus } from "react-native";
 import { syncPendingAttendance } from "@/utils/offlineStorage";
 import { syncPendingTicketUpdates } from "@/utils/offlineTicketStorage";
+import { syncPendingSiteLogs } from "@/utils/syncSiteLogStorage";
 import { authService } from "./AuthService";
 import logger from "@/utils/logger";
 
@@ -155,6 +156,21 @@ class SyncManager {
         });
       } catch (err: any) {
         logger.error("Ticket sync failed", {
+          module: "SYNC_MANAGER",
+          error: err.message,
+        });
+      }
+
+      // Sync site logs and chiller readings
+      try {
+        const siteLogResult = await syncPendingSiteLogs(token, API_URL);
+        logger.info("Site logs sync complete", {
+          module: "SYNC_MANAGER",
+          synced: siteLogResult.synced,
+          failed: siteLogResult.failed,
+        });
+      } catch (err: any) {
+        logger.error("Site logs sync failed", {
           module: "SYNC_MANAGER",
           error: err.message,
         });

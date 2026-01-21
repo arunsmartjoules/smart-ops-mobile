@@ -26,7 +26,7 @@ import {
   Bell,
   MapPin,
 } from "lucide-react-native";
-import { router, useFocusEffect } from "expo-router";
+import { router } from "expo-router";
 import { useAuth } from "@/contexts/AuthContext";
 import AttendanceService, {
   type AttendanceLog,
@@ -163,11 +163,9 @@ export default function Dashboard() {
     [],
   );
 
-  useFocusEffect(
-    React.useCallback(() => {
-      fetchAttendance();
-    }, [fetchAttendance]),
-  );
+  useEffect(() => {
+    fetchAttendance();
+  }, [fetchAttendance]);
 
   const onRefresh = React.useCallback(async () => {
     setRefreshing(true);
@@ -325,6 +323,12 @@ export default function Dashboard() {
               return (
                 <TouchableOpacity
                   key={index}
+                  onPress={() => {
+                    if (stat.label === "Logs") router.push("/site-logs");
+                    else if (stat.label === "Tickets") router.push("/tickets");
+                    else if (stat.label === "PMs Due")
+                      router.push("/preventive-maintenance");
+                  }}
                   className="flex-1 bg-white dark:bg-slate-900 rounded-xl p-3"
                   style={{
                     shadowColor: "#000",
@@ -448,6 +452,7 @@ export default function Dashboard() {
             </Text>
             <View className="flex-row gap-2">
               <TouchableOpacity
+                onPress={() => router.push("/site-logs")}
                 className="flex-1 bg-white dark:bg-slate-900 rounded-xl p-3 flex-row items-center"
                 style={{
                   shadowColor: "#000",

@@ -18,7 +18,7 @@ import {
   Sun,
   Monitor,
 } from "lucide-react-native";
-import { router, useFocusEffect } from "expo-router";
+import { router } from "expo-router";
 
 const menuItems = [
   { icon: Bell, label: "Notifications", color: "#3b82f6" },
@@ -31,12 +31,9 @@ export default function Profile() {
   const { user, signOut, refreshProfile } = useAuth();
   const { theme, setTheme } = useTheme();
 
-  // Refresh profile data when screen is focused
-  useFocusEffect(
-    React.useCallback(() => {
-      refreshProfile();
-    }, [refreshProfile])
-  );
+  React.useEffect(() => {
+    refreshProfile();
+  }, [refreshProfile]);
 
   const handleLogout = useCallback(async () => {
     await signOut();
