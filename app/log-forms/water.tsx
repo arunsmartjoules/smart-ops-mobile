@@ -34,7 +34,10 @@ export default function WaterTaskList() {
 
   // Bulk Entry State
   const [logValues, setLogValues] = useState<
-    Record<string, { tds: string; ph: string; hardness: string }>
+    Record<
+      string,
+      { tds: string; ph: string; hardness: string; remarks?: string }
+    >
   >({});
   const [signature, setSignature] = useState("");
   const [entryTime] = useState(new Date().getTime());
@@ -119,7 +122,7 @@ export default function WaterTaskList() {
 
   const updateValue = (
     taskId: string,
-    field: "tds" | "ph" | "hardness",
+    field: "tds" | "ph" | "hardness" | "remarks",
     value: string,
   ) => {
     setLogValues((prev) => ({
@@ -158,7 +161,7 @@ export default function WaterTaskList() {
           tds: parseFloat(input.tds),
           ph: parseFloat(input.ph),
           hardness: parseFloat(input.hardness),
-          remarks: `Area: ${task.name}`,
+          remarks: input.remarks || "",
           signature: signature,
           entryTime: timestamps.entryTime,
           endTime: timestamps.endTime,
@@ -197,7 +200,12 @@ export default function WaterTaskList() {
   );
 
   const renderItem = ({ item }: { item: TaskItem }) => {
-    const val = logValues[item.id] || { tds: "", ph: "", hardness: "" };
+    const val = logValues[item.id] || {
+      tds: "",
+      ph: "",
+      hardness: "",
+      remarks: "",
+    };
 
     return (
       <View
@@ -254,6 +262,16 @@ export default function WaterTaskList() {
               />
             </View>
           </View>
+        </View>
+
+        {/* Remarks Field */}
+        <View className="mt-3 flex-row items-center bg-slate-50 dark:bg-slate-800 rounded-lg px-2 border border-slate-200 dark:border-slate-700">
+          <TextInput
+            value={val.remarks}
+            onChangeText={(t) => updateValue(item.id, "remarks", t)}
+            placeholder="Remarks (optional)"
+            className="flex-1 py-3 ml-1 font-medium text-slate-900 dark:text-slate-50 text-xs"
+          />
         </View>
       </View>
     );

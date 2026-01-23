@@ -31,19 +31,17 @@ import {
   getSiteLogSyncStatus,
   getPendingSiteLogsCount,
   clearAllOfflineSiteLogData,
-  syncPendingSiteLogs,
   setSiteLogAutoSyncEnabled,
   SiteLogSyncStatus,
 } from "@/utils/syncSiteLogStorage";
 import {
   getTicketSyncStatus,
   getPendingTicketUpdates,
-  clearAllOfflineTicketData,
-  clearSyncedTicketUpdates,
-  syncPendingTicketUpdates,
   setTicketAutoSyncEnabled,
+  clearAllOfflineTicketData,
   TicketSyncStatus,
-} from "@/utils/offlineTicketStorage";
+} from "@/utils/syncTicketStorage";
+import { syncManager } from "@/services/SyncManager";
 import {
   clearAllCache,
   getCacheSize,
@@ -130,27 +128,14 @@ export default function AppSettings() {
 
     setIsSyncing(true);
     try {
-      // Sync tickets
-      const ticketResult = await syncPendingTicketUpdates(token, API_URL);
-
-      // Sync site logs
-      const siteLogResult = await syncPendingSiteLogs(token, API_URL);
+      // Use unified sync manager for smart pull and push
+      await syncManager.triggerSync("manual");
 
       await loadAllStatus();
-
-      const totalSynced = ticketResult.synced + siteLogResult.synced;
-      const totalFailed = ticketResult.failed + siteLogResult.failed;
-
-      if (totalSynced > 0 || totalFailed > 0) {
-        Alert.alert(
-          "Sync Complete",
-          `${totalSynced} record(s) synced successfully.${
-            totalFailed > 0 ? ` ${totalFailed} failed.` : ""
-          }`,
-        );
-      } else {
-        Alert.alert("No Data", "No pending records to sync.");
-      }
+      Alert.alert(
+        "Success",
+        "Synchronization complete. Your local data is up to date.",
+      );
     } catch (error: any) {
       logger.error("Manual sync all failed", {
         module: "APP_SETTINGS",

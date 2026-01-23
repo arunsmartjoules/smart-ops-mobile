@@ -1,6 +1,9 @@
 import NetInfo, { NetInfoState } from "@react-native-community/netinfo";
 import { AppState, AppStateStatus } from "react-native";
-import { syncPendingTicketUpdates } from "@/utils/offlineTicketStorage";
+import {
+  syncPendingTicketUpdates,
+  pullRecentTickets,
+} from "@/utils/syncTicketStorage";
 import {
   syncPendingSiteLogs,
   pullRecentSiteLogs,
@@ -21,7 +24,9 @@ class SyncManager {
   private networkUnsubscribe: (() => void) | null = null;
   private appStateSubscription: any = null;
   private lastSyncTime: number = 0;
+  private lastHistoryPullTime: number = 0;
   private syncCooldown = 30000; // 30 seconds minimum between syncs
+  private historyPullThreshold = 12 * 60 * 60 * 1000; // 12 hours for expensive history pulls
 
   private constructor() {}
 
@@ -136,6 +141,29 @@ class SyncManager {
       // Sync ticket updates
       try {
         const ticketResult = await syncPendingTicketUpdates(token, API_URL);
+
+        // Also pull recent tickets for history (with threshold)
+        if (
+          now - this.lastHistoryPullTime > this.historyPullThreshold ||
+          reason === "manual"
+        ) {
+          // We need site IDs from user context or similar.
+          // For now, if we don't have a specific site, we'll pull for the current logged in user's sites.
+          // Getting siteId from current session...
+          const siteId = await authService.getCurrentSiteId();
+          if (siteId) {
+            const pullTicketResult = await pullRecentTickets(
+              siteId,
+              token,
+              API_URL,
+            );
+            logger.info("Ticket history pull complete", {
+              module: "SYNC_MANAGER",
+              pulled: pullTicketResult.pulled,
+            });
+          }
+        }
+
         logger.info("Ticket sync complete", {
           module: "SYNC_MANAGER",
           synced: ticketResult.synced,
@@ -152,14 +180,24 @@ class SyncManager {
       try {
         const siteLogResult = await syncPendingSiteLogs(token, API_URL);
 
-        // Also pull recent logs to populate history/tasks
-        const pullResult = await pullRecentSiteLogs(token, API_URL);
+        // Also pull recent logs to populate history/tasks (with threshold)
+        if (
+          now - this.lastHistoryPullTime > this.historyPullThreshold ||
+          reason === "manual"
+        ) {
+          const pullResult = await pullRecentSiteLogs(token, API_URL);
+          logger.info("Site logs history pull complete", {
+            module: "SYNC_MANAGER",
+            pulled: pullResult.pulled,
+          });
+
+          this.lastHistoryPullTime = now; // Update threshold tracker
+        }
 
         logger.info("Site logs sync complete", {
           module: "SYNC_MANAGER",
           synced: siteLogResult.synced,
           failed: siteLogResult.failed,
-          pulled: pullResult.pulled,
         });
       } catch (err: any) {
         logger.error("Site logs sync failed", {

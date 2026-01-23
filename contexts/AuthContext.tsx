@@ -142,22 +142,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         return { error: result.error || "Login failed" };
       }
 
-      const { token, user } = result.data;
+      const { token, user: userData } = result.data;
 
       await SecureStorage.setItem(SECURE_KEYS.AUTH_TOKEN, token);
-      await AsyncStorage.setItem("auth_user", JSON.stringify(user));
+      await SecureStorage.setItem("user_id", userData.user_id || userData.id);
+      await AsyncStorage.setItem("auth_user", JSON.stringify(userData));
 
       setToken(token);
       setUser(user);
 
-      // Register for push notifications (don't block login if it fails)
-      registerForPushNotifications(user.user_id, token).catch((error) => {
-        logger.warn("Push registration background failure", {
-          module: "AUTH_CONTEXT",
-          error: error.message,
-          userId: user.user_id,
+      if (userData) {
+        // Register for push notifications (don't block login if it fails)
+        registerForPushNotifications(userData.user_id, token).catch((error) => {
+          logger.warn("Push registration background failure", {
+            module: "AUTH_CONTEXT",
+            error: error.message,
+            userId: userData.user_id,
+          });
         });
-      });
+      }
 
       return { error: null };
     } catch (error: any) {

@@ -303,10 +303,10 @@ export async function pullRecentSiteLogs(
 ): Promise<{ pulled: number }> {
   let pulled = 0;
   try {
-    // Calculate date for 30 days ago
-    const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-    const startDate = thirtyDaysAgo.toISOString();
+    // Calculate date for 90 days ago (3 months)
+    const ninetyDaysAgo = new Date();
+    ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
+    const startDate = ninetyDaysAgo.toISOString();
 
     const response = await fetchWithTimeout(
       `${apiUrl}/api/site-logs?startDate=${startDate}&limit=1000`,

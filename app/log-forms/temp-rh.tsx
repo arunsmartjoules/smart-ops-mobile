@@ -9,6 +9,7 @@ import {
   Alert,
   KeyboardAvoidingView,
   Platform,
+  Image,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { router } from "expo-router";
@@ -17,6 +18,7 @@ import {
   Thermometer,
   CloudRain,
   CheckCircle2,
+  Camera,
 } from "lucide-react-native";
 import { SiteConfigService, TaskItem } from "@/services/SiteConfigService";
 import { useAuth } from "@/contexts/AuthContext";
@@ -24,6 +26,8 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { format } from "date-fns";
 import SiteLogService from "@/services/SiteLogService";
 import SignaturePad from "@/components/SignaturePad";
+import * as ImagePicker from "expo-image-picker";
+import { StorageService } from "@/services/StorageService";
 
 export default function TempRHTaskList() {
   const { user } = useAuth();
@@ -33,79 +37,53 @@ export default function TempRHTaskList() {
 
   // Bulk Entry State
   const [logValues, setLogValues] = useState<
-    Record<string, { temp: string; rh: string }>
+    Record<
+      string,
+      { temp: string; rh: string; attachment?: string; remarks?: string }
+    >
   >({});
   const [signature, setSignature] = useState("");
   const [entryTime] = useState(new Date().getTime());
   const [saving, setSaving] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [uploadingAttachments, setUploadingAttachments] = useState<
+    Record<string, boolean>
+  >({});
 
   useEffect(() => {
-    loadTasks();
-  }, []);
-
-  // Load draft from storage when siteId is ready
-  useEffect(() => {
-    if (siteId) {
-      loadDraft();
-    }
-  }, [siteId]);
-
-  // Save draft to storage whenever logValues or signature changes
-  useEffect(() => {
-    if (siteId) {
-      const saveDraft = async () => {
-        try {
-          const draftKey = `draft_temprh_${siteId}_${user?.user_id}`;
-          await AsyncStorage.setItem(
-            draftKey,
-            JSON.stringify({ values: logValues, signature }),
-          );
-        } catch (e) {
-          console.error("Failed to save draft", e);
-        }
-      };
-      const timer = setTimeout(saveDraft, 500); // Debounce
-      return () => clearTimeout(timer);
-    }
-  }, [logValues, signature, siteId]);
-
-  const loadDraft = async () => {
-    try {
-      const draftKey = `draft_temprh_${siteId}_${user?.user_id}`;
-      const savedDraft = await AsyncStorage.getItem(draftKey);
-      if (savedDraft) {
-        const { values, signature: sig } = JSON.parse(savedDraft);
-        if (values) setLogValues(values);
-        if (sig) setSignature(sig);
-      }
-    } catch (e) {
-      console.error("Failed to load draft", e);
-    }
-  };
-
-  const loadTasks = async () => {
-    try {
-      setLoading(true);
-      const storageKey = `last_site_${user?.user_id || user?.id}`;
-      const savedSiteId = await AsyncStorage.getItem(storageKey);
-
-      if (savedSiteId) {
-        setSiteId(savedSiteId);
-        const areaTasks = await SiteConfigService.getLogTasks(
-          savedSiteId,
-          "Temp RH",
+    const loadData = async () => {
+      try {
+        setLoading(true);
+        // We need to get the siteId either from params or the last active one
+        const lastSite = await AsyncStorage.getItem(
+          `last_site_${user?.user_id || user?.id}`,
         );
-        setTasks(areaTasks);
-      }
-    } catch (error) {
-      console.error("Failed to load area tasks", error);
-    } finally {
-      setLoading(false);
-    }
-  };
 
-  const updateValue = (taskId: string, field: "temp" | "rh", value: string) => {
+        if (lastSite) {
+          setSiteId(lastSite);
+          const t = await SiteConfigService.getLogTasks(lastSite, "Temp RH");
+          setTasks(t);
+        } else {
+          // If no site selected, go back? or show empty?
+          // For now, let's assume one is selected.
+        }
+      } catch (e) {
+        console.error("Failed to load temp rh tasks", e);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    if (user) {
+      loadData();
+    }
+  }, [user]);
+
+  const updateValue = (
+    taskId: string,
+    field: "temp" | "rh" | "attachment" | "remarks",
+    value: string,
+  ) => {
     setLogValues((prev) => ({
       ...prev,
       [taskId]: {
@@ -113,6 +91,48 @@ export default function TempRHTaskList() {
         [field]: value,
       },
     }));
+  };
+
+  const handleTakePhoto = async (taskId: string) => {
+    try {
+      const result = await ImagePicker.requestCameraPermissionsAsync();
+      if (!result.granted) {
+        Alert.alert("Permission Required", "Camera permission is required.");
+        return;
+      }
+
+      const pickerResult = await ImagePicker.launchCameraAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        quality: 0.5,
+        allowsEditing: false, // simpler experience
+      });
+
+      if (
+        !pickerResult.canceled &&
+        pickerResult.assets &&
+        pickerResult.assets.length > 0
+      ) {
+        setUploadingAttachments((prev) => ({ ...prev, [taskId]: true }));
+        const uri = pickerResult.assets[0].uri;
+
+        const filename = `temprh/${siteId}/${taskId}_${Date.now()}.jpg`;
+        const publicUrl = await StorageService.uploadFile(
+          "site-log-attachments",
+          filename,
+          uri,
+        );
+
+        if (publicUrl) {
+          updateValue(taskId, "attachment", publicUrl);
+        } else {
+          Alert.alert("Upload Failed", "Could not upload image.");
+        }
+      }
+    } catch (e: any) {
+      Alert.alert("Error", e.message);
+    } finally {
+      setUploadingAttachments((prev) => ({ ...prev, [taskId]: false }));
+    }
   };
 
   const clearDraft = async () => {
@@ -144,6 +164,9 @@ export default function TempRHTaskList() {
 
     for (const task of filteredTasks) {
       const input = logValues[task.id];
+      // Allow saving if just attachment is present? No, typically temp/rh are required.
+      // But maybe user wants to safeguard photos.
+      // Let's stick to requiring temp & rh as per existing logic, but include attachment if present.
       if (input && input.temp && input.rh) {
         entriesToSave.push({
           siteId: siteId,
@@ -152,15 +175,15 @@ export default function TempRHTaskList() {
           taskName: task.name,
           temperature: parseFloat(input.temp),
           rh: parseFloat(input.rh),
-          remarks: `Area: ${task.name}`,
+          remarks: input.remarks || "",
           signature: signature,
           entryTime: timestamps.entryTime,
           endTime: timestamps.endTime,
           status: "completed",
+          attachment: input.attachment || null, // Add attachment
         });
       }
     }
-
     if (entriesToSave.length === 0) {
       Alert.alert(
         "No Data",
@@ -191,7 +214,13 @@ export default function TempRHTaskList() {
   );
 
   const renderItem = ({ item }: { item: TaskItem }) => {
-    const val = logValues[item.id] || { temp: "", rh: "" };
+    const val = logValues[item.id] || {
+      temp: "",
+      rh: "",
+      attachment: "",
+      remarks: "",
+    };
+    const isUploading = uploadingAttachments[item.id];
 
     return (
       <View
@@ -204,12 +233,11 @@ export default function TempRHTaskList() {
           {item.isCompleted && (
             <View className="flex-row items-center">
               <CheckCircle2 size={16} color="#16a34a" />
-              {/* User requested not to show text, or keep it subtle. I'll remove text to reduce clutter. */}
             </View>
           )}
         </View>
 
-        <View className="flex-row space-x-3 gap-3">
+        <View className="flex-row space-x-3 gap-3 items-center mb-3">
           <View className="flex-1">
             <View className="flex-row items-center bg-slate-50 dark:bg-slate-800 rounded-lg px-3 border border-slate-200 dark:border-slate-700">
               <Thermometer size={16} color="#ef4444" />
@@ -237,6 +265,34 @@ export default function TempRHTaskList() {
               <Text className="text-xs text-slate-400 font-bold">%</Text>
             </View>
           </View>
+
+          {/* Camera Button */}
+          <TouchableOpacity
+            onPress={() => handleTakePhoto(item.id)}
+            disabled={isUploading}
+            className={`w-12 h-12 rounded-xl items-center justify-center border ${val.attachment ? "bg-slate-100 border-slate-200" : "bg-slate-50 border-dashed border-slate-300"}`}
+          >
+            {isUploading ? (
+              <ActivityIndicator size="small" color="#0d9488" />
+            ) : val.attachment ? (
+              <Image
+                source={{ uri: val.attachment }}
+                className="w-10 h-10 rounded-lg"
+              />
+            ) : (
+              <Camera size={20} color="#94a3b8" />
+            )}
+          </TouchableOpacity>
+        </View>
+
+        {/* Remarks Field */}
+        <View className="flex-row items-center bg-slate-50 dark:bg-slate-800 rounded-lg px-3 border border-slate-200 dark:border-slate-700">
+          <TextInput
+            value={val.remarks}
+            onChangeText={(t) => updateValue(item.id, "remarks", t)}
+            placeholder="Remarks (optional)"
+            className="flex-1 py-3 font-medium text-slate-900 dark:text-slate-50 text-xs"
+          />
         </View>
       </View>
     );

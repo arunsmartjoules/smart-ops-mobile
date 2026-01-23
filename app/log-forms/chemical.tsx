@@ -28,7 +28,7 @@ export default function ChemicalTaskList() {
 
   // Bulk Entry State
   const [logValues, setLogValues] = useState<
-    Record<string, { dosing: string }>
+    Record<string, { dosing: string; remarks?: string }>
   >({});
   const [signature, setSignature] = useState("");
   const [entryTime] = useState(new Date().getTime());
@@ -112,10 +112,17 @@ export default function ChemicalTaskList() {
     }
   };
 
-  const updateValue = (taskId: string, value: string) => {
+  const updateValue = (
+    taskId: string,
+    field: "dosing" | "remarks",
+    value: string,
+  ) => {
     setLogValues((prev) => ({
       ...prev,
-      [taskId]: { dosing: value },
+      [taskId]: {
+        ...prev[taskId],
+        [field === "dosing" ? "dosing" : "remarks"]: value,
+      },
     }));
   };
 
@@ -144,7 +151,7 @@ export default function ChemicalTaskList() {
           logName: "Chemical Dosing",
           taskName: task.name,
           chemicalDosing: input.dosing,
-          remarks: `Area: ${task.name}`,
+          remarks: input.remarks || "",
           signature: signature,
           entryTime: timestamps.entryTime,
           endTime: timestamps.endTime,
@@ -183,7 +190,7 @@ export default function ChemicalTaskList() {
   );
 
   const renderItem = ({ item }: { item: TaskItem }) => {
-    const val = logValues[item.id] || { dosing: "" };
+    const val = logValues[item.id] || { dosing: "", remarks: "" };
 
     return (
       <View
@@ -201,13 +208,23 @@ export default function ChemicalTaskList() {
           )}
         </View>
 
-        <View className="flex-row items-center bg-slate-50 dark:bg-slate-800 rounded-lg px-3 border border-slate-200 dark:border-slate-700">
+        <View className="flex-row items-center bg-slate-50 dark:bg-slate-800 rounded-lg px-3 border border-slate-200 dark:border-slate-700 mb-3">
           <FlaskConical size={16} color="#a855f7" />
           <TextInput
             value={val.dosing}
-            onChangeText={(t) => updateValue(item.id, t)}
+            onChangeText={(t) => updateValue(item.id, "dosing", t)}
             placeholder="Dosing Details"
             className="flex-1 py-3 ml-2 font-bold text-slate-900 dark:text-slate-50"
+          />
+        </View>
+
+        {/* Remarks Field */}
+        <View className="flex-row items-center bg-slate-50 dark:bg-slate-800 rounded-lg px-3 border border-slate-200 dark:border-slate-700">
+          <TextInput
+            value={val.remarks}
+            onChangeText={(t) => updateValue(item.id, "remarks", t)}
+            placeholder="Remarks (optional)"
+            className="flex-1 py-3 font-medium text-slate-900 dark:text-slate-50 text-xs"
           />
         </View>
       </View>

@@ -541,6 +541,59 @@ export const SiteLogService = {
   },
 
   /**
+   * Get progress counts (Pending vs Total) for dashboard
+   */
+  async getCategoryProgress(
+    siteId: string,
+  ): Promise<Record<string, { total: number; completed: number }>> {
+    try {
+      const SiteConfigService =
+        require("./SiteConfigService").SiteConfigService; // Circular dependency handling
+
+      // 1. Temp RH
+      const tempTasks = await SiteConfigService.getLogTasks(siteId, "Temp RH");
+      const tempTotal = tempTasks.length;
+      const tempCompleted = tempTasks.filter((t: any) => t.isCompleted).length;
+
+      // 2. Chiller Readings
+      const chillerTasks = await SiteConfigService.getChillerTasks(siteId);
+      const chillerTotal = chillerTasks.length;
+      const chillerCompleted = chillerTasks.filter(
+        (t: any) => t.isCompleted,
+      ).length;
+
+      // 3. Water
+      const waterTask = await SiteConfigService.getGenericTask(siteId, "Water");
+
+      // 4. Chemical
+      const chemTask = await SiteConfigService.getGenericTask(
+        siteId,
+        "Chemical Dosing",
+      );
+
+      // Map to "Display Title" keys
+      return {
+        "Temp RH": { total: tempTotal || 0, completed: tempCompleted || 0 },
+        "Chiller Logs": {
+          total: chillerTotal || 0,
+          completed: chillerCompleted || 0,
+        },
+        Water: { total: 1, completed: waterTask.isCompleted ? 1 : 0 },
+        "Chemical Dosing": {
+          total: 1,
+          completed: chemTask.isCompleted ? 1 : 0,
+        },
+      };
+    } catch (error: any) {
+      logger.error("Error calculating progress", {
+        module: "SITE_LOG_SERVICE",
+        error: error.message,
+      });
+      return {};
+    }
+  },
+
+  /**
    * Get pending (unsynced) counts
    */
   async getUnsyncedCounts(): Promise<number> {

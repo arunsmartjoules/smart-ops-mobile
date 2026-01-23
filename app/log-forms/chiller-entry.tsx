@@ -7,12 +7,21 @@ import {
   TextInput,
   Alert,
   ActivityIndicator,
+  Image,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { router, useLocalSearchParams } from "expo-router";
-import { ChevronLeft, Snowflake, Info } from "lucide-react-native";
+import {
+  ChevronLeft,
+  Snowflake,
+  Info,
+  Camera,
+  Trash2,
+} from "lucide-react-native";
 import SiteLogService from "@/services/SiteLogService";
 import { useAuth } from "@/contexts/AuthContext";
+import * as ImagePicker from "expo-image-picker";
+import { StorageService } from "@/services/StorageService";
 
 export default function ChillerEntry() {
   const { user } = useAuth();
@@ -28,15 +37,67 @@ export default function ChillerEntry() {
     condenserOutletTemp: "",
     evaporatorInletTemp: "",
     evaporatorOutletTemp: "",
-    pressure: "", // General pressure field if needed
+    pressure: "",
     oilPressure: "",
     load: "",
     remarks: "",
+    attachment: "",
   });
   const [saving, setSaving] = useState(false);
+  const [uploading, setUploading] = useState(false);
 
   const updateField = (field: string, value: string) => {
     setFormData((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const handleTakePhoto = async () => {
+    try {
+      const result = await ImagePicker.requestCameraPermissionsAsync();
+      if (!result.granted) {
+        Alert.alert(
+          "Permission Required",
+          "Camera permission is required to take photos.",
+        );
+        return;
+      }
+
+      const pickerResult = await ImagePicker.launchCameraAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        quality: 0.5,
+      });
+
+      if (
+        !pickerResult.canceled &&
+        pickerResult.assets &&
+        pickerResult.assets.length > 0
+      ) {
+        setUploading(true);
+        const uri = pickerResult.assets[0].uri;
+
+        // Generate filename
+        const filename = `chiller/${params.siteId}/${Date.now()}.jpg`;
+
+        // Upload
+        const publicUrl = await StorageService.uploadFile(
+          "site-log-attachments",
+          filename,
+          uri,
+        );
+
+        if (publicUrl) {
+          updateField("attachment", publicUrl);
+        } else {
+          Alert.alert(
+            "Upload Failed",
+            "Could not upload image. Please try again.",
+          );
+        }
+      }
+    } catch (e: any) {
+      Alert.alert("Error", e.message);
+    } finally {
+      setUploading(false);
+    }
   };
 
   const handleSave = async () => {
@@ -59,6 +120,7 @@ export default function ChillerEntry() {
         compressorLoadPercentage: parseFloat(formData.load),
         remarks: formData.remarks,
         readingTime: new Date().getTime(),
+        attachments: formData.attachment,
       });
 
       Alert.alert("Success", "Reading saved successfully", [
@@ -70,6 +132,8 @@ export default function ChillerEntry() {
       setSaving(false);
     }
   };
+
+  // ... (renderInput helper kept same, implicitly)
 
   const renderInput = (
     label: string,
@@ -171,6 +235,44 @@ export default function ChillerEntry() {
                 "w-[48%]",
               )}
               {renderInput("Comp. Load (%)", "load", "--", "w-[48%]")}
+            </View>
+
+            <View className="mb-6 mt-2">
+              <Text className="text-slate-900 dark:text-slate-50 font-bold text-base mb-4">
+                Attachment
+              </Text>
+              {formData.attachment ? (
+                <View className="relative">
+                  <Image
+                    source={{ uri: formData.attachment }}
+                    className="w-full h-48 rounded-xl bg-slate-100"
+                    resizeMode="cover"
+                  />
+                  <TouchableOpacity
+                    onPress={() => updateField("attachment", "")}
+                    className="absolute top-2 right-2 bg-red-500 w-8 h-8 rounded-full items-center justify-center p-1"
+                  >
+                    <Trash2 size={16} color="white" />
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <TouchableOpacity
+                  onPress={handleTakePhoto}
+                  disabled={uploading}
+                  className="w-full h-32 border-2 border-dashed border-slate-300 dark:border-slate-700 rounded-xl items-center justify-center bg-slate-50 dark:bg-slate-900"
+                >
+                  {uploading ? (
+                    <ActivityIndicator color="#0d9488" />
+                  ) : (
+                    <>
+                      <Camera size={24} color="#94a3b8" />
+                      <Text className="text-slate-400 font-bold text-xs mt-2 uppercase tracking-wider">
+                        Take Photo
+                      </Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+              )}
             </View>
 
             <View className="mb-8 mt-2">

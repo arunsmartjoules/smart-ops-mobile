@@ -35,9 +35,9 @@ export default function SiteLogs() {
   const [refreshing, setRefreshing] = useState(false);
   const [siteId, setSiteId] = useState<string | null>(null);
   const [siteName, setSiteName] = useState<string>("Select Site");
-  const [summaryCounts, setSummaryCounts] = useState<Record<string, number>>(
-    {},
-  );
+  const [logProgress, setLogProgress] = useState<
+    Record<string, { total: number; completed: number }>
+  >({});
   const [availableSites, setAvailableSites] = useState<Site[]>([]);
   const [filterVisible, setFilterVisible] = useState(false);
   const [fromDate, setFromDate] = useState<Date | null>(null);
@@ -88,8 +88,9 @@ export default function SiteLogs() {
             console.log("Sync warning", e);
           }
         }
-        const counts = await SiteLogService.getSummaryCounts(lastSite);
-        setSummaryCounts(counts);
+        // Get rich progress counts
+        const progress = await SiteLogService.getCategoryProgress(lastSite);
+        setLogProgress(progress);
       }
     } catch (e) {
       console.error(e);
@@ -121,6 +122,7 @@ export default function SiteLogs() {
     {
       id: "temp-rh",
       title: "Temp & Humidity",
+      shortTitle: "Temp",
       route: "/log-forms/temp-rh",
       subtitle: "Monitoring Points",
       icon: Thermometer,
@@ -131,6 +133,7 @@ export default function SiteLogs() {
     {
       id: "chiller",
       title: "Chiller Readings",
+      shortTitle: "Chiller",
       route: "/log-forms/chiller",
       subtitle: "Performance Logs",
       icon: Snowflake,
@@ -141,6 +144,7 @@ export default function SiteLogs() {
     {
       id: "water",
       title: "Water Quality",
+      shortTitle: "Water",
       route: "/log-forms/water",
       subtitle: "TDS, pH, Hardness",
       icon: Droplets,
@@ -151,6 +155,7 @@ export default function SiteLogs() {
     {
       id: "chemical",
       title: "Chemical Dosing",
+      shortTitle: "Chemical",
       route: "/log-forms/chemical",
       subtitle: "Consumption Logs",
       icon: FlaskRound,
@@ -164,59 +169,86 @@ export default function SiteLogs() {
     <View className="flex-1 bg-slate-50 dark:bg-slate-950">
       <SafeAreaView className="flex-1" edges={["top"]}>
         {/* Header */}
-        <View className="px-5 pt-4 pb-6 bg-white dark:bg-slate-900 border-b border-slate-100 dark:border-slate-800">
+        <View className="px-5 pt-2 pb-3">
           <View className="flex-row items-center justify-between mb-6">
             <View className="flex-1">
-              <Text className="text-slate-400 dark:text-slate-500 text-xs font-bold uppercase tracking-wider mb-1">
+              <Text className="text-slate-400 dark:text-slate-500 text-sm font-medium mb-1">
                 Site Operations
               </Text>
               <TouchableOpacity
                 onPress={() => setFilterVisible(true)}
                 className="flex-row items-center"
               >
-                <MapPin size={20} color="#dc2626" />
+                <MapPin size={22} color="#dc2626" />
                 <Text
-                  className="text-slate-900 dark:text-slate-50 text-2xl font-black ml-2 mr-1"
+                  className="text-slate-900 dark:text-slate-50 text-2xl font-bold ml-2 mr-1"
                   numberOfLines={1}
                 >
                   {siteName}
                 </Text>
-                <ChevronDown size={18} color="#94a3b8" />
+                <ChevronDown size={20} color="#94a3b8" />
               </TouchableOpacity>
             </View>
             <TouchableOpacity
               onPress={() => setFilterVisible(true)}
-              className="w-11 h-11 rounded-xl bg-slate-100 dark:bg-slate-800 items-center justify-center"
+              className="w-11 h-11 rounded-xl bg-white dark:bg-slate-900 items-center justify-center"
+              style={{
+                shadowColor: "#000",
+                shadowOffset: { width: 0, height: 2 },
+                shadowOpacity: 0.08,
+                shadowRadius: 8,
+                elevation: 3,
+              }}
             >
               <Filter size={20} color={fromDate ? "#dc2626" : "#64748b"} />
             </TouchableOpacity>
           </View>
 
           {/* Stats Bar */}
-          <View className="flex-row gap-3">
+          <View className="flex-row gap-2">
             {loading
               ? [1, 2, 3, 4].map((i) => (
                   <Skeleton
                     key={i}
-                    height={60}
+                    height={80}
                     style={{ flex: 1, borderRadius: 12 }}
                   />
                 ))
               : categories.map((cat) => {
-                  const count = summaryCounts[getLogName(cat.title)] || 0;
+                  const progress = logProgress[getLogName(cat.title)] || {
+                    total: 0,
+                    completed: 0,
+                  };
+                  const pending = Math.max(
+                    0,
+                    progress.total - progress.completed,
+                  );
                   return (
                     <View
                       key={cat.id}
-                      className={`flex-1 rounded-2xl p-3 items-center justify-center ${cat.bg}`}
+                      className="flex-1 bg-white dark:bg-slate-900 rounded-xl p-3"
+                      style={{
+                        shadowColor: "#000",
+                        shadowOffset: { width: 0, height: 1 },
+                        shadowOpacity: 0.05,
+                        shadowRadius: 4,
+                        elevation: 2,
+                      }}
                     >
-                      <Text
-                        className="text-lg font-black"
-                        style={{ color: cat.accent }}
+                      <View
+                        className={`w-8 h-8 rounded-lg items-center justify-center mb-2 ${cat.bg}`}
                       >
-                        {count}
+                        <cat.icon size={16} color={cat.accent} />
+                      </View>
+                      <Text className="text-xl font-bold text-slate-900 dark:text-slate-50">
+                        {pending}
                       </Text>
-                      <View className="h-1" />
-                      <cat.icon size={12} color={cat.accent} opacity={0.7} />
+                      <Text
+                        className="text-slate-400 dark:text-slate-500 text-[10px] font-bold uppercase tracking-tight"
+                        numberOfLines={1}
+                      >
+                        {cat.shortTitle || cat.title}
+                      </Text>
                     </View>
                   );
                 })}
@@ -251,84 +283,106 @@ export default function SiteLogs() {
                 Log Categories
               </Text>
 
-              {categories.map((item) => (
-                <View
-                  key={item.id}
-                  className="bg-white dark:bg-slate-900 rounded-3xl p-5 mb-5 shadow-sm shadow-slate-200 dark:shadow-none border border-slate-100 dark:border-slate-800"
-                >
-                  <View className="flex-row items-start mb-6">
-                    <View
-                      className="w-14 h-14 rounded-2xl items-center justify-center mr-4 shadow-lg shadow-slate-200"
-                      style={{
-                        backgroundColor: item.colors[0],
-                        shadowColor: item.colors[0],
-                        shadowOpacity: 0.3,
-                        shadowRadius: 8,
-                        elevation: 4,
-                      }}
-                    >
-                      <item.icon size={26} color="white" />
-                    </View>
+              {categories.map((item) => {
+                const progress = logProgress[getLogName(item.title)] || {
+                  total: 0,
+                  completed: 0,
+                };
+                const pending = Math.max(
+                  0,
+                  progress.total - progress.completed,
+                );
 
-                    <View className="flex-1 pt-1">
-                      <Text className="text-slate-900 dark:text-slate-50 font-bold text-xl leading-6">
-                        {item.title}
-                      </Text>
-                      <Text className="text-slate-400 font-medium text-sm mt-1">
-                        {item.subtitle}
-                      </Text>
-                    </View>
-                  </View>
-
-                  <View className="flex-row gap-3">
-                    <TouchableOpacity
-                      onPress={() => router.push(item.route as any)}
-                      activeOpacity={0.8}
-                      className="flex-1"
-                    >
+                return (
+                  <View
+                    key={item.id}
+                    className="bg-white dark:bg-slate-900 rounded-xl p-4 mb-3"
+                    style={{
+                      shadowColor: "#000",
+                      shadowOffset: { width: 0, height: 1 },
+                      shadowOpacity: 0.05,
+                      shadowRadius: 4,
+                      elevation: 2,
+                    }}
+                  >
+                    <View className="flex-row items-center mb-4">
                       <View
-                        className="py-3.5 rounded-xl flex-row items-center justify-center shadow-md shadow-slate-200"
-                        style={{
-                          backgroundColor: item.colors[0],
-                          shadowColor: item.colors[0],
-                          shadowOpacity: 0.4,
-                          shadowRadius: 6,
-                          elevation: 4,
-                        }}
+                        className={`w-10 h-10 rounded-lg items-center justify-center mr-3 ${item.bg}`}
                       >
-                        <Plus
-                          size={16}
-                          color="white"
-                          strokeWidth={3}
-                          style={{ marginRight: 6 }}
-                        />
-                        <Text className="text-white font-bold text-sm">
-                          Start Task
+                        <item.icon size={20} color={item.accent} />
+                      </View>
+
+                      <View className="flex-1">
+                        <View className="flex-row justify-between items-center">
+                          <Text className="text-slate-900 dark:text-slate-50 font-bold text-base">
+                            {item.title}
+                          </Text>
+                          {progress.total > 0 && (
+                            <View
+                              className={`px-2 py-0.5 rounded-md ${pending === 0 ? "bg-green-100" : "bg-red-50"}`}
+                            >
+                              <Text
+                                className={`text-xs font-bold ${pending === 0 ? "text-green-700" : "text-red-600"}`}
+                              >
+                                {pending === 0
+                                  ? "All Done"
+                                  : `${pending}/${progress.total} Pending`}
+                              </Text>
+                            </View>
+                          )}
+                        </View>
+                        <Text className="text-slate-400 text-xs mt-0.5">
+                          {item.subtitle}
                         </Text>
                       </View>
-                    </TouchableOpacity>
+                    </View>
 
-                    <TouchableOpacity
-                      onPress={() =>
-                        router.push({
-                          pathname: "/history/site-history",
-                          params: { siteId, logName: getLogName(item.title) },
-                        })
-                      }
-                      className="flex-1 bg-slate-100 dark:bg-slate-800 py-3.5 rounded-xl flex-row items-center justify-center"
-                    >
-                      <History
-                        size={16}
-                        color="#64748b"
-                        style={{ marginRight: 6 }}
-                      />
-                      <Text className="text-slate-600 dark:text-slate-300 font-bold text-sm">
-                        History
-                      </Text>
-                    </TouchableOpacity>
+                    <View className="flex-row gap-3">
+                      <TouchableOpacity
+                        onPress={() => router.push(item.route as any)}
+                        activeOpacity={0.8}
+                        className="flex-1"
+                      >
+                        <View
+                          className="py-3 rounded-lg flex-row items-center justify-center"
+                          style={{
+                            backgroundColor: item.colors[0],
+                          }}
+                        >
+                          <Plus
+                            size={16}
+                            color="white"
+                            strokeWidth={2.5}
+                            style={{ marginRight: 6 }}
+                          />
+                          <Text className="text-white font-bold text-sm">
+                            Start
+                          </Text>
+                        </View>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        onPress={() =>
+                          router.push({
+                            pathname: "/history/site-history",
+                            params: { siteId, logName: getLogName(item.title) },
+                          })
+                        }
+                        className="flex-1 bg-slate-50 dark:bg-slate-800 py-3 rounded-lg flex-row items-center justify-center border border-slate-100 dark:border-slate-700"
+                      >
+                        <History
+                          size={16}
+                          color="#64748b"
+                          style={{ marginRight: 6 }}
+                        />
+                        <Text className="text-slate-600 dark:text-slate-300 font-bold text-sm">
+                          History
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
                   </View>
-                </View>
-              ))}
+                );
+              })}
             </>
           )}
         </ScrollView>

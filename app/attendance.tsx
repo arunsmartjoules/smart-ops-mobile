@@ -228,7 +228,7 @@ export default function AttendancePage() {
     const isWFH =
       user?.work_location_type === "WHF" || user?.work_location_type === "WFH";
     if (!isWFH) {
-      requestLocationPermission();
+      ensureLocation();
     }
   }, [fetchData]);
 
@@ -272,62 +272,81 @@ export default function AttendancePage() {
     };
   }, [todayAttendance]);
 
-  const requestLocationPermission = useCallback(async () => {
-    try {
-      // 1. Check if location services are enabled
-      const enabled = await Location.hasServicesEnabledAsync();
-      if (!enabled) {
-        setLocationError("Location services are disabled");
-        Alert.alert(
-          "GPS Disabled",
-          "Please enable GPS/Location services in your device settings to check in.",
-        );
-        return;
-      }
-
-      // 2. Request permissions
-      let { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== "granted") {
-        setLocationError("Permission to access location was denied");
-        const isWFH =
-          user?.work_location_type === "WHF" ||
-          user?.work_location_type === "WFH";
-        if (!isWFH) {
-          Alert.alert(
-            "Permission Denied",
-            "Location permission is required for attendance.",
-          );
-        }
-        return;
-      }
-
-      // 3. Try to get current position with a timeout
+  // Robust location getter
+  const ensureLocation =
+    useCallback(async (): Promise<Location.LocationObject | null> => {
       try {
-        let location = await Location.getCurrentPositionAsync({
-          accuracy: Location.Accuracy.Balanced,
-          // Remove timeInterval as it might be specific to watchPosition
-        });
-        setLocation(location);
-        setLocationError(null);
-      } catch (error) {
-        // 4. Fallback to last known position if current fails
-        const lastLocation = await Location.getLastKnownPositionAsync({});
-        if (lastLocation) {
-          setLocation(lastLocation);
-          setLocationError(null);
-        } else {
-          setLocationError("Could not fetch location");
+        // 1. Check services
+        const enabled = await Location.hasServicesEnabledAsync();
+        if (!enabled) {
+          setLocationError("Location services are disabled");
+          Alert.alert(
+            "GPS Disabled",
+            "Please enable GPS/Location services in your device settings.",
+            [{ text: "OK" }],
+          );
+          return null;
         }
+
+        // 2. Check & Request Permissions
+        let { status } = await Location.getForegroundPermissionsAsync();
+        if (status !== "granted") {
+          const permissionResponse =
+            await Location.requestForegroundPermissionsAsync();
+          status = permissionResponse.status;
+        }
+
+        if (status !== "granted") {
+          setLocationError("Permission to access location was denied");
+          const isWFH =
+            user?.work_location_type === "WHF" ||
+            user?.work_location_type === "WFH";
+          if (!isWFH) {
+            Alert.alert(
+              "Permission Required",
+              "Location permission is required to mark attendance. Please allow access in settings.",
+              [{ text: "OK" }],
+            );
+          }
+          return null;
+        }
+
+        // 3. Get Position
+        const locationResult = await Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.Balanced,
+        });
+        setLocation(locationResult); // Update state as well
+        setLocationError(null);
+        return locationResult;
+      } catch (error: any) {
+        console.log("Location error:", error);
+        // Fallback to last known
+        try {
+          const lastKnown = await Location.getLastKnownPositionAsync({});
+          if (lastKnown) {
+            setLocation(lastKnown);
+            return lastKnown;
+          }
+        } catch (e) {}
+
+        Alert.alert(
+          "Location Error",
+          "Could not fetch current location. Please check your GPS signal.",
+        );
+        setLocationError("Could not fetch location");
+        return null;
       }
-    } catch (error: any) {
-      logger.error("Location permission error", {
-        module: "ATTENDANCE_SCREEN",
-        error: error.message,
-        userId: user?.id,
-      });
-      setLocationError("Location initialization failed");
+    }, [user?.work_location_type]);
+
+  useEffect(() => {
+    fetchData();
+    // Only request location if not WFH
+    const isWFH =
+      user?.work_location_type === "WHF" || user?.work_location_type === "WFH";
+    if (!isWFH) {
+      ensureLocation();
     }
-  }, [user?.id, user?.work_location_type]);
+  }, [fetchData, ensureLocation]); // Updated dependency
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -361,29 +380,29 @@ export default function AttendancePage() {
     if (!location && !isWFH) {
       setValidatingLocation(true); // Show spinner immediately
       try {
-        // Try last known first (fastest)
-        const lastKnown = await Location.getLastKnownPositionAsync();
-        if (lastKnown && Date.now() - lastKnown.timestamp < 30000) {
-          setLocation(lastKnown);
-        } else {
-          // If no recent last known, request permission and get current
-          await requestLocationPermission();
-          const loc = await Location.getCurrentPositionAsync({
-            accuracy: Location.Accuracy.Balanced,
-          });
-          setLocation(loc);
+        const loc = await ensureLocation();
+        if (!loc) {
+          setValidatingLocation(false);
+          return; // ensureLocation handles alerts
         }
-      } catch (e) {
-        // Fallback or error handled below in the validation block
-      }
+      } catch (e) {}
     }
 
     setValidatingLocation(true);
     try {
+      // Re-check location state (it might have been updated by ensureLocation) or use param
+      // Actually ensureLocation returns loc, so use it if available
+      const locToUse = location || (await ensureLocation());
+
+      if (!locToUse && !isWFH) {
+        setValidatingLocation(false);
+        return;
+      }
+
       const validation = await AttendanceService.validateLocation(
         user!.id,
-        location?.coords.latitude,
-        location?.coords.longitude,
+        locToUse?.coords.latitude,
+        locToUse?.coords.longitude,
       );
 
       if (validation.isValid) {
@@ -425,7 +444,7 @@ export default function AttendancePage() {
     } finally {
       setValidatingLocation(false);
     }
-  }, [user, location, requestLocationPermission]);
+  }, [user, location, ensureLocation]);
 
   const performCheckIn = useCallback(
     async (siteId: string) => {
@@ -472,26 +491,20 @@ export default function AttendancePage() {
     setValidatingLocation(true);
     let currentLoc = location;
     try {
-      // Try fast lookup first
-      const lastKnown = await Location.getLastKnownPositionAsync();
-      if (lastKnown && Date.now() - lastKnown.timestamp < 15000) {
-        currentLoc = lastKnown;
+      // Check if location is stale (older than 1 minute) or null
+      // But safer to just ensure location again
+      const freshLoc = await ensureLocation();
+      if (freshLoc) {
+        currentLoc = freshLoc;
       } else {
-        currentLoc = await Location.getCurrentPositionAsync({
-          accuracy: Location.Accuracy.Balanced,
-        });
-      }
-      setLocation(currentLoc);
-    } catch (e) {
-      // Use existing location if fetch fails, or alert
-      if (!currentLoc) {
+        // ensureLocation handles alerts, but if it returns null, we stop
         setValidatingLocation(false);
-        Alert.alert(
-          "Location Error",
-          "Could not get current location for checkout. Please check GPS settings.",
-        );
         return;
       }
+    } catch (e) {
+      // should be handled by ensureLocation
+      setValidatingLocation(false);
+      return;
     }
 
     try {

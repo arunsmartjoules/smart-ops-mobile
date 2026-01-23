@@ -1,5 +1,6 @@
 import { SecureStorage, SECURE_KEYS } from "../utils/secureStorage";
 import logger from "../utils/logger";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 // We need to avoid circular dependencies if we import API_CONFIG constant
 // So we define the base URL dynamically or import carefully
@@ -110,6 +111,18 @@ class AuthService {
   async clearTokens(): Promise<void> {
     await SecureStorage.clearAll();
     this.tokenExpiresAt = null;
+  }
+
+  async getCurrentUserId(): Promise<string | null> {
+    // This assumes we stored it during login.
+    // Usually it's in the decoded token or saved as a separate key.
+    return await SecureStorage.getItem("user_id");
+  }
+
+  async getCurrentSiteId(): Promise<string | null> {
+    const userId = await this.getCurrentUserId();
+    if (!userId) return null;
+    return await AsyncStorage.getItem(`last_site_${userId}`);
   }
 }
 

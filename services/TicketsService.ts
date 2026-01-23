@@ -1,9 +1,6 @@
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import logger from "../utils/logger";
 import { authEvents } from "../utils/authEvents";
 import {
-  cacheTickets,
-  getCachedTickets,
   cacheAreas,
   getCachedAreas,
   cacheCategories,
@@ -11,6 +8,13 @@ import {
 } from "../utils/offlineDataCache";
 import { authService } from "../services/AuthService";
 import { fetchWithTimeout } from "../utils/apiHelper";
+import {
+  database,
+  ticketCollection,
+  ticketUpdateCollection,
+} from "../database";
+import { Q } from "@nozbe/watermelondb";
+import { pullRecentTickets } from "../utils/syncTicketStorage";
 
 const BACKEND_URL =
   process.env.EXPO_PUBLIC_BACKEND_URL || "http://192.168.31.152:3420";
@@ -117,6 +121,67 @@ export const TicketsService = {
    */
   async getTickets(siteId: string, options: any = {}) {
     const { status, fromDate, toDate, search, page = 1, limit = 50 } = options;
+
+    // 1. Return local data if searching/filtering within standard view
+    if (page === 1) {
+      try {
+        let query = ticketCollection.query(
+          Q.where("site_id", siteId),
+          Q.sortBy("created_at", Q.desc),
+        );
+
+        const conditions: any[] = [];
+        if (status) conditions.push(Q.where("status", status));
+        if (search) {
+          conditions.push(
+            Q.where("title", Q.like(`%${Q.sanitizeLikeString(search)}%`)),
+          );
+        }
+
+        if (conditions.length > 0) {
+          query = ticketCollection.query(
+            Q.where("site_id", siteId),
+            ...conditions,
+            Q.sortBy("created_at", Q.desc),
+          );
+        }
+
+        const localTickets = await query.fetch();
+        if (localTickets.length > 0) {
+          // Fire background sync if online
+          const token = await authService.getValidToken();
+          if (token) {
+            pullRecentTickets(siteId, token, BACKEND_URL).catch((e) =>
+              logger.debug("Background ticket pull failed", {
+                error: e.message,
+              }),
+            );
+          }
+
+          return {
+            success: true,
+            data: localTickets.map((t) => ({
+              ticket_id: t.serverId,
+              ticket_no: t.ticketNumber,
+              title: t.title,
+              description: t.description,
+              status: t.status,
+              priority: t.priority,
+              category: t.category,
+              location: t.area,
+              assigned_to: t.assignedTo,
+              created_user: t.createdBy,
+              created_at: t.createdAt.toISOString(),
+            })),
+            isFromCache: true,
+          };
+        }
+      } catch (err) {
+        logger.error("Error fetching local tickets", { error: err });
+      }
+    }
+
+    // 2. Fallback to API if no local data or requested specific page
     const params = new URLSearchParams();
     if (status) params.append("status", status);
     if (fromDate) params.append("fromDate", fromDate);
@@ -128,29 +193,6 @@ export const TicketsService = {
     const result = await apiFetch(
       `/api/complaints/site/${siteId}?${params.toString()}`,
     );
-
-    if (result.success) {
-      // Background: update cache if first page and no search/filter (standard view)
-      if (page === 1 && !status && !fromDate && !toDate && !search) {
-        cacheTickets(siteId, result.data);
-      }
-      return result;
-    }
-
-    // Fallback to cache if network error
-    if (
-      result.isNetworkError &&
-      page === 1 &&
-      !status &&
-      !fromDate &&
-      !toDate &&
-      !search
-    ) {
-      const cached = await getCachedTickets(siteId);
-      if (cached && cached.length > 0) {
-        return { success: true, data: cached, isFromCache: true };
-      }
-    }
 
     return result;
   },
@@ -166,20 +208,53 @@ export const TicketsService = {
    * Update ticket status and remarks
    */
   async updateStatus(ticketId: string, status: string, remarks?: string) {
-    return await apiFetch(`/api/complaints/${ticketId}/status`, {
-      method: "PATCH",
-      body: JSON.stringify({ status, remarks }),
-    });
+    try {
+      // 1. Create offline update record first
+      await database.write(async () => {
+        await ticketUpdateCollection.create((record) => {
+          record.ticketId = ticketId; // This should be local ID or server ID depending on model.
+          // Usually we want to find the model by serverId and use its local id.
+          record.updateType = "status";
+          record.updateData = JSON.stringify({ status, remarks });
+          record.isSynced = false;
+        });
+      });
+
+      // 2. Attempt API update
+      const result = await apiFetch(`/api/complaints/${ticketId}/status`, {
+        method: "PATCH",
+        body: JSON.stringify({ status, remarks }),
+      });
+
+      return result;
+    } catch (err: any) {
+      return { success: false, error: "Offline: Update queued." };
+    }
   },
 
   /**
    * Update ticket details (Area/Asset, Category)
    */
   async updateTicket(ticketId: string, data: any) {
-    return await apiFetch(`/api/complaints/${ticketId}`, {
-      method: "PUT",
-      body: JSON.stringify(data),
-    });
+    try {
+      // 1. Queue offline update
+      await database.write(async () => {
+        await ticketUpdateCollection.create((record) => {
+          record.ticketId = ticketId;
+          record.updateType = "details";
+          record.updateData = JSON.stringify(data);
+          record.isSynced = false;
+        });
+      });
+
+      // 2. Attempt API update
+      return await apiFetch(`/api/complaints/${ticketId}`, {
+        method: "PUT",
+        body: JSON.stringify(data),
+      });
+    } catch (err) {
+      return { success: false, error: "Offline: Update queued." };
+    }
   },
 
   /**
