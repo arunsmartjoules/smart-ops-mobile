@@ -14,6 +14,7 @@ import {
 
 interface SignaturePadProps {
   onClear?: () => void;
+  onChange?: (signature: string | null) => void;
 }
 
 export interface SignaturePadHandle {
@@ -22,21 +23,20 @@ export interface SignaturePadHandle {
 }
 
 export const SignaturePad = forwardRef<SignaturePadHandle, SignaturePadProps>(
-  ({ onClear }, ref) => {
+  ({ onClear, onChange }, ref) => {
     const [paths, setPaths] = useState<string[]>([]);
     const [currentPath, setCurrentPath] = useState<string>("");
 
     useImperativeHandle(ref, () => ({
       getSignature: () => {
         if (paths.length === 0) return null;
-        // In a real app, you might want to convert the SVG to a base64 image
-        // For now, we'll store the SVG path data as a string
         return paths.join(";");
       },
       clear: () => {
         setPaths([]);
         setCurrentPath("");
         if (onClear) onClear();
+        if (onChange) onChange(null);
       },
     }));
 
@@ -52,8 +52,10 @@ export const SignaturePad = forwardRef<SignaturePadHandle, SignaturePadProps>(
     const onHandlerStateChange = (event: any) => {
       if (event.nativeEvent.state === State.END) {
         if (currentPath) {
-          setPaths([...paths, currentPath]);
+          const newPaths = [...paths, currentPath];
+          setPaths(newPaths);
           setCurrentPath("");
+          if (onChange) onChange(newPaths.join(";"));
         }
       }
     };
@@ -71,17 +73,21 @@ export const SignaturePad = forwardRef<SignaturePadHandle, SignaturePadProps>(
                   <Path
                     key={i}
                     d={p}
-                    stroke="black"
+                    stroke="#0f172a"
                     strokeWidth={3}
                     fill="none"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
                   />
                 ))}
                 {currentPath ? (
                   <Path
                     d={currentPath}
-                    stroke="black"
+                    stroke="#0f172a"
                     strokeWidth={3}
                     fill="none"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
                   />
                 ) : null}
               </Svg>
@@ -93,10 +99,21 @@ export const SignaturePad = forwardRef<SignaturePadHandle, SignaturePadProps>(
               setPaths([]);
               setCurrentPath("");
               if (onClear) onClear();
+              if (onChange) onChange(null);
             }}
-            className="absolute bottom-2 right-2 bg-slate-100 px-3 py-1 rounded-full"
+            activeOpacity={0.7}
+            className="absolute bottom-4 right-4 bg-white dark:bg-slate-800 px-4 py-2 rounded-xl border border-slate-100 dark:border-slate-700"
+            style={{
+              shadowColor: "#000",
+              shadowOffset: { width: 0, height: 1 },
+              shadowOpacity: 0.1,
+              shadowRadius: 2,
+              elevation: 2,
+            }}
           >
-            <Text className="text-slate-500 text-xs font-bold">Clear</Text>
+            <Text className="text-slate-600 dark:text-slate-300 text-[10px] font-bold uppercase tracking-wider">
+              Clear
+            </Text>
           </TouchableOpacity>
         </View>
       </GestureHandlerRootView>
@@ -108,11 +125,9 @@ const styles = StyleSheet.create({
   container: {
     height: 180,
     width: "100%",
-    backgroundColor: "#f8fafc",
-    borderRadius: 16,
+    backgroundColor: "#fff",
+    borderRadius: 12,
     overflow: "hidden",
-    borderWidth: 1,
-    borderColor: "#e2e8f0",
   },
   pad: {
     flex: 1,

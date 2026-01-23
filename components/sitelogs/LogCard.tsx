@@ -57,12 +57,12 @@ export const LogCard: React.FC<LogCardProps> = ({ log, type, onPress }) => {
     <TouchableOpacity
       onPress={onPress}
       activeOpacity={0.7}
-      className="bg-white dark:bg-slate-900 rounded-2xl p-4 mb-3"
+      className="bg-white dark:bg-slate-900 rounded-xl p-4 mb-3 border border-slate-50 dark:border-slate-800"
       style={{
         shadowColor: "#000",
-        shadowOffset: { width: 0, height: 2 },
+        shadowOffset: { width: 0, height: 1 },
         shadowOpacity: 0.05,
-        shadowRadius: 8,
+        shadowRadius: 4,
         elevation: 2,
       }}
     >
@@ -109,20 +109,106 @@ export const LogCard: React.FC<LogCardProps> = ({ log, type, onPress }) => {
           </View>
         </View>
       </View>
-      
-      {/* Optional: Add summary values here if available in log object */}
-      {type === "Temp RH" && (log.temperature || log.rh) && (
-        <View className="mt-3 pt-3 border-t border-slate-50 dark:border-slate-800 flex-row gap-4">
-           <View>
-             <Text className="text-[10px] text-slate-400 font-bold uppercase">Temp</Text>
-             <Text className="text-slate-700 font-semibold">{log.temperature || "--"}°C</Text>
-           </View>
-           <View>
-             <Text className="text-[10px] text-slate-400 font-bold uppercase">RH</Text>
-             <Text className="text-slate-700 font-semibold">{log.rh || "--"}%</Text>
-           </View>
+
+      {/* Summary data based on type */}
+      {type === "Temp RH" && (log.temperature != null || log.rh != null) && (
+        <View className="mt-3 pt-3 border-t border-slate-50 dark:border-slate-800 flex-row gap-6">
+          <View>
+            <Text className="text-[10px] text-slate-400 font-bold uppercase tracking-tighter">
+              Temperature
+            </Text>
+            <Text className="text-slate-700 dark:text-slate-300 font-semibold">
+              {log.temperature ?? "--"}°C
+            </Text>
+          </View>
+          <View>
+            <Text className="text-[10px] text-slate-400 font-bold uppercase tracking-tighter">
+              Humidity
+            </Text>
+            <Text className="text-slate-700 dark:text-slate-300 font-semibold">
+              {log.rh ?? "--"}%
+            </Text>
+          </View>
         </View>
       )}
+
+      {type === "Water" &&
+        (log.tds != null || log.ph != null || log.hardness != null) && (
+          <View className="mt-3 pt-3 border-t border-slate-50 dark:border-slate-800 flex-row gap-6">
+            <View>
+              <Text className="text-[10px] text-slate-400 font-bold uppercase tracking-tighter">
+                TDS
+              </Text>
+              <Text className="text-slate-700 dark:text-slate-300 font-semibold">
+                {log.tds ?? "--"}
+                <Text className="text-[10px] font-normal">ppm</Text>
+              </Text>
+            </View>
+            <View>
+              <Text className="text-[10px] text-slate-400 font-bold uppercase tracking-tighter">
+                pH
+              </Text>
+              <Text className="text-slate-700 dark:text-slate-300 font-semibold">
+                {log.ph ?? "--"}
+              </Text>
+            </View>
+            <View>
+              <Text className="text-[10px] text-slate-400 font-bold uppercase tracking-tighter">
+                Hardness
+              </Text>
+              <Text className="text-slate-700 dark:text-slate-300 font-semibold">
+                {log.hardness ?? "--"}
+              </Text>
+            </View>
+          </View>
+        )}
+
+      {type === "Chemical Dosing" && log.chemicalDosing && (
+        <View className="mt-3 pt-3 border-t border-slate-50 dark:border-slate-800">
+          <Text className="text-[10px] text-slate-400 font-bold uppercase tracking-tighter mb-1">
+            Chemical Dosing Details
+          </Text>
+          <Text
+            className="text-slate-700 dark:text-slate-300 font-semibold"
+            numberOfLines={1}
+          >
+            {log.chemicalDosing}
+          </Text>
+        </View>
+      )}
+
+      {type === "Chiller Logs" &&
+        (log.evaporatorOutletTemp != null ||
+          log.condenserInletTemp != null) && (
+          <View className="mt-3 pt-3 border-t border-slate-50 dark:border-slate-800 flex-row gap-6">
+            <View>
+              <Text className="text-[10px] text-slate-400 font-bold uppercase tracking-tighter">
+                Evap Out
+              </Text>
+              <Text className="text-slate-700 dark:text-slate-300 font-semibold">
+                {log.evaporatorOutletTemp ?? "--"}°C
+              </Text>
+            </View>
+            <View>
+              <Text className="text-[10px] text-slate-400 font-bold uppercase tracking-tighter">
+                Cond In
+              </Text>
+              <Text className="text-slate-700 dark:text-slate-300 font-semibold">
+                {log.condenserInletTemp ?? "--"}°C
+              </Text>
+            </View>
+            {log.compressorLoadPercentage != null && (
+              <View>
+                <Text className="text-[10px] text-slate-400 font-bold uppercase tracking-tighter">
+                  Load
+                </Text>
+                <Text className="text-slate-700 dark:text-slate-300 font-semibold">
+                  {log.compressorLoadPercentage}%
+                </Text>
+              </View>
+            )}
+          </View>
+        )}
     </TouchableOpacity>
   );
 };

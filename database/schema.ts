@@ -1,7 +1,7 @@
 import { appSchema, tableSchema } from "@nozbe/watermelondb";
 
 export const schema = appSchema({
-  version: 2,
+  version: 6,
   tables: [
     // Attendance records for offline sync
     tableSchema({
@@ -96,7 +96,6 @@ export const schema = appSchema({
         { name: "cached_at", type: "number" },
       ],
     }),
-    // Site logs for Temp RH, Water, and Chemical Dosing
     tableSchema({
       name: "site_logs",
       columns: [
@@ -106,14 +105,10 @@ export const schema = appSchema({
           isOptional: true,
           isIndexed: true,
         },
-        { name: "log_id", type: "string" },
-        { name: "task_line_id", type: "string", isOptional: true },
-        { name: "sequence_no", type: "number", isOptional: true },
         { name: "site_id", type: "string", isIndexed: true },
         { name: "executor_id", type: "string" },
-        { name: "scheduled_date", type: "number", isOptional: true },
-        { name: "entry_time", type: "number", isOptional: true },
-        { name: "end_time", type: "number", isOptional: true },
+        { name: "log_name", type: "string", isIndexed: true },
+        { name: "task_name", type: "string", isOptional: true },
         { name: "temperature", type: "number", isOptional: true },
         { name: "rh", type: "number", isOptional: true },
         { name: "tds", type: "number", isOptional: true },
@@ -121,13 +116,12 @@ export const schema = appSchema({
         { name: "hardness", type: "number", isOptional: true },
         { name: "chemical_dosing", type: "string", isOptional: true },
         { name: "remarks", type: "string", isOptional: true },
-        { name: "main_remarks", type: "string", isOptional: true },
-        { name: "attachment", type: "string", isOptional: true },
+        { name: "entry_time", type: "number", isOptional: true },
+        { name: "end_time", type: "number", isOptional: true },
         { name: "signature", type: "string", isOptional: true },
-        { name: "log_name", type: "string", isIndexed: true },
-        { name: "task_name", type: "string", isOptional: true },
+        { name: "attachment", type: "string", isOptional: true },
+        { name: "status", type: "string", isOptional: true }, // Added status
         { name: "is_synced", type: "boolean" },
-        { name: "last_sync", type: "number", isOptional: true },
         { name: "created_at", type: "number" },
         { name: "updated_at", type: "number" },
       ],
@@ -183,6 +177,7 @@ export const schema = appSchema({
         { name: "reviewed_by", type: "string", isOptional: true },
         { name: "signature_text", type: "string", isOptional: true },
         { name: "attachments", type: "string", isOptional: true },
+        { name: "status", type: "string", isOptional: true }, // Added status
         { name: "is_synced", type: "boolean" },
         { name: "created_at", type: "number" },
         { name: "updated_at", type: "number" },

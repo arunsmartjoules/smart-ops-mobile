@@ -234,35 +234,6 @@ export const AttendanceService = {
       }),
     });
 
-    if (result.isNetworkError) {
-      const timestamp = new Date().toISOString();
-      await saveOfflineAttendance({
-        user_id: userId,
-        site_id: siteId,
-        punch_type: "punch_in",
-        timestamp,
-        latitude,
-        longitude,
-      });
-
-      // Construct a mock log item for UI
-      const mockLog: AttendanceLog = {
-        id: `offline_${Date.now()}`,
-        user_id: userId,
-        site_id: siteId,
-        date: new Intl.DateTimeFormat("en-CA", {
-          timeZone: "Asia/Kolkata",
-          year: "numeric",
-          month: "2-digit",
-          day: "2-digit",
-        }).format(new Date()),
-        check_in_time: timestamp,
-        status: "Present",
-      };
-
-      return { success: true, data: mockLog, isOffline: true };
-    }
-
     return result;
   },
 
@@ -283,20 +254,7 @@ export const AttendanceService = {
     hoursWorked?: string;
     isOffline?: boolean;
   }> {
-    // If it's an offline attendance ID, we can't call API directly
-    // but we can save the punch out record.
-    // However, the backend needs an actual record ID to finish.
-    // In our simplified offline mode, we'll try to find the user_id and site_id
-    // from the mock attendanceId or state if we were robust, but for now
-    // we assume most checkouts happen online or we need to find the user from context.
-
-    // Let's refine the offline punch record to be more generic.
-    // Finding user_id here might be tricky without passing it.
-    // For now, let's just attempt the API and if it fails due to network,
-    // we save it offline IF we have the user_id (maybe passed in remarks or similar hacks,
-    // but better to fix the signature).
-
-    const result = await apiFetch(`/api/attendance/${attendanceId}/check-out`, {
+    return await apiFetch(`/api/attendance/${attendanceId}/check-out`, {
       method: "POST",
       body: JSON.stringify({
         latitude,
@@ -305,16 +263,6 @@ export const AttendanceService = {
         remarks,
       }),
     });
-
-    if (result.isNetworkError) {
-      // NOTE: For offline check-out to work, we'd ideally need the user_id and site_id.
-      // Since the current signature only has attendanceId, we might need to store
-      // those when we check in or fetch them from current app state.
-      // For this POC, we'll rely on the API.
-      return result;
-    }
-
-    return result;
   },
 
   /**

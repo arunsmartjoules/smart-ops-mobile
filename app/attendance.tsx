@@ -347,6 +347,14 @@ export default function AttendancePage() {
   }, [fetchData, user?.work_location_type]);
 
   const handleCheckInPress = useCallback(async () => {
+    if (!isConnected) {
+      Alert.alert(
+        "Internet Required",
+        "An active internet connection is required to check in. Please check your connection and try again.",
+      );
+      return;
+    }
+
     const isWFH =
       user?.work_location_type === "WHF" || user?.work_location_type === "WFH";
 
@@ -421,6 +429,13 @@ export default function AttendancePage() {
 
   const performCheckIn = useCallback(
     async (siteId: string) => {
+      if (!isConnected) {
+        Alert.alert(
+          "Error",
+          "Internet connection lost. Please try again when online.",
+        );
+        return;
+      }
       try {
         const res = await AttendanceService.checkIn(
           user!.id,
@@ -429,14 +444,7 @@ export default function AttendancePage() {
           location?.coords.longitude,
         );
         if (res.success) {
-          if (res.isOffline) {
-            Alert.alert(
-              "Saved Locally",
-              "You are currently offline. Your check-in has been saved on your device and will be synced automatically when internet is available.",
-            );
-          } else {
-            Alert.alert("Success", "Checked in successfully!");
-          }
+          Alert.alert("Success", "Checked in successfully!");
           setIsSiteModalVisible(false);
           fetchData();
         } else {
@@ -446,11 +454,19 @@ export default function AttendancePage() {
         Alert.alert("Error", error.message);
       }
     },
-    [user?.id, location, fetchData],
+    [user?.id, location, fetchData, isConnected],
   );
 
   const handleCheckOutPress = useCallback(async () => {
     if (!todayAttendance) return;
+
+    if (!isConnected) {
+      Alert.alert(
+        "Internet Required",
+        "An active internet connection is required to check out. Please check your connection and try again.",
+      );
+      return;
+    }
 
     // Refresh location for checkout
     setValidatingLocation(true);
@@ -563,7 +579,7 @@ export default function AttendancePage() {
           <View className="bg-amber-500 py-1.5 px-4 flex-row items-center justify-center">
             <WifiOff size={14} color="white" />
             <Text className="text-white text-xs font-bold ml-2">
-              Offline Mode — Punches will be saved locally
+              Viewing Offline — Internet required for Check-in/out
             </Text>
           </View>
         )}

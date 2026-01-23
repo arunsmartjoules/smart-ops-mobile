@@ -1,70 +1,103 @@
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import {
   View,
   Text,
   TouchableOpacity,
-  FlatList,
   RefreshControl,
-  ActivityIndicator,
   ScrollView,
-  Dimensions,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { router } from "expo-router";
-import { LogCard } from "@/components/sitelogs/LogCard";
 import { useAuth } from "@/contexts/AuthContext";
 import SiteLogService from "@/services/SiteLogService";
+import LogFilterModal from "@/components/sitelogs/LogFilterModal";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { Filter, Calendar } from "lucide-react-native";
-
-const LOG_TYPES = [
-  "Temp RH",
-  "Water Parameters",
-  "Chemical Dosing",
-  "Chiller Logs",
-];
-
-const { width } = Dimensions.get("window");
+import {
+  Filter,
+  MapPin,
+  ChevronDown,
+  Thermometer,
+  Droplets,
+  FlaskRound,
+  Snowflake,
+  History,
+  Plus,
+} from "lucide-react-native";
+import { useNetworkStatus } from "@/hooks/useNetworkStatus";
+import AttendanceService, { type Site } from "@/services/AttendanceService";
+import logger from "@/utils/logger";
+import Skeleton from "@/components/Skeleton";
+import { LinearGradient } from "expo-linear-gradient";
 
 export default function SiteLogs() {
   const { user } = useAuth();
-  const [activeTab, setActiveTab] = useState("Temp RH");
-  const [logs, setLogs] = useState<Record<string, any[]>>({});
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [siteId, setSiteId] = useState<string | null>(null);
-
-  // Ref for the horizontal pager
-  const pagerRef = useRef<FlatList>(null);
-  // Ref for the tab scroll view
-  const tabRef = useRef<ScrollView>(null);
+  const [siteName, setSiteName] = useState<string>("Select Site");
+  const [summaryCounts, setSummaryCounts] = useState<Record<string, number>>(
+    {},
+  );
+  const [availableSites, setAvailableSites] = useState<Site[]>([]);
+  const [filterVisible, setFilterVisible] = useState(false);
+  const [fromDate, setFromDate] = useState<Date | null>(null);
+  const [toDate, setToDate] = useState<Date | null>(null);
+  const { isConnected } = useNetworkStatus();
 
   const fetchLogs = useCallback(async () => {
     try {
-      if (!refreshing) setLoading(true);
-      const lastSite = await AsyncStorage.getItem(`last_site_${user?.user_id}`);
+      if (!refreshing) setLoading(true); // Show skeleton on initial load or site switch
+      const storageKey = `last_site_${user?.user_id || user?.id}`;
+      const lastSite = await AsyncStorage.getItem(storageKey);
+
       setSiteId(lastSite);
 
-      if (lastSite) {
-        // Fetch all log types in parallel for smoother swiping
-        const promises = LOG_TYPES.map((type) =>
-          SiteLogService.getLogsByType(lastSite, type)
+      if (user?.user_id || user?.id) {
+        const sites = await AttendanceService.getUserSites(
+          user?.user_id || user?.id || "",
         );
-        const results = await Promise.all(promises);
-        
-        const newLogs: Record<string, any[]> = {};
-        LOG_TYPES.forEach((type, index) => {
-          newLogs[type] = results[index];
-        });
-        setLogs(newLogs);
+        setAvailableSites(sites);
+        const currentSite = sites.find((s) => s.site_code === lastSite);
+        if (currentSite) setSiteName(currentSite.name);
+
+        if (!lastSite && sites.length > 0) {
+          const firstSite = sites[0].site_code;
+          if (firstSite) {
+            setSiteId(firstSite);
+            setSiteName(sites[0].name);
+            await AsyncStorage.setItem(storageKey, firstSite);
+            fetchLogs();
+            return;
+          }
+        }
       }
-    } catch (error) {
-      console.error("Error fetching logs:", error);
+
+      if (lastSite) {
+        // ... fetching logic ...
+        if (isConnected) {
+          try {
+            const pullOptions = {
+              fromDate: fromDate?.getTime(),
+              toDate: toDate?.getTime(),
+            };
+            await Promise.all([
+              SiteLogService.pullSiteLogs(lastSite, pullOptions),
+              SiteLogService.pullChillerReadings(lastSite, pullOptions),
+            ]);
+          } catch (e) {
+            console.log("Sync warning", e);
+          }
+        }
+        const counts = await SiteLogService.getSummaryCounts(lastSite);
+        setSummaryCounts(counts);
+      }
+    } catch (e) {
+      console.error(e);
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [user?.user_id]);
+  }, [user?.user_id, refreshing, fromDate, toDate, isConnected]);
 
   useEffect(() => {
     fetchLogs();
@@ -75,167 +108,255 @@ export default function SiteLogs() {
     fetchLogs();
   };
 
-  const handleTabPress = (type: string, index: number) => {
-    setActiveTab(type);
-    pagerRef.current?.scrollToIndex({ index, animated: true });
+  const getLogName = (title: string) => {
+    // Robust mapping
+    if (title.includes("Temp")) return "Temp RH";
+    if (title.includes("Water")) return "Water";
+    if (title.includes("Chemical")) return "Chemical Dosing";
+    if (title.includes("Chiller")) return "Chiller Logs";
+    return title;
   };
 
-  const handlePageScroll = (event: any) => {
-    const slideSize = event.nativeEvent.layoutMeasurement.width;
-    const index = event.nativeEvent.contentOffset.x / slideSize;
-    const roundIndex = Math.round(index);
-    
-    const newTab = LOG_TYPES[roundIndex];
-    if (newTab && newTab !== activeTab) {
-      setActiveTab(newTab);
-      // Optional: Scroll tab into view if needed
-    }
-  };
-
-  const renderLogItem = useCallback(
-    ({ item, type }: { item: any; type: string }) => (
-      <LogCard
-        log={item}
-        type={type}
-        onPress={() =>
-          router.push(`/sitelog-detail?id=${item.id}&type=${type}`)
-        }
-      />
-    ),
-    []
-  );
-
-  const renderPage = ({ item: type }: { item: string }) => {
-    const typeLogs = logs[type] || [];
-    
-    return (
-      <View style={{ width }} className="flex-1">
-        <FlatList
-          data={typeLogs}
-          renderItem={({ item }) => renderLogItem({ item, type })}
-          keyExtractor={(item) => item.id}
-          contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 100 }}
-          showsVerticalScrollIndicator={false}
-          refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#dc2626" />
-          }
-          ListEmptyComponent={
-            !loading ? (
-              <View className="py-20 items-center justify-center px-4">
-                <View className="w-20 h-20 bg-slate-100 dark:bg-slate-800 rounded-full items-center justify-center mb-4">
-                  <Filter size={36} color="#cbd5e1" />
-                </View>
-                <Text className="text-slate-900 dark:text-slate-50 font-bold text-lg">
-                  No logs found
-                </Text>
-                <Text className="text-slate-400 dark:text-slate-500 text-sm mt-1 text-center">
-                  No scheduled {type} logs found.
-                </Text>
-              </View>
-            ) : null
-          }
-          ListFooterComponent={
-            loading && !refreshing ? (
-              <View className="py-6">
-                <ActivityIndicator color="#dc2626" />
-              </View>
-            ) : null
-          }
-        />
-      </View>
-    );
-  };
+  const categories = [
+    {
+      id: "temp-rh",
+      title: "Temp & Humidity",
+      route: "/log-forms/temp-rh",
+      subtitle: "Monitoring Points",
+      icon: Thermometer,
+      colors: ["#ef4444", "#f87171"],
+      bg: "bg-red-50 dark:bg-red-900/20",
+      accent: "#ef4444",
+    },
+    {
+      id: "chiller",
+      title: "Chiller Readings",
+      route: "/log-forms/chiller",
+      subtitle: "Performance Logs",
+      icon: Snowflake,
+      colors: ["#0d9488", "#14b8a6"],
+      bg: "bg-teal-50 dark:bg-teal-900/20",
+      accent: "#0d9488",
+    },
+    {
+      id: "water",
+      title: "Water Quality",
+      route: "/log-forms/water",
+      subtitle: "TDS, pH, Hardness",
+      icon: Droplets,
+      colors: ["#3b82f6", "#60a5fa"],
+      bg: "bg-blue-50 dark:bg-blue-900/20",
+      accent: "#3b82f6",
+    },
+    {
+      id: "chemical",
+      title: "Chemical Dosing",
+      route: "/log-forms/chemical",
+      subtitle: "Consumption Logs",
+      icon: FlaskRound,
+      colors: ["#8b5cf6", "#a78bfa"],
+      bg: "bg-violet-50 dark:bg-violet-900/20",
+      accent: "#8b5cf6",
+    },
+  ];
 
   return (
     <View className="flex-1 bg-slate-50 dark:bg-slate-950">
-      <SafeAreaView className="flex-1" edges={['top']}>
+      <SafeAreaView className="flex-1" edges={["top"]}>
         {/* Header */}
-        <View className="px-5 pt-2 pb-3 flex-row items-center">
-          <Text className="text-slate-900 dark:text-slate-50 text-3xl font-black">
-            Logs
-          </Text>
-          <View className="flex-1" />
-          <TouchableOpacity
-            className="w-10 h-10 rounded-xl bg-white dark:bg-slate-900 items-center justify-center"
-            style={{
-              shadowColor: "#000",
-              shadowOffset: { width: 0, height: 2 },
-              shadowOpacity: 0.05,
-              shadowRadius: 8,
-              elevation: 2,
-            }}
-          >
-            <Calendar size={20} color="#0f172a" />
-          </TouchableOpacity>
-        </View>
-
-        {/* Custom Tabs (Pills) */}
-        <View className="mb-4">
-          <ScrollView
-            ref={tabRef}
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={{ paddingHorizontal: 20, gap: 8 }}
-          >
-            {LOG_TYPES.map((type, index) => {
-              const isActive = activeTab === type;
-              let activeBg = "bg-slate-900";
-              let activeText = "text-white";
-              
-              if (isActive) {
-                 if (type === "Temp RH") activeBg = "bg-red-600";
-                 else if (type === "Water Parameters") activeBg = "bg-blue-600";
-                 else if (type === "Chemical Dosing") activeBg = "bg-violet-600";
-                 else if (type === "Chiller Logs") activeBg = "bg-cyan-600";
-              }
-
-              return (
-                <TouchableOpacity
-                  key={type}
-                  onPress={() => handleTabPress(type, index)}
-                  className={`px-4 py-2 rounded-xl border ${
-                    isActive
-                      ? `${activeBg} border-transparent`
-                      : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800"
-                  }`}
-                  style={{
-                    shadowColor: isActive ? "#000" : "transparent",
-                    shadowOffset: { width: 0, height: 2 },
-                    shadowOpacity: isActive ? 0.2 : 0,
-                    shadowRadius: 4,
-                    elevation: isActive ? 4 : 0,
-                  }}
+        <View className="px-5 pt-4 pb-6 bg-white dark:bg-slate-900 border-b border-slate-100 dark:border-slate-800">
+          <View className="flex-row items-center justify-between mb-6">
+            <View className="flex-1">
+              <Text className="text-slate-400 dark:text-slate-500 text-xs font-bold uppercase tracking-wider mb-1">
+                Site Operations
+              </Text>
+              <TouchableOpacity
+                onPress={() => setFilterVisible(true)}
+                className="flex-row items-center"
+              >
+                <MapPin size={20} color="#dc2626" />
+                <Text
+                  className="text-slate-900 dark:text-slate-50 text-2xl font-black ml-2 mr-1"
+                  numberOfLines={1}
                 >
-                  <Text
-                    className={`text-xs font-bold ${
-                      isActive
-                        ? activeText
-                        : "text-slate-500 dark:text-slate-400"
-                    }`}
-                  >
-                    {type}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
+                  {siteName}
+                </Text>
+                <ChevronDown size={18} color="#94a3b8" />
+              </TouchableOpacity>
+            </View>
+            <TouchableOpacity
+              onPress={() => setFilterVisible(true)}
+              className="w-11 h-11 rounded-xl bg-slate-100 dark:bg-slate-800 items-center justify-center"
+            >
+              <Filter size={20} color={fromDate ? "#dc2626" : "#64748b"} />
+            </TouchableOpacity>
+          </View>
+
+          {/* Stats Bar */}
+          <View className="flex-row gap-3">
+            {loading
+              ? [1, 2, 3, 4].map((i) => (
+                  <Skeleton
+                    key={i}
+                    height={60}
+                    style={{ flex: 1, borderRadius: 12 }}
+                  />
+                ))
+              : categories.map((cat) => {
+                  const count = summaryCounts[getLogName(cat.title)] || 0;
+                  return (
+                    <View
+                      key={cat.id}
+                      className={`flex-1 rounded-2xl p-3 items-center justify-center ${cat.bg}`}
+                    >
+                      <Text
+                        className="text-lg font-black"
+                        style={{ color: cat.accent }}
+                      >
+                        {count}
+                      </Text>
+                      <View className="h-1" />
+                      <cat.icon size={12} color={cat.accent} opacity={0.7} />
+                    </View>
+                  );
+                })}
+          </View>
         </View>
 
-        {/* Horizontal Pager */}
-        <FlatList
-          ref={pagerRef}
-          data={LOG_TYPES}
-          renderItem={renderPage}
-          keyExtractor={(item) => item}
-          horizontal
-          pagingEnabled
-          showsHorizontalScrollIndicator={false}
-          onMomentumScrollEnd={handlePageScroll}
-          initialNumToRender={1}
-          maxToRenderPerBatch={1}
-          windowSize={3}
-        />
+        <ScrollView
+          className="flex-1 px-5 pt-6"
+          contentContainerStyle={{ paddingBottom: 100 }}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor="#dc2626"
+            />
+          }
+        >
+          {loading ? (
+            <View>
+              <Skeleton height={20} width={120} style={{ marginBottom: 20 }} />
+              {[1, 2, 3, 4].map((i) => (
+                <Skeleton
+                  key={i}
+                  height={140}
+                  style={{ marginBottom: 16, borderRadius: 16 }}
+                />
+              ))}
+            </View>
+          ) : (
+            <>
+              <Text className="text-slate-900 dark:text-slate-50 font-bold text-lg mb-4">
+                Log Categories
+              </Text>
+
+              {categories.map((item) => (
+                <View
+                  key={item.id}
+                  className="bg-white dark:bg-slate-900 rounded-3xl p-5 mb-5 shadow-sm shadow-slate-200 dark:shadow-none border border-slate-100 dark:border-slate-800"
+                >
+                  <View className="flex-row items-start mb-6">
+                    <View
+                      className="w-14 h-14 rounded-2xl items-center justify-center mr-4 shadow-lg shadow-slate-200"
+                      style={{
+                        backgroundColor: item.colors[0],
+                        shadowColor: item.colors[0],
+                        shadowOpacity: 0.3,
+                        shadowRadius: 8,
+                        elevation: 4,
+                      }}
+                    >
+                      <item.icon size={26} color="white" />
+                    </View>
+
+                    <View className="flex-1 pt-1">
+                      <Text className="text-slate-900 dark:text-slate-50 font-bold text-xl leading-6">
+                        {item.title}
+                      </Text>
+                      <Text className="text-slate-400 font-medium text-sm mt-1">
+                        {item.subtitle}
+                      </Text>
+                    </View>
+                  </View>
+
+                  <View className="flex-row gap-3">
+                    <TouchableOpacity
+                      onPress={() => router.push(item.route as any)}
+                      activeOpacity={0.8}
+                      className="flex-1"
+                    >
+                      <View
+                        className="py-3.5 rounded-xl flex-row items-center justify-center shadow-md shadow-slate-200"
+                        style={{
+                          backgroundColor: item.colors[0],
+                          shadowColor: item.colors[0],
+                          shadowOpacity: 0.4,
+                          shadowRadius: 6,
+                          elevation: 4,
+                        }}
+                      >
+                        <Plus
+                          size={16}
+                          color="white"
+                          strokeWidth={3}
+                          style={{ marginRight: 6 }}
+                        />
+                        <Text className="text-white font-bold text-sm">
+                          Start Task
+                        </Text>
+                      </View>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      onPress={() =>
+                        router.push({
+                          pathname: "/history/site-history",
+                          params: { siteId, logName: getLogName(item.title) },
+                        })
+                      }
+                      className="flex-1 bg-slate-100 dark:bg-slate-800 py-3.5 rounded-xl flex-row items-center justify-center"
+                    >
+                      <History
+                        size={16}
+                        color="#64748b"
+                        style={{ marginRight: 6 }}
+                      />
+                      <Text className="text-slate-600 dark:text-slate-300 font-bold text-sm">
+                        History
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              ))}
+            </>
+          )}
+        </ScrollView>
       </SafeAreaView>
+      <LogFilterModal
+        visible={filterVisible}
+        onClose={() => setFilterVisible(false)}
+        fromDate={fromDate}
+        setFromDate={setFromDate}
+        toDate={toDate}
+        setToDate={setToDate}
+        availableSites={availableSites}
+        selectedSiteId={siteId}
+        onSiteSelect={async (id) => {
+          setSiteId(id);
+          const s = availableSites.find((site) => site.site_code === id);
+          if (s) setSiteName(s.name);
+          await AsyncStorage.setItem(
+            `last_site_${user?.id || user?.user_id}`,
+            id,
+          );
+          fetchLogs();
+        }}
+        onApply={() => {
+          fetchLogs();
+          setFilterVisible(false);
+        }}
+      />
     </View>
   );
 }

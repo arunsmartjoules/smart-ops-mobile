@@ -13,7 +13,9 @@ import { fetchWithTimeout } from "../utils/apiHelper";
 const BACKEND_URL =
   process.env.EXPO_PUBLIC_BACKEND_URL || "http://192.168.31.152:3420";
 
+// Helper for API requests with auth and retry logic
 const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
+  // Get valid token (will refresh if needed)
   let token = await authService.getValidToken();
 
   const getHeaders = (t: string | null) => ({
@@ -23,28 +25,35 @@ const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
   });
 
   try {
-    const response = await fetchWithTimeout(`${BACKEND_URL}${endpoint}`, {
+    let response = await fetchWithTimeout(`${BACKEND_URL}${endpoint}`, {
       ...options,
       headers: getHeaders(token),
     });
 
+    // If 401, try refresh once
     if (response.status === 401) {
+      logger.debug(`401 on ${endpoint}, attempting refresh`, {
+        module: "SITE_LOG_SERVICE",
+      });
       const newToken = await authService.refreshToken();
+
       if (newToken) {
-        return await fetchWithTimeout(`${BACKEND_URL}${endpoint}`, {
+        token = newToken;
+        // Retry with new token
+        response = await fetchWithTimeout(`${BACKEND_URL}${endpoint}`, {
           ...options,
-          headers: getHeaders(newToken),
-        }).then((res) => res.json());
+          headers: getHeaders(token),
+        });
       }
     }
 
-    return await response.json();
-  } catch (error: any) {
-    logger.warn(`Network Error on ${endpoint}`, {
+    return response;
+  } catch (error) {
+    logger.error(`API Fetch Error: ${endpoint}`, {
       module: "SITE_LOG_SERVICE",
-      error: error.message,
+      error: error instanceof Error ? error.message : String(error),
     });
-    return { success: false, isNetworkError: true };
+    throw error;
   }
 };
 
@@ -54,19 +63,49 @@ export const SiteLogService = {
    */
   async getLogsByType(siteId: string, logType: string, options: any = {}) {
     try {
+      let query;
       if (logType === "Chiller Logs") {
-        return await chillerReadingCollection
-          .query(Q.where("site_id", siteId), Q.sortBy("created_at", Q.desc))
-          .fetch();
+        query = chillerReadingCollection.query(
+          Q.where("site_id", siteId),
+          Q.sortBy("created_at", Q.desc),
+        );
       } else {
-        return await siteLogCollection
-          .query(
+        query = siteLogCollection.query(
+          Q.where("site_id", siteId),
+          Q.where("log_name", logType),
+          Q.sortBy("created_at", Q.desc),
+        );
+      }
+
+      // Apply date filters
+      const conditions: any[] = [];
+      if (options.fromDate) {
+        conditions.push(Q.where("created_at", Q.gte(options.fromDate)));
+      }
+      if (options.toDate) {
+        conditions.push(Q.where("created_at", Q.lte(options.toDate)));
+      }
+
+      if (conditions.length > 0) {
+        // Unfortunately WatermelonDB query is immutable, we need to create a new one with combined clauses
+        // Re-creating the query with all clauses
+        if (logType === "Chiller Logs") {
+          query = chillerReadingCollection.query(
+            Q.where("site_id", siteId),
+            ...conditions,
+            Q.sortBy("created_at", Q.desc),
+          );
+        } else {
+          query = siteLogCollection.query(
             Q.where("site_id", siteId),
             Q.where("log_name", logType),
+            ...conditions,
             Q.sortBy("created_at", Q.desc),
-          )
-          .fetch();
+          );
+        }
       }
+
+      return await query.fetch();
     } catch (error: any) {
       logger.error(`Error fetching ${logType} logs`, {
         module: "SITE_LOG_SERVICE",
@@ -77,18 +116,45 @@ export const SiteLogService = {
   },
 
   /**
+   * Bulk Save site logs (Temp RH, Water, Chemical Dosing)
+   */
+  async saveBulkSiteLogs(logs: any[]): Promise<void> {
+    await database.write(async () => {
+      const batch = logs.map((data) =>
+        siteLogCollection.prepareCreate((record) => {
+          record.siteId = data.siteId;
+          record.executorId = data.executorId;
+          record.logName = data.logName;
+          record.taskName = data.taskName;
+          record.temperature = data.temperature || null;
+          record.rh = data.rh || null;
+          record.tds = data.tds || null;
+          record.ph = data.ph || null;
+          record.hardness = data.hardness || null;
+          record.chemicalDosing = data.chemicalDosing || null;
+          record.remarks = data.remarks || null;
+          record.entryTime = data.entryTime || null;
+          record.endTime = data.endTime || null;
+          record.signature = data.signature || null;
+          record.attachment = data.attachment || null;
+          record.status = data.status || "completed";
+          record.isSynced = false;
+        }),
+      );
+      await database.batch(...batch);
+    });
+  },
+
+  /**
    * Save a site log (Temp RH, Water, Chemical Dosing)
    */
   async saveSiteLog(data: any): Promise<SiteLog> {
     return await database.write(async () => {
       return await siteLogCollection.create((record) => {
-        record.logId = `LOG-${Date.now()}`;
         record.siteId = data.siteId;
         record.executorId = data.executorId;
         record.logName = data.logName;
-        record.scheduledDate = data.scheduledDate || null;
-        record.entryTime = data.entryTime || null;
-        record.endTime = data.endTime || null;
+        record.taskName = data.taskName; // Ensure this is saved
         record.temperature = data.temperature || null;
         record.rh = data.rh || null;
         record.tds = data.tds || null;
@@ -96,11 +162,12 @@ export const SiteLogService = {
         record.hardness = data.hardness || null;
         record.chemicalDosing = data.chemicalDosing || null;
         record.remarks = data.remarks || null;
-        record.mainRemarks = data.mainRemarks || null;
+        record.entryTime = data.entryTime || null;
+        record.endTime = data.endTime || null;
         record.signature = data.signature || null;
+        record.attachment = data.attachment || null;
+        record.status = data.status || null;
         record.isSynced = false;
-        record.taskName = data.taskName || null;
-        record.taskLineId = data.taskLineId || null;
       });
     });
   },
@@ -111,7 +178,6 @@ export const SiteLogService = {
   async saveChillerReading(data: any): Promise<ChillerReading> {
     return await database.write(async () => {
       return await chillerReadingCollection.create((record) => {
-        record.logId = `CHL-${Date.now()}`;
         record.siteId = data.siteId;
         record.executorId = data.executorId;
         record.chillerId = data.chillerId || null;
@@ -144,6 +210,334 @@ export const SiteLogService = {
         record.isSynced = false;
       });
     });
+  },
+
+  /**
+   * Pull site logs from server and sync to local DB
+   */
+  async pullSiteLogs(
+    siteId: string,
+    options: { fromDate?: number; toDate?: number } = {},
+  ) {
+    try {
+      logger.info(`Pulling site logs for ${siteId}`, {
+        module: "SITE_LOG_SERVICE",
+        options,
+      });
+
+      let endpoint = `/api/site-logs/site/${siteId}`;
+      const params = new URLSearchParams();
+      if (options.fromDate)
+        params.append("date_from", new Date(options.fromDate).toISOString());
+      if (options.toDate)
+        params.append("date_to", new Date(options.toDate).toISOString());
+
+      const queryString = params.toString();
+      if (queryString) endpoint += `?${queryString}`;
+
+      const response = await apiFetch(endpoint);
+
+      if (!response.ok) {
+        logger.error(`Failed to fetch site logs: ${response.status}`, {
+          module: "SITE_LOG_SERVICE",
+          status: response.status,
+        });
+        return;
+      }
+
+      const result = await response.json();
+
+      logger.info(`Server response for logs:`, {
+        success: result.success,
+        count: result.data?.length,
+        firstLog: result.data?.[0]
+          ? JSON.stringify(result.data[0]).substring(0, 200)
+          : "none",
+      });
+
+      if (result.success && Array.isArray(result.data)) {
+        logger.info(`Fetched ${result.data.length} logs from server`, {
+          module: "SITE_LOG_SERVICE",
+        });
+        await database.write(async () => {
+          for (const serverLog of result.data) {
+            // Check if record exists locally
+            const localRecords = await siteLogCollection
+              .query(Q.where("server_id", serverLog.id))
+              .fetch();
+
+            // Handle potential field mismatches/typos
+            const executorId = serverLog.executor_id || serverLog.exicuter_id;
+            const entryTime = serverLog.entry_time
+              ? new Date(serverLog.entry_time).getTime()
+              : null;
+            const endTime = serverLog.end_time
+              ? new Date(serverLog.end_time).getTime()
+              : null;
+
+            // Handle signature format (JSON vs Path string)
+            let signature = serverLog.signature;
+            if (typeof signature === "string" && signature.startsWith("{")) {
+              try {
+                const sigObj = JSON.parse(signature);
+                signature = sigObj.path || serverLog.signature;
+              } catch (e) {
+                // Not valid JSON or parsing error, keep as is
+              }
+            }
+
+            if (localRecords.length > 0) {
+              // Update existing
+              await localRecords[0].update((record) => {
+                record.logName = serverLog.log_name;
+                record.temperature = parseFloat(serverLog.temperature) || null;
+                record.rh = parseFloat(serverLog.rh) || null;
+                record.tds = parseFloat(serverLog.tds) || null;
+                record.ph = parseFloat(serverLog.ph) || null;
+                record.hardness = parseFloat(serverLog.hardness) || null;
+                record.chemicalDosing = serverLog.chemical_dosing;
+                record.remarks = serverLog.remarks;
+                record.entryTime = entryTime;
+                record.endTime = endTime;
+                record.signature = signature;
+                record.isSynced = true;
+              });
+            } else {
+              // Create new
+              await siteLogCollection.create((record) => {
+                record.serverId = serverLog.id;
+                record.siteId = siteId;
+                record.executorId = executorId || "unknown";
+                record.logName = serverLog.log_name;
+                record.temperature = parseFloat(serverLog.temperature) || null;
+                record.rh = parseFloat(serverLog.rh) || null;
+                record.tds = parseFloat(serverLog.tds) || null;
+                record.ph = parseFloat(serverLog.ph) || null;
+                record.hardness = parseFloat(serverLog.hardness) || null;
+                record.chemicalDosing = serverLog.chemical_dosing;
+                record.remarks = serverLog.remarks;
+                record.entryTime = entryTime;
+                record.endTime = endTime;
+                record.signature = signature;
+                record.isSynced = true;
+              });
+            }
+          }
+        });
+      }
+    } catch (error: any) {
+      logger.error("Error pulling site logs", {
+        module: "SITE_LOG_SERVICE",
+        error: error.message,
+      });
+    }
+  },
+
+  /**
+   * Pull chiller readings from server and sync to local DB
+   */
+  async pullChillerReadings(
+    siteId: string,
+    options: { fromDate?: number; toDate?: number } = {},
+  ) {
+    try {
+      logger.info(`Pulling chiller readings for ${siteId}`, {
+        module: "SITE_LOG_SERVICE",
+        options,
+      });
+
+      let endpoint = `/api/chiller-readings/site/${siteId}`;
+      const params = new URLSearchParams();
+      if (options.fromDate)
+        params.append("date_from", new Date(options.fromDate).toISOString());
+      if (options.toDate)
+        params.append("date_to", new Date(options.toDate).toISOString());
+
+      const queryString = params.toString();
+      if (queryString) endpoint += `?${queryString}`;
+
+      const response = await apiFetch(endpoint);
+
+      if (!response.ok) {
+        logger.error(`Failed to fetch chiller readings: ${response.status}`, {
+          module: "SITE_LOG_SERVICE",
+          status: response.status,
+        });
+        return;
+      }
+
+      const result = await response.json();
+
+      logger.info(`Server response for chiller readings:`, {
+        success: result.success,
+        count: result.data?.length,
+        firstLog: result.data?.[0]
+          ? JSON.stringify(result.data[0]).substring(0, 200)
+          : "none",
+      });
+
+      if (result.success && Array.isArray(result.data)) {
+        logger.info(
+          `Fetched ${result.data.length} chiller readings from server`,
+          { module: "SITE_LOG_SERVICE" },
+        );
+        await database.write(async () => {
+          for (const serverLog of result.data) {
+            const localRecords = await chillerReadingCollection
+              .query(Q.where("server_id", serverLog.id))
+              .fetch();
+
+            const executorId = serverLog.executor_id || serverLog.exicuter_id;
+            const readingTime = serverLog.reading_time
+              ? new Date(serverLog.reading_time).getTime()
+              : serverLog.reading_time || null;
+            const startDateTime = serverLog.start_datetime
+              ? new Date(serverLog.start_datetime).getTime()
+              : serverLog.start_datetime || null;
+            const endDateTime = serverLog.end_datetime
+              ? new Date(serverLog.end_datetime).getTime()
+              : serverLog.end_datetime || null;
+
+            if (localRecords.length > 0) {
+              await localRecords[0].update((record) => {
+                record.chillerId = serverLog.chiller_id;
+                record.equipmentId = serverLog.equipment_id;
+                record.executorId = executorId || "unknown";
+                record.dateShift = serverLog.date_shift;
+                record.reading_time = readingTime;
+                record.start_datetime = startDateTime;
+                record.end_datetime = endDateTime;
+                record.condenserInletTemp =
+                  parseFloat(serverLog.condenser_inlet_temp) || null;
+                record.condenserOutletTemp =
+                  parseFloat(serverLog.condenser_outlet_temp) || null;
+                record.evaporatorInletTemp =
+                  parseFloat(serverLog.evaporator_inlet_temp) || null;
+                record.evaporatorOutletTemp =
+                  parseFloat(serverLog.evaporator_outlet_temp) || null;
+                record.compressorSuctionTemp =
+                  parseFloat(serverLog.compressor_suction_temp) || null;
+                record.motorTemperature =
+                  parseFloat(serverLog.motor_temperature) || null;
+                record.saturatedCondenserTemp =
+                  parseFloat(serverLog.saturated_condenser_temp) || null;
+                record.saturatedSuctionTemp =
+                  parseFloat(serverLog.saturated_suction_temp) || null;
+                record.setPointCelsius =
+                  parseFloat(serverLog.set_point_celsius) || null;
+                record.dischargePressure =
+                  parseFloat(serverLog.discharge_pressure) || null;
+                record.mainSuctionPressure =
+                  parseFloat(serverLog.main_suction_pressure) || null;
+                record.oilPressure = parseFloat(serverLog.oil_pressure) || null;
+                record.oilPressureDifference =
+                  parseFloat(serverLog.oil_pressure_difference) || null;
+                record.condenserInletPressure =
+                  parseFloat(serverLog.condenser_inlet_pressure) || null;
+                record.condenserOutletPressure =
+                  parseFloat(serverLog.condenser_outlet_pressure) || null;
+                record.evaporatorInletPressure =
+                  parseFloat(serverLog.evaporator_inlet_pressure) || null;
+                record.evaporatorOutletPressure =
+                  parseFloat(serverLog.evaporator_outlet_pressure) || null;
+                record.compressorLoadPercentage =
+                  parseFloat(serverLog.compressor_load_percentage) || null;
+                record.inlineBtuMeter =
+                  parseFloat(serverLog.inline_btu_meter) || null;
+                record.remarks = serverLog.remarks;
+                record.signatureText = serverLog.signature_text;
+                record.isSynced = true;
+              });
+            } else {
+              await chillerReadingCollection.create((record) => {
+                record.serverId = serverLog.id;
+                record.siteId = siteId;
+                record.chillerId = serverLog.chiller_id;
+                record.equipmentId = serverLog.equipment_id;
+                record.executorId = executorId || "unknown";
+                record.dateShift = serverLog.date_shift;
+                record.reading_time = readingTime;
+                record.start_datetime = startDateTime;
+                record.end_datetime = endDateTime;
+                record.condenserInletTemp =
+                  parseFloat(serverLog.condenser_inlet_temp) || null;
+                record.condenserOutletTemp =
+                  parseFloat(serverLog.condenser_outlet_temp) || null;
+                record.evaporatorInletTemp =
+                  parseFloat(serverLog.evaporator_inlet_temp) || null;
+                record.evaporatorOutletTemp =
+                  parseFloat(serverLog.evaporator_outlet_temp) || null;
+                record.compressorSuctionTemp =
+                  parseFloat(serverLog.compressor_suction_temp) || null;
+                record.motorTemperature =
+                  parseFloat(serverLog.motor_temperature) || null;
+                record.saturatedCondenserTemp =
+                  parseFloat(serverLog.saturated_condenser_temp) || null;
+                record.saturatedSuctionTemp =
+                  parseFloat(serverLog.saturated_suction_temp) || null;
+                record.setPointCelsius =
+                  parseFloat(serverLog.set_point_celsius) || null;
+                record.dischargePressure =
+                  parseFloat(serverLog.discharge_pressure) || null;
+                record.mainSuctionPressure =
+                  parseFloat(serverLog.main_suction_pressure) || null;
+                record.oilPressure = parseFloat(serverLog.oil_pressure) || null;
+                record.oilPressureDifference =
+                  parseFloat(serverLog.oil_pressure_difference) || null;
+                record.condenserInletPressure =
+                  parseFloat(serverLog.condenser_inlet_pressure) || null;
+                record.condenserOutletPressure =
+                  parseFloat(serverLog.condenser_outlet_pressure) || null;
+                record.evaporatorInletPressure =
+                  parseFloat(serverLog.evaporator_inlet_pressure) || null;
+                record.evaporatorOutletPressure =
+                  parseFloat(serverLog.evaporator_outlet_pressure) || null;
+                record.compressorLoadPercentage =
+                  parseFloat(serverLog.compressor_load_percentage) || null;
+                record.inlineBtuMeter =
+                  parseFloat(serverLog.inline_btu_meter) || null;
+                record.remarks = serverLog.remarks;
+                record.signatureText = serverLog.signature_text;
+                record.isSynced = true;
+              });
+            }
+          }
+        });
+      }
+    } catch (error: any) {
+      logger.error("Error pulling chiller readings", {
+        module: "SITE_LOG_SERVICE",
+        error: error.message,
+      });
+    }
+  },
+
+  /**
+   * Get summary counts for dashboard
+   */
+  async getSummaryCounts(siteId: string): Promise<Record<string, number>> {
+    try {
+      const counts: Record<string, number> = {};
+      const logTypes = ["Temp RH", "Water Parameters", "Chemical Dosing"];
+
+      for (const type of logTypes) {
+        counts[type] = await siteLogCollection
+          .query(Q.where("site_id", siteId), Q.where("log_name", type))
+          .fetchCount();
+      }
+
+      counts["Chiller Logs"] = await chillerReadingCollection
+        .query(Q.where("site_id", siteId))
+        .fetchCount();
+
+      return counts;
+    } catch (error: any) {
+      logger.error("Error getting summary counts", {
+        module: "SITE_LOG_SERVICE",
+        error: error.message,
+      });
+      return {};
+    }
   },
 
   /**

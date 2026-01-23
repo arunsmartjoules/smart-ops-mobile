@@ -1,8 +1,10 @@
 import NetInfo, { NetInfoState } from "@react-native-community/netinfo";
 import { AppState, AppStateStatus } from "react-native";
-import { syncPendingAttendance } from "@/utils/offlineStorage";
 import { syncPendingTicketUpdates } from "@/utils/offlineTicketStorage";
-import { syncPendingSiteLogs } from "@/utils/syncSiteLogStorage";
+import {
+  syncPendingSiteLogs,
+  pullRecentSiteLogs,
+} from "@/utils/syncSiteLogStorage";
 import { authService } from "./AuthService";
 import logger from "@/utils/logger";
 
@@ -131,21 +133,6 @@ class SyncManager {
         return;
       }
 
-      // Sync attendance records
-      try {
-        const attendanceResult = await syncPendingAttendance(token, API_URL);
-        logger.info("Attendance sync complete", {
-          module: "SYNC_MANAGER",
-          synced: attendanceResult.synced,
-          failed: attendanceResult.failed,
-        });
-      } catch (err: any) {
-        logger.error("Attendance sync failed", {
-          module: "SYNC_MANAGER",
-          error: err.message,
-        });
-      }
-
       // Sync ticket updates
       try {
         const ticketResult = await syncPendingTicketUpdates(token, API_URL);
@@ -164,10 +151,15 @@ class SyncManager {
       // Sync site logs and chiller readings
       try {
         const siteLogResult = await syncPendingSiteLogs(token, API_URL);
+
+        // Also pull recent logs to populate history/tasks
+        const pullResult = await pullRecentSiteLogs(token, API_URL);
+
         logger.info("Site logs sync complete", {
           module: "SYNC_MANAGER",
           synced: siteLogResult.synced,
           failed: siteLogResult.failed,
+          pulled: pullResult.pulled,
         });
       } catch (err: any) {
         logger.error("Site logs sync failed", {

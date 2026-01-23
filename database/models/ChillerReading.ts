@@ -43,6 +43,7 @@ export default class ChillerReading extends Model {
   @text("reviewed_by") reviewedBy!: string | null;
   @text("signature_text") signatureText!: string | null;
   @text("attachments") attachments!: string | null;
+  @text("status") status!: string | null;
 
   @field("is_synced") isSynced!: boolean;
 

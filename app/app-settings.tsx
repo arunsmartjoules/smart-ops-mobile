@@ -28,14 +28,13 @@ import {
 import { router } from "expo-router";
 import { useAuth } from "@/contexts/AuthContext";
 import {
-  getSyncStatus,
-  getPendingAttendance,
-  clearAllOfflineData,
-  clearSyncedRecords,
-  syncPendingRecords,
-  setAutoSyncEnabled,
-  SyncStatus,
-} from "@/utils/offlineStorage";
+  getSiteLogSyncStatus,
+  getPendingSiteLogsCount,
+  clearAllOfflineSiteLogData,
+  syncPendingSiteLogs,
+  setSiteLogAutoSyncEnabled,
+  SiteLogSyncStatus,
+} from "@/utils/syncSiteLogStorage";
 import {
   getTicketSyncStatus,
   getPendingTicketUpdates,
@@ -60,19 +59,21 @@ export default function AppSettings() {
   const { token } = useAuth();
   const { isConnected } = useNetworkStatus();
 
-  // Attendance sync status
-  const [attendanceSyncStatus, setAttendanceSyncStatus] = useState<SyncStatus>({
-    lastSynced: null,
-    pendingCount: 0,
-    autoSyncEnabled: true,
-  });
-
   // Ticket sync status
   const [ticketSyncStatus, setTicketSyncStatus] = useState<TicketSyncStatus>({
     lastSynced: null,
     pendingCount: 0,
     autoSyncEnabled: true,
   });
+
+  // Site Log sync status
+  const [siteLogSyncStatus, setSiteLogSyncStatus] = useState<SiteLogSyncStatus>(
+    {
+      lastSynced: null,
+      pendingCount: 0,
+      autoSyncEnabled: true,
+    },
+  );
 
   // Cache info
   const [cacheSize, setCacheSize] = useState({ items: 0, bytes: 0 });
@@ -87,20 +88,20 @@ export default function AppSettings() {
   const loadAllStatus = useCallback(async () => {
     setIsLoading(true);
     try {
-      // Load attendance status
-      const attStatus = await getSyncStatus();
-      const attPending = await getPendingAttendance();
-      setAttendanceSyncStatus((prev) => ({
-        ...attStatus,
-        pendingCount: attPending.length,
-      }));
-
       // Load ticket status
       const ticketStatus = await getTicketSyncStatus();
       const ticketPending = await getPendingTicketUpdates();
       setTicketSyncStatus((prev) => ({
         ...ticketStatus,
         pendingCount: ticketPending.length,
+      }));
+
+      // Load site log status
+      const siteLogStatus = await getSiteLogSyncStatus();
+      const siteLogPending = await getPendingSiteLogsCount();
+      setSiteLogSyncStatus((prev) => ({
+        ...siteLogStatus,
+        pendingCount: siteLogPending,
       }));
 
       // Load cache size
@@ -129,23 +130,23 @@ export default function AppSettings() {
 
     setIsSyncing(true);
     try {
-      // Sync attendance
-      const attResult = await syncPendingRecords(token, API_URL);
-
       // Sync tickets
       const ticketResult = await syncPendingTicketUpdates(token, API_URL);
 
+      // Sync site logs
+      const siteLogResult = await syncPendingSiteLogs(token, API_URL);
+
       await loadAllStatus();
 
-      const totalSynced = attResult.synced + ticketResult.synced;
-      const totalFailed = attResult.failed + ticketResult.failed;
+      const totalSynced = ticketResult.synced + siteLogResult.synced;
+      const totalFailed = ticketResult.failed + siteLogResult.failed;
 
       if (totalSynced > 0 || totalFailed > 0) {
         Alert.alert(
           "Sync Complete",
           `${totalSynced} record(s) synced successfully.${
             totalFailed > 0 ? ` ${totalFailed} failed.` : ""
-          }`
+          }`,
         );
       } else {
         Alert.alert("No Data", "No pending records to sync.");
@@ -172,8 +173,8 @@ export default function AppSettings() {
           style: "destructive",
           onPress: async () => {
             try {
-              await clearAllOfflineData();
               await clearAllOfflineTicketData();
+              await clearAllOfflineSiteLogData();
               await clearAllCache();
               await loadAllStatus();
               Alert.alert("Success", "All local data cleared");
@@ -186,22 +187,22 @@ export default function AppSettings() {
             }
           },
         },
-      ]
+      ],
     );
   }, [loadAllStatus]);
 
   const handleToggleAutoSync = useCallback(
-    async (module: "attendance" | "tickets", enabled: boolean) => {
+    async (module: "tickets" | "site_logs", enabled: boolean) => {
       try {
-        if (module === "attendance") {
-          await setAutoSyncEnabled(enabled);
-          setAttendanceSyncStatus((prev) => ({
+        if (module === "tickets") {
+          await setTicketAutoSyncEnabled(enabled);
+          setTicketSyncStatus((prev) => ({
             ...prev,
             autoSyncEnabled: enabled,
           }));
-        } else {
-          await setTicketAutoSyncEnabled(enabled);
-          setTicketSyncStatus((prev) => ({
+        } else if (module === "site_logs") {
+          await setSiteLogAutoSyncEnabled(enabled);
+          setSiteLogSyncStatus((prev) => ({
             ...prev,
             autoSyncEnabled: enabled,
           }));
@@ -215,7 +216,7 @@ export default function AppSettings() {
         Alert.alert("Error", "Failed to update auto-sync setting");
       }
     },
-    []
+    [],
   );
 
   const formatLastSynced = useCallback((dateString: string | null) => {
@@ -233,8 +234,8 @@ export default function AppSettings() {
   }, []);
 
   const totalPending = useMemo(
-    () => attendanceSyncStatus.pendingCount + ticketSyncStatus.pendingCount,
-    [attendanceSyncStatus.pendingCount, ticketSyncStatus.pendingCount]
+    () => ticketSyncStatus.pendingCount + siteLogSyncStatus.pendingCount,
+    [ticketSyncStatus.pendingCount, siteLogSyncStatus.pendingCount],
   );
 
   return (
@@ -362,67 +363,6 @@ export default function AppSettings() {
               </TouchableOpacity>
             </View>
 
-            {/* Attendance Section */}
-            <View
-              className="bg-white dark:bg-slate-900 rounded-2xl p-5 mb-4"
-              style={{
-                shadowColor: "#000",
-                shadowOffset: { width: 0, height: 2 },
-                shadowOpacity: 0.06,
-                shadowRadius: 12,
-                elevation: 3,
-              }}
-            >
-              <View className="flex-row items-center mb-4">
-                <View className="w-10 h-10 rounded-xl bg-blue-50 dark:bg-blue-900/20 items-center justify-center">
-                  <UserCheck size={20} color="#3b82f6" />
-                </View>
-                <View className="ml-3 flex-1">
-                  <Text className="text-slate-900 dark:text-slate-50 font-bold">
-                    Attendance
-                  </Text>
-                  <Text className="text-slate-400 dark:text-slate-500 text-xs">
-                    Check-in & check-out records
-                  </Text>
-                </View>
-                <View className="items-end">
-                  <Text
-                    className={`font-bold ${attendanceSyncStatus.pendingCount > 0 ? "text-red-600 dark:text-red-400" : "text-green-600 dark:text-green-400"}`}
-                  >
-                    {attendanceSyncStatus.pendingCount}
-                  </Text>
-                  <Text className="text-slate-400 text-xs">pending</Text>
-                </View>
-              </View>
-
-              <View className="flex-row items-center justify-between py-3 border-t border-slate-100">
-                <View className="flex-row items-center">
-                  <Clock size={14} color="#94a3b8" />
-                  <Text className="text-slate-500 text-sm ml-2">
-                    Last synced
-                  </Text>
-                </View>
-                <Text className="text-slate-700 dark:text-slate-300 font-medium text-sm">
-                  {formatLastSynced(attendanceSyncStatus.lastSynced)}
-                </Text>
-              </View>
-
-              <View className="flex-row items-center justify-between py-3 border-t border-slate-100">
-                <View className="flex-row items-center">
-                  <Cloud size={14} color="#22c55e" />
-                  <Text className="text-slate-500 text-sm ml-2">Auto-sync</Text>
-                </View>
-                <Switch
-                  value={attendanceSyncStatus.autoSyncEnabled}
-                  onValueChange={(v) => handleToggleAutoSync("attendance", v)}
-                  trackColor={{ false: "#e2e8f0", true: "#bbf7d0" }}
-                  thumbColor={
-                    attendanceSyncStatus.autoSyncEnabled ? "#22c55e" : "#94a3b8"
-                  }
-                />
-              </View>
-            </View>
-
             {/* Tickets Section */}
             <View
               className="bg-white dark:bg-slate-900 rounded-2xl p-5 mb-4"
@@ -480,6 +420,124 @@ export default function AppSettings() {
                   thumbColor={
                     ticketSyncStatus.autoSyncEnabled ? "#22c55e" : "#94a3b8"
                   }
+                />
+              </View>
+            </View>
+
+            {/* Site Logs Section */}
+            <View
+              className="bg-white dark:bg-slate-900 rounded-2xl p-5 mb-4"
+              style={{
+                shadowColor: "#000",
+                shadowOffset: { width: 0, height: 2 },
+                shadowOpacity: 0.06,
+                shadowRadius: 12,
+                elevation: 3,
+              }}
+            >
+              <View className="flex-row items-center mb-4">
+                <View className="w-10 h-10 rounded-xl bg-orange-50 dark:bg-orange-900/20 items-center justify-center">
+                  <Database size={20} color="#f97316" />
+                </View>
+                <View className="ml-3 flex-1">
+                  <Text className="text-slate-900 dark:text-slate-50 font-bold">
+                    Site Logs
+                  </Text>
+                  <Text className="text-slate-400 dark:text-slate-500 text-xs">
+                    Temp, Water, Chemical & Chiller
+                  </Text>
+                </View>
+                <View className="items-end">
+                  <Text
+                    className={`font-bold ${siteLogSyncStatus.pendingCount > 0 ? "text-red-600 dark:text-red-400" : "text-green-600 dark:text-green-400"}`}
+                  >
+                    {siteLogSyncStatus.pendingCount}
+                  </Text>
+                  <Text className="text-slate-400 text-xs">pending</Text>
+                </View>
+              </View>
+
+              <View className="flex-row items-center justify-between py-3 border-t border-slate-100">
+                <View className="flex-row items-center">
+                  <Clock size={14} color="#94a3b8" />
+                  <Text className="text-slate-500 text-sm ml-2">
+                    Last synced
+                  </Text>
+                </View>
+                <Text className="text-slate-700 dark:text-slate-300 font-medium text-sm">
+                  {formatLastSynced(siteLogSyncStatus.lastSynced)}
+                </Text>
+              </View>
+
+              <View className="flex-row items-center justify-between py-3 border-t border-slate-100">
+                <View className="flex-row items-center">
+                  <Cloud size={14} color="#22c55e" />
+                  <Text className="text-slate-500 text-sm ml-2">Auto-sync</Text>
+                </View>
+                <Switch
+                  value={siteLogSyncStatus.autoSyncEnabled}
+                  onValueChange={(v) => handleToggleAutoSync("site_logs", v)}
+                  trackColor={{ false: "#e2e8f0", true: "#bbf7d0" }}
+                  thumbColor={
+                    siteLogSyncStatus.autoSyncEnabled ? "#22c55e" : "#94a3b8"
+                  }
+                />
+              </View>
+            </View>
+
+            {/* PM Section (Placeholder) */}
+            <View
+              className="bg-white dark:bg-slate-900 rounded-2xl p-5 mb-4"
+              style={{
+                shadowColor: "#000",
+                shadowOffset: { width: 0, height: 2 },
+                shadowOpacity: 0.06,
+                shadowRadius: 12,
+                elevation: 3,
+              }}
+            >
+              <View className="flex-row items-center mb-4">
+                <View className="w-10 h-10 rounded-xl bg-violet-50 dark:bg-violet-900/20 items-center justify-center">
+                  <CheckCircle size={20} color="#8b5cf6" />
+                </View>
+                <View className="ml-3 flex-1">
+                  <Text className="text-slate-900 dark:text-slate-50 font-bold">
+                    Preventive Maintenance
+                  </Text>
+                  <Text className="text-slate-400 dark:text-slate-500 text-xs">
+                    Scheduled maintenance tasks
+                  </Text>
+                </View>
+                <View className="items-end">
+                  <Text className="text-green-600 dark:text-green-400 font-bold">
+                    0
+                  </Text>
+                  <Text className="text-slate-400 text-xs">pending</Text>
+                </View>
+              </View>
+
+              <View className="flex-row items-center justify-between py-3 border-t border-slate-100">
+                <View className="flex-row items-center">
+                  <Clock size={14} color="#94a3b8" />
+                  <Text className="text-slate-500 text-sm ml-2">
+                    Last synced
+                  </Text>
+                </View>
+                <Text className="text-slate-700 dark:text-slate-300 font-medium text-sm">
+                  Never
+                </Text>
+              </View>
+
+              <View className="flex-row items-center justify-between py-3 border-t border-slate-100">
+                <View className="flex-row items-center">
+                  <Cloud size={14} color="#22c55e" />
+                  <Text className="text-slate-500 text-sm ml-2">Auto-sync</Text>
+                </View>
+                <Switch
+                  value={true}
+                  disabled={true}
+                  trackColor={{ false: "#e2e8f0", true: "#bbf7d0" }}
+                  thumbColor={"#22c55e"}
                 />
               </View>
             </View>

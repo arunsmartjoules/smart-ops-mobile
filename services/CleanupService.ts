@@ -1,10 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { SecureStorage } from "@/utils/secureStorage";
-import {
-  clearAllOfflineData,
-  clearSyncedRecords,
-} from "@/utils/offlineStorage";
 import { clearAllOfflineTicketData } from "@/utils/offlineTicketStorage";
+import { clearAllOfflineSiteLogData } from "@/utils/syncSiteLogStorage";
 import { clearAllCache } from "@/utils/offlineDataCache";
 import logger from "@/utils/logger";
 
@@ -35,7 +32,9 @@ export async function performLogoutCleanup(): Promise<void> {
     ];
     await AsyncStorage.multiRemove(keysToRemove);
 
-    // 3. Clear offline data caches (files/images if any, or just metadata)
+    // 3. Clear offline data caches
+    await clearAllOfflineTicketData();
+    await clearAllOfflineSiteLogData();
     await clearAllCache();
 
     // 4. Clear WatermelonDB data (if applicable in future)
@@ -67,6 +66,6 @@ export async function performLogoutCleanup(): Promise<void> {
 export async function performAccountSwitchCleanup(): Promise<void> {
   await SecureStorage.clearAll();
   await AsyncStorage.removeItem("auth_user");
-  await clearAllOfflineData();
   await clearAllOfflineTicketData();
+  await clearAllOfflineSiteLogData();
 }

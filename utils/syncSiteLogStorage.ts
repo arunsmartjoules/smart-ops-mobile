@@ -131,14 +131,13 @@ export async function syncPendingSiteLogs(
   for (const log of pendingSiteLogs) {
     try {
       const response = await syncWithRetry(() =>
-        fetchWithTimeout(`${apiUrl}/api/logs`, {
+        fetchWithTimeout(`${apiUrl}/api/site-logs`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
             Authorization: `Bearer ${token}`,
           },
           body: JSON.stringify({
-            action: "SITE_LOG_ENTRY", // Align with backend logs controller expectations if generic, or specific endpoint
             // Wait, the backend endpoint for logs is usually /api/logs for system logs
             // BUT site logs likely go to /api/sites/:id/logs or something specific.
             // Checking SiteLogService... it doesn't have an API call there.
@@ -159,27 +158,26 @@ export async function syncPendingSiteLogs(
             // Wait, "SiteLogService" has `saveSiteLog`.
             // Let's check `backend/src/routes/chillerReadingsRoutes.ts` and `backend/src/routes/logsRoutes.ts` later if needed.
             // For now, I'll stick to what was there or make a best guess based on `SiteLogService` usage (which was missing api calls).
-            
+
             // Correction: The backend likely expects specific endpoints.
             // Let's use `/api/chiller-readings` for chiller logs.
             // For other logs, if they are "Site Logs", maybe they need a new endpoint or go to tasks?
             // "Temp RH" etc seem like log entries.
             // Let's look at `backend/src/models/SiteLog.ts` if it exists?
             // Actually, I'll use `/api/site-logs` generic endpoint if I can, or `/api/logs` if it supports type.
-            
+
             // Re-reading the previous implementation in the file I just read:
             // It used `${apiUrl}/api/v1/site-logs` and `${apiUrl}/api/v1/chiller-readings`.
             // But backend `index.ts` has `/api/chiller-readings` (no v1).
             // And `/api/logs`.
             // I will use `/api/site-logs` (I might need to create it if missing) or assume `/api/logs` handles it?
             // Let's pause and check backend routes quickly to be sure.
-            
+
             // Assuming for now `/api/site-logs` based on "SiteLog" naming.
             // But wait, `index.ts` didn't have `/api/site-logs`.
             // It had `/api/logs`.
             // Let's check `backend/src/routes/logsRoutes.ts`.
-            
-            log_id: log.logId,
+
             site_id: log.siteId,
             executor_id: log.executorId,
             log_name: log.logName,
@@ -193,8 +191,6 @@ export async function syncPendingSiteLogs(
             signature: log.signature,
             entry_time: log.entryTime,
             end_time: log.endTime,
-            task_line_id: log.taskLineId,
-            scheduled_date: log.scheduledDate,
           }),
         }),
       );
@@ -241,6 +237,9 @@ export async function syncPendingSiteLogs(
             site_id: log.siteId,
             executor_id: log.executorId,
             chiller_id: log.chillerId,
+            equipment_id: log.equipmentId,
+            date_shift: log.dateShift,
+            reading_time: log.reading_time,
             condenser_inlet_temp: log.condenserInletTemp,
             condenser_outlet_temp: log.condenserOutletTemp,
             evaporator_inlet_temp: log.evaporatorInletTemp,
@@ -293,4 +292,104 @@ export async function syncPendingSiteLogs(
   await updateSiteLogPendingCount();
 
   return { synced, failed };
+}
+
+/**
+ * Pull recent site logs from server to populate local history (bootstrapping)
+ */
+export async function pullRecentSiteLogs(
+  token: string,
+  apiUrl: string,
+): Promise<{ pulled: number }> {
+  let pulled = 0;
+  try {
+    // Calculate date for 30 days ago
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    const startDate = thirtyDaysAgo.toISOString();
+
+    const response = await fetchWithTimeout(
+      `${apiUrl}/api/site-logs?startDate=${startDate}&limit=1000`,
+      {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      },
+    );
+
+    if (response.ok) {
+      const result = await response.json();
+      const logs = result.data || [];
+
+      if (logs.length > 0) {
+        await database.write(async () => {
+          for (const logData of logs) {
+            // Check if exists
+            const existing = await siteLogCollection
+              .query(Q.where("server_id", logData.id))
+              .fetch();
+
+            if (existing.length > 0) {
+              await existing[0].update((r) => {
+                r.siteId = logData.site_id;
+                r.executorId = logData.executor_id;
+                r.logName = logData.log_name;
+                r.taskName = logData.task_name; // NEW COLUMN
+                r.temperature = logData.temperature
+                  ? Number(logData.temperature)
+                  : null;
+                r.rh = logData.rh ? Number(logData.rh) : null;
+                r.tds = logData.tds ? Number(logData.tds) : null;
+                r.ph = logData.ph ? Number(logData.ph) : null;
+                r.hardness = logData.hardness ? Number(logData.hardness) : null;
+                r.chemicalDosing = logData.chemical_dosing;
+                r.remarks = logData.remarks;
+                r.signature = logData.signature;
+                r.entryTime = logData.entry_time
+                  ? Number(new Date(logData.entry_time))
+                  : null;
+                r.endTime = logData.end_time
+                  ? Number(new Date(logData.end_time))
+                  : null;
+                r.isSynced = true;
+              });
+            } else {
+              await siteLogCollection.create((r) => {
+                r.serverId = logData.id;
+                r.siteId = logData.site_id;
+                r.executorId = logData.executor_id;
+                r.logName = logData.log_name;
+                r.taskName = logData.task_name; // NEW COLUMN
+                r.temperature = logData.temperature
+                  ? Number(logData.temperature)
+                  : null;
+                r.rh = logData.rh ? Number(logData.rh) : null;
+                r.tds = logData.tds ? Number(logData.tds) : null;
+                r.ph = logData.ph ? Number(logData.ph) : null;
+                r.hardness = logData.hardness ? Number(logData.hardness) : null;
+                r.chemicalDosing = logData.chemical_dosing;
+                r.remarks = logData.remarks;
+                r.signature = logData.signature;
+                r.entryTime = logData.entry_time
+                  ? Number(new Date(logData.entry_time))
+                  : null;
+                r.endTime = logData.end_time
+                  ? Number(new Date(logData.end_time))
+                  : null;
+                r.isSynced = true;
+              });
+            }
+            pulled++;
+          }
+        });
+      }
+    }
+  } catch (error: any) {
+    logger.error("Error pulling recent site logs", {
+      module: "OFFLINE_SITE_LOG_STORAGE",
+      error: error.message,
+    });
+  }
+  return { pulled };
 }

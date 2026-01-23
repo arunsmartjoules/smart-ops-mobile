@@ -294,9 +294,9 @@ const AdvancedFilterModal = React.memo(
                         onPress={() => {
                           const siteCode = s.site_code || "";
                           setSelectedSiteId(siteCode);
-                          if (user?.id) {
+                          if (user?.user_id || user?.id) {
                             AsyncStorage.setItem(
-                              `last_site_${user.id}`,
+                              `last_site_${user.user_id || user.id}`,
                               siteCode,
                             );
                           }
