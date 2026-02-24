@@ -16,8 +16,9 @@ import {
 import { Q } from "@nozbe/watermelondb";
 import { pullRecentTickets } from "../utils/syncTicketStorage";
 
-const BACKEND_URL =
-  process.env.EXPO_PUBLIC_BACKEND_URL || "http://192.168.31.152:3420";
+import { API_BASE_URL } from "../constants/api";
+
+const BACKEND_URL = API_BASE_URL;
 
 // Helper for API requests with auth and retry logic
 const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
@@ -100,8 +101,7 @@ export interface Ticket {
   ticket_no: string;
   title: string;
   status: string;
-  site_id: string;
-  site_code?: string;
+  site_code: string;
   site_name?: string;
   created_at: string;
   due_date?: string;
@@ -119,14 +119,14 @@ export const TicketsService = {
   /**
    * Get tickets for a site with filters
    */
-  async getTickets(siteId: string, options: any = {}) {
+  async getTickets(siteCode: string, options: any = {}) {
     const { status, fromDate, toDate, search, page = 1, limit = 50 } = options;
 
     // 1. Return local data if searching/filtering within standard view
     if (page === 1) {
       try {
         let query = ticketCollection.query(
-          Q.where("site_id", siteId),
+          Q.where("site_code", siteCode),
           Q.sortBy("created_at", Q.desc),
         );
 
@@ -140,7 +140,7 @@ export const TicketsService = {
 
         if (conditions.length > 0) {
           query = ticketCollection.query(
-            Q.where("site_id", siteId),
+            Q.where("site_code", siteCode),
             ...conditions,
             Q.sortBy("created_at", Q.desc),
           );
@@ -151,7 +151,7 @@ export const TicketsService = {
           // Fire background sync if online
           const token = await authService.getValidToken();
           if (token) {
-            pullRecentTickets(siteId, token, BACKEND_URL).catch((e) =>
+            pullRecentTickets(siteCode, token, BACKEND_URL).catch((e) =>
               logger.debug("Background ticket pull failed", {
                 error: e.message,
               }),
@@ -171,6 +171,7 @@ export const TicketsService = {
               location: t.area,
               assigned_to: t.assignedTo,
               created_user: t.createdBy,
+              site_code: t.siteCode,
               created_at: t.createdAt.toISOString(),
             })),
             isFromCache: true,
@@ -191,7 +192,7 @@ export const TicketsService = {
     params.append("limit", limit.toString());
 
     const result = await apiFetch(
-      `/api/complaints/site/${siteId}?${params.toString()}`,
+      `/api/complaints/site/${siteCode}?${params.toString()}`,
     );
 
     return result;
@@ -260,14 +261,14 @@ export const TicketsService = {
   /**
    * Get assets for a site
    */
-  async getAssets(siteId: string) {
-    const result = await apiFetch(`/api/assets/site/${siteId}`);
+  async getAssets(siteCode: string) {
+    const result = await apiFetch(`/api/assets/site/${siteCode}`);
     if (result.success) {
-      cacheAreas(siteId, result.data);
+      cacheAreas(siteCode, result.data);
       return result;
     }
     if (result.isNetworkError) {
-      const cached = await getCachedAreas(siteId);
+      const cached = await getCachedAreas(siteCode);
       if (cached && cached.length > 0) {
         return { success: true, data: cached, isFromCache: true };
       }
@@ -278,8 +279,8 @@ export const TicketsService = {
   /**
    * Get complaint statistics for a site
    */
-  async getStats(siteId: string) {
-    return await apiFetch(`/api/complaints/site/${siteId}/stats`);
+  async getStats(siteCode: string) {
+    return await apiFetch(`/api/complaints/site/${siteCode}/stats`);
   },
 
   /**
@@ -298,6 +299,33 @@ export const TicketsService = {
       }
     }
     return result;
+  },
+
+  /**
+   * Get ticket line items (images/videos/texts)
+   */
+  async getLineItems(ticketId: string) {
+    return await apiFetch(`/api/complaints/${ticketId}/line-items`);
+  },
+
+  /**
+   * Add a line item to a ticket
+   */
+  async addLineItem(
+    ticketId: string,
+    data: {
+      message_text?: string;
+      image_url?: string;
+      video_url?: string;
+      message_id?: string;
+    },
+  ) {
+    // Note: For full offline support, we would add to ticketUpdateCollection here as well.
+    // Assuming simple online-first strategy for now to support attachments functionality.
+    return await apiFetch(`/api/complaints/${ticketId}/line-items`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
   },
 };
 

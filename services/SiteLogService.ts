@@ -10,8 +10,9 @@ import logger from "../utils/logger";
 import { authService } from "./AuthService";
 import { fetchWithTimeout } from "../utils/apiHelper";
 
-const BACKEND_URL =
-  process.env.EXPO_PUBLIC_BACKEND_URL || "http://192.168.31.152:3420";
+import { API_BASE_URL } from "../constants/api";
+
+const BACKEND_URL = API_BASE_URL;
 
 // Helper for API requests with auth and retry logic
 const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
@@ -61,17 +62,17 @@ export const SiteLogService = {
   /**
    * Fetch logs for a site by type
    */
-  async getLogsByType(siteId: string, logType: string, options: any = {}) {
+  async getLogsByType(siteCode: string, logType: string, options: any = {}) {
     try {
       let query;
       if (logType === "Chiller Logs") {
         query = chillerReadingCollection.query(
-          Q.where("site_id", siteId),
+          Q.where("site_code", siteCode),
           Q.sortBy("created_at", Q.desc),
         );
       } else {
         query = siteLogCollection.query(
-          Q.where("site_id", siteId),
+          Q.where("site_code", siteCode),
           Q.where("log_name", logType),
           Q.sortBy("created_at", Q.desc),
         );
@@ -91,13 +92,13 @@ export const SiteLogService = {
         // Re-creating the query with all clauses
         if (logType === "Chiller Logs") {
           query = chillerReadingCollection.query(
-            Q.where("site_id", siteId),
+            Q.where("site_code", siteCode),
             ...conditions,
             Q.sortBy("created_at", Q.desc),
           );
         } else {
           query = siteLogCollection.query(
-            Q.where("site_id", siteId),
+            Q.where("site_code", siteCode),
             Q.where("log_name", logType),
             ...conditions,
             Q.sortBy("created_at", Q.desc),
@@ -122,7 +123,7 @@ export const SiteLogService = {
     await database.write(async () => {
       const batch = logs.map((data) =>
         siteLogCollection.prepareCreate((record) => {
-          record.siteId = data.siteId;
+          record.siteCode = data.siteCode;
           record.executorId = data.executorId;
           record.logName = data.logName;
           record.taskName = data.taskName;
@@ -151,7 +152,7 @@ export const SiteLogService = {
   async saveSiteLog(data: any): Promise<SiteLog> {
     return await database.write(async () => {
       return await siteLogCollection.create((record) => {
-        record.siteId = data.siteId;
+        record.siteCode = data.siteCode;
         record.executorId = data.executorId;
         record.logName = data.logName;
         record.taskName = data.taskName; // Ensure this is saved
@@ -178,7 +179,7 @@ export const SiteLogService = {
   async saveChillerReading(data: any): Promise<ChillerReading> {
     return await database.write(async () => {
       return await chillerReadingCollection.create((record) => {
-        record.siteId = data.siteId;
+        record.siteCode = data.siteCode;
         record.executorId = data.executorId;
         record.chillerId = data.chillerId || null;
         record.equipmentId = data.equipmentId || null;
@@ -207,6 +208,7 @@ export const SiteLogService = {
         record.inlineBtuMeter = data.inlineBtuMeter || null;
         record.remarks = data.remarks || null;
         record.signatureText = data.signatureText || null;
+        record.status = data.status || "Completed";
         record.isSynced = false;
       });
     });
@@ -216,16 +218,16 @@ export const SiteLogService = {
    * Pull site logs from server and sync to local DB
    */
   async pullSiteLogs(
-    siteId: string,
+    siteCode: string,
     options: { fromDate?: number; toDate?: number } = {},
   ) {
     try {
-      logger.info(`Pulling site logs for ${siteId}`, {
+      logger.info(`Pulling site logs for ${siteCode}`, {
         module: "SITE_LOG_SERVICE",
         options,
       });
 
-      let endpoint = `/api/site-logs/site/${siteId}`;
+      let endpoint = `/api/site-logs/site/${siteCode}`;
       const params = new URLSearchParams();
       if (options.fromDate)
         params.append("date_from", new Date(options.fromDate).toISOString());
@@ -266,8 +268,7 @@ export const SiteLogService = {
               .query(Q.where("server_id", serverLog.id))
               .fetch();
 
-            // Handle potential field mismatches/typos
-            const executorId = serverLog.executor_id || serverLog.exicuter_id;
+            const executorId = serverLog.executor_id;
             const entryTime = serverLog.entry_time
               ? new Date(serverLog.entry_time).getTime()
               : null;
@@ -300,13 +301,14 @@ export const SiteLogService = {
                 record.entryTime = entryTime;
                 record.endTime = endTime;
                 record.signature = signature;
+                record.status = serverLog.status || "Completed";
                 record.isSynced = true;
               });
             } else {
               // Create new
               await siteLogCollection.create((record) => {
                 record.serverId = serverLog.id;
-                record.siteId = siteId;
+                record.siteCode = siteCode;
                 record.executorId = executorId || "unknown";
                 record.logName = serverLog.log_name;
                 record.temperature = parseFloat(serverLog.temperature) || null;
@@ -319,6 +321,7 @@ export const SiteLogService = {
                 record.entryTime = entryTime;
                 record.endTime = endTime;
                 record.signature = signature;
+                record.status = serverLog.status || "Completed";
                 record.isSynced = true;
               });
             }
@@ -337,16 +340,16 @@ export const SiteLogService = {
    * Pull chiller readings from server and sync to local DB
    */
   async pullChillerReadings(
-    siteId: string,
+    siteCode: string,
     options: { fromDate?: number; toDate?: number } = {},
   ) {
     try {
-      logger.info(`Pulling chiller readings for ${siteId}`, {
+      logger.info(`Pulling chiller readings for ${siteCode}`, {
         module: "SITE_LOG_SERVICE",
         options,
       });
 
-      let endpoint = `/api/chiller-readings/site/${siteId}`;
+      let endpoint = `/api/chiller-readings/site/${siteCode}`;
       const params = new URLSearchParams();
       if (options.fromDate)
         params.append("date_from", new Date(options.fromDate).toISOString());
@@ -387,7 +390,7 @@ export const SiteLogService = {
               .query(Q.where("server_id", serverLog.id))
               .fetch();
 
-            const executorId = serverLog.executor_id || serverLog.exicuter_id;
+            const executorId = serverLog.executor_id;
             const readingTime = serverLog.reading_time
               ? new Date(serverLog.reading_time).getTime()
               : serverLog.reading_time || null;
@@ -446,12 +449,13 @@ export const SiteLogService = {
                   parseFloat(serverLog.inline_btu_meter) || null;
                 record.remarks = serverLog.remarks;
                 record.signatureText = serverLog.signature_text;
+                record.status = serverLog.status || "Completed";
                 record.isSynced = true;
               });
             } else {
               await chillerReadingCollection.create((record) => {
                 record.serverId = serverLog.id;
-                record.siteId = siteId;
+                record.siteCode = siteCode;
                 record.chillerId = serverLog.chiller_id;
                 record.equipmentId = serverLog.equipment_id;
                 record.executorId = executorId || "unknown";
@@ -498,6 +502,7 @@ export const SiteLogService = {
                   parseFloat(serverLog.inline_btu_meter) || null;
                 record.remarks = serverLog.remarks;
                 record.signatureText = serverLog.signature_text;
+                record.status = serverLog.status || "Completed";
                 record.isSynced = true;
               });
             }
@@ -515,19 +520,19 @@ export const SiteLogService = {
   /**
    * Get summary counts for dashboard
    */
-  async getSummaryCounts(siteId: string): Promise<Record<string, number>> {
+  async getSummaryCounts(siteCode: string): Promise<Record<string, number>> {
     try {
       const counts: Record<string, number> = {};
       const logTypes = ["Temp RH", "Water Parameters", "Chemical Dosing"];
 
       for (const type of logTypes) {
         counts[type] = await siteLogCollection
-          .query(Q.where("site_id", siteId), Q.where("log_name", type))
+          .query(Q.where("site_code", siteCode), Q.where("log_name", type))
           .fetchCount();
       }
 
       counts["Chiller Logs"] = await chillerReadingCollection
-        .query(Q.where("site_id", siteId))
+        .query(Q.where("site_code", siteCode))
         .fetchCount();
 
       return counts;
@@ -544,30 +549,36 @@ export const SiteLogService = {
    * Get progress counts (Pending vs Total) for dashboard
    */
   async getCategoryProgress(
-    siteId: string,
+    siteCode: string,
   ): Promise<Record<string, { total: number; completed: number }>> {
     try {
       const SiteConfigService =
         require("./SiteConfigService").SiteConfigService; // Circular dependency handling
 
       // 1. Temp RH
-      const tempTasks = await SiteConfigService.getLogTasks(siteId, "Temp RH");
+      const tempTasks = await SiteConfigService.getLogTasks(
+        siteCode,
+        "Temp RH",
+      );
       const tempTotal = tempTasks.length;
       const tempCompleted = tempTasks.filter((t: any) => t.isCompleted).length;
 
       // 2. Chiller Readings
-      const chillerTasks = await SiteConfigService.getChillerTasks(siteId);
+      const chillerTasks = await SiteConfigService.getChillerTasks(siteCode);
       const chillerTotal = chillerTasks.length;
       const chillerCompleted = chillerTasks.filter(
         (t: any) => t.isCompleted,
       ).length;
 
       // 3. Water
-      const waterTask = await SiteConfigService.getGenericTask(siteId, "Water");
+      const waterTask = await SiteConfigService.getGenericTask(
+        siteCode,
+        "Water",
+      );
 
       // 4. Chemical
       const chemTask = await SiteConfigService.getGenericTask(
-        siteId,
+        siteCode,
         "Chemical Dosing",
       );
 

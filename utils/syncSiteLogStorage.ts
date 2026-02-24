@@ -178,7 +178,7 @@ export async function syncPendingSiteLogs(
             // It had `/api/logs`.
             // Let's check `backend/src/routes/logsRoutes.ts`.
 
-            site_id: log.siteId,
+            site_code: log.siteCode,
             executor_id: log.executorId,
             log_name: log.logName,
             temperature: log.temperature,
@@ -234,7 +234,7 @@ export async function syncPendingSiteLogs(
           },
           body: JSON.stringify({
             log_id: log.logId,
-            site_id: log.siteId,
+            site_code: log.siteCode,
             executor_id: log.executorId,
             chiller_id: log.chillerId,
             equipment_id: log.equipmentId,
@@ -332,7 +332,7 @@ export async function pullRecentSiteLogs(
 
             if (existing.length > 0) {
               await existing[0].update((r) => {
-                r.siteId = logData.site_id;
+                r.siteCode = logData.site_code || logData.site_id;
                 r.executorId = logData.executor_id;
                 r.logName = logData.log_name;
                 r.taskName = logData.task_name; // NEW COLUMN
@@ -357,7 +357,7 @@ export async function pullRecentSiteLogs(
             } else {
               await siteLogCollection.create((r) => {
                 r.serverId = logData.id;
-                r.siteId = logData.site_id;
+                r.siteCode = logData.site_code || logData.site_id;
                 r.executorId = logData.executor_id;
                 r.logName = logData.log_name;
                 r.taskName = logData.task_name; // NEW COLUMN

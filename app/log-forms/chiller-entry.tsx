@@ -27,8 +27,9 @@ export default function ChillerEntry() {
   const { user } = useAuth();
   const params = useLocalSearchParams<{
     chillerId: string;
-    siteId: string;
+    siteCode: string;
     isNew?: string;
+    readingTime?: string;
   }>();
 
   const [formData, setFormData] = useState({
@@ -50,34 +51,12 @@ export default function ChillerEntry() {
     setFormData((prev) => ({ ...prev, [field]: value }));
   };
 
-  const handleTakePhoto = async () => {
-    try {
-      const result = await ImagePicker.requestCameraPermissionsAsync();
-      if (!result.granted) {
-        Alert.alert(
-          "Permission Required",
-          "Camera permission is required to take photos.",
-        );
-        return;
-      }
-
-      const pickerResult = await ImagePicker.launchCameraAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        quality: 0.5,
-      });
-
-      if (
-        !pickerResult.canceled &&
-        pickerResult.assets &&
-        pickerResult.assets.length > 0
-      ) {
-        setUploading(true);
-        const uri = pickerResult.assets[0].uri;
-
-        // Generate filename
-        const filename = `chiller/${params.siteId}/${Date.now()}.jpg`;
-
-        // Upload
+  const processImageResult = async (result: ImagePicker.ImagePickerResult) => {
+    if (!result.canceled && result.assets && result.assets.length > 0) {
+      setUploading(true);
+      try {
+        const uri = result.assets[0].uri;
+        const filename = `chiller/${params.siteCode}/${Date.now()}.jpg`;
         const publicUrl = await StorageService.uploadFile(
           "site-log-attachments",
           filename,
@@ -92,12 +71,43 @@ export default function ChillerEntry() {
             "Could not upload image. Please try again.",
           );
         }
+      } catch (e: any) {
+        Alert.alert("Error", e.message);
+      } finally {
+        setUploading(false);
       }
-    } catch (e: any) {
-      Alert.alert("Error", e.message);
-    } finally {
-      setUploading(false);
     }
+  };
+
+  const handleAttachment = () => {
+    Alert.alert("Add Attachment", "Choose an option", [
+      {
+        text: "Take Photo",
+        onPress: async () => {
+          const perm = await ImagePicker.requestCameraPermissionsAsync();
+          if (perm.granted) {
+            const res = await ImagePicker.launchCameraAsync({
+              mediaTypes: ImagePicker.MediaTypeOptions.Images,
+              quality: 0.5,
+            });
+            processImageResult(res);
+          } else {
+            Alert.alert("Permission Required", "Camera permission is needed.");
+          }
+        },
+      },
+      {
+        text: "Choose from Gallery",
+        onPress: async () => {
+          const res = await ImagePicker.launchImageLibraryAsync({
+            mediaTypes: ImagePicker.MediaTypeOptions.Images,
+            quality: 0.5,
+          });
+          processImageResult(res);
+        },
+      },
+      { text: "Cancel", style: "cancel" },
+    ]);
   };
 
   const handleSave = async () => {
@@ -109,7 +119,7 @@ export default function ChillerEntry() {
     try {
       setSaving(true);
       await SiteLogService.saveChillerReading({
-        siteId: params.siteId,
+        siteCode: params.siteCode,
         executorId: user?.user_id || user?.id || "unknown",
         chillerId: formData.chillerId,
         condenserInletTemp: parseFloat(formData.condenserInletTemp),
@@ -119,7 +129,9 @@ export default function ChillerEntry() {
         oilPressure: parseFloat(formData.oilPressure),
         compressorLoadPercentage: parseFloat(formData.load),
         remarks: formData.remarks,
-        readingTime: new Date().getTime(),
+        readingTime: params.readingTime
+          ? parseInt(params.readingTime)
+          : new Date().getTime(),
         attachments: formData.attachment,
       });
 
@@ -257,7 +269,7 @@ export default function ChillerEntry() {
                 </View>
               ) : (
                 <TouchableOpacity
-                  onPress={handleTakePhoto}
+                  onPress={handleAttachment}
                   disabled={uploading}
                   className="w-full h-32 border-2 border-dashed border-slate-300 dark:border-slate-700 rounded-xl items-center justify-center bg-slate-50 dark:bg-slate-900"
                 >
@@ -267,7 +279,7 @@ export default function ChillerEntry() {
                     <>
                       <Camera size={24} color="#94a3b8" />
                       <Text className="text-slate-400 font-bold text-xs mt-2 uppercase tracking-wider">
-                        Take Photo
+                        Add Photo / Upload
                       </Text>
                     </>
                   )}

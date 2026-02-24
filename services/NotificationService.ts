@@ -6,8 +6,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import logger from "@/utils/logger";
 import { fetchWithTimeout } from "@/utils/apiHelper";
 
-const API_URL =
-  (process.env.EXPO_PUBLIC_BACKEND_URL || "http://10.0.2.2:3420") + "/api";
+import { API_URL } from "../constants/api";
 
 // Configure notification handler
 Notifications.setNotificationHandler({

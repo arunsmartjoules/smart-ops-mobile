@@ -20,7 +20,7 @@ export interface User {
   role: UserRole;
   employee_code?: string;
   designation?: string;
-  site_id?: string;
+  site_code?: string;
   site_name?: string;
   phone?: string;
   is_active: boolean;
@@ -39,7 +39,7 @@ export interface AuthUser {
   name: string;
   role: UserRole;
   employee_code?: string;
-  site_id?: string;
+  site_code?: string;
   is_admin?: boolean;
 }
 

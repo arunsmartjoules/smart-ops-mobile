@@ -1,5 +1,5 @@
 /**
- * Design tokens - Color palette for the SmartOps app
+ * Design tokens - Color palette for the JouleOps app
  */
 
 export const colors = {

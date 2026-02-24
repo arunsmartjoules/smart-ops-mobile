@@ -5,7 +5,7 @@ export default class Ticket extends Model {
   static table = "tickets";
 
   @field("server_id") serverId!: string | null;
-  @field("site_id") siteId!: string;
+  @field("site_code") siteCode!: string;
   @field("ticket_number") ticketNumber!: string;
   @field("title") title!: string;
   @field("description") description!: string | null;

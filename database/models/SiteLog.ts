@@ -5,7 +5,7 @@ export default class SiteLog extends Model {
   static table = "site_logs";
 
   @field("server_id") serverId!: string | null;
-  @text("site_id") siteId!: string;
+  @text("site_code") siteCode!: string;
   @text("executor_id") executorId!: string;
   @text("log_name") logName!: string;
   @text("task_name") taskName!: string | null;

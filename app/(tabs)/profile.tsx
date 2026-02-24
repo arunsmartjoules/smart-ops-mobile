@@ -138,7 +138,7 @@ export default function Profile() {
                             {
                               month: "short",
                               year: "numeric",
-                            }
+                            },
                           )
                         : "N/A"}
                     </Text>
@@ -317,7 +317,7 @@ export default function Profile() {
         <View className="flex-1 justify-end pb-4">
           <View className="items-center">
             <Text className="text-slate-300 dark:text-slate-600 text-xs">
-              Smart Ops v1.0.0
+              JouleOps v1.0.0
             </Text>
           </View>
         </View>

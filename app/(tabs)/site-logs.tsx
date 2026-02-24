@@ -33,7 +33,7 @@ export default function SiteLogs() {
   const { user } = useAuth();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [siteId, setSiteId] = useState<string | null>(null);
+  const [siteCode, setSiteCode] = useState<string | null>(null);
   const [siteName, setSiteName] = useState<string>("Select Site");
   const [logProgress, setLogProgress] = useState<
     Record<string, { total: number; completed: number }>
@@ -48,31 +48,32 @@ export default function SiteLogs() {
     try {
       if (!refreshing) setLoading(true); // Show skeleton on initial load or site switch
       const storageKey = `last_site_${user?.user_id || user?.id}`;
-      const lastSite = await AsyncStorage.getItem(storageKey);
+      const lastSiteCode = await AsyncStorage.getItem(storageKey);
 
-      setSiteId(lastSite);
+      setSiteCode(lastSiteCode);
 
       if (user?.user_id || user?.id) {
         const sites = await AttendanceService.getUserSites(
           user?.user_id || user?.id || "",
+          "JouleCool",
         );
         setAvailableSites(sites);
-        const currentSite = sites.find((s) => s.site_code === lastSite);
+        const currentSite = sites.find((s) => s.site_code === lastSiteCode);
         if (currentSite) setSiteName(currentSite.name);
 
-        if (!lastSite && sites.length > 0) {
-          const firstSite = sites[0].site_code;
-          if (firstSite) {
-            setSiteId(firstSite);
+        if (!lastSiteCode && sites.length > 0) {
+          const firstSiteCode = sites[0].site_code;
+          if (firstSiteCode) {
+            setSiteCode(firstSiteCode);
             setSiteName(sites[0].name);
-            await AsyncStorage.setItem(storageKey, firstSite);
+            await AsyncStorage.setItem(storageKey, firstSiteCode);
             fetchLogs();
             return;
           }
         }
       }
 
-      if (lastSite) {
+      if (lastSiteCode) {
         // ... fetching logic ...
         if (isConnected) {
           try {
@@ -81,15 +82,15 @@ export default function SiteLogs() {
               toDate: toDate?.getTime(),
             };
             await Promise.all([
-              SiteLogService.pullSiteLogs(lastSite, pullOptions),
-              SiteLogService.pullChillerReadings(lastSite, pullOptions),
+              SiteLogService.pullSiteLogs(lastSiteCode, pullOptions),
+              SiteLogService.pullChillerReadings(lastSiteCode, pullOptions),
             ]);
           } catch (e) {
             console.log("Sync warning", e);
           }
         }
         // Get rich progress counts
-        const progress = await SiteLogService.getCategoryProgress(lastSite);
+        const progress = await SiteLogService.getCategoryProgress(lastSiteCode);
         setLogProgress(progress);
       }
     } catch (e) {
@@ -365,7 +366,10 @@ export default function SiteLogs() {
                         onPress={() =>
                           router.push({
                             pathname: "/history/site-history",
-                            params: { siteId, logName: getLogName(item.title) },
+                            params: {
+                              siteCode,
+                              logName: getLogName(item.title),
+                            },
                           })
                         }
                         className="flex-1 bg-slate-50 dark:bg-slate-800 py-3 rounded-lg flex-row items-center justify-center border border-slate-100 dark:border-slate-700"
@@ -395,9 +399,9 @@ export default function SiteLogs() {
         toDate={toDate}
         setToDate={setToDate}
         availableSites={availableSites}
-        selectedSiteId={siteId}
+        selectedSiteCode={siteCode}
         onSiteSelect={async (id) => {
-          setSiteId(id);
+          setSiteCode(id);
           const s = availableSites.find((site) => site.site_code === id);
           if (s) setSiteName(s.name);
           await AsyncStorage.setItem(

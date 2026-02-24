@@ -30,7 +30,7 @@ export default function WaterTaskList() {
   const { user } = useAuth();
   const [tasks, setTasks] = useState<TaskItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [siteId, setSiteId] = useState<string | null>(null);
+  const [siteCode, setSiteCode] = useState<string | null>(null);
 
   // Bulk Entry State
   const [logValues, setLogValues] = useState<
@@ -50,17 +50,17 @@ export default function WaterTaskList() {
 
   // Load draft from storage when siteId is ready
   useEffect(() => {
-    if (siteId) {
+    if (siteCode) {
       loadDraft();
     }
-  }, [siteId]);
+  }, [siteCode]);
 
   // Save draft to storage whenever logValues or signature changes
   useEffect(() => {
-    if (siteId) {
+    if (siteCode) {
       const saveDraft = async () => {
         try {
-          const draftKey = `draft_water_${siteId}_${user?.user_id}`;
+          const draftKey = `draft_water_${siteCode}_${user?.user_id}`;
           await AsyncStorage.setItem(
             draftKey,
             JSON.stringify({ values: logValues, signature }),
@@ -72,11 +72,11 @@ export default function WaterTaskList() {
       const timer = setTimeout(saveDraft, 500); // Debounce
       return () => clearTimeout(timer);
     }
-  }, [logValues, signature, siteId]);
+  }, [logValues, signature, siteCode]);
 
   const loadDraft = async () => {
     try {
-      const draftKey = `draft_water_${siteId}_${user?.user_id}`;
+      const draftKey = `draft_water_${siteCode}_${user?.user_id}`;
       const savedDraft = await AsyncStorage.getItem(draftKey);
       if (savedDraft) {
         const { values, signature: sig } = JSON.parse(savedDraft);
@@ -90,7 +90,7 @@ export default function WaterTaskList() {
 
   const clearDraft = async () => {
     try {
-      const draftKey = `draft_water_${siteId}_${user?.user_id}`;
+      const draftKey = `draft_water_${siteCode}_${user?.user_id}`;
       await AsyncStorage.removeItem(draftKey);
       setLogValues({});
       setSignature("");
@@ -103,12 +103,12 @@ export default function WaterTaskList() {
     try {
       setLoading(true);
       const storageKey = `last_site_${user?.user_id || user?.id}`;
-      const savedSiteId = await AsyncStorage.getItem(storageKey);
+      const savedSiteCode = await AsyncStorage.getItem(storageKey);
 
-      if (savedSiteId) {
-        setSiteId(savedSiteId);
+      if (savedSiteCode) {
+        setSiteCode(savedSiteCode);
         const areaTasks = await SiteConfigService.getLogTasks(
-          savedSiteId,
+          savedSiteCode,
           "Water",
         );
         setTasks(areaTasks);
@@ -154,7 +154,7 @@ export default function WaterTaskList() {
       const input = logValues[task.id];
       if (input && input.tds && input.ph && input.hardness) {
         entriesToSave.push({
-          siteId: siteId,
+          siteCode: siteCode,
           executorId: user?.user_id || user?.id || "unknown",
           logName: "Water",
           taskName: task.name,

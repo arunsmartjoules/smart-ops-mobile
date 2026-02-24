@@ -25,7 +25,9 @@ import {
 import { router } from "expo-router";
 import { useAuth } from "@/contexts/AuthContext";
 
-const API_URL = process.env.EXPO_PUBLIC_API_URL || "http://192.168.31.152:3420";
+import { API_BASE_URL } from "../constants/api";
+
+const API_URL = API_BASE_URL;
 
 export default function PrivacySecurity() {
   const { token } = useAuth();

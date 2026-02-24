@@ -17,8 +17,9 @@ import { SecureStorage, SECURE_KEYS } from "../utils/secureStorage";
 import { performLogoutCleanup } from "../services/CleanupService";
 import { syncManager } from "../services/SyncManager";
 
-const BACKEND_URL =
-  process.env.EXPO_PUBLIC_BACKEND_URL || "http://192.168.31.152:3420";
+import { API_BASE_URL } from "../constants/api";
+
+const BACKEND_URL = API_BASE_URL;
 
 interface AuthUser {
   id: string;
@@ -142,14 +143,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         return { error: result.error || "Login failed" };
       }
 
-      const { token, user: userData } = result.data;
+      const { token, refresh_token, user: userData } = result.data;
+
+      // Ensure consistent mapping: some controllers return 'id' as user_id
+      const mappedUser = {
+        ...userData,
+        user_id: userData.user_id || userData.id,
+        id: userData.user_id || userData.id,
+      };
 
       await SecureStorage.setItem(SECURE_KEYS.AUTH_TOKEN, token);
-      await SecureStorage.setItem("user_id", userData.user_id || userData.id);
-      await AsyncStorage.setItem("auth_user", JSON.stringify(userData));
+      await SecureStorage.setItem(SECURE_KEYS.REFRESH_TOKEN, refresh_token);
+      await SecureStorage.setItem("user_id", mappedUser.user_id);
+      await AsyncStorage.setItem("auth_user", JSON.stringify(mappedUser));
 
       setToken(token);
-      setUser(user);
+      setUser(mappedUser);
 
       if (userData) {
         // Register for push notifications (don't block login if it fails)
@@ -197,13 +206,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         return { error: result.error || "Signup failed" };
       }
 
-      const { token, user } = result.data;
+      const { token, refresh_token, user: userData } = result.data;
 
-      await AsyncStorage.setItem("auth_token", token);
-      await AsyncStorage.setItem("auth_user", JSON.stringify(user));
+      const mappedUser = {
+        ...userData,
+        user_id: userData.user_id || userData.id,
+        id: userData.user_id || userData.id,
+      };
+
+      await SecureStorage.setItem(SECURE_KEYS.AUTH_TOKEN, token);
+      await SecureStorage.setItem(SECURE_KEYS.REFRESH_TOKEN, refresh_token);
+      await SecureStorage.setItem("user_id", mappedUser.user_id);
+      await AsyncStorage.setItem("auth_user", JSON.stringify(mappedUser));
 
       setToken(token);
-      setUser(user);
+      setUser(mappedUser);
 
       return { error: null };
     } catch (error: any) {

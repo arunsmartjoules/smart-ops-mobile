@@ -4,8 +4,9 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 
 // We need to avoid circular dependencies if we import API_CONFIG constant
 // So we define the base URL dynamically or import carefully
-const BACKEND_URL =
-  process.env.EXPO_PUBLIC_BACKEND_URL || "http://192.168.31.152:3420";
+import { API_BASE_URL } from "../constants/api";
+
+const BACKEND_URL = API_BASE_URL;
 
 interface TokenResponse {
   success: boolean;
@@ -25,17 +26,54 @@ class AuthService {
 
     if (!token) return null;
 
-    // Check if token is about to expire (within 2 minutes)
-    // Note: This relies on us tracking expiry. If we don't have it tracked in memory (e.g. app restart),
-    // we assume it's valid until a 401 happens.
-    if (this.tokenExpiresAt && Date.now() > this.tokenExpiresAt - 120000) {
-      logger.debug("Token about to expire, refreshing...", {
+    // 1. If we don't have expiry in memory (e.g. app reload), try to decode from token
+    if (!this.tokenExpiresAt) {
+      const exp = this.getExpiryFromToken(token);
+      if (exp) {
+        this.tokenExpiresAt = exp * 1000;
+      }
+    }
+
+    // 2. Check if token is about to expire (within 5 minutes for more proactivity)
+    const isExpired =
+      !this.tokenExpiresAt || Date.now() > this.tokenExpiresAt - 300000;
+
+    if (isExpired) {
+      logger.debug("Token expired or about to expire, refreshing...", {
         module: "AUTH_SERVICE",
       });
       return this.refreshToken();
     }
 
     return token;
+  }
+
+  private getExpiryFromToken(token: string): number | null {
+    try {
+      const payload = token.split(".")[1];
+      const decoded = JSON.parse(this.base64Decode(payload));
+      return decoded.exp || null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  private base64Decode(str: string): string {
+    // Basic base64 decode for JSON strings in React Native
+    const chars =
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=";
+    let output = "";
+    str = str.replace(/=/g, "");
+    for (
+      let bc = 0, bs = 0, buffer, i = 0;
+      (buffer = str.charAt(i++));
+      ~buffer && ((bs = bc % 4 ? bs * 64 + buffer : buffer), bc++ % 4)
+        ? (output += String.fromCharCode(255 & (bs >> ((-2 * bc) & 6))))
+        : 0
+    ) {
+      buffer = chars.indexOf(buffer);
+    }
+    return output;
   }
 
   async refreshToken(): Promise<string | null> {
@@ -74,8 +112,20 @@ class AuthService {
       const result: TokenResponse = await response.json();
 
       if (result.success && result.data) {
+        // Save new access token
         await SecureStorage.setItem(SECURE_KEYS.AUTH_TOKEN, result.data.token);
         this.tokenExpiresAt = Date.now() + result.data.expires_in * 1000;
+
+        // --- Handle Refresh Token Rotation ---
+        // Save new refresh token if provided by the backend
+        if ((result.data as any).refresh_token) {
+          await SecureStorage.setItem(
+            SECURE_KEYS.REFRESH_TOKEN,
+            (result.data as any).refresh_token,
+          );
+          logger.debug("Refresh token rotated", { module: "AUTH_SERVICE" });
+        }
+
         logger.debug("Token refreshed successfully", {
           module: "AUTH_SERVICE",
         });
@@ -119,7 +169,7 @@ class AuthService {
     return await SecureStorage.getItem("user_id");
   }
 
-  async getCurrentSiteId(): Promise<string | null> {
+  async getCurrentSiteCode(): Promise<string | null> {
     const userId = await this.getCurrentUserId();
     if (!userId) return null;
     return await AsyncStorage.getItem(`last_site_${userId}`);

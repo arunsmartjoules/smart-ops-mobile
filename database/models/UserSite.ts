@@ -7,5 +7,6 @@ export default class UserSite extends Model {
   @field("server_id") serverId!: string;
   @field("user_id") userId!: string;
   @field("site_name") siteName!: string;
+  @field("site_code") siteCode!: string;
   @field("cached_at") cachedAt!: number;
 }

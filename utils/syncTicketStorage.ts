@@ -20,7 +20,7 @@ export interface TicketSyncStatus {
  * Pull last 3 months of tickets for a site
  */
 export async function pullRecentTickets(
-  siteId: string,
+  siteCode: string,
   token: string,
   apiUrl: string,
 ): Promise<{ pulled: number }> {
@@ -28,13 +28,15 @@ export async function pullRecentTickets(
   try {
     const ninetyDaysAgo = new Date();
     ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
-    const fromDate = ninetyDaysAgo.toISOString();
+    const fromDate = encodeURIComponent(ninetyDaysAgo.toISOString());
 
-    const response = await fetchWithTimeout(
-      `${apiUrl}/api/complaints/site/${siteId}?fromDate=${fromDate}&limit=1000`,
-      {
-        headers: { Authorization: `Bearer ${token}` },
-      },
+    const response = await syncWithRetry(() =>
+      fetchWithTimeout(
+        `${apiUrl}/api/complaints/site/${siteCode}?fromDate=${fromDate}&limit=1000`,
+        {
+          headers: { Authorization: `Bearer ${token}` },
+        },
+      ),
     );
 
     if (response.ok) {
@@ -64,7 +66,7 @@ export async function pullRecentTickets(
             } else {
               await ticketCollection.create((record) => {
                 record.serverId = t.ticket_id || t.id;
-                record.siteId = siteId;
+                record.siteCode = siteCode;
                 record.ticketNumber = t.ticket_no;
                 record.title = t.title;
                 record.description = t.description || t.internal_remarks;
@@ -81,6 +83,11 @@ export async function pullRecentTickets(
           }
         });
       }
+    } else {
+      logger.warn("Failed to pull recent tickets", {
+        module: "TICKET_SYNC",
+        status: response.status,
+      });
     }
   } catch (error: any) {
     logger.error("Error pulling recent tickets", {

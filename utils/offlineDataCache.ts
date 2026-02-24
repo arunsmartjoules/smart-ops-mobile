@@ -12,7 +12,7 @@ const CACHE_METADATA_KEY = "@cache_metadata";
 export interface Area {
   id: string;
   name: string;
-  site_id: string;
+  site_code: string;
   description?: string;
 }
 
@@ -23,10 +23,10 @@ export interface Category {
 }
 
 export interface CacheMetadata {
-  areas: { [siteId: string]: string }; // siteId -> timestamp
+  areas: { [siteCode: string]: string }; // siteCode -> timestamp
   categories: string | null; // timestamp
   sites: { [userId: string]: string }; // userId -> timestamp
-  tickets: { [siteId: string]: string }; // siteId -> timestamp
+  tickets: { [siteCode: string]: string }; // siteCode -> timestamp
   attendance: { [userId: string]: string }; // userId -> timestamp
 }
 
@@ -71,43 +71,48 @@ async function updateCacheMetadata(
 
 // ===== AREAS =====
 
-export async function cacheAreas(siteId: string, areas: Area[]): Promise<void> {
+export async function cacheAreas(
+  siteCode: string,
+  areas: Area[],
+): Promise<void> {
   try {
     await AsyncStorage.setItem(
-      `${CACHE_AREAS_PREFIX}${siteId}`,
+      `${CACHE_AREAS_PREFIX}${siteCode}`,
       JSON.stringify(areas),
     );
     const metadata = await getCacheMetadata();
     await updateCacheMetadata({
-      areas: { ...metadata.areas, [siteId]: new Date().toISOString() },
+      areas: { ...metadata.areas, [siteCode]: new Date().toISOString() },
     });
   } catch (error: any) {
     logger.error("Error caching areas", {
       module: "OFFLINE_DATA_CACHE",
       error: error.message,
-      siteId,
+      siteCode,
     });
   }
 }
 
-export async function getCachedAreas(siteId: string): Promise<Area[]> {
+export async function getCachedAreas(siteCode: string): Promise<Area[]> {
   try {
-    const data = await AsyncStorage.getItem(`${CACHE_AREAS_PREFIX}${siteId}`);
+    const data = await AsyncStorage.getItem(`${CACHE_AREAS_PREFIX}${siteCode}`);
     return data ? JSON.parse(data) : [];
   } catch (error: any) {
     logger.error("Error getting cached areas", {
       module: "OFFLINE_DATA_CACHE",
       error: error.message,
-      siteId,
+      siteCode,
     });
     return [];
   }
 }
 
-export async function getAreasCacheAge(siteId: string): Promise<number | null> {
+export async function getAreasCacheAge(
+  siteCode: string,
+): Promise<number | null> {
   const metadata = await getCacheMetadata();
-  if (!metadata.areas[siteId]) return null;
-  return Date.now() - new Date(metadata.areas[siteId]).getTime();
+  if (!metadata.areas[siteCode]) return null;
+  return Date.now() - new Date(metadata.areas[siteCode]).getTime();
 }
 
 // ===== CATEGORIES =====
@@ -184,47 +189,49 @@ export async function getCachedSites(userId: string): Promise<any[]> {
 // ===== TICKETS =====
 
 export async function cacheTickets(
-  siteId: string,
+  siteCode: string,
   tickets: any[],
 ): Promise<void> {
   try {
     await AsyncStorage.setItem(
-      `${CACHE_TICKETS_PREFIX}${siteId}`,
+      `${CACHE_TICKETS_PREFIX}${siteCode}`,
       JSON.stringify(tickets),
     );
     const metadata = await getCacheMetadata();
     await updateCacheMetadata({
-      tickets: { ...metadata.tickets, [siteId]: new Date().toISOString() },
+      tickets: { ...metadata.tickets, [siteCode]: new Date().toISOString() },
     });
   } catch (error: any) {
     logger.error("Error caching tickets", {
       module: "OFFLINE_DATA_CACHE",
       error: error.message,
-      siteId,
+      siteCode,
     });
   }
 }
 
-export async function getCachedTickets(siteId: string): Promise<any[]> {
+export async function getCachedTickets(siteCode: string): Promise<any[]> {
   try {
-    const data = await AsyncStorage.getItem(`${CACHE_TICKETS_PREFIX}${siteId}`);
+    const data = await AsyncStorage.getItem(
+      `${CACHE_TICKETS_PREFIX}${siteCode}`,
+    );
     return data ? JSON.parse(data) : [];
   } catch (error: any) {
     logger.error("Error getting cached tickets", {
       module: "OFFLINE_DATA_CACHE",
       error: error.message,
-      siteId,
+      siteCode,
     });
     return [];
   }
 }
 
 export async function getTicketsCacheAge(
-  siteId: string,
+  siteCode: string,
 ): Promise<number | null> {
   const metadata = await getCacheMetadata();
-  if (!metadata.tickets[siteId]) return null;
-  return Date.now() - new Date(metadata.tickets[siteId]).getTime();
+  if (!metadata.tickets[siteCode]) return null;
+  return Date.now() - new Date(metadata.tickets[siteCode]).getTime();
 }
 
 // ===== ATTENDANCE =====

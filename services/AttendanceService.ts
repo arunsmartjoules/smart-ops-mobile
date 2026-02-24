@@ -6,15 +6,46 @@ import {
   getCachedAttendance,
 } from "../utils/offlineDataCache";
 import { authService } from "../services/AuthService";
-
-const BACKEND_URL =
-  process.env.EXPO_PUBLIC_BACKEND_URL || "http://192.168.31.152:3420";
-
-import {
-  saveOfflineAttendance,
-  getPendingAttendance,
-} from "../utils/offlineStorage";
 import { fetchWithTimeout } from "../utils/apiHelper";
+import { API_BASE_URL } from "../constants/api";
+
+const BACKEND_URL = API_BASE_URL;
+
+const getISTDateString = (d: Date = new Date()) =>
+  new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(d);
+
+const safeDate = (value: any): Date | null => {
+  if (!value) return null;
+  const d = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(d.getTime()) ? null : d;
+};
+
+const normalizeAttendanceLog = (log: any): AttendanceLog | null => {
+  if (!log) return null;
+
+  const ci = safeDate(log.check_in_time);
+  const co = safeDate(log.check_out_time);
+
+  return {
+    ...log,
+    check_in_time: ci ? ci.toISOString() : undefined,
+    check_out_time: co ? co.toISOString() : undefined,
+  } as AttendanceLog;
+};
+
+const isAttendanceForToday = (log: AttendanceLog | null | undefined) => {
+  if (!log) return false;
+  const today = getISTDateString();
+  if (log.date && log.date === today) return true;
+  const d = safeDate(log.check_in_time || log.check_out_time);
+  if (!d) return false;
+  return getISTDateString(d) === today;
+};
 
 // Helper for API requests with auth and retry logic
 const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
@@ -87,7 +118,7 @@ const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
 
     return {
       success: false,
-      error: "Network unavailable. Using offline data.",
+      error: "Network unavailable. Please check your internet connection.",
       isNetworkError: true,
     };
   }
@@ -95,9 +126,8 @@ const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
 
 // Types
 export interface Site {
-  site_id: string;
+  site_code: string;
   name: string;
-  site_code?: string;
   address?: string;
   city?: string;
   state?: string;
@@ -111,7 +141,7 @@ export interface Site {
 export interface AttendanceLog {
   id: string;
   user_id: string;
-  site_id: string;
+  site_code: string;
   date: string;
   check_in_time?: string;
   check_out_time?: string;
@@ -140,24 +170,40 @@ export const AttendanceService = {
    * Get today's attendance for a user
    */
   async getTodayAttendance(userId: string): Promise<AttendanceLog | null> {
-    const result = await apiFetch(`/api/attendance/user/${userId}/today`);
-    if (result.success) {
-      // Just update the 'today' part of the cache without triggering a full history fetch
-      getCachedAttendance(userId).then((cached) => {
-        cacheAttendance(userId, {
-          today: result.data,
-          history: cached ? cached.history : [],
-        });
-      });
-      return result.data;
+    // 1. Try to get from cache first for immediate return
+    const cached = await getCachedAttendance(userId);
+    const cachedToday = normalizeAttendanceLog(cached?.today);
+
+    // If we have a valid cached log for today, return it immediately to unblock UI
+    const hasValidCache = cachedToday && isAttendanceForToday(cachedToday);
+
+    // 2. Fire off the API check in the background
+    const apiPromise = apiFetch(`/api/attendance/user/${userId}/today`).then(
+      (result) => {
+        if (result.success) {
+          const normalized = normalizeAttendanceLog(result.data);
+          const todayFromApi =
+            normalized && isAttendanceForToday(normalized) ? normalized : null;
+
+          // Update cache with fresh data
+          cacheAttendance(userId, {
+            today: todayFromApi,
+            history: cached ? cached.history : [],
+          });
+          return todayFromApi;
+        }
+        return null;
+      },
+    );
+
+    // If we have cache, return it and let the caller update again if they want
+    // (Actual pattern will be implemented in the screen hook/component)
+    if (hasValidCache) {
+      return cachedToday;
     }
 
-    // Fallback to cache if network error
-    if (result.isNetworkError) {
-      const cached = await getCachedAttendance(userId);
-      return cached ? cached.today : null;
-    }
-    return null;
+    // If no valid cache, wait for API
+    return apiPromise;
   },
 
   /**
@@ -189,8 +235,14 @@ export const AttendanceService = {
   /**
    * Get user's assigned sites with coordinates
    */
-  async getUserSites(userId: string): Promise<Site[]> {
-    const result = await apiFetch(`/api/attendance/user-sites/${userId}`);
+  async getUserSites(userId: string, projectType?: string): Promise<Site[]> {
+    const params = new URLSearchParams();
+    if (projectType) params.append("project_type", projectType);
+
+    const queryStr = params.toString();
+    const result = await apiFetch(
+      `/api/attendance/user-sites/${userId}${queryStr ? `?${queryStr}` : ""}`,
+    );
     if (result.success) {
       return result.data;
     }
@@ -213,7 +265,7 @@ export const AttendanceService = {
    */
   async checkIn(
     userId: string,
-    siteId: string,
+    siteCode: string,
     latitude?: number,
     longitude?: number,
     address?: string,
@@ -221,18 +273,24 @@ export const AttendanceService = {
     success: boolean;
     data?: AttendanceLog;
     error?: string;
-    isOffline?: boolean;
   }> {
     const result = await apiFetch("/api/attendance/check-in", {
       method: "POST",
       body: JSON.stringify({
         user_id: userId,
-        site_id: siteId,
+        site_code: siteCode,
         latitude,
         longitude,
         address,
       }),
     });
+
+    if (!result.success && result.isNetworkError) {
+      return {
+        success: false,
+        error: "Cannot check in offline. Internet connection required.",
+      };
+    }
 
     return result;
   },
@@ -252,9 +310,8 @@ export const AttendanceService = {
     error?: string;
     isEarlyCheckout?: boolean;
     hoursWorked?: string;
-    isOffline?: boolean;
   }> {
-    return await apiFetch(`/api/attendance/${attendanceId}/check-out`, {
+    const result = await apiFetch(`/api/attendance/${attendanceId}/check-out`, {
       method: "POST",
       body: JSON.stringify({
         latitude,
@@ -263,6 +320,15 @@ export const AttendanceService = {
         remarks,
       }),
     });
+
+    if (!result.success && result.isNetworkError) {
+      return {
+        success: false,
+        error: "Cannot check out offline. Internet connection required.",
+      };
+    }
+
+    return result;
   },
 
   /**

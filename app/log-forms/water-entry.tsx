@@ -16,16 +16,21 @@ import {
   Info,
   Activity,
   Beaker,
+  Camera,
+  Trash2,
 } from "lucide-react-native";
 import SiteLogService from "@/services/SiteLogService";
 import { useAuth } from "@/contexts/AuthContext";
+import * as ImagePicker from "expo-image-picker";
+import { StorageService } from "@/services/StorageService";
+import { Image } from "react-native";
 
 export default function WaterEntry() {
   const { user } = useAuth();
   const params = useLocalSearchParams<{
     areaId: string;
     areaName: string;
-    siteId: string;
+    siteCode: string;
   }>();
 
   const [formData, setFormData] = useState({
@@ -34,9 +39,11 @@ export default function WaterEntry() {
     hardness: "",
     remarks: "",
     signature: "",
+    attachment: "",
   });
   const [entryTime] = useState(new Date().getTime()); // Start timer on mount
   const [saving, setSaving] = useState(false);
+  const [uploading, setUploading] = useState(false);
 
   // Pre-fill remarks if empty
   React.useEffect(() => {
@@ -47,6 +54,65 @@ export default function WaterEntry() {
 
   const updateField = (field: string, value: string) => {
     setFormData((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const processImageResult = async (result: ImagePicker.ImagePickerResult) => {
+    if (!result.canceled && result.assets && result.assets.length > 0) {
+      setUploading(true);
+      try {
+        const uri = result.assets[0].uri;
+        const filename = `water/${params.siteCode}/${Date.now()}.jpg`;
+        const publicUrl = await StorageService.uploadFile(
+          "site-log-attachments",
+          filename,
+          uri,
+        );
+
+        if (publicUrl) {
+          updateField("attachment", publicUrl);
+        } else {
+          Alert.alert(
+            "Upload Failed",
+            "Could not upload image. Please try again.",
+          );
+        }
+      } catch (e: any) {
+        Alert.alert("Error", e.message);
+      } finally {
+        setUploading(false);
+      }
+    }
+  };
+
+  const handleAttachment = () => {
+    Alert.alert("Add Attachment", "Choose an option", [
+      {
+        text: "Take Photo",
+        onPress: async () => {
+          const perm = await ImagePicker.requestCameraPermissionsAsync();
+          if (perm.granted) {
+            const res = await ImagePicker.launchCameraAsync({
+              mediaTypes: ImagePicker.MediaTypeOptions.Images,
+              quality: 0.5,
+            });
+            processImageResult(res);
+          } else {
+            Alert.alert("Permission Required", "Camera permission is needed.");
+          }
+        },
+      },
+      {
+        text: "Choose from Gallery",
+        onPress: async () => {
+          const res = await ImagePicker.launchImageLibraryAsync({
+            mediaTypes: ImagePicker.MediaTypeOptions.Images,
+            quality: 0.5,
+          });
+          processImageResult(res);
+        },
+      },
+      { text: "Cancel", style: "cancel" },
+    ]);
   };
 
   const handleSave = async () => {
@@ -68,7 +134,7 @@ export default function WaterEntry() {
       const endTime = new Date().getTime();
 
       await SiteLogService.saveSiteLog({
-        siteId: params.siteId,
+        siteCode: params.siteCode,
         executorId: user?.user_id || user?.id || "unknown",
         logName: "Water",
         taskName: params.areaName,
@@ -80,6 +146,7 @@ export default function WaterEntry() {
         entryTime: entryTime,
         endTime: endTime,
         status: "completed",
+        attachment: formData.attachment,
       });
 
       Alert.alert("Success", "Log saved successfully", [
@@ -171,6 +238,44 @@ export default function WaterEntry() {
               <Beaker size={20} color="#8b5cf6" />,
               "ppm",
             )}
+
+            <View className="mb-6 mt-2">
+              <Text className="text-slate-900 dark:text-slate-50 font-bold text-base mb-4">
+                Attachment
+              </Text>
+              {formData.attachment ? (
+                <View className="relative">
+                  <Image
+                    source={{ uri: formData.attachment }}
+                    className="w-full h-48 rounded-xl bg-slate-100"
+                    resizeMode="cover"
+                  />
+                  <TouchableOpacity
+                    onPress={() => updateField("attachment", "")}
+                    className="absolute top-2 right-2 bg-red-500 w-8 h-8 rounded-full items-center justify-center p-1"
+                  >
+                    <Trash2 size={16} color="white" />
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <TouchableOpacity
+                  onPress={handleAttachment}
+                  disabled={uploading}
+                  className="w-full h-32 border-2 border-dashed border-slate-300 dark:border-slate-700 rounded-xl items-center justify-center bg-slate-50 dark:bg-slate-900"
+                >
+                  {uploading ? (
+                    <ActivityIndicator color="#0d9488" />
+                  ) : (
+                    <>
+                      <Camera size={24} color="#94a3b8" />
+                      <Text className="text-slate-400 font-bold text-xs mt-2 uppercase tracking-wider">
+                        Add Photo / Upload
+                      </Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+              )}
+            </View>
 
             <View className="mb-8">
               <Text className="text-slate-500 dark:text-slate-400 text-[10px] font-bold uppercase tracking-widest mb-2 ml-1">

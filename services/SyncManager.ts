@@ -13,10 +13,9 @@ import logger from "@/utils/logger";
 
 // We need to avoid hardcoded URLs if possible, but for sync we need API connection
 // Ideally this comes from a config or env
-const API_URL =
-  process.env.EXPO_PUBLIC_BACKEND_URL || "http://192.168.31.152:3420";
+import { API_BASE_URL } from "../constants/api";
 
-type SyncStatus = "idle" | "syncing" | "error";
+const API_URL = API_BASE_URL;
 
 class SyncManager {
   private static instance: SyncManager;
@@ -27,6 +26,8 @@ class SyncManager {
   private lastHistoryPullTime: number = 0;
   private syncCooldown = 30000; // 30 seconds minimum between syncs
   private historyPullThreshold = 12 * 60 * 60 * 1000; // 12 hours for expensive history pulls
+  private debounceTimer: ReturnType<typeof setTimeout> | null = null;
+  private currentSyncPromise: Promise<void> | null = null;
 
   private constructor() {}
 
@@ -68,10 +69,15 @@ class SyncManager {
     this.networkUnsubscribe = NetInfo.addEventListener(
       (state: NetInfoState) => {
         if (state.isConnected && state.isInternetReachable) {
-          logger.debug("Network connected, triggering sync", {
-            module: "SYNC_MANAGER",
-          });
-          this.triggerSync("network_reconnect");
+          // Debounce network reconnection events to prevent "event storms" during startup
+          if (this.debounceTimer) clearTimeout(this.debounceTimer);
+          this.debounceTimer = setTimeout(() => {
+            logger.debug("Network stabilized, triggering sync", {
+              module: "SYNC_MANAGER",
+              reason: "network_reconnect",
+            });
+            this.triggerSync("network_reconnect");
+          }, 2000);
         }
       },
     );
@@ -109,21 +115,39 @@ class SyncManager {
       return;
     }
 
-    if (this.isSyncing) {
-      logger.debug("Sync already in progress", { module: "SYNC_MANAGER" });
-      return;
+    if (this.isSyncing && this.currentSyncPromise) {
+      logger.debug("Sync already in progress, awaiting current sync", {
+        module: "SYNC_MANAGER",
+      });
+      return this.currentSyncPromise;
     }
+  }
 
-    // Check network
-    const networkState = await NetInfo.fetch();
-    if (!networkState.isConnected || !networkState.isInternetReachable) {
-      logger.debug("Sync skipped - no network", { module: "SYNC_MANAGER" });
-      return;
-    }
+  /**
+   * Prefetch all essential data for current user
+   */
+  async prefetchAll(): Promise<void> {
+    if (!authService.getValidToken()) return;
 
-    this.isSyncing = true;
-    this.lastSyncTime = now;
+    logger.info("Starting background prefetch", { module: "SYNC_MANAGER" });
 
+    // We run these in parallel without blocking
+    Promise.all([
+      this.triggerSync("prefetch"),
+      // Add other specific prefetch calls here if needed as they are implemented
+    ]).catch((err) => {
+      logger.error("Prefetch failed", {
+        module: "SYNC_MANAGER",
+        error: err.message,
+      });
+    });
+  }
+
+  /**
+   * Internal sync logic
+   */
+  private async performSync(reason: string): Promise<void> {
+    const now = Date.now();
     try {
       logger.info(`Starting sync (reason: ${reason})`, {
         module: "SYNC_MANAGER",
@@ -147,13 +171,11 @@ class SyncManager {
           now - this.lastHistoryPullTime > this.historyPullThreshold ||
           reason === "manual"
         ) {
-          // We need site IDs from user context or similar.
-          // For now, if we don't have a specific site, we'll pull for the current logged in user's sites.
-          // Getting siteId from current session...
-          const siteId = await authService.getCurrentSiteId();
-          if (siteId) {
+          // We need site codes from user context or similar.
+          const siteCode = await authService.getCurrentSiteCode();
+          if (siteCode) {
             const pullTicketResult = await pullRecentTickets(
-              siteId,
+              siteCode,
               token,
               API_URL,
             );
@@ -180,18 +202,24 @@ class SyncManager {
       try {
         const siteLogResult = await syncPendingSiteLogs(token, API_URL);
 
-        // Also pull recent logs to populate history/tasks (with threshold)
+        // Also pull recent logs to populate history/tasks
         if (
+          siteLogResult.synced > 0 ||
           now - this.lastHistoryPullTime > this.historyPullThreshold ||
           reason === "manual"
         ) {
-          const pullResult = await pullRecentSiteLogs(token, API_URL);
-          logger.info("Site logs history pull complete", {
+          logger.debug("Pulling recent history (Smart Pull)", {
             module: "SYNC_MANAGER",
-            pulled: pullResult.pulled,
+            reason,
           });
+          await pullRecentSiteLogs(token, API_URL);
+          await pullRecentTickets(
+            (await authService.getCurrentSiteCode()) || "",
+            token,
+            API_URL,
+          );
 
-          this.lastHistoryPullTime = now; // Update threshold tracker
+          this.lastHistoryPullTime = now;
         }
 
         logger.info("Site logs sync complete", {
@@ -200,7 +228,7 @@ class SyncManager {
           failed: siteLogResult.failed,
         });
       } catch (err: any) {
-        logger.error("Site logs sync failed", {
+        logger.error("Error syncing site logs/history", {
           module: "SYNC_MANAGER",
           error: err.message,
         });

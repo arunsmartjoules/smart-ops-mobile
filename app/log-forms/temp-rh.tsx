@@ -33,7 +33,7 @@ export default function TempRHTaskList() {
   const { user } = useAuth();
   const [tasks, setTasks] = useState<TaskItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [siteId, setSiteId] = useState<string | null>(null);
+  const [siteCode, setSiteCode] = useState<string | null>(null);
 
   // Bulk Entry State
   const [logValues, setLogValues] = useState<
@@ -55,13 +55,16 @@ export default function TempRHTaskList() {
       try {
         setLoading(true);
         // We need to get the siteId either from params or the last active one
-        const lastSite = await AsyncStorage.getItem(
+        const lastSiteCode = await AsyncStorage.getItem(
           `last_site_${user?.user_id || user?.id}`,
         );
 
-        if (lastSite) {
-          setSiteId(lastSite);
-          const t = await SiteConfigService.getLogTasks(lastSite, "Temp RH");
+        if (lastSiteCode) {
+          setSiteCode(lastSiteCode);
+          const t = await SiteConfigService.getLogTasks(
+            lastSiteCode,
+            "Temp RH",
+          );
           setTasks(t);
         } else {
           // If no site selected, go back? or show empty?
@@ -115,7 +118,7 @@ export default function TempRHTaskList() {
         setUploadingAttachments((prev) => ({ ...prev, [taskId]: true }));
         const uri = pickerResult.assets[0].uri;
 
-        const filename = `temprh/${siteId}/${taskId}_${Date.now()}.jpg`;
+        const filename = `temprh/${siteCode}/${taskId}_${Date.now()}.jpg`;
         const publicUrl = await StorageService.uploadFile(
           "site-log-attachments",
           filename,
@@ -137,7 +140,7 @@ export default function TempRHTaskList() {
 
   const clearDraft = async () => {
     try {
-      const draftKey = `draft_temprh_${siteId}_${user?.user_id}`;
+      const draftKey = `draft_temprh_${siteCode}_${user?.user_id}`;
       await AsyncStorage.removeItem(draftKey);
       setLogValues({});
       setSignature("");
@@ -169,7 +172,7 @@ export default function TempRHTaskList() {
       // Let's stick to requiring temp & rh as per existing logic, but include attachment if present.
       if (input && input.temp && input.rh) {
         entriesToSave.push({
-          siteId: siteId,
+          siteCode: siteCode,
           executorId: user?.user_id || user?.id || "unknown",
           logName: "Temp RH",
           taskName: task.name,

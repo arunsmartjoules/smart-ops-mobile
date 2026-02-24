@@ -9,7 +9,7 @@ import {
   Platform,
   ActivityIndicator,
 } from "react-native";
-import { Mail, Lock, User, Zap } from "lucide-react-native";
+import { Mail, Lock, User, Zap, Eye, EyeOff } from "lucide-react-native";
 import { router } from "expo-router";
 import { useAuth } from "@/contexts/AuthContext";
 import { showAlert } from "@/utils/alert";
@@ -19,6 +19,7 @@ export default function SignUp() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const { signUp } = useAuth();
 
@@ -83,7 +84,7 @@ export default function SignUp() {
             <View className="bg-red-700 dark:bg-red-900 items-center justify-center rounded-t-2xl h-56">
               <Zap size={40} color="#fecaca" />
               <Text className="text-white text-4xl font-extrabold">
-                Smart Ops
+                JouleOps
               </Text>
               <Text className="text-red-200 mt-1 text-sm">
                 Create Your Account
@@ -135,10 +136,21 @@ export default function SignUp() {
                   placeholder="Password (min. 6 characters)"
                   value={password}
                   onChangeText={setPassword}
-                  secureTextEntry
+                  secureTextEntry={!showPassword}
                   editable={!loading}
-                  className="pl-12 pr-4 py-3 border border-gray-300 dark:border-slate-700 rounded-lg text-gray-800 dark:text-slate-50 dark:bg-slate-800"
+                  className="pl-12 pr-12 py-3 border border-gray-300 dark:border-slate-700 rounded-lg text-gray-800 dark:text-slate-50 dark:bg-slate-800"
                 />
+                <TouchableOpacity
+                  onPress={() => setShowPassword(!showPassword)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 z-10"
+                  disabled={loading}
+                >
+                  {showPassword ? (
+                    <EyeOff size={20} color="#94a3b8" />
+                  ) : (
+                    <Eye size={20} color="#94a3b8" />
+                  )}
+                </TouchableOpacity>
               </View>
 
               {/* Sign Up Button */}

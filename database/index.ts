@@ -3,7 +3,6 @@ import SQLiteAdapter from "@nozbe/watermelondb/adapters/sqlite";
 import LokiJSAdapter from "@nozbe/watermelondb/adapters/lokijs";
 import { Platform, NativeModules } from "react-native";
 import { schema } from "./schema";
-import AttendanceRecord from "./models/AttendanceRecord";
 import Ticket from "./models/Ticket";
 import TicketUpdate from "./models/TicketUpdate";
 import Area from "./models/Area";
@@ -11,6 +10,7 @@ import Category from "./models/Category";
 import UserSite from "./models/UserSite";
 import SiteLog from "./models/SiteLog";
 import ChillerReading from "./models/ChillerReading";
+import PMInstance from "./models/PMInstance";
 
 // Choose adapter based on platform and availability
 // We check for the native bridge to decide between SQLite (Production/Dev Client)
@@ -42,7 +42,6 @@ const adapter = getAdapter();
 export const database = new Database({
   adapter,
   modelClasses: [
-    AttendanceRecord,
     Ticket,
     TicketUpdate,
     Area,
@@ -50,12 +49,11 @@ export const database = new Database({
     UserSite,
     SiteLog,
     ChillerReading,
+    PMInstance,
   ],
 });
 
 // Export collections for easy access
-export const attendanceCollection =
-  database.get<AttendanceRecord>("attendance_records");
 export const ticketCollection = database.get<Ticket>("tickets");
 export const ticketUpdateCollection =
   database.get<TicketUpdate>("ticket_updates");
@@ -65,3 +63,4 @@ export const userSiteCollection = database.get<UserSite>("user_sites");
 export const siteLogCollection = database.get<SiteLog>("site_logs");
 export const chillerReadingCollection =
   database.get<ChillerReading>("chiller_readings");
+export const pmInstanceCollection = database.get<PMInstance>("pm_instances");

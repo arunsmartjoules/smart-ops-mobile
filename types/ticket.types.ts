@@ -17,7 +17,7 @@ export interface Ticket {
   status: TicketStatus;
   category?: string;
   location?: string;
-  site_id: string;
+  site_code: string;
   site_name?: string;
   assigned_to?: string;
   created_by?: string;
@@ -37,7 +37,7 @@ export interface CreateTicketPayload {
   description?: string;
   category: string;
   location: string;
-  site_id: string;
+  site_code: string;
   customer_inputs?: string;
 }
 
@@ -58,7 +58,7 @@ export interface UpdateTicketPayload {
  */
 export interface TicketFilters {
   status?: TicketStatus | TicketStatus[];
-  site_id?: string;
+  site_code?: string;
   category?: string;
   fromDate?: string;
   toDate?: string;

@@ -26,7 +26,7 @@ import {
   Bell,
   MapPin,
 } from "lucide-react-native";
-import { router } from "expo-router";
+import { router, useFocusEffect } from "expo-router";
 import { useAuth } from "@/contexts/AuthContext";
 import AttendanceService, {
   type AttendanceLog,
@@ -34,6 +34,7 @@ import AttendanceService, {
 import { format } from "date-fns";
 import { useNetworkStatus } from "@/hooks/useNetworkStatus";
 import { WifiOff } from "lucide-react-native";
+import { syncManager } from "@/services/SyncManager";
 
 // Task List Data
 const taskListData = [
@@ -101,34 +102,11 @@ export default function Dashboard() {
   const fetchAttendance = React.useCallback(async () => {
     if (user?.id) {
       try {
+        // 1. Service now returns cache first, then API
         const data = await AttendanceService.getTodayAttendance(user.id);
-
         if (data) {
           setTodayAttendance(data);
-        } else {
-          // Fallback: check history
-          const history = await AttendanceService.getAttendanceHistory(
-            user.id,
-            1,
-            5,
-          );
-          if (history.data && history.data.length > 0) {
-            const latest = history.data[0];
-            const istDate = new Intl.DateTimeFormat("en-CA", {
-              timeZone: "Asia/Kolkata",
-              year: "numeric",
-              month: "2-digit",
-              day: "2-digit",
-            }).format(new Date());
-
-            if (latest.date === istDate) {
-              setTodayAttendance(latest);
-            } else {
-              setTodayAttendance(null);
-            }
-          } else {
-            setTodayAttendance(null);
-          }
+          setLoadingAttendance(false);
         }
       } catch (error) {
         console.error("Failed to fetch attendance:", error);
@@ -163,9 +141,12 @@ export default function Dashboard() {
     [],
   );
 
-  useEffect(() => {
-    fetchAttendance();
-  }, [fetchAttendance]);
+  useFocusEffect(
+    useCallback(() => {
+      fetchAttendance();
+      syncManager.prefetchAll();
+    }, [fetchAttendance]),
+  );
 
   const onRefresh = React.useCallback(async () => {
     setRefreshing(true);
@@ -217,7 +198,7 @@ export default function Dashboard() {
                 Welcome back
               </Text>
               <Text className="text-slate-900 dark:text-slate-50 text-2xl font-bold mt-0.5">
-                {user?.full_name || user?.name || "Smart Ops"}
+                {user?.full_name || user?.name || "JouleOps"}
               </Text>
             </View>
             <View className="flex-row items-center gap-3">

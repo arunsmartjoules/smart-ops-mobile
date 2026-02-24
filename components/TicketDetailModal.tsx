@@ -21,6 +21,7 @@ import {
 import { format } from "date-fns";
 import SearchableSelect, { type SelectOption } from "./SearchableSelect";
 import { type Ticket } from "@/services/TicketsService";
+import TicketLineItems from "./TicketLineItems";
 
 interface TicketDetailModalProps {
   visible: boolean;
@@ -754,6 +755,13 @@ const TicketDetailModal = React.memo(
                         </Text>
                       )}
                     </TouchableOpacity>
+                  )}
+
+                  {/* Comments & Timeline */}
+                  {ticket && (
+                    <TicketLineItems
+                      ticketId={ticket.ticket_id || ticket.ticket_no}
+                    />
                   )}
                 </View>
               </ScrollView>

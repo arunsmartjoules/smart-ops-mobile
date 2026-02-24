@@ -5,7 +5,7 @@ export default class Area extends Model {
   static table = "areas";
 
   @field("server_id") serverId!: string;
-  @field("site_id") siteId!: string;
+  @field("site_code") siteCode!: string;
   @field("name") name!: string;
   @field("cached_at") cachedAt!: number;
 }

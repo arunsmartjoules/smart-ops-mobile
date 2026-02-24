@@ -4,6 +4,7 @@ import { X, Search as SearchIcon, Calendar } from "lucide-react-native";
 import { format } from "date-fns";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { type Site } from "@/services/AttendanceService";
+import SearchableSelect, { type SelectOption } from "./SearchableSelect";
 
 interface AdvancedFilterModalProps {
   visible: boolean;
@@ -15,8 +16,8 @@ interface AdvancedFilterModalProps {
   tempToDate: string | null;
   setTempToDate: (s: string | null) => void;
   sites: Site[];
-  selectedSiteId: string;
-  setSelectedSiteId: (s: string) => void;
+  selectedSiteCode: string;
+  setSelectedSiteCode: (s: string) => void;
   user: any;
   statusFilter: string;
   setStatusFilter: (s: string) => void;
@@ -34,13 +35,22 @@ const AdvancedFilterModal = React.memo(
     tempToDate,
     setTempToDate,
     sites,
-    selectedSiteId,
-    setSelectedSiteId,
+    selectedSiteCode,
+    setSelectedSiteCode,
     user,
     statusFilter,
     setStatusFilter,
     applyAdvancedFilters,
   }: AdvancedFilterModalProps) => {
+    const siteOptions = React.useMemo(
+      () =>
+        sites.map((s) => ({
+          value: s.site_code || "",
+          label: s.name || s.site_code || "",
+        })),
+      [sites],
+    );
+
     if (!visible) return null;
 
     return (
@@ -270,69 +280,36 @@ const AdvancedFilterModal = React.memo(
                 )}
               </View>
 
-              {sites.length > 0 && (
-                <View>
-                  <Text
-                    style={{
-                      color: "#94a3b8",
-                      fontSize: 10,
-                      fontWeight: "900",
-                      textTransform: "uppercase",
-                      letterSpacing: 1.5,
-                      marginBottom: 12,
-                      marginLeft: 4,
-                    }}
-                  >
-                    Change Site
-                  </Text>
-                  <View
-                    style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}
-                  >
-                    {sites.map((s) => (
-                      <TouchableOpacity
-                        key={s.site_id}
-                        onPress={() => {
-                          const siteCode = s.site_code || "";
-                          setSelectedSiteId(siteCode);
-                          if (user?.user_id || user?.id) {
-                            AsyncStorage.setItem(
-                              `last_site_${user.user_id || user.id}`,
-                              siteCode,
-                            );
-                          }
-                        }}
-                        style={{
-                          paddingHorizontal: 16,
-                          paddingVertical: 12,
-                          borderRadius: 16,
-                          borderWidth: 1,
-                          backgroundColor:
-                            selectedSiteId === s.site_code
-                              ? "#fef2f2"
-                              : "#ffffff",
-                          borderColor:
-                            selectedSiteId === s.site_code
-                              ? "#fecaca"
-                              : "#e2e8f0",
-                        }}
-                      >
-                        <Text
-                          style={{
-                            fontSize: 12,
-                            fontWeight: "700",
-                            color:
-                              selectedSiteId === s.site_code
-                                ? "#dc2626"
-                                : "#64748b",
-                          }}
-                        >
-                          {s.name}
-                        </Text>
-                      </TouchableOpacity>
-                    ))}
-                  </View>
-                </View>
-              )}
+              <View>
+                <Text
+                  style={{
+                    color: "#94a3b8",
+                    fontSize: 10,
+                    fontWeight: "900",
+                    textTransform: "uppercase",
+                    letterSpacing: 1.5,
+                    marginBottom: 12,
+                    marginLeft: 4,
+                  }}
+                >
+                  Change Site
+                </Text>
+                <SearchableSelect
+                  label=""
+                  placeholder="Select a site"
+                  options={siteOptions}
+                  value={selectedSiteCode}
+                  onChange={(siteCode) => {
+                    setSelectedSiteCode(siteCode);
+                    if (user?.user_id || user?.id) {
+                      AsyncStorage.setItem(
+                        `last_site_${user.user_id || user.id}`,
+                        siteCode,
+                      );
+                    }
+                  }}
+                />
+              </View>
             </View>
 
             <View style={{ flexDirection: "row", gap: 16, marginTop: 40 }}>

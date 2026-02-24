@@ -26,8 +26,9 @@ import { database } from "@/database";
 import { format } from "date-fns";
 import { Svg, Path } from "react-native-svg";
 
-const API_URL =
-  process.env.EXPO_PUBLIC_BACKEND_URL || "http://192.168.31.152:3420";
+import { API_BASE_URL } from "../constants/api";
+
+const API_URL = API_BASE_URL;
 
 export default function SiteLogDetail() {
   const { id, type } = useLocalSearchParams<{ id: string; type: string }>();

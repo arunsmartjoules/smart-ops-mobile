@@ -58,8 +58,23 @@ import {
 import logger from "@/utils/logger";
 import TicketDetailModal from "@/components/TicketDetailModal";
 import AdvancedFilterModal from "@/components/AdvancedFilterModal";
+import Skeleton from "@/components/Skeleton";
 
 const { width } = Dimensions.get("window");
+
+function TicketsListSkeleton() {
+  return (
+    <View style={{ paddingTop: 8 }}>
+      {[1, 2, 3, 4, 5].map((i) => (
+        <Skeleton
+          key={i}
+          height={120}
+          style={{ marginBottom: 16, borderRadius: 16 }}
+        />
+      ))}
+    </View>
+  );
+}
 
 // Separate component for Ticket Item to stabilize the tree
 const TicketItem = React.memo(
@@ -140,7 +155,7 @@ const TicketItem = React.memo(
                   letterSpacing: 1.5,
                 }}
               >
-                {item.site_id}
+                {item.site_code}
               </Text>
             </View>
             <Text
@@ -233,7 +248,7 @@ export default function Tickets() {
   const { user, isLoading } = useAuth();
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [sites, setSites] = useState<Site[]>([]);
-  const [selectedSiteId, setSelectedSiteId] = useState<string>("");
+  const [selectedSiteCode, setSelectedSiteCode] = useState<string>("");
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [assets, setAssets] = useState<any[]>([]);
@@ -292,6 +307,38 @@ export default function Tickets() {
   // Track the last requested page to prevent duplicate requests
   const lastRequestedPageRef = React.useRef(0);
 
+  // Enrich tickets with site name and code from the sites array (useful for cached data)
+  const enrichedTickets = useMemo(() => {
+    return tickets.map((t) => {
+      if (t.site_name && t.site_name !== "N/A") return t;
+
+      const siteId = String(t.site_code || "")
+        .trim()
+        .toLowerCase();
+      const site = sites.find((s) => {
+        const sCode = String(s.site_code || "")
+          .trim()
+          .toLowerCase();
+
+        return sCode === siteId;
+      });
+
+      if (site) {
+        return {
+          ...t,
+          site_name:
+            site.name || (site as any).siteName || (site as any).site_name,
+          site_code: site.site_code || t.site_code,
+        };
+      }
+      return {
+        ...t,
+        site_name: t.site_name || "N/A",
+        site_code: t.site_code || "N/A",
+      };
+    });
+  }, [tickets, sites]);
+
   useEffect(() => {
     logger.debug("Modal Visible State", {
       module: "TICKETS",
@@ -329,22 +376,22 @@ export default function Tickets() {
   }, [user?.user_id, user?.id, isLoading]);
 
   useEffect(() => {
-    if (selectedSiteId) {
+    if (selectedSiteCode) {
       logger.debug("Site ready, triggering fetch", { module: "TICKETS" });
       resetAndFetch();
       fetchStats();
       loadAreasAndCategories();
     }
-  }, [selectedSiteId, statusFilter, searchQuery, fromDate, toDate]);
+  }, [selectedSiteCode, statusFilter, searchQuery, fromDate, toDate]);
 
   // Load areas (from assets table) and categories for the dropdown
   const loadAreasAndCategories = useCallback(async () => {
-    if (!selectedSiteId) return;
+    if (!selectedSiteCode) return;
 
     setAreasLoading(true);
     try {
       // Try to get cached areas first
-      const cachedAreas = await getCachedAreas(selectedSiteId);
+      const cachedAreas = await getCachedAreas(selectedSiteCode);
       if (cachedAreas.length > 0) {
         setAreaOptions(
           cachedAreas.map((a: any) => ({
@@ -359,7 +406,7 @@ export default function Tickets() {
       // If online, fetch fresh data from backend
       if (isConnected) {
         // Fetch assets for area dropdown (using asset_name)
-        const assetsResult = await TicketsService.getAssets(selectedSiteId);
+        const assetsResult = await TicketsService.getAssets(selectedSiteCode);
         if (assetsResult?.data && assetsResult.data.length > 0) {
           const areas = assetsResult.data.map((asset: any) => ({
             value: asset.asset_name || asset.asset_id,
@@ -369,7 +416,7 @@ export default function Tickets() {
           }));
           setAreaOptions(areas);
           // Cache for offline use
-          await cacheAreas(selectedSiteId, assetsResult.data);
+          await cacheAreas(selectedSiteCode, assetsResult.data);
         }
 
         // Fetch complaint categories from backend
@@ -391,19 +438,19 @@ export default function Tickets() {
     } finally {
       setAreasLoading(false);
     }
-  }, [selectedSiteId, isConnected]);
+  }, [selectedSiteCode, isConnected]);
 
   const loadSites = async (userId: string) => {
     setLoading(true);
     try {
       // Load from cache first
       const cachedSites = await getCachedSites(userId);
-      const lastSiteId = await AsyncStorage.getItem(`last_site_${userId}`);
+      const lastSiteCode = await AsyncStorage.getItem(`last_site_${userId}`);
 
       if (cachedSites.length > 0) {
         setSites(cachedSites);
-        if (lastSiteId) {
-          setSelectedSiteId(lastSiteId);
+        if (lastSiteCode) {
+          setSelectedSiteCode(lastSiteCode);
         }
       }
 
@@ -417,7 +464,7 @@ export default function Tickets() {
         userSites = await AttendanceService.getAllSites();
       } else {
         logger.debug("Fetching sites for user", { module: "TICKETS", userId });
-        userSites = await AttendanceService.getUserSites(userId);
+        userSites = await AttendanceService.getUserSites(userId, "JouleCool");
       }
 
       logger.debug("Sites response", {
@@ -429,20 +476,19 @@ export default function Tickets() {
 
       if (isAdmin) {
         const allSitesOption: Site = {
-          site_id: "all",
           site_code: "all",
           name: "All Sites",
         };
         finalSites = [allSitesOption, ...userSites];
         setSites(finalSites);
-        const siteToSelect = lastSiteId || "all";
-        setSelectedSiteId(siteToSelect);
+        const siteToSelect = lastSiteCode || "all";
+        setSelectedSiteCode(siteToSelect);
       } else {
         finalSites = userSites;
         setSites(userSites);
         if (userSites.length > 0) {
-          const siteToSelect = lastSiteId || userSites[0].site_code || "";
-          setSelectedSiteId(siteToSelect);
+          const siteToSelect = lastSiteCode || userSites[0].site_code || "";
+          setSelectedSiteCode(siteToSelect);
         } else {
           setLoading(false);
         }
@@ -457,36 +503,36 @@ export default function Tickets() {
   };
 
   const fetchStats = useCallback(async () => {
-    if (!selectedSiteId) return;
+    if (!selectedSiteCode) return;
     try {
-      const res = await TicketsService.getStats(selectedSiteId);
+      const res = await TicketsService.getStats(selectedSiteCode);
       if (res.success) {
         setStats(res.data);
         await AsyncStorage.setItem(
-          `stats_${selectedSiteId}`,
+          `stats_${selectedSiteCode}`,
           JSON.stringify(res.data),
         );
       }
     } catch (e) {}
-  }, [selectedSiteId]);
+  }, [selectedSiteCode]);
 
   const fetchAssets = useCallback(async () => {
-    if (!selectedSiteId) return;
+    if (!selectedSiteCode) return;
     try {
-      const res = await TicketsService.getAssets(selectedSiteId);
+      const res = await TicketsService.getAssets(selectedSiteCode);
       if (res.success) {
         setAssets(res.data);
         await AsyncStorage.setItem(
-          `assets_${selectedSiteId}`,
+          `assets_${selectedSiteCode}`,
           JSON.stringify(res.data),
         );
       }
     } catch (e) {}
-  }, [selectedSiteId]);
+  }, [selectedSiteCode]);
 
   const fetchTickets = useCallback(
     async (p: number, reset = false) => {
-      if (!selectedSiteId) {
+      if (!selectedSiteCode) {
         setLoading(false);
         return;
       }
@@ -494,7 +540,7 @@ export default function Tickets() {
       if (reset) {
         setLoading(true);
         // Load from cache first for reset
-        const cachedTickets = await getCachedTickets(selectedSiteId);
+        const cachedTickets = await getCachedTickets(selectedSiteCode);
         if (cachedTickets.length > 0) {
           setTickets(cachedTickets);
         }
@@ -513,13 +559,13 @@ export default function Tickets() {
         if (statusFilter !== "All") {
           options.status = statusFilter;
         }
-        const res = await TicketsService.getTickets(selectedSiteId, options);
+        const res = await TicketsService.getTickets(selectedSiteCode, options);
         if (res.success) {
           const newTickets = res.data || [];
           if (reset) {
             setTickets(newTickets);
             // Cache page 1
-            await cacheTickets(selectedSiteId, newTickets);
+            await cacheTickets(selectedSiteCode, newTickets);
           } else {
             setTickets((prev) => {
               // Avoid duplicates
@@ -548,7 +594,7 @@ export default function Tickets() {
         setRefreshing(false);
       }
     },
-    [selectedSiteId, statusFilter, searchQuery, fromDate, toDate],
+    [selectedSiteCode, statusFilter, searchQuery, fromDate, toDate],
   );
 
   const resetAndFetch = useCallback(() => {
@@ -634,6 +680,37 @@ export default function Tickets() {
     ),
     [handleTicketPress, handleTicketLongPress],
   );
+
+  const enrichedSelectedTicket = useMemo(() => {
+    if (!selectedTicket) return null;
+    if (selectedTicket.site_name && selectedTicket.site_name !== "N/A")
+      return selectedTicket;
+
+    const siteId = String(selectedTicket.site_code || "")
+      .trim()
+      .toLowerCase();
+    const site = sites.find((s) => {
+      const sCode = String(s.site_code || "")
+        .trim()
+        .toLowerCase();
+
+      return sCode === siteId;
+    });
+
+    if (site) {
+      return {
+        ...selectedTicket,
+        site_name:
+          site.name || (site as any).siteName || (site as any).site_name,
+        site_code: site.site_code || selectedTicket.site_code,
+      };
+    }
+    return {
+      ...selectedTicket,
+      site_name: selectedTicket.site_name || "N/A",
+      site_code: selectedTicket.site_code || "N/A",
+    };
+  }, [selectedTicket, sites]);
 
   const handleUpdateStatus = async () => {
     if (!selectedTicket) return;
@@ -735,101 +812,113 @@ export default function Tickets() {
         {/* Quick Stats - matching dashboard screen */}
         <View className="px-5 mb-3">
           <View className="flex-row gap-2">
-            <TouchableOpacity
-              className="flex-1 bg-white dark:bg-slate-900 rounded-xl p-3"
-              style={{
-                shadowColor: "#000",
-                shadowOffset: { width: 0, height: 1 },
-                shadowOpacity: 0.05,
-                shadowRadius: 4,
-                elevation: 2,
-              }}
-            >
-              <View
-                className="w-8 h-8 rounded-lg items-center justify-center mb-2"
-                style={{ backgroundColor: "#ef444415" }}
-              >
-                <TicketIcon size={16} color="#ef4444" />
-              </View>
-              <Text className="text-xl font-bold text-slate-900 dark:text-slate-50">
-                {stats?.byStatus?.Open || 0}
-              </Text>
-              <Text className="text-slate-400 dark:text-slate-500 text-xs">
-                Open
-              </Text>
-            </TouchableOpacity>
+            {loading && !stats ? (
+              [1, 2, 3, 4].map((i) => (
+                <Skeleton
+                  key={i}
+                  height={80}
+                  style={{ flex: 1, borderRadius: 12 }}
+                />
+              ))
+            ) : (
+              <>
+                <TouchableOpacity
+                  className="flex-1 bg-white dark:bg-slate-900 rounded-xl p-3"
+                  style={{
+                    shadowColor: "#000",
+                    shadowOffset: { width: 0, height: 1 },
+                    shadowOpacity: 0.05,
+                    shadowRadius: 4,
+                    elevation: 2,
+                  }}
+                >
+                  <View
+                    className="w-8 h-8 rounded-lg items-center justify-center mb-2"
+                    style={{ backgroundColor: "#ef444415" }}
+                  >
+                    <TicketIcon size={16} color="#ef4444" />
+                  </View>
+                  <Text className="text-xl font-bold text-slate-900 dark:text-slate-50">
+                    {stats?.byStatus?.Open || 0}
+                  </Text>
+                  <Text className="text-slate-400 dark:text-slate-500 text-xs">
+                    Open
+                  </Text>
+                </TouchableOpacity>
 
-            <TouchableOpacity
-              className="flex-1 bg-white dark:bg-slate-900 rounded-xl p-3"
-              style={{
-                shadowColor: "#000",
-                shadowOffset: { width: 0, height: 1 },
-                shadowOpacity: 0.05,
-                shadowRadius: 4,
-                elevation: 2,
-              }}
-            >
-              <View
-                className="w-8 h-8 rounded-lg items-center justify-center mb-2"
-                style={{ backgroundColor: "#3b82f615" }}
-              >
-                <TrendingUp size={16} color="#3b82f6" />
-              </View>
-              <Text className="text-xl font-bold text-slate-900 dark:text-slate-50">
-                {stats?.byStatus?.Inprogress || 0}
-              </Text>
-              <Text className="text-slate-400 dark:text-slate-500 text-xs">
-                In Progress
-              </Text>
-            </TouchableOpacity>
+                <TouchableOpacity
+                  className="flex-1 bg-white dark:bg-slate-900 rounded-xl p-3"
+                  style={{
+                    shadowColor: "#000",
+                    shadowOffset: { width: 0, height: 1 },
+                    shadowOpacity: 0.05,
+                    shadowRadius: 4,
+                    elevation: 2,
+                  }}
+                >
+                  <View
+                    className="w-8 h-8 rounded-lg items-center justify-center mb-2"
+                    style={{ backgroundColor: "#3b82f615" }}
+                  >
+                    <TrendingUp size={16} color="#3b82f6" />
+                  </View>
+                  <Text className="text-xl font-bold text-slate-900 dark:text-slate-50">
+                    {stats?.byStatus?.Inprogress || 0}
+                  </Text>
+                  <Text className="text-slate-400 dark:text-slate-500 text-xs">
+                    In Progress
+                  </Text>
+                </TouchableOpacity>
 
-            <TouchableOpacity
-              className="flex-1 bg-white dark:bg-slate-900 rounded-xl p-3"
-              style={{
-                shadowColor: "#000",
-                shadowOffset: { width: 0, height: 1 },
-                shadowOpacity: 0.05,
-                shadowRadius: 4,
-                elevation: 2,
-              }}
-            >
-              <View
-                className="w-8 h-8 rounded-lg items-center justify-center mb-2"
-                style={{ backgroundColor: "#22c55e15" }}
-              >
-                <CheckCircle size={16} color="#22c55e" />
-              </View>
-              <Text className="text-xl font-bold text-slate-900 dark:text-slate-50">
-                {stats?.byStatus?.Resolved || 0}
-              </Text>
-              <Text className="text-slate-400 dark:text-slate-500 text-xs">
-                Resolved
-              </Text>
-            </TouchableOpacity>
+                <TouchableOpacity
+                  className="flex-1 bg-white dark:bg-slate-900 rounded-xl p-3"
+                  style={{
+                    shadowColor: "#000",
+                    shadowOffset: { width: 0, height: 1 },
+                    shadowOpacity: 0.05,
+                    shadowRadius: 4,
+                    elevation: 2,
+                  }}
+                >
+                  <View
+                    className="w-8 h-8 rounded-lg items-center justify-center mb-2"
+                    style={{ backgroundColor: "#22c55e15" }}
+                  >
+                    <CheckCircle size={16} color="#22c55e" />
+                  </View>
+                  <Text className="text-xl font-bold text-slate-900 dark:text-slate-50">
+                    {stats?.byStatus?.Resolved || 0}
+                  </Text>
+                  <Text className="text-slate-400 dark:text-slate-500 text-xs">
+                    Resolved
+                  </Text>
+                </TouchableOpacity>
 
-            <TouchableOpacity
-              className="flex-1 bg-white dark:bg-slate-900 rounded-xl p-3"
-              style={{
-                shadowColor: "#000",
-                shadowOffset: { width: 0, height: 1 },
-                shadowOpacity: 0.05,
-                shadowRadius: 4,
-                elevation: 2,
-              }}
-            >
-              <View
-                className="w-8 h-8 rounded-lg items-center justify-center mb-2"
-                style={{ backgroundColor: "#64748b15" }}
-              >
-                <X size={16} color="#64748b" />
-              </View>
-              <Text className="text-xl font-bold text-slate-900 dark:text-slate-50">
-                {stats?.byStatus?.Cancelled || 0}
-              </Text>
-              <Text className="text-slate-400 dark:text-slate-500 text-xs">
-                Cancelled
-              </Text>
-            </TouchableOpacity>
+                <TouchableOpacity
+                  className="flex-1 bg-white dark:bg-slate-900 rounded-xl p-3"
+                  style={{
+                    shadowColor: "#000",
+                    shadowOffset: { width: 0, height: 1 },
+                    shadowOpacity: 0.05,
+                    shadowRadius: 4,
+                    elevation: 2,
+                  }}
+                >
+                  <View
+                    className="w-8 h-8 rounded-lg items-center justify-center mb-2"
+                    style={{ backgroundColor: "#64748b15" }}
+                  >
+                    <X size={16} color="#64748b" />
+                  </View>
+                  <Text className="text-xl font-bold text-slate-900 dark:text-slate-50">
+                    {stats?.byStatus?.Cancelled || 0}
+                  </Text>
+                  <Text className="text-slate-400 dark:text-slate-500 text-xs">
+                    Cancelled
+                  </Text>
+                </TouchableOpacity>
+              </>
+            )}
           </View>
         </View>
 
@@ -874,11 +963,15 @@ export default function Tickets() {
         {/* Tickets List */}
         <View className="flex-1">
           <FlatList
-            data={tickets}
+            data={enrichedTickets}
             renderItem={renderTicketItem}
-            keyExtractor={(item, index) => item.ticket_id || `ticket-${index}`}
+            keyExtractor={(item, index) =>
+              item.ticket_id || item.ticket_no || `ticket-${index}`
+            }
             ListEmptyComponent={
-              !loading ? (
+              loading ? (
+                <TicketsListSkeleton />
+              ) : (
                 <View className="py-20 items-center justify-center">
                   <View className="w-20 h-20 bg-slate-100 rounded-full items-center justify-center mb-4">
                     <TicketIcon size={36} color="#cbd5e1" />
@@ -890,7 +983,7 @@ export default function Tickets() {
                     Try adjusting your filters or search keywords.
                   </Text>
                 </View>
-              ) : null
+              )
             }
             ListFooterComponent={
               isFetchingMore ? (
@@ -916,14 +1009,7 @@ export default function Tickets() {
           />
         </View>
 
-        {loading && !refreshing && (
-          <View className="absolute inset-0 bg-slate-50/80 items-center justify-center">
-            <ActivityIndicator color="#dc2626" size="large" />
-            <Text className="text-slate-400 dark:text-slate-500 mt-3 text-xs font-medium">
-              Loading...
-            </Text>
-          </View>
-        )}
+        {/* Skeletons render via ListEmptyComponent + stats placeholders */}
 
         {showFiltersModal && (
           <AdvancedFilterModal
@@ -936,8 +1022,8 @@ export default function Tickets() {
             tempToDate={tempToDate}
             setTempToDate={setTempToDate}
             sites={sites}
-            selectedSiteId={selectedSiteId}
-            setSelectedSiteId={setSelectedSiteId}
+            selectedSiteCode={selectedSiteCode}
+            setSelectedSiteCode={setSelectedSiteCode}
             user={user}
             statusFilter={statusFilter}
             setStatusFilter={setStatusFilter}
@@ -948,7 +1034,7 @@ export default function Tickets() {
         {isDetailVisible && (
           <TicketDetailModal
             visible={isDetailVisible}
-            ticket={selectedTicket}
+            ticket={enrichedSelectedTicket}
             onClose={handleCloseDetail}
             updateStatus={updateStatus}
             setUpdateStatus={setUpdateStatus}

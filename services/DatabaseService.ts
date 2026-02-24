@@ -2,130 +2,22 @@ import { Q } from "@nozbe/watermelondb";
 import logger from "@/utils/logger";
 import {
   database,
-  attendanceCollection,
   ticketCollection,
   ticketUpdateCollection,
   areaCollection,
   categoryCollection,
   userSiteCollection,
 } from "@/database";
-import AttendanceRecord from "@/database/models/AttendanceRecord";
 import Ticket from "@/database/models/Ticket";
 import TicketUpdate from "@/database/models/TicketUpdate";
 import Area from "@/database/models/Area";
 import Category from "@/database/models/Category";
 import UserSite from "@/database/models/UserSite";
 
-// ============== ATTENDANCE ==============
-
-export const AttendanceDB = {
-  async create(data: {
-    userId: string;
-    siteId: string;
-    checkInTime?: number;
-    checkInLatitude?: number;
-    checkInLongitude?: number;
-    status: string;
-    serverId?: string;
-  }): Promise<AttendanceRecord> {
-    try {
-      return await database.write(async () => {
-        return await attendanceCollection.create((record) => {
-          record.userId = data.userId;
-          record.siteId = data.siteId;
-          record.checkInTime = data.checkInTime || null;
-          record.checkInLatitude = data.checkInLatitude || null;
-          record.checkInLongitude = data.checkInLongitude || null;
-          record.status = data.status;
-          record.serverId = data.serverId || null;
-          record.isSynced = !!data.serverId;
-        });
-      });
-    } catch (error: any) {
-      logger.error("Database error creating attendance record", {
-        module: "DATABASE_SERVICE",
-        error: error.message,
-        data,
-      });
-      throw error;
-    }
-  },
-
-  async update(
-    id: string,
-    data: Partial<{
-      checkOutTime: number;
-      checkOutLatitude: number;
-      checkOutLongitude: number;
-      status: string;
-      remarks: string;
-      isSynced: boolean;
-      serverId: string;
-    }>
-  ): Promise<void> {
-    try {
-      await database.write(async () => {
-        const record = await attendanceCollection.find(id);
-        await record.update((r: AttendanceRecord) => {
-          if (data.checkOutTime !== undefined)
-            r.checkOutTime = data.checkOutTime;
-          if (data.checkOutLatitude !== undefined)
-            r.checkOutLatitude = data.checkOutLatitude;
-          if (data.checkOutLongitude !== undefined)
-            r.checkOutLongitude = data.checkOutLongitude;
-          if (data.status !== undefined) r.status = data.status;
-          if (data.remarks !== undefined) r.remarks = data.remarks;
-          if (data.isSynced !== undefined) r.isSynced = data.isSynced;
-          if (data.serverId !== undefined) r.serverId = data.serverId;
-        });
-      });
-    } catch (error: any) {
-      logger.error("Database error updating attendance record", {
-        module: "DATABASE_SERVICE",
-        error: error.message,
-        id,
-        data,
-      });
-      throw error;
-    }
-  },
-
-  async getByUserId(userId: string): Promise<AttendanceRecord[]> {
-    return await attendanceCollection
-      .query(Q.where("user_id", userId), Q.sortBy("created_at", Q.desc))
-      .fetch();
-  },
-
-  async getTodayByUserId(userId: string): Promise<AttendanceRecord | null> {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const todayTimestamp = today.getTime();
-
-    const records = await attendanceCollection
-      .query(
-        Q.where("user_id", userId),
-        Q.where("created_at", Q.gte(todayTimestamp))
-      )
-      .fetch();
-
-    return records.length > 0 ? records[0] : null;
-  },
-
-  async getUnsyncedRecords(): Promise<AttendanceRecord[]> {
-    return await attendanceCollection
-      .query(Q.where("is_synced", false))
-      .fetch();
-  },
-
-  async markAsSynced(id: string, serverId: string): Promise<void> {
-    await this.update(id, { isSynced: true, serverId });
-  },
-};
-
 // ============== TICKETS ==============
 
 export const TicketDB = {
-  async upsertMany(tickets: any[], siteId: string): Promise<void> {
+  async upsertMany(tickets: any[], siteCode: string): Promise<void> {
     await database.write(async () => {
       for (const ticket of tickets) {
         const existing = await ticketCollection
@@ -152,7 +44,7 @@ export const TicketDB = {
         } else {
           await ticketCollection.create((t) => {
             t.serverId = ticket.id.toString();
-            t.siteId = siteId;
+            t.siteCode = siteCode;
             t.ticketNumber = ticket.ticket_number || `TKT-${ticket.id}`;
             t.title = ticket.title || ticket.complaint;
             t.description = ticket.description || null;
@@ -176,9 +68,9 @@ export const TicketDB = {
     });
   },
 
-  async getBySiteId(siteId: string): Promise<Ticket[]> {
+  async getBySiteId(siteCode: string): Promise<Ticket[]> {
     return await ticketCollection
-      .query(Q.where("site_id", siteId), Q.sortBy("created_at", Q.desc))
+      .query(Q.where("site_code", siteCode), Q.sortBy("created_at", Q.desc))
       .fetch();
   },
 
@@ -189,7 +81,7 @@ export const TicketDB = {
   async queueUpdate(
     ticketId: string,
     updateType: string,
-    updateData: any
+    updateData: any,
   ): Promise<void> {
     await database.write(async () => {
       await ticketUpdateCollection.create((u) => {
@@ -226,11 +118,11 @@ export const TicketDB = {
 // ============== AREAS ==============
 
 export const AreaDB = {
-  async upsertMany(areas: any[], siteId: string): Promise<void> {
+  async upsertMany(areas: any[], siteCode: string): Promise<void> {
     await database.write(async () => {
       // Clear old cached areas for this site
       const existing = await areaCollection
-        .query(Q.where("site_id", siteId))
+        .query(Q.where("site_code", siteCode))
         .fetch();
       for (const area of existing) {
         await area.destroyPermanently();
@@ -240,7 +132,7 @@ export const AreaDB = {
       for (const area of areas) {
         await areaCollection.create((a) => {
           a.serverId = area.id?.toString() || area.value;
-          a.siteId = siteId;
+          a.siteCode = siteCode;
           a.name = area.asset_name || area.label || area.name;
           a.cachedAt = Date.now();
         });
@@ -248,8 +140,8 @@ export const AreaDB = {
     });
   },
 
-  async getBySiteId(siteId: string): Promise<Area[]> {
-    return await areaCollection.query(Q.where("site_id", siteId)).fetch();
+  async getBySiteId(siteCode: string): Promise<Area[]> {
+    return await areaCollection.query(Q.where("site_code", siteCode)).fetch();
   },
 };
 
@@ -299,6 +191,7 @@ export const UserSiteDB = {
           s.serverId = site.id?.toString() || site.site_id;
           s.userId = userId;
           s.siteName = site.site_name || site.name;
+          s.siteCode = site.site_code;
           s.cachedAt = Date.now();
         });
       }
@@ -320,15 +213,11 @@ export const SyncDB = {
   },
 
   async getUnsyncedCounts(): Promise<{
-    attendance: number;
     ticketUpdates: number;
   }> {
-    const attendance = await attendanceCollection
-      .query(Q.where("is_synced", false))
-      .fetchCount();
     const ticketUpdates = await ticketUpdateCollection
       .query(Q.where("is_synced", false))
       .fetchCount();
-    return { attendance, ticketUpdates };
+    return { ticketUpdates };
   },
 };

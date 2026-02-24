@@ -9,11 +9,21 @@ import {
   Platform,
   ActivityIndicator,
 } from "react-native";
-import { Mail, Zap, ArrowLeft, Lock, KeyRound } from "lucide-react-native";
+import {
+  Mail,
+  Zap,
+  ArrowLeft,
+  Lock,
+  KeyRound,
+  Eye,
+  EyeOff,
+} from "lucide-react-native";
 import { router } from "expo-router";
 import { showAlert } from "@/utils/alert";
 
-const API_URL = process.env.EXPO_PUBLIC_API_URL || "http://192.168.31.152:3420";
+import { API_BASE_URL } from "../constants/api";
+
+const API_URL = API_BASE_URL;
 
 export default function ForgotPassword() {
   const [step, setStep] = useState<"email" | "otp" | "password">("email");
@@ -21,6 +31,8 @@ export default function ForgotPassword() {
   const [otp, setOtp] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [loading, setLoading] = useState(false);
 
   const handleSendOtp = async () => {
@@ -32,7 +44,7 @@ export default function ForgotPassword() {
     if (!email.toLowerCase().endsWith("@smartjoules.in")) {
       showAlert(
         "Invalid Email",
-        "Please use your SmartJoules email (@smartjoules.in)"
+        "Please use your SmartJoules email (@smartjoules.in)",
       );
       return;
     }
@@ -50,7 +62,7 @@ export default function ForgotPassword() {
       if (result.success) {
         showAlert(
           "OTP Sent",
-          "A verification code has been sent to your email"
+          "A verification code has been sent to your email",
         );
         setStep("otp");
       } else {
@@ -95,7 +107,7 @@ export default function ForgotPassword() {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ email, code: otp, newPassword }),
-        }
+        },
       );
 
       const result = await response.json();
@@ -104,7 +116,7 @@ export default function ForgotPassword() {
         showAlert(
           "✅ Password Reset!",
           "Your password has been updated. You can now sign in.",
-          [{ text: "Sign In", onPress: () => router.replace("/sign-in") }]
+          [{ text: "Sign In", onPress: () => router.replace("/sign-in") }],
         );
       } else {
         showAlert("Error", result.error || "Failed to reset password");
@@ -131,7 +143,7 @@ export default function ForgotPassword() {
             <View className="bg-red-700 dark:bg-red-900 p-10 items-center justify-center rounded-t-2xl h-56">
               <Zap size={40} color="#fecaca" />
               <Text className="text-white text-4xl font-extrabold mt-2">
-                Smart Ops
+                JouleOps
               </Text>
               <Text className="text-red-200 mt-1 text-sm">
                 Password Recovery
@@ -253,10 +265,21 @@ export default function ForgotPassword() {
                       placeholder="New Password (min 6 chars)"
                       value={newPassword}
                       onChangeText={setNewPassword}
-                      secureTextEntry
+                      secureTextEntry={!showNewPassword}
                       editable={!loading}
-                      className="pl-12 pr-4 py-3 border border-gray-300 dark:border-slate-700 rounded-lg text-gray-800 dark:text-slate-50 dark:bg-slate-800"
+                      className="pl-12 pr-12 py-3 border border-gray-300 dark:border-slate-700 rounded-lg text-gray-800 dark:text-slate-50 dark:bg-slate-800"
                     />
+                    <TouchableOpacity
+                      onPress={() => setShowNewPassword(!showNewPassword)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 z-10"
+                      disabled={loading}
+                    >
+                      {showNewPassword ? (
+                        <EyeOff size={20} color="#94a3b8" />
+                      ) : (
+                        <Eye size={20} color="#94a3b8" />
+                      )}
+                    </TouchableOpacity>
                   </View>
 
                   <View className="mb-6">
@@ -267,10 +290,23 @@ export default function ForgotPassword() {
                       placeholder="Confirm New Password"
                       value={confirmPassword}
                       onChangeText={setConfirmPassword}
-                      secureTextEntry
+                      secureTextEntry={!showConfirmPassword}
                       editable={!loading}
-                      className="pl-12 pr-4 py-3 border border-gray-300 dark:border-slate-700 rounded-lg text-gray-800 dark:text-slate-50 dark:bg-slate-800"
+                      className="pl-12 pr-12 py-3 border border-gray-300 dark:border-slate-700 rounded-lg text-gray-800 dark:text-slate-50 dark:bg-slate-800"
                     />
+                    <TouchableOpacity
+                      onPress={() =>
+                        setShowConfirmPassword(!showConfirmPassword)
+                      }
+                      className="absolute right-3 top-1/2 -translate-y-1/2 z-10"
+                      disabled={loading}
+                    >
+                      {showConfirmPassword ? (
+                        <EyeOff size={20} color="#94a3b8" />
+                      ) : (
+                        <Eye size={20} color="#94a3b8" />
+                      )}
+                    </TouchableOpacity>
                   </View>
 
                   <TouchableOpacity

@@ -13,7 +13,7 @@ export interface TaskItem {
   type: "area" | "asset" | "general";
   isCompleted: boolean;
   lastLogId?: string;
-  meta?: any; // For storing extra data like chiller_id or site_id
+  meta?: any; // For storing extra data like chiller_id or site_code
 }
 
 export const SiteConfigService = {
@@ -21,13 +21,13 @@ export const SiteConfigService = {
    * Get all Tasks (Areas) for a Site and Log Type.
    * Derived from historical logs.
    */
-  async getLogTasks(siteId: string, logName: string): Promise<TaskItem[]> {
+  async getLogTasks(siteCode: string, logName: string): Promise<TaskItem[]> {
     try {
       // 1. Fetch distinct Task Names (Areas) from recent logs
       // We look back to find what "Areas" or "Points" exist for this log type.
       const recentLogs = await siteLogCollection
         .query(
-          Q.where("site_id", siteId),
+          Q.where("site_code", siteCode),
           Q.where("log_name", logName),
           Q.sortBy("created_at", Q.desc),
           Q.take(500), // increased to capture more history if needed
@@ -49,7 +49,7 @@ export const SiteConfigService = {
 
       const todaysLogs = await siteLogCollection
         .query(
-          Q.where("site_id", siteId),
+          Q.where("site_code", siteCode),
           Q.where("log_name", logName),
           Q.where("created_at", Q.gte(start)),
           Q.where("created_at", Q.lte(end)),
@@ -92,14 +92,14 @@ export const SiteConfigService = {
   /**
    * Get Chillers for a Site (derived from history) and check status.
    */
-  async getChillerTasks(siteId: string): Promise<TaskItem[]> {
+  async getChillerTasks(siteCode: string): Promise<TaskItem[]> {
     try {
       // 1. Fetch distinct Chiller IDs from historical logs
       // WatermelonDB doesn't support 'distinct' easily.
       // We will fetch the last 100 chiller readings to guess the active chillers.
       const recentReadings = await chillerReadingCollection
         .query(
-          Q.where("site_id", siteId),
+          Q.where("site_code", siteCode),
           Q.sortBy("created_at", Q.desc),
           Q.take(50),
         )
@@ -122,7 +122,7 @@ export const SiteConfigService = {
 
       const todaysReadings = await chillerReadingCollection
         .query(
-          Q.where("site_id", siteId),
+          Q.where("site_code", siteCode),
           Q.where("created_at", Q.gte(start)),
           Q.where("created_at", Q.lte(end)),
         )
@@ -154,13 +154,13 @@ export const SiteConfigService = {
    * Helper to get generic tasks (Water/Chemical)
    * These are usually 1-per-shift site-wide, but we treat them as single tasks.
    */
-  async getGenericTask(siteId: string, logName: string): Promise<TaskItem> {
+  async getGenericTask(siteCode: string, logName: string): Promise<TaskItem> {
     const start = startOfDay(new Date()).getTime();
     const end = endOfDay(new Date()).getTime();
 
     const count = await siteLogCollection
       .query(
-        Q.where("site_id", siteId),
+        Q.where("site_code", siteCode),
         Q.where("log_name", logName),
         Q.where("created_at", Q.gte(start)),
         Q.where("created_at", Q.lte(end)),

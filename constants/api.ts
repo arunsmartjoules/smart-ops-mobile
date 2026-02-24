@@ -2,9 +2,14 @@
  * API configuration constants
  */
 
+import { Platform } from "react-native";
+
 // Base URLs
 export const API_BASE_URL =
-  process.env.EXPO_PUBLIC_API_URL || "http://192.168.31.152:3420";
+  process.env.EXPO_PUBLIC_BACKEND_URL ||
+  (Platform.OS === "android"
+    ? "http://10.0.2.2:3420"
+    : "http://localhost:3420");
 export const API_URL = `${API_BASE_URL}/api`;
 
 // Timeouts (in milliseconds)

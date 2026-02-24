@@ -6,7 +6,7 @@ export default class ChillerReading extends Model {
 
   @field("server_id") serverId!: string | null;
   @text("log_id") logId!: string;
-  @text("site_id") siteId!: string;
+  @text("site_code") siteCode!: string;
   @text("chiller_id") chillerId!: string | null;
   @text("equipment_id") equipmentId!: string | null;
   @text("executor_id") executorId!: string;

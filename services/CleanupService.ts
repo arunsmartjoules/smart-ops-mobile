@@ -24,7 +24,6 @@ export async function performLogoutCleanup(): Promise<void> {
       "auth_user",
       "@sync_status",
       "@ticket_sync_status",
-      "@offline_attendance",
       "@offline_ticket_updates",
       "@cache_metadata",
       "last_sync_time",

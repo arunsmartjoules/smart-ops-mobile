@@ -2,6 +2,7 @@ import React from "react";
 import { View, Text, TouchableOpacity, Modal, ScrollView } from "react-native";
 import { X, Calendar, Check } from "lucide-react-native";
 import { format } from "date-fns";
+import SearchableSelect from "../SearchableSelect";
 
 interface LogFilterModalProps {
   visible: boolean;
@@ -12,8 +13,8 @@ interface LogFilterModalProps {
   setToDate: (date: Date | null) => void;
   onApply: () => void;
   availableSites: any[];
-  selectedSiteId: string | null;
-  onSiteSelect: (siteId: string) => void;
+  selectedSiteCode: string | null;
+  onSiteSelect: (siteCode: string) => void;
 }
 
 const LogFilterModal = ({
@@ -25,9 +26,21 @@ const LogFilterModal = ({
   setToDate,
   onApply,
   availableSites,
-  selectedSiteId,
+  selectedSiteCode,
   onSiteSelect,
 }: LogFilterModalProps) => {
+  const siteOptions = React.useMemo(
+    () =>
+      availableSites.map((site) => ({
+        value: site.site_code || site.id,
+        label: site.name,
+        description: `${site.city || ""}, ${site.state || ""}`
+          .trim()
+          .replace(/^, |, $/g, ""),
+      })),
+    [availableSites],
+  );
+
   if (!visible) return null;
 
   return (
@@ -90,47 +103,13 @@ const LogFilterModal = ({
                 <Text className="text-slate-400 dark:text-slate-500 text-[10px] font-bold uppercase tracking-widest mb-3 ml-1">
                   Select Site
                 </Text>
-                <View className="gap-2">
-                  {availableSites.length > 0 ? (
-                    availableSites.map((site) => (
-                      <TouchableOpacity
-                        key={site.id || site.site_code}
-                        onPress={() => onSiteSelect(site.site_code)}
-                        className={`p-4 rounded-xl border ${
-                          selectedSiteId === site.site_code
-                            ? "bg-red-50 border-red-100 dark:bg-red-900/10 dark:border-red-900/20"
-                            : "bg-slate-50 border-slate-100 dark:bg-slate-800/50 dark:border-slate-800"
-                        } flex-row items-center justify-between`}
-                      >
-                        <View className="flex-1">
-                          <Text
-                            className={`font-bold ${
-                              selectedSiteId === site.site_code
-                                ? "text-red-600"
-                                : "text-slate-900 dark:text-slate-50"
-                            }`}
-                          >
-                            {site.name}
-                          </Text>
-                          <Text className="text-slate-400 dark:text-slate-500 text-[10px] font-medium mt-0.5">
-                            {site.city || "N/A"}, {site.state || "N/A"}
-                          </Text>
-                        </View>
-                        {selectedSiteId === site.site_code && (
-                          <View className="w-5 h-5 rounded-full bg-red-600 items-center justify-center">
-                            <Check size={12} color="#fff" strokeWidth={3} />
-                          </View>
-                        )}
-                      </TouchableOpacity>
-                    ))
-                  ) : (
-                    <View className="p-8 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-dashed border-slate-200 dark:border-slate-700 items-center justify-center">
-                      <Text className="text-slate-400 text-xs italic text-center">
-                        No sites found.
-                      </Text>
-                    </View>
-                  )}
-                </View>
+                <SearchableSelect
+                  label=""
+                  placeholder="Select a site"
+                  options={siteOptions}
+                  value={selectedSiteCode || ""}
+                  onChange={onSiteSelect}
+                />
               </View>
 
               {/* Date Range Display */}

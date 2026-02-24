@@ -73,6 +73,27 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
+        name="tickets"
+        options={{
+          title: "Tickets",
+          tabBarIcon: ({ color, focused }) => (
+            <View
+              style={{
+                backgroundColor: focused ? "#fef2f2" : "transparent",
+                padding: 8,
+                borderRadius: 12,
+              }}
+            >
+              <Ticket
+                size={22}
+                color={focused ? "#ef4444" : color}
+                strokeWidth={focused ? 2.5 : 2}
+              />
+            </View>
+          ),
+        }}
+      />
+      <Tabs.Screen
         name="site-logs"
         options={{
           title: "Logs",
@@ -108,27 +129,6 @@ export default function TabLayout() {
               <ListChecks
                 size={22}
                 color={focused ? "#3b82f6" : color}
-                strokeWidth={focused ? 2.5 : 2}
-              />
-            </View>
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="tickets"
-        options={{
-          title: "Tickets",
-          tabBarIcon: ({ color, focused }) => (
-            <View
-              style={{
-                backgroundColor: focused ? "#fef2f2" : "transparent",
-                padding: 8,
-                borderRadius: 12,
-              }}
-            >
-              <Ticket
-                size={22}
-                color={focused ? "#ef4444" : color}
                 strokeWidth={focused ? 2.5 : 2}
               />
             </View>

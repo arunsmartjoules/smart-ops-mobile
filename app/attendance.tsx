@@ -25,7 +25,7 @@ import {
   Map as LucideMap,
   X,
 } from "lucide-react-native";
-import { router } from "expo-router";
+import { router, useFocusEffect } from "expo-router";
 import * as Location from "expo-location";
 import { useAuth } from "@/contexts/AuthContext";
 import AttendanceService, {
@@ -33,6 +33,7 @@ import AttendanceService, {
   type Site,
   type LocationValidationResult,
 } from "@/services/AttendanceService";
+import { syncManager } from "@/services/SyncManager";
 import logger from "@/utils/logger";
 import { format, differenceInMinutes, parseISO } from "date-fns";
 import { useNetworkStatus } from "@/hooks/useNetworkStatus";
@@ -128,10 +129,10 @@ const HistoryItem = React.memo(
 );
 
 const SiteItem = React.memo(
-  ({ site, onSelect }: { site: Site; onSelect: (id: string) => void }) => {
+  ({ site, onSelect }: { site: Site; onSelect: (code: string) => void }) => {
     const handleSelect = useCallback(() => {
-      onSelect(site.site_id);
-    }, [site.site_id, onSelect]);
+      onSelect(site.site_code);
+    }, [site.site_code, onSelect]);
 
     return (
       <TouchableOpacity
@@ -187,29 +188,29 @@ export default function AttendancePage() {
   const fetchData = React.useCallback(async () => {
     if (!user?.id) return;
     try {
+      // 1. Show cached data immediately (SWR)
+      const cachedToday = await AttendanceService.getTodayAttendance(user.id);
+      if (cachedToday) setTodayAttendance(cachedToday);
+
+      const cachedHistory = await AttendanceService.getAttendanceHistory(
+        user.id,
+        1,
+        30,
+      );
+      if (cachedHistory.data.length > 0)
+        setAttendanceHistory(cachedHistory.data);
+
+      if (cachedToday || cachedHistory.data.length > 0) {
+        setLoading(false);
+      }
+
+      // 2. Fetch fresh data from API
       const [today, history] = await Promise.all([
         AttendanceService.getTodayAttendance(user.id),
         AttendanceService.getAttendanceHistory(user.id),
       ]);
 
-      let finalToday = today;
-
-      // Client-side fallback: if today check fails but history has a record for today, use it.
-      if (!finalToday && history.data && history.data.length > 0) {
-        const latest = history.data[0];
-        const istDate = new Intl.DateTimeFormat("en-CA", {
-          timeZone: "Asia/Kolkata",
-          year: "numeric",
-          month: "2-digit",
-          day: "2-digit",
-        }).format(new Date());
-
-        if (latest.date === istDate) {
-          finalToday = latest;
-        }
-      }
-
-      setTodayAttendance(finalToday);
+      setTodayAttendance(today);
       setAttendanceHistory(history.data);
     } catch (error: any) {
       logger.error("Fetch attendance data error", {
@@ -222,15 +223,83 @@ export default function AttendancePage() {
     }
   }, [user?.id]);
 
-  useEffect(() => {
-    fetchData();
-    // Only request location if not WFH
-    const isWFH =
-      user?.work_location_type === "WHF" || user?.work_location_type === "WFH";
-    if (!isWFH) {
-      ensureLocation();
-    }
-  }, [fetchData]);
+  // Robust location getter
+  const ensureLocation =
+    useCallback(async (): Promise<Location.LocationObject | null> => {
+      try {
+        // 1. Check services
+        const enabled = await Location.hasServicesEnabledAsync();
+        if (!enabled) {
+          setLocationError("Location services are disabled");
+          Alert.alert(
+            "GPS Disabled",
+            "Please enable GPS/Location services in your device settings.",
+            [{ text: "OK" }],
+          );
+          return null;
+        }
+
+        // 2. Check & Request Permissions
+        let { status } = await Location.getForegroundPermissionsAsync();
+        if (status !== "granted") {
+          const permissionResponse =
+            await Location.requestForegroundPermissionsAsync();
+          status = permissionResponse.status;
+        }
+
+        if (status !== "granted") {
+          setLocationError("Permission to access location was denied");
+          const isWFH = user?.work_location_type === "WFH";
+          if (!isWFH) {
+            Alert.alert(
+              "Permission Required",
+              "Location permission is required to mark attendance. Please allow access in settings.",
+              [{ text: "OK" }],
+            );
+          }
+          return null;
+        }
+
+        // 3. Get Position
+        const locationResult = await Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.Balanced,
+        });
+        setLocation(locationResult); // Update state as well
+        setLocationError(null);
+        return locationResult;
+      } catch (error: any) {
+        console.log("Location error:", error);
+        // Fallback to last known
+        try {
+          const lastKnown = await Location.getLastKnownPositionAsync({});
+          if (lastKnown) {
+            setLocation(lastKnown);
+            return lastKnown;
+          }
+        } catch (e) {}
+
+        Alert.alert(
+          "Location Error",
+          "Could not fetch current location. Please check your GPS signal.",
+        );
+        setLocationError("Could not fetch location");
+        return null;
+      }
+    }, [user?.work_location_type]);
+
+  useFocusEffect(
+    useCallback(() => {
+      fetchData();
+      // Only request location if not WFH
+      const isWFH = user?.work_location_type === "WFH";
+      if (!isWFH) {
+        ensureLocation();
+      }
+
+      // Prefetch other data in background
+      syncManager.prefetchAll();
+    }, [fetchData, ensureLocation, user?.work_location_type]),
+  );
 
   // Update current time every minute for the live timer with AppState handling
   useEffect(() => {
@@ -272,88 +341,11 @@ export default function AttendancePage() {
     };
   }, [todayAttendance]);
 
-  // Robust location getter
-  const ensureLocation =
-    useCallback(async (): Promise<Location.LocationObject | null> => {
-      try {
-        // 1. Check services
-        const enabled = await Location.hasServicesEnabledAsync();
-        if (!enabled) {
-          setLocationError("Location services are disabled");
-          Alert.alert(
-            "GPS Disabled",
-            "Please enable GPS/Location services in your device settings.",
-            [{ text: "OK" }],
-          );
-          return null;
-        }
-
-        // 2. Check & Request Permissions
-        let { status } = await Location.getForegroundPermissionsAsync();
-        if (status !== "granted") {
-          const permissionResponse =
-            await Location.requestForegroundPermissionsAsync();
-          status = permissionResponse.status;
-        }
-
-        if (status !== "granted") {
-          setLocationError("Permission to access location was denied");
-          const isWFH =
-            user?.work_location_type === "WHF" ||
-            user?.work_location_type === "WFH";
-          if (!isWFH) {
-            Alert.alert(
-              "Permission Required",
-              "Location permission is required to mark attendance. Please allow access in settings.",
-              [{ text: "OK" }],
-            );
-          }
-          return null;
-        }
-
-        // 3. Get Position
-        const locationResult = await Location.getCurrentPositionAsync({
-          accuracy: Location.Accuracy.Balanced,
-        });
-        setLocation(locationResult); // Update state as well
-        setLocationError(null);
-        return locationResult;
-      } catch (error: any) {
-        console.log("Location error:", error);
-        // Fallback to last known
-        try {
-          const lastKnown = await Location.getLastKnownPositionAsync({});
-          if (lastKnown) {
-            setLocation(lastKnown);
-            return lastKnown;
-          }
-        } catch (e) {}
-
-        Alert.alert(
-          "Location Error",
-          "Could not fetch current location. Please check your GPS signal.",
-        );
-        setLocationError("Could not fetch location");
-        return null;
-      }
-    }, [user?.work_location_type]);
-
-  useEffect(() => {
-    fetchData();
-    // Only request location if not WFH
-    const isWFH =
-      user?.work_location_type === "WHF" || user?.work_location_type === "WFH";
-    if (!isWFH) {
-      ensureLocation();
-    }
-  }, [fetchData, ensureLocation]); // Updated dependency
-
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     await fetchData();
     // Refresh location too if not WFH
-    const isWFH =
-      user?.work_location_type === "WHF" || user?.work_location_type === "WFH";
+    const isWFH = user?.work_location_type === "WFH";
     if (!isWFH) {
       try {
         let location = await Location.getCurrentPositionAsync({
@@ -366,16 +358,14 @@ export default function AttendancePage() {
   }, [fetchData, user?.work_location_type]);
 
   const handleCheckInPress = useCallback(async () => {
-    if (!isConnected) {
-      Alert.alert(
-        "Internet Required",
-        "An active internet connection is required to check in. Please check your connection and try again.",
-      );
+    // Simplified: No network check here, rely on service fallback
+    // if (!isConnected) { ... }
+    if (!user?.id) {
+      Alert.alert("Error", "User session not available. Please sign in again.");
       return;
     }
 
-    const isWFH =
-      user?.work_location_type === "WHF" || user?.work_location_type === "WFH";
+    const isWFH = user?.work_location_type === "WFH";
 
     if (!location && !isWFH) {
       setValidatingLocation(true); // Show spinner immediately
@@ -416,13 +406,15 @@ export default function AttendancePage() {
               {
                 text: "Check In",
                 onPress: () =>
-                  performCheckIn(validation.allowedSites[0]?.site_id || "WFH"),
+                  performCheckIn(
+                    validation.allowedSites[0]?.site_code || "WFH",
+                  ),
               },
             ],
           );
         } else if (validation.allowedSites.length === 1) {
           // Auto-select the only available site
-          performCheckIn(validation.allowedSites[0].site_id);
+          performCheckIn(validation.allowedSites[0].site_code);
         } else {
           // Show site selection modal
           setAvailableSites(validation.allowedSites);
@@ -447,18 +439,31 @@ export default function AttendancePage() {
   }, [user, location, ensureLocation]);
 
   const performCheckIn = useCallback(
-    async (siteId: string) => {
-      if (!isConnected) {
+    async (siteCode: string) => {
+      // Offline allowed
+      // if (!isConnected) { ... }
+      if (!user?.id) {
         Alert.alert(
           "Error",
-          "Internet connection lost. Please try again when online.",
+          "User session not available. Please sign in again.",
         );
         return;
       }
       try {
+        // Optimistic UI update
+        const optimisticLog: AttendanceLog = {
+          id: `opt-${Date.now()}`,
+          user_id: user!.id,
+          site_code: siteCode,
+          date: new Date().toISOString().split("T")[0],
+          check_in_time: new Date().toISOString(),
+          status: "Present",
+        };
+        setTodayAttendance(optimisticLog);
+
         const res = await AttendanceService.checkIn(
           user!.id,
-          siteId,
+          siteCode,
           location?.coords.latitude,
           location?.coords.longitude,
         );
@@ -467,9 +472,12 @@ export default function AttendancePage() {
           setIsSiteModalVisible(false);
           fetchData();
         } else {
+          // Revert optimistic update on failure
+          setTodayAttendance(null);
           Alert.alert("Failed", res.error || "Check-in failed");
         }
       } catch (error: any) {
+        setTodayAttendance(null);
         Alert.alert("Error", error.message);
       }
     },
@@ -479,13 +487,8 @@ export default function AttendancePage() {
   const handleCheckOutPress = useCallback(async () => {
     if (!todayAttendance) return;
 
-    if (!isConnected) {
-      Alert.alert(
-        "Internet Required",
-        "An active internet connection is required to check out. Please check your connection and try again.",
-      );
-      return;
-    }
+    // Offline allowed
+    // if (!isConnected) { ... }
 
     // Refresh location for checkout
     setValidatingLocation(true);
@@ -848,7 +851,7 @@ export default function AttendancePage() {
                 <ScrollView className="mb-4">
                   {availableSites.map((site) => (
                     <SiteItem
-                      key={site.site_id}
+                      key={site.site_code}
                       site={site}
                       onSelect={performCheckIn}
                     />
