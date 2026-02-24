@@ -100,6 +100,10 @@ export const WhatsAppService = {
         ticket.priority || "Normal",
       );
       messageContent = messageContent.replace(
+        /\{\{\s*internal_remarks\s*\}\}/g,
+        ticket.internal_remarks || "N/A",
+      );
+      messageContent = messageContent.replace(
         /\{\{\s*created_by\s*\}\}/g,
         ticket.created_user || "N/A",
       );

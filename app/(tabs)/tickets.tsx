@@ -732,8 +732,8 @@ export default function Tickets() {
       category: updateCategory || selectedTicket.category,
     };
 
-    // If status is Inprogress, assign to current user
-    if (updateStatus === "Inprogress") {
+    // If status is Inprogress or Cancelled, assign to current user
+    if (updateStatus === "Inprogress" || updateStatus === "Cancelled") {
       payload.assigned_to = user?.full_name || user?.name || "";
     }
 
