@@ -59,6 +59,7 @@ import logger from "@/utils/logger";
 import TicketDetailModal from "@/components/TicketDetailModal";
 import AdvancedFilterModal from "@/components/AdvancedFilterModal";
 import Skeleton from "@/components/Skeleton";
+import { WhatsAppService } from "@/services/WhatsAppService";
 
 const { width } = Dimensions.get("window");
 
@@ -643,6 +644,7 @@ export default function Tickets() {
       ticketId: ticket.ticket_id,
       status: ticket.status,
     });
+
     if (ticket.status !== "Open" && ticket.status !== "Inprogress") {
       // Still allow viewing some details, but not updates for terminal statuses
       // return;
@@ -723,12 +725,17 @@ export default function Tickets() {
       return;
     }
 
-    const payload = {
+    const payload: any = {
       status: updateStatus,
       remarks: updateRemarks,
       area_asset: updateArea || selectedTicket.area_asset,
       category: updateCategory || selectedTicket.category,
     };
+
+    // If status is Inprogress, assign to current user
+    if (updateStatus === "Inprogress") {
+      payload.assigned_to = user?.full_name || user?.name || "";
+    }
 
     setIsUpdating(true);
     try {
@@ -739,6 +746,22 @@ export default function Tickets() {
           payload,
         );
         if (res.success) {
+          // Trigger WhatsApp template resolution and sending
+          // Use updated ticket data for notification
+          const updatedTicketForWA = {
+            ...selectedTicket,
+            ...payload,
+          };
+          WhatsAppService.sendStatusUpdate(
+            updatedTicketForWA,
+            updateStatus,
+            updateRemarks,
+          ).catch((e: any) =>
+            logger.warn("Failed WhatsApp notification in background", {
+              error: e,
+            }),
+          );
+
           Alert.alert("Success", "Ticket updated successfully");
           setIsDetailVisible(false);
           fetchStats();

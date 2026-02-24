@@ -9,6 +9,7 @@ import {
   Modal,
   Animated,
   Alert,
+  useWindowDimensions,
 } from "react-native";
 import {
   X,
@@ -64,6 +65,7 @@ const TicketDetailModal = React.memo(
     const [holdProgress] = useState(new Animated.Value(0));
     const timerRef = useRef<any>(null);
     const [isHolding, setIsHolding] = useState(false);
+    const { height: windowHeight } = useWindowDimensions();
 
     useEffect(() => {
       if (!visible) {
@@ -114,56 +116,94 @@ const TicketDetailModal = React.memo(
       outputRange: ["0%", "100%"],
     });
 
+    const modalHeight = Math.min(windowHeight * 0.92, 780);
+
     return (
       <Modal visible={visible} animationType="slide" transparent={true}>
         <View
           style={{
             flex: 1,
-            backgroundColor: "rgba(0,0,0,0.6)",
+            backgroundColor: "rgba(0,0,0,0.55)",
             justifyContent: "flex-end",
           }}
         >
           <View
             style={{
               backgroundColor: "#ffffff",
-              borderTopLeftRadius: 40,
-              borderTopRightRadius: 40,
-              padding: 24,
-              height: 700,
+              borderTopLeftRadius: 36,
+              borderTopRightRadius: 36,
+              paddingHorizontal: 22,
+              paddingTop: 14,
+              paddingBottom: 18,
+              height: modalHeight,
+              minHeight: 420,
               shadowColor: "#000",
-              shadowOffset: { width: 0, height: -10 },
-              shadowOpacity: 0.1,
-              shadowRadius: 20,
+              shadowOffset: { width: 0, height: -8 },
+              shadowOpacity: 0.12,
+              shadowRadius: 16,
               elevation: 12,
             }}
           >
             <View
               style={{
+                alignSelf: "center",
+                width: 48,
+                height: 5,
+                borderRadius: 999,
+                backgroundColor: "#e2e8f0",
+                marginBottom: 14,
+              }}
+            />
+            <View
+              style={{
                 flexDirection: "row",
                 alignItems: "center",
                 justifyContent: "space-between",
-                marginBottom: 16,
+                marginBottom: 10,
               }}
             >
-              <View
-                style={{
-                  backgroundColor: "#fef2f2",
-                  paddingHorizontal: 12,
-                  paddingVertical: 6,
-                  borderRadius: 999,
-                }}
-              >
-                <Text
+              <View style={{ flexDirection: "row", alignItems: "center" }}>
+                <View
                   style={{
-                    color: "#dc2626",
-                    fontWeight: "900",
-                    fontSize: 10,
-                    textTransform: "uppercase",
-                    letterSpacing: 1.5,
+                    backgroundColor: "#fef2f2",
+                    paddingHorizontal: 12,
+                    paddingVertical: 6,
+                    borderRadius: 999,
+                    marginRight: 10,
                   }}
                 >
-                  {ticket.ticket_no}
-                </Text>
+                  <Text
+                    style={{
+                      color: "#dc2626",
+                      fontWeight: "900",
+                      fontSize: 10,
+                      textTransform: "uppercase",
+                      letterSpacing: 1.5,
+                    }}
+                  >
+                    {ticket.ticket_no}
+                  </Text>
+                </View>
+                <View
+                  style={{
+                    backgroundColor: "#f1f5f9",
+                    paddingHorizontal: 10,
+                    paddingVertical: 6,
+                    borderRadius: 999,
+                  }}
+                >
+                  <Text
+                    style={{
+                      color: "#475569",
+                      fontWeight: "800",
+                      fontSize: 10,
+                      textTransform: "uppercase",
+                      letterSpacing: 1.2,
+                    }}
+                  >
+                    {ticket.status || "Unknown"}
+                  </Text>
+                </View>
               </View>
               <TouchableOpacity
                 onPress={onClose}
@@ -186,24 +226,35 @@ const TicketDetailModal = React.memo(
                 fontSize: 22,
                 fontWeight: "900",
                 lineHeight: 28,
-                marginBottom: 20,
+                marginBottom: 6,
               }}
             >
               {ticket.title}
+            </Text>
+            <Text
+              style={{
+                color: "#94a3b8",
+                fontSize: 12,
+                fontWeight: "700",
+                marginBottom: 18,
+              }}
+            >
+              Tap a new status, fill details, then update.
             </Text>
 
             <View style={{ flex: 1 }}>
               <ScrollView
                 showsVerticalScrollIndicator={false}
-                contentContainerStyle={{ paddingBottom: 100 }}
+                style={{ flex: 1 }}
+                contentContainerStyle={{ paddingBottom: 120, flexGrow: 1 }}
               >
                 <View>
                   <View
                     className="bg-slate-50 dark:bg-slate-800"
                     style={{
-                      borderRadius: 24,
-                      padding: 24,
-                      marginBottom: 32,
+                      borderRadius: 22,
+                      padding: 20,
+                      marginBottom: 26,
                     }}
                   >
                     <View
@@ -534,19 +585,36 @@ const TicketDetailModal = React.memo(
                     )}
                   </View>
 
-                  <Text
-                    style={{
-                      color: "#0f172a",
-                      fontWeight: "900",
-                      fontSize: 14,
-                      textTransform: "uppercase",
-                      letterSpacing: 1.5,
-                      marginBottom: 16,
-                      marginLeft: 4,
-                    }}
-                  >
-                    Status Transition
-                  </Text>
+                    <View
+                      style={{
+                        flexDirection: "row",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        marginBottom: 12,
+                      }}
+                    >
+                      <Text
+                        style={{
+                          color: "#0f172a",
+                          fontWeight: "900",
+                          fontSize: 14,
+                          textTransform: "uppercase",
+                          letterSpacing: 1.5,
+                          marginLeft: 4,
+                        }}
+                      >
+                        Update Status
+                      </Text>
+                      <Text
+                        style={{
+                          color: "#94a3b8",
+                          fontSize: 11,
+                          fontWeight: "700",
+                        }}
+                      >
+                        Current: {ticket.status || "N/A"}
+                      </Text>
+                    </View>
                   <View
                     style={{
                       flexDirection: "row",
@@ -580,34 +648,34 @@ const TicketDetailModal = React.memo(
                               setUpdateRemarks("");
                             }
                           }}
+                        style={{
+                          paddingHorizontal: 18,
+                          paddingVertical: 10,
+                          borderRadius: 16,
+                          borderWidth: 1,
+                          backgroundColor:
+                            updateStatus === s ? "#dc2626" : "#ffffff",
+                          borderColor:
+                            updateStatus === s ? "#dc2626" : "#e2e8f0",
+                        }}
+                      >
+                        <Text
                           style={{
-                            paddingHorizontal: 20,
-                            paddingVertical: 12,
-                            borderRadius: 16,
-                            borderWidth: 1,
-                            backgroundColor:
-                              updateStatus === s ? "#dc2626" : "#ffffff",
-                            borderColor:
-                              updateStatus === s ? "#dc2626" : "#e2e8f0",
+                            fontSize: 12,
+                            fontWeight: "700",
+                            color: updateStatus === s ? "#ffffff" : "#475569",
                           }}
                         >
-                          <Text
-                            style={{
-                              fontSize: 12,
-                              fontWeight: "700",
-                              color: updateStatus === s ? "#ffffff" : "#475569",
-                            }}
-                          >
-                            {s}
-                          </Text>
-                        </TouchableOpacity>
-                      ))}
+                          {s}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
                   </View>
 
-                  {updateStatus === "Inprogress" && (
-                    <View style={{ marginBottom: 32 }}>
-                      <SearchableSelect
-                        label="Select Area"
+                    {updateStatus === "Inprogress" && (
+                      <View style={{ marginBottom: 24 }}>
+                        <SearchableSelect
+                          label="Select Area"
                         placeholder="Choose an area..."
                         value={updateArea}
                         options={areaOptions}
@@ -617,8 +685,8 @@ const TicketDetailModal = React.memo(
                         emptyMessage="No areas found"
                       />
 
-                      <SearchableSelect
-                        label="Select Category"
+                        <SearchableSelect
+                          label="Select Category"
                         placeholder="Choose a category..."
                         value={updateCategory}
                         options={categoryOptions}
@@ -651,9 +719,9 @@ const TicketDetailModal = React.memo(
                           backgroundColor: "#f8fafc",
                           borderWidth: 1,
                           borderColor: "#e2e8f0",
-                          borderRadius: 24,
-                          padding: 20,
-                          height: 128,
+                          borderRadius: 20,
+                          padding: 16,
+                          height: 120,
                           fontWeight: "700",
                           textAlignVertical: "top",
                         }}
@@ -670,101 +738,108 @@ const TicketDetailModal = React.memo(
                     </View>
                   )}
 
-                  {updateStatus === "Cancelled" ? (
-                    <View style={{ position: "relative" }}>
-                      <TouchableOpacity
-                        onPressIn={handleHoldStart}
-                        onPressOut={handleHoldEnd}
-                        activeOpacity={0.9}
-                        style={{
-                          backgroundColor: "#f1f5f9",
-                          borderRadius: 28,
-                          paddingVertical: 20,
-                          alignItems: "center",
-                          overflow: "hidden",
-                          borderWidth: 2,
-                          borderColor: "#dc2626",
-                        }}
-                      >
-                        <Animated.View
-                          style={{
-                            position: "absolute",
-                            left: 0,
-                            top: 0,
-                            bottom: 0,
-                            backgroundColor: "#fee2e2",
-                            width: progressWidth,
-                          }}
-                        />
-                        <Text
-                          style={{
-                            color: "#dc2626",
-                            fontWeight: "900",
-                            textTransform: "uppercase",
-                            letterSpacing: 1.5,
-                            fontSize: 14,
-                            zIndex: 1,
-                          }}
-                        >
-                          {isHolding ? "HOLDING..." : "HOLD 3S TO CANCEL"}
-                        </Text>
-                      </TouchableOpacity>
-                      {!isHolding && !updateRemarks.trim() && (
-                        <Text
-                          style={{
-                            color: "#ef4444",
-                            fontSize: 10,
-                            textAlign: "center",
-                            marginTop: 8,
-                            fontWeight: "700",
-                          }}
-                        >
-                          * REMARKS REQUIRED TO ENABLE HOLD
-                        </Text>
-                      )}
-                    </View>
-                  ) : (
-                    <TouchableOpacity
-                      onPress={handleUpdateStatus}
-                      disabled={isUpdating}
-                      style={{
-                        backgroundColor: "#dc2626",
-                        borderRadius: 28,
-                        paddingVertical: 20,
-                        alignItems: "center",
-                        shadowColor: "#dc2626",
-                        shadowOffset: { width: 0, height: 10 },
-                        shadowOpacity: 0.2,
-                        shadowRadius: 20,
-                        elevation: 8,
-                      }}
-                    >
-                      {isUpdating ? (
-                        <ActivityIndicator color="white" size="small" />
-                      ) : (
-                        <Text
-                          style={{
-                            color: "#ffffff",
-                            fontWeight: "900",
-                            textTransform: "uppercase",
-                            letterSpacing: 1.5,
-                            fontSize: 14,
-                          }}
-                        >
-                          Update Information
-                        </Text>
-                      )}
-                    </TouchableOpacity>
-                  )}
-
-                  {/* Comments & Timeline */}
-                  {ticket && (
-                    <TicketLineItems
+                    {/* Comments & Timeline */}
+                    {ticket && (
+                      <TicketLineItems
                       ticketId={ticket.ticket_id || ticket.ticket_no}
                     />
                   )}
                 </View>
               </ScrollView>
+            </View>
+            <View
+              style={{
+                paddingTop: 12,
+                borderTopWidth: 1,
+                borderTopColor: "#f1f5f9",
+              }}
+            >
+              {updateStatus === "Cancelled" ? (
+                <View style={{ position: "relative" }}>
+                  <TouchableOpacity
+                    onPressIn={handleHoldStart}
+                    onPressOut={handleHoldEnd}
+                    activeOpacity={0.9}
+                    style={{
+                      backgroundColor: "#f8fafc",
+                      borderRadius: 26,
+                      paddingVertical: 18,
+                      alignItems: "center",
+                      overflow: "hidden",
+                      borderWidth: 2,
+                      borderColor: "#dc2626",
+                    }}
+                  >
+                    <Animated.View
+                      style={{
+                        position: "absolute",
+                        left: 0,
+                        top: 0,
+                        bottom: 0,
+                        backgroundColor: "#fee2e2",
+                        width: progressWidth,
+                      }}
+                    />
+                    <Text
+                      style={{
+                        color: "#dc2626",
+                        fontWeight: "900",
+                        textTransform: "uppercase",
+                        letterSpacing: 1.5,
+                        fontSize: 13,
+                        zIndex: 1,
+                      }}
+                    >
+                      {isHolding ? "HOLDING..." : "HOLD 3S TO CANCEL"}
+                    </Text>
+                  </TouchableOpacity>
+                  {!isHolding && !updateRemarks.trim() && (
+                    <Text
+                      style={{
+                        color: "#ef4444",
+                        fontSize: 10,
+                        textAlign: "center",
+                        marginTop: 8,
+                        fontWeight: "700",
+                      }}
+                    >
+                      * REMARKS REQUIRED TO ENABLE HOLD
+                    </Text>
+                  )}
+                </View>
+              ) : (
+                <TouchableOpacity
+                  onPress={handleUpdateStatus}
+                  disabled={isUpdating}
+                  style={{
+                    backgroundColor: "#dc2626",
+                    borderRadius: 26,
+                    paddingVertical: 18,
+                    alignItems: "center",
+                    shadowColor: "#dc2626",
+                    shadowOffset: { width: 0, height: 10 },
+                    shadowOpacity: 0.2,
+                    shadowRadius: 18,
+                    elevation: 8,
+                  }}
+                >
+                  {isUpdating ? (
+                    <ActivityIndicator color="white" size="small" />
+                  ) : (
+                    <Text
+                      style={{
+                        color: "#ffffff",
+                        fontWeight: "900",
+                        textTransform: "uppercase",
+                        letterSpacing: 1.5,
+                        fontSize: 13,
+                      }}
+                    >
+                      Update Information
+                    </Text>
+                  )}
+                </TouchableOpacity>
+              )}
             </View>
           </View>
         </View>

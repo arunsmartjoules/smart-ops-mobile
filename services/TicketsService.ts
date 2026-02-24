@@ -112,6 +112,7 @@ export interface Ticket {
   customer_inputs?: string;
   assigned_to?: string;
   created_user?: string;
+  priority?: string;
   // ... other fields if needed
 }
 
