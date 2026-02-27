@@ -2,6 +2,7 @@ import { Q } from "@nozbe/watermelondb";
 import { database, pmInstanceCollection } from "../database";
 import PMInstance from "../database/models/PMInstance";
 import logger from "../utils/logger";
+import { authEvents } from "../utils/authEvents";
 import { authService } from "./AuthService";
 import { fetchWithTimeout } from "../utils/apiHelper";
 import { API_BASE_URL } from "../constants/api";
@@ -31,6 +32,17 @@ const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
           ...options,
           headers: getHeaders(newToken),
         });
+      }
+
+      if (response.status === 401) {
+        // Silent sign-out: avoid intrusive alerts for token issues
+        authEvents.emitUnauthorized();
+        // Return a dummy response to prevent further processing
+        return {
+          ok: false,
+          status: 401,
+          json: async () => ({ success: false, error: "No token provided" }),
+        } as Response;
       }
     }
 

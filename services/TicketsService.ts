@@ -74,7 +74,8 @@ const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
       }
 
       if (response.status === 401) {
-        result.error = "Session expired. Please sign in again.";
+        // Silent sign-out: avoid intrusive alerts for token issues
+        result.error = "No token provided";
         authEvents.emitUnauthorized();
       }
     }
@@ -97,7 +98,7 @@ const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
 
 // Types
 export interface Ticket {
-  ticket_id: string;
+  id: string;
   ticket_no: string;
   title: string;
   status: string;
@@ -162,7 +163,7 @@ export const TicketsService = {
           return {
             success: true,
             data: localTickets.map((t) => ({
-              ticket_id: t.serverId,
+              id: t.serverId,
               ticket_no: t.ticketNumber,
               title: t.title,
               description: t.description,
@@ -202,28 +203,31 @@ export const TicketsService = {
   /**
    * Get ticket by ID
    */
-  async getTicketById(ticketId: string) {
-    return await apiFetch(`/api/complaints/${ticketId}`);
+  async getTicketById(id: string) {
+    return await apiFetch(`/api/complaints/${id}`);
   },
 
   /**
    * Update ticket status and remarks
    */
-  async updateStatus(ticketId: string, status: string, remarks?: string) {
+  async updateStatus(id: string, status: string, remarks?: string) {
     try {
       // 1. Create offline update record first
       await database.write(async () => {
         await ticketUpdateCollection.create((record) => {
-          record.ticketId = ticketId; // This should be local ID or server ID depending on model.
+          record.ticketId = id; // This should be local ID or server ID depending on model.
           // Usually we want to find the model by serverId and use its local id.
           record.updateType = "status";
-          record.updateData = JSON.stringify({ status, remarks });
+          record.updateData = JSON.stringify({
+            status,
+            internal_remarks: remarks,
+          });
           record.isSynced = false;
         });
       });
 
       // 2. Attempt API update
-      const result = await apiFetch(`/api/complaints/${ticketId}/status`, {
+      const result = await apiFetch(`/api/complaints/status?id=${id}`, {
         method: "PATCH",
         body: JSON.stringify({ status, remarks }),
       });
@@ -237,12 +241,12 @@ export const TicketsService = {
   /**
    * Update ticket details (Area/Asset, Category)
    */
-  async updateTicket(ticketId: string, data: any) {
+  async updateTicket(id: string, data: any) {
     try {
       // 1. Queue offline update
       await database.write(async () => {
         await ticketUpdateCollection.create((record) => {
-          record.ticketId = ticketId;
+          record.ticketId = id;
           record.updateType = "details";
           record.updateData = JSON.stringify(data);
           record.isSynced = false;
@@ -250,7 +254,7 @@ export const TicketsService = {
       });
 
       // 2. Attempt API update
-      return await apiFetch(`/api/complaints/${ticketId}`, {
+      return await apiFetch(`/api/complaints?id=${id}`, {
         method: "PUT",
         body: JSON.stringify(data),
       });
@@ -305,15 +309,15 @@ export const TicketsService = {
   /**
    * Get ticket line items (images/videos/texts)
    */
-  async getLineItems(ticketId: string) {
-    return await apiFetch(`/api/complaints/${ticketId}/line-items`);
+  async getLineItems(id: string) {
+    return await apiFetch(`/api/complaints/${id}/line-items`);
   },
 
   /**
    * Add a line item to a ticket
    */
   async addLineItem(
-    ticketId: string,
+    id: string,
     data: {
       message_text?: string;
       image_url?: string;
@@ -323,7 +327,7 @@ export const TicketsService = {
   ) {
     // Note: For full offline support, we would add to ticketUpdateCollection here as well.
     // Assuming simple online-first strategy for now to support attachments functionality.
-    return await apiFetch(`/api/complaints/${ticketId}/line-items`, {
+    return await apiFetch(`/api/complaints/${id}/line-items`, {
       method: "POST",
       body: JSON.stringify(data),
     });

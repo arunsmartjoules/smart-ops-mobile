@@ -60,190 +60,12 @@ import TicketDetailModal from "@/components/TicketDetailModal";
 import AdvancedFilterModal from "@/components/AdvancedFilterModal";
 import Skeleton from "@/components/Skeleton";
 import { WhatsAppService } from "@/services/WhatsAppService";
+import TicketItem from "@/components/TicketItem";
+import TicketStats from "@/components/TicketStats";
+import TicketFilters from "@/components/TicketFilters";
+import TicketSkeleton from "@/components/TicketSkeleton";
 
 const { width } = Dimensions.get("window");
-
-function TicketsListSkeleton() {
-  return (
-    <View style={{ paddingTop: 8 }}>
-      {[1, 2, 3, 4, 5].map((i) => (
-        <Skeleton
-          key={i}
-          height={120}
-          style={{ marginBottom: 16, borderRadius: 16 }}
-        />
-      ))}
-    </View>
-  );
-}
-
-// Separate component for Ticket Item to stabilize the tree
-const TicketItem = React.memo(
-  ({
-    item,
-    onPress,
-    onLongPress,
-  }: {
-    item: Ticket;
-    onPress: (item: Ticket) => void;
-    onLongPress: (item: Ticket) => void;
-  }) => {
-    const handlePress = useCallback(() => {
-      onPress(item);
-    }, [item, onPress]);
-
-    const handleLongPress = useCallback(() => {
-      onLongPress(item);
-    }, [item, onLongPress]);
-
-    return (
-      <TouchableOpacity
-        onPress={handlePress}
-        onLongPress={handleLongPress}
-        delayLongPress={500}
-        activeOpacity={0.7}
-        className="bg-white dark:bg-slate-900 rounded-2xl p-5 mb-4"
-        style={{
-          shadowColor: "#000",
-          shadowOffset: { width: 0, height: 2 },
-          shadowOpacity: 0.06,
-          shadowRadius: 12,
-          elevation: 3,
-        }}
-      >
-        <View
-          style={{
-            flexDirection: "row",
-            justifyContent: "space-between",
-            alignItems: "flex-start",
-            marginBottom: 12,
-          }}
-        >
-          <View style={{ flex: 1, marginRight: 16 }}>
-            <View
-              style={{
-                flexDirection: "row",
-                alignItems: "center",
-                marginBottom: 6,
-              }}
-            >
-              <Text
-                style={{
-                  fontSize: 10,
-                  fontWeight: "900",
-                  color: "#dc2626",
-                  textTransform: "uppercase",
-                  letterSpacing: 1.5,
-                }}
-              >
-                {item.ticket_no}
-              </Text>
-              <View
-                style={{
-                  marginHorizontal: 8,
-                  width: 4,
-                  height: 4,
-                  borderRadius: 2,
-                  backgroundColor: "#e2e8f0",
-                }}
-              />
-              <Text
-                style={{
-                  fontSize: 10,
-                  fontWeight: "900",
-                  color: "#94a3b8",
-                  textTransform: "uppercase",
-                  letterSpacing: 1.5,
-                }}
-              >
-                {item.site_code}
-              </Text>
-            </View>
-            <Text
-              className="text-slate-900 dark:text-slate-50"
-              style={{
-                fontWeight: "700",
-                fontSize: 18,
-                lineHeight: 28,
-              }}
-              numberOfLines={2}
-            >
-              {item.title}
-            </Text>
-          </View>
-          <View style={{ flexDirection: "row", alignItems: "center" }}>
-            <View
-              style={{
-                paddingHorizontal: 12,
-                paddingVertical: 4,
-                borderRadius: 999,
-                backgroundColor:
-                  item.status === "Open"
-                    ? "#fef2f2"
-                    : item.status === "Inprogress"
-                      ? "#eff6ff"
-                      : "#f0fdf4",
-              }}
-            >
-              <Text
-                style={{
-                  fontSize: 10,
-                  fontWeight: "900",
-                  textTransform: "uppercase",
-                  color:
-                    item.status === "Open"
-                      ? "#dc2626"
-                      : item.status === "Inprogress"
-                        ? "#2563eb"
-                        : "#16a34a",
-                }}
-              >
-                {item.status}
-              </Text>
-            </View>
-            <View style={{ marginLeft: 8 }}>
-              <ChevronRight size={16} color="#94a3b8" />
-            </View>
-          </View>
-        </View>
-
-        <View
-          className="border-t border-slate-100 dark:border-slate-800"
-          style={{
-            flexDirection: "row",
-            flexWrap: "wrap",
-            paddingTop: 16,
-            marginTop: 8,
-          }}
-        >
-          <View
-            style={{ width: "50%", flexDirection: "row", alignItems: "center" }}
-          >
-            <MapPin size={12} color="#94a3b8" style={{ marginRight: 6 }} />
-            <Text
-              className="text-slate-600 dark:text-slate-400"
-              style={{ fontSize: 11, fontWeight: "500" }}
-              numberOfLines={1}
-            >
-              {item.area_asset || item.location || "N/A"}
-            </Text>
-          </View>
-          <View
-            style={{ width: "50%", flexDirection: "row", alignItems: "center" }}
-          >
-            <Clock size={12} color="#94a3b8" style={{ marginRight: 6 }} />
-            <Text
-              className="text-slate-600 dark:text-slate-400"
-              style={{ fontSize: 11, fontWeight: "500" }}
-            >
-              {format(new Date(item.created_at), "dd MMM, yy")}
-            </Text>
-          </View>
-        </View>
-      </TouchableOpacity>
-    );
-  },
-);
 
 export default function Tickets() {
   const { user, isLoading } = useAuth();
@@ -300,9 +122,7 @@ export default function Tickets() {
 
   // Memoized keyExtractor for FlatList
   const keyExtractor = useCallback((item: Ticket) => {
-    return (
-      item.ticket_id?.toString() || item.ticket_no || Math.random().toString()
-    );
+    return item.id?.toString() || item.ticket_no || Math.random().toString();
   }, []);
 
   // Track the last requested page to prevent duplicate requests
@@ -344,7 +164,7 @@ export default function Tickets() {
     logger.debug("Modal Visible State", {
       module: "TICKETS",
       isDetailVisible,
-      ticketId: selectedTicket?.ticket_id,
+      ticketId: selectedTicket?.id,
     });
   }, [isDetailVisible, selectedTicket]);
 
@@ -570,9 +390,9 @@ export default function Tickets() {
           } else {
             setTickets((prev) => {
               // Avoid duplicates
-              const existingIds = new Set(prev.map((t) => t.ticket_id));
+              const existingIds = new Set(prev.map((t) => t.id));
               const uniqueNew = newTickets.filter(
-                (t: Ticket) => !existingIds.has(t.ticket_id),
+                (t: Ticket) => !existingIds.has(t.id),
               );
               return [...prev, ...uniqueNew];
             });
@@ -641,7 +461,7 @@ export default function Tickets() {
   const handleTicketPress = useCallback((ticket: Ticket) => {
     logger.debug("Ticket pressed", {
       module: "TICKETS",
-      ticketId: ticket.ticket_id,
+      ticketId: ticket.id,
       status: ticket.status,
     });
 
@@ -663,7 +483,7 @@ export default function Tickets() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     logger.debug("Ticket long pressed", {
       module: "TICKETS",
-      ticketId: ticket.ticket_id,
+      ticketId: ticket.id,
     });
 
     setSelectedTicket(ticket);
@@ -727,7 +547,7 @@ export default function Tickets() {
 
     const payload: any = {
       status: updateStatus,
-      remarks: updateRemarks,
+      internal_remarks: updateRemarks,
       area_asset: updateArea || selectedTicket.area_asset,
       category: updateCategory || selectedTicket.category,
     };
@@ -742,7 +562,7 @@ export default function Tickets() {
       if (isConnected) {
         // Online: Update directly
         const res = await TicketsService.updateTicket(
-          selectedTicket.ticket_id || selectedTicket.ticket_no,
+          selectedTicket.id || selectedTicket.ticket_no,
           payload,
         );
         if (res.success) {
@@ -772,7 +592,7 @@ export default function Tickets() {
       } else {
         // Offline: Save to queue
         await saveOfflineTicketUpdate(
-          selectedTicket.ticket_id,
+          selectedTicket.id,
           selectedTicket.ticket_no,
           "update_details",
           payload,
@@ -787,7 +607,7 @@ export default function Tickets() {
         // Update local ticket in list to reflect change
         setTickets((prev) =>
           prev.map((t) =>
-            t.ticket_id === selectedTicket.ticket_id ? { ...t, ...payload } : t,
+            t.id === selectedTicket.id ? { ...t, ...payload } : t,
           ),
         );
       }
@@ -832,156 +652,12 @@ export default function Tickets() {
           </TouchableOpacity>
         </View>
 
-        {/* Quick Stats - matching dashboard screen */}
-        <View className="px-5 mb-3">
-          <View className="flex-row gap-2">
-            {loading && !stats ? (
-              [1, 2, 3, 4].map((i) => (
-                <Skeleton
-                  key={i}
-                  height={80}
-                  style={{ flex: 1, borderRadius: 12 }}
-                />
-              ))
-            ) : (
-              <>
-                <TouchableOpacity
-                  className="flex-1 bg-white dark:bg-slate-900 rounded-xl p-3"
-                  style={{
-                    shadowColor: "#000",
-                    shadowOffset: { width: 0, height: 1 },
-                    shadowOpacity: 0.05,
-                    shadowRadius: 4,
-                    elevation: 2,
-                  }}
-                >
-                  <View
-                    className="w-8 h-8 rounded-lg items-center justify-center mb-2"
-                    style={{ backgroundColor: "#ef444415" }}
-                  >
-                    <TicketIcon size={16} color="#ef4444" />
-                  </View>
-                  <Text className="text-xl font-bold text-slate-900 dark:text-slate-50">
-                    {stats?.byStatus?.Open || 0}
-                  </Text>
-                  <Text className="text-slate-400 dark:text-slate-500 text-xs">
-                    Open
-                  </Text>
-                </TouchableOpacity>
+        <TicketStats stats={stats} loading={loading} />
 
-                <TouchableOpacity
-                  className="flex-1 bg-white dark:bg-slate-900 rounded-xl p-3"
-                  style={{
-                    shadowColor: "#000",
-                    shadowOffset: { width: 0, height: 1 },
-                    shadowOpacity: 0.05,
-                    shadowRadius: 4,
-                    elevation: 2,
-                  }}
-                >
-                  <View
-                    className="w-8 h-8 rounded-lg items-center justify-center mb-2"
-                    style={{ backgroundColor: "#3b82f615" }}
-                  >
-                    <TrendingUp size={16} color="#3b82f6" />
-                  </View>
-                  <Text className="text-xl font-bold text-slate-900 dark:text-slate-50">
-                    {stats?.byStatus?.Inprogress || 0}
-                  </Text>
-                  <Text className="text-slate-400 dark:text-slate-500 text-xs">
-                    In Progress
-                  </Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  className="flex-1 bg-white dark:bg-slate-900 rounded-xl p-3"
-                  style={{
-                    shadowColor: "#000",
-                    shadowOffset: { width: 0, height: 1 },
-                    shadowOpacity: 0.05,
-                    shadowRadius: 4,
-                    elevation: 2,
-                  }}
-                >
-                  <View
-                    className="w-8 h-8 rounded-lg items-center justify-center mb-2"
-                    style={{ backgroundColor: "#22c55e15" }}
-                  >
-                    <CheckCircle size={16} color="#22c55e" />
-                  </View>
-                  <Text className="text-xl font-bold text-slate-900 dark:text-slate-50">
-                    {stats?.byStatus?.Resolved || 0}
-                  </Text>
-                  <Text className="text-slate-400 dark:text-slate-500 text-xs">
-                    Resolved
-                  </Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  className="flex-1 bg-white dark:bg-slate-900 rounded-xl p-3"
-                  style={{
-                    shadowColor: "#000",
-                    shadowOffset: { width: 0, height: 1 },
-                    shadowOpacity: 0.05,
-                    shadowRadius: 4,
-                    elevation: 2,
-                  }}
-                >
-                  <View
-                    className="w-8 h-8 rounded-lg items-center justify-center mb-2"
-                    style={{ backgroundColor: "#64748b15" }}
-                  >
-                    <X size={16} color="#64748b" />
-                  </View>
-                  <Text className="text-xl font-bold text-slate-900 dark:text-slate-50">
-                    {stats?.byStatus?.Cancelled || 0}
-                  </Text>
-                  <Text className="text-slate-400 dark:text-slate-500 text-xs">
-                    Cancelled
-                  </Text>
-                </TouchableOpacity>
-              </>
-            )}
-          </View>
-        </View>
-
-        {/* Status Filter Tabs */}
-        <View className="px-5 mb-4">
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={{ gap: 8 }}
-          >
-            {[
-              "Open",
-              "Inprogress",
-              "Resolved",
-              "Hold",
-              "Waiting",
-              "Cancelled",
-              "All",
-            ].map((item) => (
-              <TouchableOpacity
-                key={item}
-                onPress={() => setStatusFilter(item)}
-                className={`px-4 py-2 rounded-xl ${statusFilter === item ? "bg-red-600" : "bg-white border border-slate-200"}`}
-                style={{
-                  shadowColor: "#000",
-                  shadowOffset: { width: 0, height: 1 },
-                  shadowOpacity: 0.03,
-                  shadowRadius: 4,
-                  elevation: 1,
-                }}
-              >
-                <Text
-                  className={`text-xs font-semibold ${statusFilter === item ? "text-white" : "text-slate-500"}`}
-                >
-                  {item}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
-        </View>
+        <TicketFilters
+          statusFilter={statusFilter}
+          setStatusFilter={setStatusFilter}
+        />
 
         {/* Tickets List */}
         <View className="flex-1">
@@ -989,11 +665,11 @@ export default function Tickets() {
             data={enrichedTickets}
             renderItem={renderTicketItem}
             keyExtractor={(item, index) =>
-              item.ticket_id || item.ticket_no || `ticket-${index}`
+              item.id || item.ticket_no || `ticket-${index}`
             }
             ListEmptyComponent={
               loading ? (
-                <TicketsListSkeleton />
+                <TicketSkeleton />
               ) : (
                 <View className="py-20 items-center justify-center">
                   <View className="w-20 h-20 bg-slate-100 rounded-full items-center justify-center mb-4">

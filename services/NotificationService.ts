@@ -7,6 +7,7 @@ import logger from "@/utils/logger";
 import { fetchWithTimeout } from "@/utils/apiHelper";
 
 import { API_URL } from "../constants/api";
+import { authEvents } from "@/utils/authEvents";
 
 // Configure notification handler
 Notifications.setNotificationHandler({
@@ -117,6 +118,11 @@ export const registerForPushNotifications = async (
       },
     );
 
+    if (response.status === 401) {
+      authEvents.emitUnauthorized();
+      return { success: false, error: "No token provided" };
+    }
+
     const data = await response.json();
 
     if (data.success) {
@@ -220,6 +226,10 @@ export const getNotificationPreferences = async (authToken: string) => {
       },
     );
 
+    if (response.status === 401) {
+      return { success: false, error: "No token provided" };
+    }
+
     const data = await response.json();
     return data;
   } catch (error: any) {
@@ -250,6 +260,10 @@ export const updateNotificationPreferences = async (
         body: JSON.stringify(preferences),
       },
     );
+
+    if (response.status === 401) {
+      return { success: false, error: "No token provided" };
+    }
 
     const data = await response.json();
     return data;

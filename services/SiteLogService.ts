@@ -7,6 +7,7 @@ import {
 import SiteLog from "../database/models/SiteLog";
 import ChillerReading from "../database/models/ChillerReading";
 import logger from "../utils/logger";
+import { authEvents } from "../utils/authEvents";
 import { authService } from "./AuthService";
 import { fetchWithTimeout } from "../utils/apiHelper";
 
@@ -45,6 +46,19 @@ const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
           ...options,
           headers: getHeaders(token),
         });
+      }
+    }
+
+    if (!response.ok) {
+      if (response.status === 401) {
+        // Silent sign-out: avoid intrusive alerts for token issues
+        const result = { success: false, error: "No token provided" };
+        authEvents.emitUnauthorized();
+        return {
+          ok: false,
+          status: 401,
+          json: async () => result,
+        } as Response;
       }
     }
 

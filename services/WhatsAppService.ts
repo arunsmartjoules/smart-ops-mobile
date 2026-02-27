@@ -1,3 +1,4 @@
+import { authEvents } from "../utils/authEvents";
 import { authService } from "./AuthService";
 import { API_BASE_URL } from "../constants/api";
 import { fetchWithTimeout } from "../utils/apiHelper";
@@ -29,6 +30,12 @@ const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
           ...options,
           headers: getHeaders(token),
         });
+      }
+
+      if (response.status === 401) {
+        // Silent sign-out: avoid intrusive alerts for token issues
+        authEvents.emitUnauthorized();
+        return { ok: false, error: "No token provided" };
       }
     }
 
