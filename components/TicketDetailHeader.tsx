@@ -1,7 +1,16 @@
 import React from "react";
 import { View, Text, TouchableOpacity } from "react-native";
-import { X } from "lucide-react-native";
+import { X, User } from "lucide-react-native";
 import { type Ticket } from "@/services/TicketsService";
+
+const STATUS_THEME: Record<string, { bg: string; text: string }> = {
+  Open: { bg: "#fef2f2", text: "#dc2626" },
+  Inprogress: { bg: "#eff6ff", text: "#2563eb" },
+  Hold: { bg: "#fffbeb", text: "#d97706" },
+  Waiting: { bg: "#f5f3ff", text: "#7c3aed" },
+  Resolved: { bg: "#f0fdf4", text: "#16a34a" },
+  Cancelled: { bg: "#f1f5f9", text: "#64748b" },
+};
 
 interface TicketDetailHeaderProps {
   ticket: Ticket;
@@ -9,43 +18,46 @@ interface TicketDetailHeaderProps {
 }
 
 const TicketDetailHeader = ({ ticket, onClose }: TicketDetailHeaderProps) => {
+  const statusColors = STATUS_THEME[ticket.status] || STATUS_THEME.Open;
+
   return (
     <>
+      {/* Drag Handle */}
       <View
         style={{
           alignSelf: "center",
-          width: 48,
-          height: 5,
+          width: 40,
+          height: 4,
           borderRadius: 999,
           backgroundColor: "#e2e8f0",
-          marginBottom: 14,
+          marginBottom: 16,
         }}
       />
+
+      {/* Header Row: Ticket No + Status + Close */}
       <View
         style={{
           flexDirection: "row",
           alignItems: "center",
           justifyContent: "space-between",
-          marginBottom: 10,
+          marginBottom: 14,
         }}
       >
-        <View style={{ flexDirection: "row", alignItems: "center" }}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
           <View
             style={{
               backgroundColor: "#fef2f2",
-              paddingHorizontal: 12,
-              paddingVertical: 6,
-              borderRadius: 999,
-              marginRight: 10,
+              paddingHorizontal: 10,
+              paddingVertical: 5,
+              borderRadius: 8,
             }}
           >
             <Text
               style={{
                 color: "#dc2626",
-                fontWeight: "900",
-                fontSize: 10,
-                textTransform: "uppercase",
-                letterSpacing: 1.5,
+                fontWeight: "800",
+                fontSize: 11,
+                letterSpacing: 0.5,
               }}
             >
               {ticket.ticket_no}
@@ -53,19 +65,18 @@ const TicketDetailHeader = ({ ticket, onClose }: TicketDetailHeaderProps) => {
           </View>
           <View
             style={{
-              backgroundColor: "#f1f5f9",
+              backgroundColor: statusColors.bg,
               paddingHorizontal: 10,
-              paddingVertical: 6,
-              borderRadius: 999,
+              paddingVertical: 5,
+              borderRadius: 8,
             }}
           >
             <Text
               style={{
-                color: "#475569",
+                color: statusColors.text,
                 fontWeight: "800",
-                fontSize: 10,
-                textTransform: "uppercase",
-                letterSpacing: 1.2,
+                fontSize: 11,
+                letterSpacing: 0.5,
               }}
             >
               {ticket.status || "Unknown"}
@@ -75,39 +86,46 @@ const TicketDetailHeader = ({ ticket, onClose }: TicketDetailHeaderProps) => {
         <TouchableOpacity
           onPress={onClose}
           style={{
-            width: 40,
-            height: 40,
-            backgroundColor: "#f8fafc",
-            borderRadius: 20,
+            width: 36,
+            height: 36,
+            backgroundColor: "#f1f5f9",
+            borderRadius: 12,
             alignItems: "center",
             justifyContent: "center",
           }}
         >
-          <X size={20} color="#94a3b8" />
+          <X size={18} color="#94a3b8" />
         </TouchableOpacity>
       </View>
 
+      {/* Title */}
       <Text
         className="text-slate-900 dark:text-slate-50"
         style={{
-          fontSize: 22,
-          fontWeight: "900",
-          lineHeight: 28,
-          marginBottom: 6,
+          fontSize: 20,
+          fontWeight: "800",
+          lineHeight: 26,
+          marginBottom: 4,
         }}
+        numberOfLines={2}
       >
         {ticket.title}
       </Text>
-      <Text
+
+      {/* Assigned To */}
+      <View
         style={{
-          color: "#94a3b8",
-          fontSize: 12,
-          fontWeight: "700",
-          marginBottom: 18,
+          flexDirection: "row",
+          alignItems: "center",
+          marginBottom: 16,
+          gap: 6,
         }}
       >
-        Tap a new status, fill details, then update.
-      </Text>
+        <User size={12} color="#94a3b8" />
+        <Text style={{ color: "#94a3b8", fontSize: 12, fontWeight: "600" }}>
+          {ticket.assigned_to || "Unassigned"}
+        </Text>
+      </View>
     </>
   );
 };

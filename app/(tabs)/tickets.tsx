@@ -81,7 +81,7 @@ export default function Tickets() {
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
   const [isFetchingMore, setIsFetchingMore] = useState(false);
-  const PAGE_SIZE = 15;
+  const PAGE_SIZE = 50;
 
   // Filters
   const [statusFilter, setStatusFilter] = useState("Open");
@@ -302,7 +302,7 @@ export default function Tickets() {
         };
         finalSites = [allSitesOption, ...userSites];
         setSites(finalSites);
-        const siteToSelect = lastSiteCode || "all";
+        const siteToSelect = "all";
         setSelectedSiteCode(siteToSelect);
       } else {
         finalSites = userSites;
@@ -422,9 +422,21 @@ export default function Tickets() {
     setPage(1);
     setTickets([]);
     setHasMore(true);
-    lastRequestedPageRef.current = 0; // Reset ref when resetting pagination
+    lastRequestedPageRef.current = 0;
     fetchTickets(1, true);
   }, [fetchTickets]);
+
+  const clearFilters = useCallback(() => {
+    setSearchQuery("");
+    setTempSearch("");
+    setFromDate(null);
+    setToDate(null);
+    setTempFromDate(null);
+    setTempToDate(null);
+    setStatusFilter("All");
+    // If admin, we keep 'all' as site code, or reset based on requirements.
+    // Let's keep the current site selection but clear search/date/status.
+  }, []);
 
   const handleLoadMore = useCallback(() => {
     // Only proceed if we're not already fetching and there's more data
@@ -646,10 +658,19 @@ export default function Tickets() {
             }}
           >
             <Filter size={20} color="#0f172a" />
-            {(searchQuery || fromDate) && (
+            {(searchQuery || fromDate || statusFilter !== "All") && (
               <View className="absolute top-1 right-1 w-2.5 h-2.5 bg-red-600 rounded-full" />
             )}
           </TouchableOpacity>
+
+          {(searchQuery || fromDate || statusFilter !== "All") && (
+            <TouchableOpacity
+              onPress={clearFilters}
+              className="ml-2 h-10 px-3 rounded-xl bg-slate-100 dark:bg-slate-800 items-center justify-center"
+            >
+              <X size={16} color="#475569" />
+            </TouchableOpacity>
+          )}
         </View>
 
         <TicketStats stats={stats} loading={loading} />

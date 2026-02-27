@@ -53,6 +53,21 @@ const TicketDetailModal = React.memo(
     categoryOptions,
     areasLoading,
   }: TicketDetailModalProps) => {
+    const isDirty = React.useMemo(() => {
+      if (!ticket) return false;
+      // Compare with original ticket values
+      const originalRemarks = ticket.internal_remarks || "";
+      const originalArea = ticket.area_asset || "";
+      const originalCategory = ticket.category || "";
+
+      return (
+        updateStatus !== ticket.status ||
+        updateRemarks.trim() !== originalRemarks.trim() ||
+        updateArea !== originalArea ||
+        updateCategory !== originalCategory
+      );
+    }, [ticket, updateStatus, updateRemarks, updateArea, updateCategory]);
+
     const { height: windowHeight } = useWindowDimensions();
 
     if (!ticket || !visible) return null;
@@ -126,17 +141,18 @@ const TicketDetailModal = React.memo(
             >
               <TouchableOpacity
                 onPress={handleUpdateStatus}
-                disabled={isUpdating}
+                disabled={isUpdating || !isDirty}
                 style={{
-                  backgroundColor: "#dc2626",
+                  backgroundColor: isDirty ? "#dc2626" : "#cbd5e1",
                   borderRadius: 26,
                   paddingVertical: 18,
                   alignItems: "center",
-                  shadowColor: "#dc2626",
+                  shadowColor: isDirty ? "#dc2626" : "transparent",
                   shadowOffset: { width: 0, height: 10 },
-                  shadowOpacity: 0.2,
+                  shadowOpacity: isDirty ? 0.2 : 0,
                   shadowRadius: 18,
-                  elevation: 8,
+                  elevation: isDirty ? 8 : 0,
+                  opacity: isDirty ? 1 : 0.8,
                 }}
               >
                 {isUpdating ? (
@@ -144,16 +160,14 @@ const TicketDetailModal = React.memo(
                 ) : (
                   <Text
                     style={{
-                      color: "#ffffff",
+                      color: isDirty ? "#ffffff" : "#64748b",
                       fontWeight: "900",
                       textTransform: "uppercase",
                       letterSpacing: 1.5,
                       fontSize: 13,
                     }}
                   >
-                    {updateStatus === "Open"
-                      ? "Reopen Ticket"
-                      : "Update Information"}
+                    {updateStatus === "Open" ? "Reopen Ticket" : "Update"}
                   </Text>
                 )}
               </TouchableOpacity>

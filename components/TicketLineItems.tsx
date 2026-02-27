@@ -12,6 +12,7 @@ import {
   Image as ImageIcon,
   Video,
   Send,
+  MessageCircle,
 } from "lucide-react-native";
 import TicketsService from "../services/TicketsService";
 import { format } from "date-fns";
@@ -66,7 +67,7 @@ const TicketLineItems = ({ ticketId }: TicketLineItemsProps) => {
       });
       if (res.success) {
         setMessage("");
-        fetchItems(); // refresh list
+        fetchItems();
       }
     } catch (error) {
       console.error("Failed to add message:", error);
@@ -76,7 +77,6 @@ const TicketLineItems = ({ ticketId }: TicketLineItemsProps) => {
   };
 
   const pickImage = async () => {
-    // Basic implementation for picking image
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
       allowsEditing: true,
@@ -84,10 +84,6 @@ const TicketLineItems = ({ ticketId }: TicketLineItemsProps) => {
     });
 
     if (!result.canceled && result.assets && result.assets.length > 0) {
-      // In a real app, upload this to S3, get URL, then save.
-      // Assuming naive direct push for now or URL generation.
-      // Here we might just send the local URI or base64.
-      // Need a backend route to accept uploads if actual files. We'll simulate with an alert or basic text for now.
       alert(
         "Image attachment requires an upload server. Implement upload to get URL, then save line item.",
       );
@@ -95,121 +91,198 @@ const TicketLineItems = ({ ticketId }: TicketLineItemsProps) => {
   };
 
   const renderItem = (item: LineItem, index: number) => {
+    const isLast = index === items.length - 1;
+    const isImage = !!item.image_url;
+    const isVideo = !!item.video_url;
+
     return (
-      <View
-        key={index}
-        style={{
-          backgroundColor: "#f8fafc",
-          borderRadius: 16,
-          padding: 16,
-          marginBottom: 12,
-          borderWidth: 1,
-          borderColor: "#e2e8f0",
-        }}
-        className="bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700"
-      >
-        <View
-          style={{
-            flexDirection: "row",
-            justifyContent: "space-between",
-            marginBottom: 8,
-          }}
-        >
-          <View style={{ flexDirection: "row", alignItems: "center" }}>
-            {item.image_url ? (
-              <ImageIcon size={14} color="#3b82f6" style={{ marginRight: 6 }} />
-            ) : item.video_url ? (
-              <Video size={14} color="#8b5cf6" style={{ marginRight: 6 }} />
-            ) : (
-              <MessageSquare
-                size={14}
-                color="#10b981"
-                style={{ marginRight: 6 }}
-              />
-            )}
-            <Text
-              style={{ fontSize: 12, fontWeight: "700", color: "#64748b" }}
-              className="text-slate-500"
-            >
-              Update
-            </Text>
-          </View>
-          <Text
-            style={{ fontSize: 10, color: "#94a3b8" }}
-            className="text-slate-400"
-          >
-            {format(new Date(item.created_at), "MMM d, HH:mm")}
-          </Text>
-        </View>
-
-        {item.message_text ? (
-          <Text
-            style={{ fontSize: 14, color: "#334155", lineHeight: 20 }}
-            className="text-slate-300"
-          >
-            {item.message_text}
-          </Text>
-        ) : null}
-
-        {item.image_url ? (
-          <Image
-            source={{ uri: item.image_url }}
-            style={{
-              width: "100%",
-              height: 200,
-              borderRadius: 12,
-              marginTop: 8,
-            }}
-            resizeMode="cover"
-          />
-        ) : null}
-
-        {item.video_url ? (
+      <View key={index} style={{ flexDirection: "row" }}>
+        {/* Timeline connector */}
+        <View style={{ width: 28, alignItems: "center" }}>
+          {/* Dot */}
           <View
             style={{
-              width: "100%",
-              height: 200,
-              backgroundColor: "#000",
-              borderRadius: 12,
-              marginTop: 8,
-              justifyContent: "center",
+              width: 10,
+              height: 10,
+              borderRadius: 5,
+              backgroundColor: isImage
+                ? "#3b82f6"
+                : isVideo
+                  ? "#8b5cf6"
+                  : "#dc2626",
+              marginTop: 4,
+            }}
+          />
+          {/* Line */}
+          {!isLast && (
+            <View
+              style={{
+                width: 2,
+                flex: 1,
+                backgroundColor: "#e2e8f0",
+                marginTop: 4,
+              }}
+            />
+          )}
+        </View>
+
+        {/* Content */}
+        <View
+          style={{
+            flex: 1,
+            marginLeft: 8,
+            marginBottom: 16,
+            backgroundColor: "#f8fafc",
+            borderRadius: 12,
+            padding: 12,
+            borderWidth: 1,
+            borderColor: "#f1f5f9",
+          }}
+          className="bg-slate-50 dark:bg-slate-800 border-slate-100 dark:border-slate-700"
+        >
+          <View
+            style={{
+              flexDirection: "row",
+              justifyContent: "space-between",
               alignItems: "center",
+              marginBottom:
+                item.message_text || item.image_url || item.video_url ? 6 : 0,
             }}
           >
-            <Video size={32} color="#fff" />
-            <Text style={{ color: "#fff", marginTop: 8, fontSize: 12 }}>
-              Video Attachment
+            <View
+              style={{ flexDirection: "row", alignItems: "center", gap: 4 }}
+            >
+              {isImage ? (
+                <ImageIcon size={12} color="#3b82f6" />
+              ) : isVideo ? (
+                <Video size={12} color="#8b5cf6" />
+              ) : (
+                <MessageSquare size={12} color="#dc2626" />
+              )}
+              <Text
+                style={{ fontSize: 10, fontWeight: "700", color: "#94a3b8" }}
+              >
+                {isImage ? "Image" : isVideo ? "Video" : "Comment"}
+              </Text>
+            </View>
+            <Text style={{ fontSize: 10, color: "#cbd5e1", fontWeight: "600" }}>
+              {format(new Date(item.created_at), "dd MMM, HH:mm")}
             </Text>
           </View>
-        ) : null}
+
+          {item.message_text ? (
+            <Text
+              className="text-slate-700 dark:text-slate-200"
+              style={{ fontSize: 13, lineHeight: 19, fontWeight: "500" }}
+            >
+              {item.message_text}
+            </Text>
+          ) : null}
+
+          {item.image_url ? (
+            <Image
+              source={{ uri: item.image_url }}
+              style={{
+                width: "100%",
+                height: 160,
+                borderRadius: 10,
+                marginTop: 6,
+              }}
+              resizeMode="cover"
+            />
+          ) : null}
+
+          {item.video_url ? (
+            <View
+              style={{
+                width: "100%",
+                height: 120,
+                backgroundColor: "#0f172a",
+                borderRadius: 10,
+                marginTop: 6,
+                justifyContent: "center",
+                alignItems: "center",
+              }}
+            >
+              <Video size={28} color="#fff" />
+              <Text
+                style={{
+                  color: "#94a3b8",
+                  marginTop: 6,
+                  fontSize: 11,
+                  fontWeight: "600",
+                }}
+              >
+                Video Attachment
+              </Text>
+            </View>
+          ) : null}
+        </View>
       </View>
     );
   };
 
   return (
-    <View style={{ marginTop: 24 }}>
-      <Text
+    <View style={{ marginTop: 4 }}>
+      {/* Section Header */}
+      <View
         style={{
-          color: "#0f172a",
-          fontWeight: "900",
-          fontSize: 14,
-          textTransform: "uppercase",
-          letterSpacing: 1.5,
+          flexDirection: "row",
+          alignItems: "center",
           marginBottom: 16,
-          marginLeft: 4,
+          gap: 8,
         }}
-        className="text-slate-900 dark:text-slate-50"
       >
-        Activity & Attachments
-      </Text>
+        <Text
+          className="text-slate-800 dark:text-slate-100"
+          style={{
+            fontWeight: "800",
+            fontSize: 13,
+            textTransform: "uppercase",
+            letterSpacing: 1,
+          }}
+        >
+          Activity
+        </Text>
+        <View
+          className="bg-slate-200 dark:bg-slate-700"
+          style={{ flex: 1, height: 1 }}
+        />
+        {items.length > 0 && (
+          <View
+            style={{
+              backgroundColor: "#fef2f2",
+              paddingHorizontal: 8,
+              paddingVertical: 3,
+              borderRadius: 8,
+            }}
+          >
+            <Text style={{ fontSize: 10, fontWeight: "800", color: "#dc2626" }}>
+              {items.length}
+            </Text>
+          </View>
+        )}
+      </View>
 
       {/* Timeline List */}
-      <View style={{ marginBottom: 16 }}>
+      <View>
         {loading ? (
-          <ActivityIndicator color="#dc2626" />
+          <View style={{ paddingVertical: 24 }}>
+            <ActivityIndicator color="#dc2626" />
+          </View>
         ) : items.length === 0 ? (
-          <View style={{ alignItems: "center", paddingVertical: 20 }}>
-            <MessageSquare size={32} color="#cbd5e1" />
+          <View
+            style={{
+              alignItems: "center",
+              paddingVertical: 28,
+              backgroundColor: "#f8fafc",
+              borderRadius: 14,
+              borderWidth: 1,
+              borderColor: "#f1f5f9",
+              borderStyle: "dashed",
+            }}
+          >
+            <MessageCircle size={28} color="#cbd5e1" />
             <Text
               style={{
                 color: "#94a3b8",
@@ -218,7 +291,16 @@ const TicketLineItems = ({ ticketId }: TicketLineItemsProps) => {
                 fontSize: 12,
               }}
             >
-              No messages or attachments yet.
+              No activity yet
+            </Text>
+            <Text
+              style={{
+                color: "#cbd5e1",
+                marginTop: 2,
+                fontSize: 11,
+              }}
+            >
+              Send a message to start
             </Text>
           </View>
         ) : (
@@ -227,13 +309,20 @@ const TicketLineItems = ({ ticketId }: TicketLineItemsProps) => {
       </View>
 
       {/* Input Area */}
-      <View style={{ flexDirection: "row", alignItems: "flex-end", gap: 8 }}>
+      <View
+        style={{
+          flexDirection: "row",
+          alignItems: "flex-end",
+          gap: 8,
+          marginTop: 12,
+        }}
+      >
         <TouchableOpacity
           onPress={pickImage}
           style={{
-            width: 44,
-            height: 44,
-            borderRadius: 22,
+            width: 40,
+            height: 40,
+            borderRadius: 12,
             backgroundColor: "#f1f5f9",
             justifyContent: "center",
             alignItems: "center",
@@ -242,29 +331,30 @@ const TicketLineItems = ({ ticketId }: TicketLineItemsProps) => {
           }}
           className="bg-slate-100 dark:bg-slate-800 border-slate-200 dark:border-slate-700"
         >
-          <ImageIcon size={20} color="#64748b" />
+          <ImageIcon size={18} color="#64748b" />
         </TouchableOpacity>
 
         <View
           style={{
             flex: 1,
             backgroundColor: "#f8fafc",
-            borderRadius: 24,
+            borderRadius: 14,
             borderWidth: 1,
             borderColor: "#e2e8f0",
             flexDirection: "row",
             alignItems: "center",
-            paddingHorizontal: 16,
+            paddingHorizontal: 14,
           }}
           className="bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700"
         >
           <TextInput
             style={{
               flex: 1,
-              minHeight: 48,
-              maxHeight: 120,
-              paddingVertical: 12,
+              minHeight: 40,
+              maxHeight: 100,
+              paddingVertical: 10,
               color: "#334155",
+              fontSize: 13,
             }}
             className="text-slate-900 dark:text-slate-100"
             placeholder="Type a message..."
@@ -277,10 +367,10 @@ const TicketLineItems = ({ ticketId }: TicketLineItemsProps) => {
             onPress={handleSendText}
             disabled={submitting || !message.trim()}
             style={{
-              width: 36,
-              height: 36,
-              borderRadius: 18,
-              backgroundColor: message.trim() ? "#dc2626" : "#cbd5e1",
+              width: 32,
+              height: 32,
+              borderRadius: 10,
+              backgroundColor: message.trim() ? "#dc2626" : "#e2e8f0",
               justifyContent: "center",
               alignItems: "center",
               marginLeft: 8,
@@ -290,9 +380,9 @@ const TicketLineItems = ({ ticketId }: TicketLineItemsProps) => {
               <ActivityIndicator color="#fff" size="small" />
             ) : (
               <Send
-                size={16}
-                color="#ffffff"
-                style={{ marginLeft: -2, marginTop: 2 }}
+                size={14}
+                color={message.trim() ? "#ffffff" : "#94a3b8"}
+                style={{ marginLeft: -1, marginTop: 1 }}
               />
             )}
           </TouchableOpacity>

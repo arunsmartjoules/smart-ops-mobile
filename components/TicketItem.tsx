@@ -135,25 +135,33 @@ const TicketItem = React.memo(
           className="border-t border-slate-100 dark:border-slate-800"
           style={{
             flexDirection: "row",
-            flexWrap: "wrap",
+            justifyContent: "space-between",
+            alignItems: "center",
             paddingTop: 16,
             marginTop: 8,
           }}
         >
           <View
-            style={{ width: "50%", flexDirection: "row", alignItems: "center" }}
+            style={{ flex: 1.2, flexDirection: "row", alignItems: "center" }}
           >
             <MapPin size={12} color="#94a3b8" style={{ marginRight: 6 }} />
             <Text
               className="text-slate-600 dark:text-slate-400"
-              style={{ fontSize: 11, fontWeight: "500" }}
+              style={{ fontSize: 11, fontWeight: "600" }}
               numberOfLines={1}
+              ellipsizeMode="tail"
             >
               {item.area_asset || item.location || "N/A"}
             </Text>
           </View>
+
           <View
-            style={{ width: "50%", flexDirection: "row", alignItems: "center" }}
+            style={{
+              flex: 1,
+              flexDirection: "row",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
           >
             <Clock size={12} color="#94a3b8" style={{ marginRight: 6 }} />
             <Text
@@ -162,6 +170,26 @@ const TicketItem = React.memo(
             >
               {format(new Date(item.created_at), "dd MMM, yy")}
             </Text>
+          </View>
+
+          <View
+            style={{
+              flex: 1,
+              flexDirection: "row",
+              alignItems: "center",
+              justifyContent: "flex-end",
+            }}
+          >
+            <View className="bg-slate-50 dark:bg-slate-800 px-2 py-1 rounded-md border border-slate-100 dark:border-slate-700">
+              <Text
+                className="text-slate-500 dark:text-slate-400"
+                style={{ fontSize: 9, fontWeight: "700" }}
+                numberOfLines={1}
+                ellipsizeMode="tail"
+              >
+                {item.assigned_to ? item.assigned_to.split(" ")[0] : "Pending"}
+              </Text>
+            </View>
           </View>
         </View>
       </TouchableOpacity>

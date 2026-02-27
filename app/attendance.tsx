@@ -249,14 +249,11 @@ export default function AttendancePage() {
 
         if (status !== "granted") {
           setLocationError("Permission to access location was denied");
-          const isWFH = user?.work_location_type === "WFH";
-          if (!isWFH) {
-            Alert.alert(
-              "Permission Required",
-              "Location permission is required to mark attendance. Please allow access in settings.",
-              [{ text: "OK" }],
-            );
-          }
+          Alert.alert(
+            "Permission Required",
+            "Location permission is required to mark attendance. Please allow access in settings.",
+            [{ text: "OK" }],
+          );
           return null;
         }
 
@@ -290,15 +287,12 @@ export default function AttendancePage() {
   useFocusEffect(
     useCallback(() => {
       fetchData();
-      // Only request location if not WFH
-      const isWFH = user?.work_location_type === "WFH";
-      if (!isWFH) {
-        ensureLocation();
-      }
+      // Always request location regardless of work_location_type
+      ensureLocation();
 
       // Prefetch other data in background
       syncManager.prefetchAll();
-    }, [fetchData, ensureLocation, user?.work_location_type]),
+    }, [fetchData, ensureLocation]),
   );
 
   // Update current time every minute for the live timer with AppState handling
@@ -344,31 +338,25 @@ export default function AttendancePage() {
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     await fetchData();
-    // Refresh location too if not WFH
-    const isWFH = user?.work_location_type === "WFH";
-    if (!isWFH) {
-      try {
-        let location = await Location.getCurrentPositionAsync({
-          accuracy: Location.Accuracy.Balanced,
-        });
-        setLocation(location);
-      } catch (e) {}
-    }
+    // Always refresh location on pull-to-refresh
+    try {
+      let location = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Balanced,
+      });
+      setLocation(location);
+    } catch (e) {}
     setRefreshing(false);
-  }, [fetchData, user?.work_location_type]);
+  }, [fetchData]);
 
   const handleCheckInPress = useCallback(async () => {
-    // Simplified: No network check here, rely on service fallback
-    // if (!isConnected) { ... }
     if (!user?.id) {
       Alert.alert("Error", "User session not available. Please sign in again.");
       return;
     }
 
-    const isWFH = user?.work_location_type === "WFH";
-
-    if (!location && !isWFH) {
-      setValidatingLocation(true); // Show spinner immediately
+    // Always ensure location is available for coordinate capture
+    if (!location) {
+      setValidatingLocation(true);
       try {
         const loc = await ensureLocation();
         if (!loc) {
@@ -380,11 +368,9 @@ export default function AttendancePage() {
 
     setValidatingLocation(true);
     try {
-      // Re-check location state (it might have been updated by ensureLocation) or use param
-      // Actually ensureLocation returns loc, so use it if available
       const locToUse = location || (await ensureLocation());
 
-      if (!locToUse && !isWFH) {
+      if (!locToUse) {
         setValidatingLocation(false);
         return;
       }
@@ -424,7 +410,7 @@ export default function AttendancePage() {
         const message = validation.nearestSite
           ? `You are ${validation.nearestSite.distance}m away from ${validation.nearestSite.name}. Max allowed: ${validation.nearestSite.radius || 500}m.`
           : validation.message;
-        Alert.alert("Location Validaton Failed", message);
+        Alert.alert("Location Validation Failed", message);
       }
     } catch (error: any) {
       logger.error("Check-in validation error", {
