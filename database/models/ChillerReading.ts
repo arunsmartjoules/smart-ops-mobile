@@ -9,9 +9,12 @@ export default class ChillerReading extends Model {
   @text("site_code") siteCode!: string;
   @text("chiller_id") chillerId!: string | null;
   @text("equipment_id") equipmentId!: string | null;
+  @text("asset_name") assetName!: string | null;
+  @text("asset_type") assetType!: string | null;
   @text("executor_id") executorId!: string;
 
   @text("date_shift") dateShift!: string | null;
+  @text("assigned_to") assignedTo!: string | null;
   @field("reading_time") reading_time!: number | null;
   @field("start_datetime") start_datetime!: number | null;
   @field("end_datetime") end_datetime!: number | null;

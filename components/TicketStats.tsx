@@ -11,9 +11,16 @@ import Skeleton from "./Skeleton";
 interface TicketStatsProps {
   stats: any;
   loading: boolean;
+  currentStatus: string;
+  onStatusChange: (status: string) => void;
 }
 
-const TicketStats = ({ stats, loading }: TicketStatsProps) => {
+const TicketStats = ({
+  stats,
+  loading,
+  currentStatus,
+  onStatusChange,
+}: TicketStatsProps) => {
   if (loading && !stats) {
     return (
       <View className="px-5 mb-3">
@@ -30,104 +37,83 @@ const TicketStats = ({ stats, loading }: TicketStatsProps) => {
     );
   }
 
+  const renderStatCard = (
+    label: string,
+    value: number,
+    status: string,
+    icon: React.ReactNode,
+    color: string,
+    bgColor: string,
+  ) => {
+    const isActive = currentStatus === status;
+
+    return (
+      <TouchableOpacity
+        onPress={() => onStatusChange(status)}
+        activeOpacity={0.7}
+        className="flex-1 rounded-xl p-3 bg-white dark:bg-slate-900"
+        style={{
+          shadowColor: "#000",
+          shadowOffset: { width: 0, height: 1 },
+          shadowOpacity: 0.05,
+          shadowRadius: 4,
+          elevation: 2,
+        }}
+      >
+        <View
+          className="w-8 h-8 rounded-lg items-center justify-center mb-2"
+          style={{ backgroundColor: bgColor }}
+        >
+          {icon}
+        </View>
+        <Text className="text-slate-900 dark:text-slate-50 text-xl font-bold">
+          {value}
+        </Text>
+        <Text className="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+          {label}
+        </Text>
+      </TouchableOpacity>
+    );
+  };
+
   return (
     <View className="px-5 mb-3">
       <View className="flex-row gap-2">
-        <TouchableOpacity
-          className="flex-1 bg-white dark:bg-slate-900 rounded-xl p-3"
-          style={{
-            shadowColor: "#000",
-            shadowOffset: { width: 0, height: 1 },
-            shadowOpacity: 0.05,
-            shadowRadius: 4,
-            elevation: 2,
-          }}
-        >
-          <View
-            className="w-8 h-8 rounded-lg items-center justify-center mb-2"
-            style={{ backgroundColor: "#ef444415" }}
-          >
-            <TicketIcon size={16} color="#ef4444" />
-          </View>
-          <Text className="text-xl font-bold text-slate-900 dark:text-slate-50">
-            {stats?.byStatus?.Open || 0}
-          </Text>
-          <Text className="text-slate-400 dark:text-slate-500 text-xs">
-            Open
-          </Text>
-        </TouchableOpacity>
+        {renderStatCard(
+          "Open",
+          stats?.byStatus?.Open || 0,
+          "Open",
+          <TicketIcon size={16} color="#ef4444" />,
+          "#ef4444",
+          "#ef444415",
+        )}
 
-        <TouchableOpacity
-          className="flex-1 bg-white dark:bg-slate-900 rounded-xl p-3"
-          style={{
-            shadowColor: "#000",
-            shadowOffset: { width: 0, height: 1 },
-            shadowOpacity: 0.05,
-            shadowRadius: 4,
-            elevation: 2,
-          }}
-        >
-          <View
-            className="w-8 h-8 rounded-lg items-center justify-center mb-2"
-            style={{ backgroundColor: "#3b82f615" }}
-          >
-            <TrendingUp size={16} color="#3b82f6" />
-          </View>
-          <Text className="text-xl font-bold text-slate-900 dark:text-slate-50">
-            {stats?.byStatus?.Inprogress || 0}
-          </Text>
-          <Text className="text-slate-400 dark:text-slate-500 text-xs">
-            In Progress
-          </Text>
-        </TouchableOpacity>
+        {renderStatCard(
+          "In Progress",
+          stats?.byStatus?.Inprogress || 0,
+          "Inprogress",
+          <TrendingUp size={16} color="#3b82f6" />,
+          "#3b82f6",
+          "#3b82f615",
+        )}
 
-        <TouchableOpacity
-          className="flex-1 bg-white dark:bg-slate-900 rounded-xl p-3"
-          style={{
-            shadowColor: "#000",
-            shadowOffset: { width: 0, height: 1 },
-            shadowOpacity: 0.05,
-            shadowRadius: 4,
-            elevation: 2,
-          }}
-        >
-          <View
-            className="w-8 h-8 rounded-lg items-center justify-center mb-2"
-            style={{ backgroundColor: "#22c55e15" }}
-          >
-            <CheckCircle size={16} color="#22c55e" />
-          </View>
-          <Text className="text-xl font-bold text-slate-900 dark:text-slate-50">
-            {stats?.byStatus?.Resolved || 0}
-          </Text>
-          <Text className="text-slate-400 dark:text-slate-500 text-xs">
-            Resolved
-          </Text>
-        </TouchableOpacity>
+        {renderStatCard(
+          "Resolved",
+          stats?.byStatus?.Resolved || 0,
+          "Resolved",
+          <CheckCircle size={16} color="#22c55e" />,
+          "#22c55e",
+          "#22c55e15",
+        )}
 
-        <TouchableOpacity
-          className="flex-1 bg-white dark:bg-slate-900 rounded-xl p-3"
-          style={{
-            shadowColor: "#000",
-            shadowOffset: { width: 0, height: 1 },
-            shadowOpacity: 0.05,
-            shadowRadius: 4,
-            elevation: 2,
-          }}
-        >
-          <View
-            className="w-8 h-8 rounded-lg items-center justify-center mb-2"
-            style={{ backgroundColor: "#64748b15" }}
-          >
-            <X size={16} color="#64748b" />
-          </View>
-          <Text className="text-xl font-bold text-slate-900 dark:text-slate-50">
-            {stats?.byStatus?.Cancelled || 0}
-          </Text>
-          <Text className="text-slate-400 dark:text-slate-500 text-xs">
-            Cancelled
-          </Text>
-        </TouchableOpacity>
+        {renderStatCard(
+          "Cancelled",
+          stats?.byStatus?.Cancelled || 0,
+          "Cancelled",
+          <X size={16} color="#64748b" />,
+          "#64748b",
+          "#64748b15",
+        )}
       </View>
     </View>
   );

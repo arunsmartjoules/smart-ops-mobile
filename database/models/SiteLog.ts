@@ -26,6 +26,7 @@ export default class SiteLog extends Model {
   @field("entry_time") entryTime!: number | null;
   @field("end_time") endTime!: number | null;
   @text("signature") signature!: string | null;
+  @text("assigned_to") assignedTo!: string | null;
   @text("attachment") attachment!: string | null;
   @text("status") status!: string | null;
   @field("is_synced") isSynced!: boolean;

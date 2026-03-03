@@ -12,8 +12,9 @@ export interface TaskItem {
   name: string;
   type: "area" | "asset" | "general";
   isCompleted: boolean;
+  status: "Open" | "Inprogress" | "Completed";
   lastLogId?: string;
-  meta?: any; // For storing extra data like chiller_id or site_code
+  meta?: any;
 }
 
 export const SiteConfigService = {
@@ -24,13 +25,12 @@ export const SiteConfigService = {
   async getLogTasks(siteCode: string, logName: string): Promise<TaskItem[]> {
     try {
       // 1. Fetch distinct Task Names (Areas) from recent logs
-      // We look back to find what "Areas" or "Points" exist for this log type.
       const recentLogs = await siteLogCollection
         .query(
           Q.where("site_code", siteCode),
           Q.where("log_name", logName),
           Q.sortBy("created_at", Q.desc),
-          Q.take(500), // increased to capture more history if needed
+          Q.take(500),
         )
         .fetch();
 
@@ -58,16 +58,22 @@ export const SiteConfigService = {
 
       // 3. Map to Task Items
       const tasks: TaskItem[] = Array.from(uniqueTasks).map((taskName) => {
-        // Check if completed today
-        // We consider it completed if there is a log with status='completed' OR just exists (legacy)
-        // Ideally we check l.status === 'completed'
-        // But for backward compat, existence is enough if status is missing.
         const completedLog = todaysLogs.find((l) => l.taskName === taskName);
-        const isCompleted =
-          !!completedLog &&
-          (completedLog.status === "completed" || !completedLog.status);
 
-        // Return existing log ID if needed
+        // Determine status based on the log
+        let status: "Open" | "Inprogress" | "Completed" = "Open";
+        if (completedLog) {
+          if (completedLog.status === "Completed") {
+            status = "Completed";
+          } else if (completedLog.status === "Inprogress") {
+            status = "Inprogress";
+          } else if (!completedLog.status) {
+            // Backward compatibility
+            status = "Completed";
+          }
+        }
+
+        const isCompleted = status === "Completed";
         const lastLogId = completedLog?.id;
 
         return {
@@ -75,6 +81,7 @@ export const SiteConfigService = {
           name: taskName,
           type: "area",
           isCompleted,
+          status,
           lastLogId,
         };
       });
@@ -137,6 +144,7 @@ export const SiteConfigService = {
           name: chillerId, // e.g. "CH-01"
           type: "asset",
           isCompleted,
+          status: isCompleted ? "Completed" : "Open",
         };
       });
 
@@ -169,9 +177,10 @@ export const SiteConfigService = {
 
     return {
       id: logName,
-      name: `${logName} Log`,
+      name: logName === "Water" ? "Water Parameters" : `${logName} Log`,
       type: "general",
       isCompleted: count > 0,
+      status: count > 0 ? "Completed" : "Open",
     };
   },
 };

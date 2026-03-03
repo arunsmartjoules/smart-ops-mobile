@@ -7,6 +7,7 @@ import {
 import {
   syncPendingSiteLogs,
   pullRecentSiteLogs,
+  pullRecentChillerReadings,
 } from "@/utils/syncSiteLogStorage";
 import { authService } from "./AuthService";
 import logger from "@/utils/logger";
@@ -121,6 +122,17 @@ class SyncManager {
       });
       return this.currentSyncPromise;
     }
+
+    this.isSyncing = true;
+    this.currentSyncPromise = this.performSync(reason);
+
+    try {
+      await this.currentSyncPromise;
+      this.lastSyncTime = now;
+    } finally {
+      this.isSyncing = false;
+      this.currentSyncPromise = null;
+    }
   }
 
   /**
@@ -212,12 +224,20 @@ class SyncManager {
             module: "SYNC_MANAGER",
             reason,
           });
-          await pullRecentSiteLogs(token, API_URL);
-          await pullRecentTickets(
+          const siteLogResult = await pullRecentSiteLogs(token, API_URL);
+          const chillerResult = await pullRecentChillerReadings(token, API_URL);
+          const ticketResult = await pullRecentTickets(
             (await authService.getCurrentSiteCode()) || "",
             token,
             API_URL,
           );
+
+          logger.info("Background pull complete", {
+            module: "SYNC_MANAGER",
+            siteLogs: siteLogResult.pulled,
+            chillerReadings: chillerResult.pulled,
+            tickets: ticketResult.pulled,
+          });
 
           this.lastHistoryPullTime = now;
         }

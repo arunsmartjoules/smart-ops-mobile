@@ -1,7 +1,7 @@
 import { appSchema, tableSchema } from "@nozbe/watermelondb";
 
 export const schema = appSchema({
-  version: 8,
+  version: 11,
   tables: [
     // Tickets for offline access and updates
     tableSchema({
@@ -95,6 +95,7 @@ export const schema = appSchema({
         { name: "entry_time", type: "number", isOptional: true },
         { name: "end_time", type: "number", isOptional: true },
         { name: "signature", type: "string", isOptional: true },
+        { name: "assigned_to", type: "string", isOptional: true },
         { name: "attachment", type: "string", isOptional: true },
         { name: "status", type: "string", isOptional: true },
         { name: "is_synced", type: "boolean" },
@@ -116,8 +117,11 @@ export const schema = appSchema({
         { name: "site_code", type: "string", isIndexed: true },
         { name: "chiller_id", type: "string", isOptional: true },
         { name: "equipment_id", type: "string", isOptional: true },
+        { name: "asset_name", type: "string", isOptional: true },
+        { name: "asset_type", type: "string", isOptional: true },
         { name: "executor_id", type: "string" },
         { name: "date_shift", type: "string", isOptional: true },
+        { name: "assigned_to", type: "string", isOptional: true },
         { name: "reading_time", type: "number", isOptional: true },
         { name: "start_datetime", type: "number", isOptional: true },
         { name: "end_datetime", type: "number", isOptional: true },

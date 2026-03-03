@@ -17,7 +17,6 @@ const TicketFilters = ({
     "Hold",
     "Waiting",
     "Cancelled",
-    "All",
   ];
 
   return (
@@ -25,7 +24,7 @@ const TicketFilters = ({
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
-        contentContainerStyle={{ gap: 8 }}
+        contentContainerStyle={{ gap: 8, paddingRight: 20 }}
       >
         {statuses.map((item) => (
           <TouchableOpacity
@@ -34,7 +33,7 @@ const TicketFilters = ({
             className={`px-4 py-2 rounded-xl ${
               statusFilter === item
                 ? "bg-red-600"
-                : "bg-white border border-slate-200"
+                : "bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800"
             }`}
             style={{
               shadowColor: "#000",

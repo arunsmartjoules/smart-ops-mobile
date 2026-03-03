@@ -114,11 +114,6 @@ export default function TempRHEntry() {
   };
 
   const handleSave = async () => {
-    if (!formData.temperature || !formData.rh) {
-      Alert.alert("Error", "Please fill in all required fields (Temp & RH)");
-      return;
-    }
-
     if (!formData.signature || formData.signature.trim().length === 0) {
       Alert.alert("Error", "Signature is mandatory");
       return;
@@ -126,20 +121,34 @@ export default function TempRHEntry() {
 
     try {
       setSaving(true);
-      const endTime = new Date().getTime(); // Capture end time
+      const endTime = new Date().getTime();
+
+      // Determine status
+      let status: "Open" | "Inprogress" | "Completed" = "Open";
+      const hasTemp = !!(
+        formData.temperature && formData.temperature.trim().length > 0
+      );
+      const hasRH = !!(formData.rh && formData.rh.trim().length > 0);
+
+      if (hasTemp && hasRH) {
+        status = "Completed";
+      } else if (hasTemp || hasRH) {
+        status = "Inprogress";
+      }
 
       await SiteLogService.saveSiteLog({
         siteCode: params.siteCode,
         executorId: user?.user_id || user?.id || "unknown",
+        assignedTo: user?.name || user?.user_id || "unknown", // Capture login user
         logName: "Temp RH",
-        taskName: params.areaName, // Save task/area name explicitly
-        temperature: parseFloat(formData.temperature),
-        rh: parseFloat(formData.rh),
+        taskName: params.areaName,
+        temperature: hasTemp ? parseFloat(formData.temperature) : null,
+        rh: hasRH ? parseFloat(formData.rh) : null,
         remarks: formData.remarks,
         signature: formData.signature,
-        entryTime: entryTime, // From mount
-        endTime: endTime, // Now
-        status: "completed",
+        entryTime: entryTime,
+        endTime: endTime,
+        status: status,
         attachment: formData.attachment,
       });
 

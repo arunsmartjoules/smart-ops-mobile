@@ -116,16 +116,19 @@ export default function WaterEntry() {
   };
 
   const handleSave = async () => {
-    if (!formData.tds || !formData.ph || !formData.hardness) {
-      Alert.alert(
-        "Error",
-        "Please fill in all required fields (TDS, pH, Hardness)",
-      );
+    if (!formData.signature || formData.signature.trim().length === 0) {
+      Alert.alert("Error", "Signature is mandatory");
       return;
     }
 
-    if (!formData.signature || formData.signature.trim().length === 0) {
-      Alert.alert("Error", "Signature is mandatory");
+    const hasData = !!(
+      (formData.tds && formData.tds.trim().length > 0) ||
+      (formData.ph && formData.ph.trim().length > 0) ||
+      (formData.hardness && formData.hardness.trim().length > 0)
+    );
+
+    if (!hasData && !formData.remarks) {
+      Alert.alert("Error", "Please enter at least one value or a remark");
       return;
     }
 
@@ -136,16 +139,17 @@ export default function WaterEntry() {
       await SiteLogService.saveSiteLog({
         siteCode: params.siteCode,
         executorId: user?.user_id || user?.id || "unknown",
+        assignedTo: user?.name || user?.user_id || "unknown", // Capture login user
         logName: "Water",
         taskName: params.areaName,
-        tds: parseFloat(formData.tds),
-        ph: parseFloat(formData.ph),
-        hardness: parseFloat(formData.hardness),
+        tds: formData.tds ? parseFloat(formData.tds) : null,
+        ph: formData.ph ? parseFloat(formData.ph) : null,
+        hardness: formData.hardness ? parseFloat(formData.hardness) : null,
         remarks: formData.remarks,
         signature: formData.signature,
         entryTime: entryTime,
         endTime: endTime,
-        status: "completed",
+        status: "Completed",
         attachment: formData.attachment,
       });
 
@@ -206,10 +210,10 @@ export default function WaterEntry() {
           </TouchableOpacity>
           <View className="items-center">
             <Text className="text-slate-900 dark:text-slate-50 font-bold text-lg">
-              {params.areaName || "Water Log"}
+              Water Parameters
             </Text>
             <Text className="text-slate-400 text-[10px] font-bold uppercase tracking-wider">
-              New Entry
+              {params.areaName || "New Entry"}
             </Text>
           </View>
           <View className="w-10" />

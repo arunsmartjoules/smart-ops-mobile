@@ -127,10 +127,12 @@ export const TicketsService = {
     // 1. Return local data if searching/filtering within standard view
     if (page === 1) {
       try {
-        let query = ticketCollection.query(
-          Q.where("site_code", siteCode),
-          Q.sortBy("created_at", Q.desc),
-        );
+        const queryConditions: any[] = [Q.sortBy("created_at", Q.desc)];
+        if (siteCode !== "all") {
+          queryConditions.unshift(Q.where("site_code", siteCode));
+        }
+
+        let query = ticketCollection.query(...(queryConditions as any));
 
         const conditions: any[] = [];
         if (status) conditions.push(Q.where("status", status));
@@ -141,11 +143,14 @@ export const TicketsService = {
         }
 
         if (conditions.length > 0) {
-          query = ticketCollection.query(
-            Q.where("site_code", siteCode),
+          const finalConditions = [
             ...conditions,
             Q.sortBy("created_at", Q.desc),
-          );
+          ];
+          if (siteCode !== "all") {
+            finalConditions.unshift(Q.where("site_code", siteCode));
+          }
+          query = ticketCollection.query(...finalConditions);
         }
 
         const localTickets = await query.fetch();

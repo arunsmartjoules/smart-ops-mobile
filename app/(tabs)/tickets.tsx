@@ -33,8 +33,8 @@ import {
   Layers,
   Layout,
   Calendar,
+  ChevronDown,
 } from "lucide-react-native";
-import { format } from "date-fns";
 import { useAuth } from "@/contexts/AuthContext";
 import { useNetworkStatus } from "@/hooks/useNetworkStatus";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -63,7 +63,9 @@ import { WhatsAppService } from "@/services/WhatsAppService";
 import TicketItem from "@/components/TicketItem";
 import TicketStats from "@/components/TicketStats";
 import TicketFilters from "@/components/TicketFilters";
-import TicketSkeleton from "@/components/TicketSkeleton";
+import TicketSkeleton, {
+  TicketSkeletonItem,
+} from "@/components/TicketSkeleton";
 
 const { width } = Dimensions.get("window");
 
@@ -72,6 +74,7 @@ export default function Tickets() {
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [sites, setSites] = useState<Site[]>([]);
   const [selectedSiteCode, setSelectedSiteCode] = useState<string>("");
+  const [siteName, setSiteName] = useState<string>("Select Site");
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [assets, setAssets] = useState<any[]>([]);
@@ -199,6 +202,10 @@ export default function Tickets() {
   useEffect(() => {
     if (selectedSiteCode) {
       logger.debug("Site ready, triggering fetch", { module: "TICKETS" });
+      const currentSite = sites.find((s) => s.site_code === selectedSiteCode);
+      if (currentSite) {
+        setSiteName(`${currentSite.site_code} - ${currentSite.name}`);
+      }
       resetAndFetch();
       fetchStats();
       loadAreasAndCategories();
@@ -272,6 +279,14 @@ export default function Tickets() {
         setSites(cachedSites);
         if (lastSiteCode) {
           setSelectedSiteCode(lastSiteCode);
+          const currentSite = cachedSites.find(
+            (s: Site) => s.site_code === lastSiteCode,
+          );
+          if (currentSite) {
+            setSiteName(
+              `${currentSite.site_code} - ${currentSite.name || (currentSite as any).siteName || ""}`,
+            );
+          }
         }
       }
 
@@ -293,7 +308,7 @@ export default function Tickets() {
         count: userSites.length,
       });
 
-      let finalSites = [];
+      let finalSites: Site[] = [];
 
       if (isAdmin) {
         const allSitesOption: Site = {
@@ -301,18 +316,39 @@ export default function Tickets() {
           name: "All Sites",
         };
         finalSites = [allSitesOption, ...userSites];
-        setSites(finalSites);
-        const siteToSelect = "all";
-        setSelectedSiteCode(siteToSelect);
       } else {
         finalSites = userSites;
-        setSites(userSites);
-        if (userSites.length > 0) {
-          const siteToSelect = lastSiteCode || userSites[0].site_code || "";
-          setSelectedSiteCode(siteToSelect);
-        } else {
-          setLoading(false);
+      }
+
+      setSites(finalSites);
+
+      // Default selection logic
+      if (finalSites.length > 0) {
+        let siteToSelect = lastSiteCode || "";
+
+        // If last site code is invalid or doesn't exist in the new list, pick the first one
+        if (
+          !siteToSelect ||
+          !finalSites.find((s) => s.site_code === siteToSelect)
+        ) {
+          siteToSelect = finalSites[0].site_code;
         }
+
+        setSelectedSiteCode(siteToSelect);
+        const currentSite = finalSites.find(
+          (s) => s.site_code === siteToSelect,
+        );
+        if (currentSite) {
+          setSiteName(
+            siteToSelect === "all"
+              ? currentSite.name
+              : `${currentSite.site_code} - ${currentSite.name}`,
+          );
+        }
+
+        await AsyncStorage.setItem(`last_site_${userId}`, siteToSelect);
+      } else {
+        setLoading(false);
       }
 
       // Save to cache
@@ -373,13 +409,11 @@ export default function Tickets() {
         const options: any = {
           page: p,
           limit: PAGE_SIZE,
+          status: statusFilter,
           search: searchQuery,
           fromDate: fromDate,
           toDate: toDate,
         };
-        if (statusFilter !== "All") {
-          options.status = statusFilter;
-        }
         const res = await TicketsService.getTickets(selectedSiteCode, options);
         if (res.success) {
           const newTickets = res.data || [];
@@ -433,9 +467,7 @@ export default function Tickets() {
     setToDate(null);
     setTempFromDate(null);
     setTempToDate(null);
-    setStatusFilter("All");
-    // If admin, we keep 'all' as site code, or reset based on requirements.
-    // Let's keep the current site selection but clear search/date/status.
+    setStatusFilter("Open");
   }, []);
 
   const handleLoadMore = useCallback(() => {
@@ -640,40 +672,50 @@ export default function Tickets() {
   return (
     <View className="flex-1 bg-slate-50 dark:bg-slate-950">
       <SafeAreaView className="flex-1">
-        {/* Header - matching profile screen */}
-        <View className="px-5 pt-2 pb-3 flex-row items-center">
-          <Text className="text-slate-900 dark:text-slate-50 text-3xl font-black">
-            Tickets
-          </Text>
-          <View className="flex-1" />
-          <TouchableOpacity
-            onPress={() => setShowFiltersModal(true)}
-            className="w-10 h-10 rounded-xl bg-white dark:bg-slate-900 items-center justify-center"
-            style={{
-              shadowColor: "#000",
-              shadowOffset: { width: 0, height: 2 },
-              shadowOpacity: 0.05,
-              shadowRadius: 8,
-              elevation: 2,
-            }}
-          >
-            <Filter size={20} color="#0f172a" />
-            {(searchQuery || fromDate || statusFilter !== "All") && (
-              <View className="absolute top-1 right-1 w-2.5 h-2.5 bg-red-600 rounded-full" />
-            )}
-          </TouchableOpacity>
+        {/* Header - matching dashboard/logs screen */}
+        <View className="px-5 pt-2 pb-3">
+          <View className="flex-row items-center justify-between mb-4">
+            <View className="flex-1">
+              <Text className="text-slate-400 dark:text-slate-500 text-sm font-medium mb-1">
+                Site Operations
+              </Text>
+              <TouchableOpacity
+                onPress={() => setShowFiltersModal(true)}
+                className="flex-row items-center"
+              >
+                <MapPin size={22} color="#dc2626" />
+                <Text
+                  className="text-slate-900 dark:text-slate-50 text-2xl font-bold ml-2 mr-1"
+                  numberOfLines={1}
+                >
+                  {siteName}
+                </Text>
+                <ChevronDown size={20} color="#94a3b8" />
+              </TouchableOpacity>
+            </View>
 
-          {(searchQuery || fromDate || statusFilter !== "All") && (
             <TouchableOpacity
-              onPress={clearFilters}
-              className="ml-2 h-10 px-3 rounded-xl bg-slate-100 dark:bg-slate-800 items-center justify-center"
+              onPress={() => setShowFiltersModal(true)}
+              className="w-11 h-11 rounded-xl bg-white dark:bg-slate-900 items-center justify-center"
+              style={{
+                shadowColor: "#000",
+                shadowOffset: { width: 0, height: 2 },
+                shadowOpacity: 0.08,
+                shadowRadius: 8,
+                elevation: 3,
+              }}
             >
-              <X size={16} color="#475569" />
+              <Filter size={20} color={fromDate ? "#dc2626" : "#64748b"} />
             </TouchableOpacity>
-          )}
+          </View>
         </View>
 
-        <TicketStats stats={stats} loading={loading} />
+        <TicketStats
+          stats={stats}
+          loading={loading}
+          currentStatus={statusFilter}
+          onStatusChange={setStatusFilter}
+        />
 
         <TicketFilters
           statusFilter={statusFilter}
@@ -707,8 +749,8 @@ export default function Tickets() {
             }
             ListFooterComponent={
               isFetchingMore ? (
-                <View className="py-6">
-                  <ActivityIndicator color="#dc2626" />
+                <View className="pb-6">
+                  <TicketSkeletonItem />
                 </View>
               ) : null
             }

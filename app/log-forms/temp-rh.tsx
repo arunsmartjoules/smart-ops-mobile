@@ -167,23 +167,36 @@ export default function TempRHTaskList() {
 
     for (const task of filteredTasks) {
       const input = logValues[task.id];
-      // Allow saving if just attachment is present? No, typically temp/rh are required.
-      // But maybe user wants to safeguard photos.
-      // Let's stick to requiring temp & rh as per existing logic, but include attachment if present.
-      if (input && input.temp && input.rh) {
+
+      // Determine status based on inputs
+      let status: "Open" | "Inprogress" | "Completed" = "Open";
+      const hasTemp = !!(input?.temp && input.temp.trim().length > 0);
+      const hasRH = !!(input?.rh && input.rh.trim().length > 0);
+
+      if (hasTemp && hasRH) {
+        status = "Completed";
+      } else if (hasTemp || hasRH) {
+        status = "Inprogress";
+      }
+
+      // We only save if there's at least one value or an attachment/remark,
+      // but according to requirements we update status based on Temp and RH.
+      // If the user hits "Submit All", we save what's there.
+      if (input && (hasTemp || hasRH || input.attachment || input.remarks)) {
         entriesToSave.push({
           siteCode: siteCode,
           executorId: user?.user_id || user?.id || "unknown",
+          assignedTo: user?.name || user?.user_id || "unknown", // Capture login user
           logName: "Temp RH",
           taskName: task.name,
-          temperature: parseFloat(input.temp),
-          rh: parseFloat(input.rh),
+          temperature: hasTemp ? parseFloat(input.temp) : null,
+          rh: hasRH ? parseFloat(input.rh) : null,
           remarks: input.remarks || "",
           signature: signature,
           entryTime: timestamps.entryTime,
           endTime: timestamps.endTime,
-          status: "completed",
-          attachment: input.attachment || null, // Add attachment
+          status: status,
+          attachment: input.attachment || null,
         });
       }
     }
@@ -212,9 +225,14 @@ export default function TempRHTaskList() {
     }
   };
 
-  const filteredData = tasks.filter((task) =>
-    task.name.toLowerCase().includes(searchQuery.toLowerCase()),
-  );
+  const filteredData = tasks.filter((task) => {
+    const matchesSearch = task.name
+      .toLowerCase()
+      .includes(searchQuery.toLowerCase());
+    const isOpenOrInProgress =
+      task.status === "Open" || task.status === "Inprogress";
+    return matchesSearch && isOpenOrInProgress;
+  });
 
   const renderItem = ({ item }: { item: TaskItem }) => {
     const val = logValues[item.id] || {

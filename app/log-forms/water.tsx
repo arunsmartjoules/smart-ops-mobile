@@ -152,29 +152,33 @@ export default function WaterTaskList() {
 
     for (const task of filteredTasks) {
       const input = logValues[task.id];
-      if (input && input.tds && input.ph && input.hardness) {
+      const hasData = !!(
+        (input?.tds && input.tds.trim().length > 0) ||
+        (input?.ph && input.ph.trim().length > 0) ||
+        (input?.hardness && input.hardness.trim().length > 0)
+      );
+
+      if (input && (hasData || input.remarks)) {
         entriesToSave.push({
           siteCode: siteCode,
           executorId: user?.user_id || user?.id || "unknown",
+          assignedTo: user?.name || user?.user_id || "unknown", // Capture login user
           logName: "Water",
           taskName: task.name,
-          tds: parseFloat(input.tds),
-          ph: parseFloat(input.ph),
-          hardness: parseFloat(input.hardness),
+          tds: input.tds ? parseFloat(input.tds) : null,
+          ph: input.ph ? parseFloat(input.ph) : null,
+          hardness: input.hardness ? parseFloat(input.hardness) : null,
           remarks: input.remarks || "",
           signature: signature,
           entryTime: timestamps.entryTime,
           endTime: timestamps.endTime,
-          status: "completed",
+          status: "Completed",
         });
       }
     }
 
     if (entriesToSave.length === 0) {
-      Alert.alert(
-        "No Data",
-        "Please enter valid TDS, pH, and Hardness for at least one visible area.",
-      );
+      Alert.alert("No Data", "Please enter at least one value for one area.");
       return;
     }
 
@@ -195,9 +199,14 @@ export default function WaterTaskList() {
     }
   };
 
-  const filteredData = tasks.filter((task) =>
-    task.name.toLowerCase().includes(searchQuery.toLowerCase()),
-  );
+  const filteredData = tasks.filter((task) => {
+    const matchesSearch = task.name
+      .toLowerCase()
+      .includes(searchQuery.toLowerCase());
+    const isOpenOrInProgress =
+      task.status === "Open" || task.status === "Inprogress";
+    return matchesSearch && isOpenOrInProgress;
+  });
 
   const renderItem = ({ item }: { item: TaskItem }) => {
     const val = logValues[item.id] || {
@@ -336,7 +345,7 @@ export default function WaterTaskList() {
               </TouchableOpacity>
               <View>
                 <Text className="text-slate-900 dark:text-slate-50 font-bold text-lg text-center">
-                  Water (Bulk)
+                  Water Parameters
                 </Text>
                 <Text className="text-slate-400 text-xs font-bold uppercase tracking-wider text-center">
                   {format(new Date(), "dd MMM yyyy")}

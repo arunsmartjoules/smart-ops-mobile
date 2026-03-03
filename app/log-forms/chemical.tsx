@@ -148,6 +148,7 @@ export default function ChemicalTaskList() {
         entriesToSave.push({
           siteCode: siteCode,
           executorId: user?.user_id || user?.id || "unknown",
+          assignedTo: user?.name || user?.user_id || "unknown", // Capture login user
           logName: "Chemical Dosing",
           taskName: task.name,
           chemicalDosing: input.dosing,
@@ -155,16 +156,13 @@ export default function ChemicalTaskList() {
           signature: signature,
           entryTime: timestamps.entryTime,
           endTime: timestamps.endTime,
-          status: "completed",
+          status: "Completed",
         });
       }
     }
 
     if (entriesToSave.length === 0) {
-      Alert.alert(
-        "No Data",
-        "Please enter dosing details for at least one visible area.",
-      );
+      Alert.alert("No Data", "Please select Yes/No for at least one area.");
       return;
     }
 
@@ -185,9 +183,14 @@ export default function ChemicalTaskList() {
     }
   };
 
-  const filteredData = tasks.filter((task) =>
-    task.name.toLowerCase().includes(searchQuery.toLowerCase()),
-  );
+  const filteredData = tasks.filter((task) => {
+    const matchesSearch = task.name
+      .toLowerCase()
+      .includes(searchQuery.toLowerCase());
+    const isOpenOrInProgress =
+      task.status === "Open" || task.status === "Inprogress";
+    return matchesSearch && isOpenOrInProgress;
+  });
 
   const renderItem = ({ item }: { item: TaskItem }) => {
     const val = logValues[item.id] || { dosing: "", remarks: "" };
@@ -208,14 +211,35 @@ export default function ChemicalTaskList() {
           )}
         </View>
 
-        <View className="flex-row items-center bg-slate-50 dark:bg-slate-800 rounded-lg px-3 border border-slate-200 dark:border-slate-700 mb-3">
-          <FlaskConical size={16} color="#a855f7" />
-          <TextInput
-            value={val.dosing}
-            onChangeText={(t) => updateValue(item.id, "dosing", t)}
-            placeholder="Dosing Details"
-            className="flex-1 py-3 ml-2 font-bold text-slate-900 dark:text-slate-50"
-          />
+        <View className="flex-row items-center mb-3">
+          <TouchableOpacity
+            onPress={() => updateValue(item.id, "dosing", "Yes")}
+            className={`flex-1 py-3 items-center justify-center rounded-l-lg border ${
+              val.dosing === "Yes"
+                ? "bg-purple-600 border-purple-600"
+                : "bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700"
+            }`}
+          >
+            <Text
+              className={`font-bold ${val.dosing === "Yes" ? "text-white" : "text-slate-500"}`}
+            >
+              YES
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => updateValue(item.id, "dosing", "No")}
+            className={`flex-1 py-3 items-center justify-center rounded-r-lg border-y border-r ${
+              val.dosing === "No"
+                ? "bg-purple-600 border-purple-600"
+                : "bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700"
+            }`}
+          >
+            <Text
+              className={`font-bold ${val.dosing === "No" ? "text-white" : "text-slate-500"}`}
+            >
+              NO
+            </Text>
+          </TouchableOpacity>
         </View>
 
         {/* Remarks Field */}

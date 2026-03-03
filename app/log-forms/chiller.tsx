@@ -1,410 +1,755 @@
-import { useFocusEffect } from "expo-router";
-import React, { useState, useCallback } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import {
   View,
   Text,
-  TouchableOpacity,
-  ActivityIndicator,
-  FlatList,
   ScrollView,
+  TouchableOpacity,
+  TextInput,
+  Alert,
+  ActivityIndicator,
+  Image,
+  StyleSheet,
+  KeyboardAvoidingView,
+  Platform,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { router } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import {
   ChevronLeft,
   Snowflake,
-  CheckCircle2,
-  AlertCircle,
-  ChevronRight,
-  Filter,
-  ArrowUpDown,
-  Clock,
+  Info,
+  Camera,
+  Trash2,
   Thermometer,
+  Activity,
+  Gauge,
+  PenTool,
+  CheckCircle2,
+  Save,
 } from "lucide-react-native";
-import { LinearGradient } from "expo-linear-gradient";
-import { SiteConfigService, TaskItem } from "@/services/SiteConfigService";
-import SiteLogService from "@/services/SiteLogService";
+import { SiteLogService } from "@/services/SiteLogService";
+import AssetService from "@/services/AssetService";
+import AttendanceService from "@/services/AttendanceService";
 import { useAuth } from "@/contexts/AuthContext";
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import { format, isBefore } from "date-fns";
+import * as ImagePicker from "expo-image-picker";
+import { StorageService } from "@/services/StorageService";
+import SearchableSelect, { SelectOption } from "@/components/SearchableSelect";
+import SignaturePad from "@/components/SignaturePad";
+import { LinearGradient } from "expo-linear-gradient";
+import { chillerReadingCollection } from "@/database";
+import Skeleton from "@/components/Skeleton";
 
-type ScheduleItem = {
-  timeLabel: string;
-  items: {
-    chillerId: string;
-    isCompleted: boolean;
-    readingTime: number;
-    compressorLoad?: number; // Optional: if we want to show preview data
-  }[];
-};
-
-export default function ChillerTaskList() {
+export default function ChillerEntry() {
   const { user } = useAuth();
-  const [schedule, setSchedule] = useState<ScheduleItem[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [siteCode, setSiteCode] = useState<string | null>(null);
-  const [filterStatus, setFilterStatus] = useState<
-    "All" | "Pending" | "Completed"
-  >("All");
-  const [sortOrder, setSortOrder] = useState<"Desc" | "Asc">("Desc"); // Desc = Newest First
+  const params = useLocalSearchParams<{
+    id?: string;
+    chillerId?: string;
+    siteCode: string;
+    isNew?: string;
+    readingTime?: string;
+  }>();
 
-  useFocusEffect(
-    useCallback(() => {
-      loadSchedule();
-    }, []),
+  const [formData, setFormData] = useState({
+    chillerId: params.chillerId || "",
+    equipmentId: "",
+    // Temperatures
+    condenserInletTemp: "",
+    condenserOutletTemp: "",
+    evaporatorInletTemp: "",
+    evaporatorOutletTemp: "",
+    saturatedCondenserTemp: "",
+    saturatedSuctionTemp: "",
+    compressorSuctionTemp: "",
+    motorTemperature: "",
+    setPointCelsius: "",
+    // Pressures
+    dischargePressure: "",
+    mainSuctionPressure: "",
+    oilPressure: "",
+    oilPressureDifference: "",
+    condenserInletPressure: "",
+    condenserOutletPressure: "",
+    evaporatorInletPressure: "",
+    evaporatorOutletPressure: "",
+    // Performance
+    load: "",
+    inlineBtuMeter: "",
+    // Meta
+    remarks: "",
+    attachment: "",
+    signature: "",
+  });
+  const [selectedSite, setSelectedSite] = useState(params.siteCode);
+  const [sites, setSites] = useState<SelectOption[]>([]);
+  const [loadingSites, setLoadingSites] = useState(false);
+
+  const [assets, setAssets] = useState<SelectOption[]>([]);
+  const [loadingAssets, setLoadingAssets] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [uploading, setUploading] = useState(false);
+
+  useEffect(() => {
+    loadSites();
+  }, [user?.user_id || user?.id]);
+
+  useEffect(() => {
+    loadAssets();
+  }, [selectedSite]);
+
+  useEffect(() => {
+    if (params.id) {
+      loadReading();
+    }
+  }, [params.id]);
+
+  const ChillerFormSkeleton = () => (
+    <View className="py-6">
+      <View className="mb-6">
+        <Skeleton width={120} height={10} style={{ marginBottom: 8 }} />
+        <Skeleton width="100%" height={50} borderRadius={12} />
+      </View>
+
+      <View className="flex-row items-center mb-6">
+        <Skeleton width={20} height={20} borderRadius={10} />
+        <Skeleton width={150} height={15} style={{ marginLeft: 10 }} />
+      </View>
+
+      <View className="flex-row flex-wrap justify-between">
+        {[1, 2, 3, 4, 5, 6].map((i) => (
+          <View key={i} className="mb-6" style={{ width: "48%" }}>
+            <Skeleton width={80} height={10} style={{ marginBottom: 8 }} />
+            <Skeleton width="100%" height={45} borderRadius={12} />
+          </View>
+        ))}
+      </View>
+
+      <View className="flex-row items-center mt-4 mb-6">
+        <Skeleton width={20} height={20} borderRadius={10} />
+        <Skeleton width={150} height={15} style={{ marginLeft: 10 }} />
+      </View>
+
+      <View className="flex-row flex-wrap justify-between">
+        {[1, 2, 3, 4].map((i) => (
+          <View key={i} className="mb-6" style={{ width: "48%" }}>
+            <Skeleton width={80} height={10} style={{ marginBottom: 8 }} />
+            <Skeleton width="100%" height={45} borderRadius={12} />
+          </View>
+        ))}
+      </View>
+    </View>
   );
 
-  const loadSchedule = async () => {
+  const loadReading = async () => {
     try {
+      if (!params.id) return;
       setLoading(true);
-      const storageKey = `last_site_${user?.user_id || user?.id}`;
-      const savedSiteCode = await AsyncStorage.getItem(storageKey);
-
-      if (savedSiteCode) {
-        setSiteCode(savedSiteCode);
-
-        const chillerTasks =
-          await SiteConfigService.getChillerTasks(savedSiteCode);
-        const chillerIds = chillerTasks.map((t) => t.id);
-
-        if (chillerIds.length === 0) {
-          setSchedule([]);
-          setLoading(false);
-          return;
-        }
-
-        const start = new Date();
-        start.setHours(0, 0, 0, 0);
-        const end = new Date();
-        end.setHours(23, 59, 59, 999);
-
-        const todaysReadings = await SiteLogService.getLogsByType(
-          savedSiteCode,
-          "Chiller Logs",
-          { fromDate: start.getTime(), toDate: end.getTime() },
-        );
-
-        // Generate Slots
-        const slots = [];
-        // Generate for 24 hours first, then we sort later
-        for (let i = 0; i < 24; i += 2) {
-          const slotTime = new Date();
-          slotTime.setHours(i, 0, 0, 0);
-
-          const slotItems = chillerIds.map((chillerId) => {
-            const found = todaysReadings.find((r: any) => {
-              const rTime = new Date(r.reading_time || r.createdAt);
-              const rHours = rTime.getHours();
-              return r.chillerId === chillerId && rHours >= i && rHours < i + 2;
-            });
-
-            return {
-              chillerId,
-              isCompleted: !!found,
-              readingTime: slotTime.getTime(),
-            };
-          });
-
-          slots.push({
-            timeLabel: `${i.toString().padStart(2, "0")}:00`,
-            items: slotItems,
-          });
-        }
-        setSchedule(slots);
+      const record: any = await chillerReadingCollection.find(params.id);
+      if (record) {
+        setSelectedSite(record.siteCode);
+        setFormData({
+          chillerId: record.chillerId || "",
+          equipmentId: record.equipmentId || "",
+          condenserInletTemp: record.condenserInletTemp?.toString() || "",
+          condenserOutletTemp: record.condenserOutletTemp?.toString() || "",
+          evaporatorInletTemp: record.evaporatorInletTemp?.toString() || "",
+          evaporatorOutletTemp: record.evaporatorOutletTemp?.toString() || "",
+          saturatedCondenserTemp:
+            record.saturatedCondenserTemp?.toString() || "",
+          saturatedSuctionTemp: record.saturatedSuctionTemp?.toString() || "",
+          compressorSuctionTemp: record.compressorSuctionTemp?.toString() || "",
+          motorTemperature: record.motorTemperature?.toString() || "",
+          setPointCelsius: record.setPointCelsius?.toString() || "",
+          dischargePressure: record.dischargePressure?.toString() || "",
+          mainSuctionPressure: record.mainSuctionPressure?.toString() || "",
+          oilPressure: record.oilPressure?.toString() || "",
+          oilPressureDifference: record.oilPressureDifference?.toString() || "",
+          condenserInletPressure:
+            record.condenserInletPressure?.toString() || "",
+          condenserOutletPressure:
+            record.condenserOutletPressure?.toString() || "",
+          evaporatorInletPressure:
+            record.evaporatorInletPressure?.toString() || "",
+          evaporatorOutletPressure:
+            record.evaporatorOutletPressure?.toString() || "",
+          load: record.compressorLoadPercentage?.toString() || "",
+          inlineBtuMeter: record.inlineBtuMeter?.toString() || "",
+          remarks: record.remarks || "",
+          attachment: record.attachments || "",
+          signature: record.signatureText || "",
+        });
       }
-    } catch (error) {
-      console.error("Failed to load chiller schedule", error);
+    } catch (e) {
+      console.error("Failed to load reading", e);
     } finally {
       setLoading(false);
     }
   };
 
-  const handleSlotPress = (chillerId: string, readingTime: number) => {
-    router.push({
-      pathname: "/log-forms/chiller-entry",
-      params: {
-        chillerId: chillerId,
-        siteCode: siteCode,
-        readingTime: readingTime.toString(),
-      },
-    });
+  const loadSites = async () => {
+    const userId = user?.user_id || user?.id;
+    if (!userId) return;
+    try {
+      setLoadingSites(true);
+      const data = await AttendanceService.getUserSites(userId);
+      const options = data.map((s) => ({
+        value: s.site_code,
+        label: `${s.site_code} - ${s.name}`,
+      }));
+      setSites(options);
+    } catch (e) {
+      console.error("Failed to load sites", e);
+    } finally {
+      setLoadingSites(false);
+    }
   };
 
-  // --- Derived Data Logic ---
+  const loadAssets = async () => {
+    if (!selectedSite) return;
+    try {
+      setLoadingAssets(true);
+      const data = await AssetService.getAssetsBySite(selectedSite, "Chiller");
+      const options = data.map((asset: any) => ({
+        value: asset.asset_id,
+        label: asset.asset_name || asset.asset_id,
+        description: asset.location || asset.equipment_type,
+      }));
+      setAssets(options);
+    } catch (e) {
+      console.error("Failed to load assets", e);
+    } finally {
+      setLoadingAssets(false);
+    }
+  };
 
-  const now = new Date();
+  const updateField = (field: string, value: string) => {
+    setFormData((prev) => ({ ...prev, [field]: value }));
+  };
 
-  // Flatten for Priority Analysis
-  const allItems = schedule.flatMap((s) =>
-    s.items.map((i) => ({ ...i, timeLabel: s.timeLabel })),
+  const processImageResult = async (result: ImagePicker.ImagePickerResult) => {
+    if (!result.canceled && result.assets && result.assets.length > 0) {
+      setUploading(true);
+      try {
+        const uri = result.assets[0].uri;
+        const filename = `chiller/${selectedSite}/${Date.now()}.jpg`;
+        const publicUrl = await StorageService.uploadFile(
+          "site-log-attachments",
+          filename,
+          uri,
+        );
+
+        if (publicUrl) {
+          updateField("attachment", publicUrl);
+        } else {
+          Alert.alert(
+            "Upload Failed",
+            "Could not upload image. Please try again.",
+          );
+        }
+      } catch (e: any) {
+        Alert.alert("Error", e.message);
+      } finally {
+        setUploading(false);
+      }
+    }
+  };
+
+  const handleAttachment = () => {
+    Alert.alert("Add Attachment", "Choose an option", [
+      {
+        text: "Take Photo",
+        onPress: async () => {
+          const perm = await ImagePicker.requestCameraPermissionsAsync();
+          if (perm.granted) {
+            const res = await ImagePicker.launchCameraAsync({
+              mediaTypes: ImagePicker.MediaTypeOptions.Images,
+              quality: 0.5,
+            });
+            processImageResult(res);
+          } else {
+            Alert.alert("Permission Required", "Camera permission is needed.");
+          }
+        },
+      },
+      {
+        text: "Choose from Gallery",
+        onPress: async () => {
+          const res = await ImagePicker.launchImageLibraryAsync({
+            mediaTypes: ImagePicker.MediaTypeOptions.Images,
+            quality: 0.5,
+          });
+          processImageResult(res);
+        },
+      },
+      { text: "Cancel", style: "cancel" },
+    ]);
+  };
+
+  const handleSubmission = async (status: string) => {
+    if (!formData.chillerId) {
+      Alert.alert("Error", "Please select a Chiller asset");
+      return;
+    }
+
+    if (status === "Completed" && !formData.signature) {
+      Alert.alert("Error", "Signature is required to complete the log");
+      return;
+    }
+
+    try {
+      setSaving(true);
+      const selectedAsset = assets.find((a) => a.value === formData.chillerId);
+
+      const payload = {
+        siteCode: selectedSite,
+        executorId: user?.user_id || user?.id || "unknown",
+        chillerId: formData.chillerId,
+        equipmentId: formData.chillerId,
+        assetName: selectedAsset?.label || formData.chillerId,
+        assetType: selectedAsset?.description || "Chiller",
+        condenserInletTemp: parseFloat(formData.condenserInletTemp),
+        condenserOutletTemp: parseFloat(formData.condenserOutletTemp),
+        evaporatorInletTemp: parseFloat(formData.evaporatorInletTemp),
+        evaporatorOutletTemp: parseFloat(formData.evaporatorOutletTemp),
+        saturatedCondenserTemp: parseFloat(formData.saturatedCondenserTemp),
+        saturatedSuctionTemp: parseFloat(formData.saturatedSuctionTemp),
+        compressorSuctionTemp: parseFloat(formData.compressorSuctionTemp),
+        motorTemperature: parseFloat(formData.motorTemperature),
+        setPointCelsius: parseFloat(formData.setPointCelsius),
+        dischargePressure: parseFloat(formData.dischargePressure),
+        mainSuctionPressure: parseFloat(formData.mainSuctionPressure),
+        oilPressure: parseFloat(formData.oilPressure),
+        oilPressureDifference: parseFloat(formData.oilPressureDifference),
+        condenserInletPressure: parseFloat(formData.condenserInletPressure),
+        condenserOutletPressure: parseFloat(formData.condenserOutletPressure),
+        evaporatorInletPressure: parseFloat(formData.evaporatorInletPressure),
+        evaporatorOutletPressure: parseFloat(formData.evaporatorOutletPressure),
+        compressorLoadPercentage: parseFloat(formData.load),
+        inlineBtuMeter: parseFloat(formData.inlineBtuMeter),
+        remarks: formData.remarks,
+        assignedTo: user?.full_name || user?.name || "unknown",
+        signature: formData.signature,
+        status: status,
+        readingTime: params.readingTime
+          ? parseInt(params.readingTime)
+          : new Date().getTime(),
+        attachments: formData.attachment,
+      };
+
+      if (params.id) {
+        await SiteLogService.updateChillerReading(params.id, payload);
+      } else {
+        await SiteLogService.saveChillerReading(payload);
+      }
+
+      Alert.alert("Success", `Reading ${status.toLowerCase()} successfully`, [
+        { text: "OK", onPress: () => router.back() },
+      ]);
+    } catch (error: any) {
+      Alert.alert("Error", error.message || "Failed to save reading");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const renderInput = (
+    label: string,
+    field: string,
+    placeholder: string,
+    unit?: string,
+    widthClass = "w-full",
+  ) => (
+    <View className={`mb-4 ${widthClass}`}>
+      <Text className="text-slate-500 dark:text-slate-400 text-[10px] font-bold uppercase tracking-widest mb-1.5 ml-1">
+        {label}
+      </Text>
+      <View
+        className="bg-white dark:bg-slate-900 rounded-xl border border-slate-100 dark:border-slate-800 px-3 flex-row items-center"
+        style={{
+          shadowColor: "#000",
+          shadowOffset: { width: 0, height: 1 },
+          shadowOpacity: 0.03,
+          shadowRadius: 2,
+          elevation: 1,
+        }}
+      >
+        <TextInput
+          value={(formData as any)[field]}
+          onChangeText={(val) => updateField(field, val)}
+          placeholder={placeholder}
+          keyboardType="numeric"
+          className="flex-1 py-3 font-semibold text-base text-slate-900 dark:text-slate-50"
+        />
+        {unit && (
+          <Text className="text-slate-400 text-xs font-bold ml-1">{unit}</Text>
+        )}
+      </View>
+    </View>
   );
-
-  // Missed: Time < Now (with buffer) AND Pending
-  const missedItems = allItems.filter((i) => {
-    const slotTime = new Date(i.readingTime);
-    // Consider missed if more than 30 mins past slot start? Or just strictly past.
-    // Let's say strictly past slot time for simplicity
-    return isBefore(slotTime, now) && !i.isCompleted;
-  });
-
-  // Next: Top 1 upcoming (or current slot)
-  const currentOrNextItems = allItems.filter((i) => {
-    // Find the slot that wraps NOW (e.g., now is 10:30, slot is 10:00)
-    const slotTime = new Date(i.readingTime);
-    const slotEnd = new Date(i.readingTime);
-    slotEnd.setHours(slotEnd.getHours() + 2);
-    return now >= slotTime && now < slotEnd && !i.isCompleted;
-  });
-  // If no "current" active slot, find absolute next
-  const upcomingItems =
-    currentOrNextItems.length > 0
-      ? currentOrNextItems
-      : allItems.filter((i) => new Date(i.readingTime) > now && !i.isCompleted);
-
-  // Priority List: Missed + Immediate Next (max 5 to keep UI clean)
-  const priorityList = [...missedItems, ...upcomingItems]
-    .sort((a, b) => a.readingTime - b.readingTime)
-    .slice(0, 5);
-
-  // --- Filter & Sort Main List ---
-  let processedSchedule = [...schedule];
-
-  // 1. Sort
-  processedSchedule.sort((a, b) => {
-    // Parse timeLabel "HH:mm" to compare
-    const timeA = parseInt(a.timeLabel.split(":")[0]);
-    const timeB = parseInt(b.timeLabel.split(":")[0]);
-    return sortOrder === "Desc" ? timeB - timeA : timeA - timeB;
-  });
-
-  // 2. Filter
-  const finalDisplay = processedSchedule
-    .map((slot) => ({
-      ...slot,
-      items: slot.items.filter((item) => {
-        if (filterStatus === "All") return true;
-        if (filterStatus === "Pending") return !item.isCompleted;
-        if (filterStatus === "Completed") return item.isCompleted;
-        return true;
-      }),
-    }))
-    .filter((slot) => slot.items.length > 0);
 
   return (
     <View className="flex-1 bg-slate-50 dark:bg-slate-950">
       <SafeAreaView className="flex-1" edges={["top"]}>
         {/* Header */}
-        <View className="px-5 pt-2 pb-4 bg-white dark:bg-slate-900 border-b border-slate-100 dark:border-slate-800">
-          <View className="flex-row items-center justify-between mb-4">
-            <TouchableOpacity
-              onPress={() => router.back()}
-              className="w-10 h-10 rounded-full bg-slate-100 dark:bg-slate-800 items-center justify-center"
-            >
-              <ChevronLeft size={20} color="#0f172a" />
-            </TouchableOpacity>
-            <View className="items-center">
-              <Text className="text-slate-900 dark:text-slate-50 font-bold text-lg">
-                Chiller Log
-              </Text>
-              <Text className="text-slate-500 text-xs font-semibold">
-                {format(new Date(), "EEEE, dd MMMM")}
-              </Text>
-            </View>
-            <TouchableOpacity className="w-10 h-10 rounded-full bg-slate-100 dark:bg-slate-800 items-center justify-center">
-              {/* Placeholder for future action or just balance */}
-              <Thermometer size={18} color="#64748b" />
-            </TouchableOpacity>
+        <View className="flex-row items-center justify-between px-5 py-4 bg-white dark:bg-slate-900 border-b border-slate-100 dark:border-slate-800">
+          <TouchableOpacity
+            onPress={() => router.back()}
+            className="w-10 h-10 rounded-full bg-slate-50 dark:bg-slate-800 items-center justify-center"
+          >
+            <ChevronLeft size={20} color="#0f172a" />
+          </TouchableOpacity>
+          <View className="flex-1 items-center">
+            <Text className="text-lg font-bold text-slate-900 dark:text-slate-50 text-center">
+              {params.id ? "Edit Chiller Reading" : "Chiller Reading"}
+            </Text>
+            <Text className="text-[10px] text-slate-400 dark:text-slate-500 font-bold uppercase tracking-widest mt-0.5">
+              {params.id
+                ? `ID: ${params.id.slice(-8).toUpperCase()}`
+                : `Chiller ID: ${formData.chillerId || params.chillerId}`}
+            </Text>
           </View>
-
-          {/* Filter & Sort Bar */}
-          <View className="flex-row items-center justify-between">
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              className="flex-row"
-            >
-              {(["All", "Pending", "Completed"] as const).map((status) => (
-                <TouchableOpacity
-                  key={status}
-                  onPress={() => setFilterStatus(status)}
-                  className={`px-4 py-2 rounded-full mr-2 ${filterStatus === status ? "bg-slate-900 dark:bg-slate-50" : "bg-slate-100 dark:bg-slate-800"}`}
-                >
-                  <Text
-                    className={`text-xs font-bold ${filterStatus === status ? "text-white dark:text-slate-900" : "text-slate-600 dark:text-slate-400"}`}
-                  >
-                    {status}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-            <TouchableOpacity
-              onPress={() =>
-                setSortOrder((prev) => (prev === "Desc" ? "Asc" : "Desc"))
-              }
-              className="w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-800 items-center justify-center"
-            >
-              <ArrowUpDown size={14} color="#64748b" />
-            </TouchableOpacity>
-          </View>
+          <View className="w-10" />
         </View>
 
-        {loading ? (
-          <View className="flex-1 items-center justify-center">
-            <ActivityIndicator color="#0d9488" />
-          </View>
-        ) : (
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : "height"}
+          className="flex-1"
+        >
           <ScrollView
-            contentContainerStyle={{ paddingBottom: 100 }}
+            className="flex-1"
+            contentContainerStyle={{
+              paddingHorizontal: 20,
+              paddingBottom: 120,
+            }}
             showsVerticalScrollIndicator={false}
           >
-            {/* Priority Section */}
-            {priorityList.length > 0 && (
-              <View className="mt-5">
-                <Text className="px-5 text-slate-900 dark:text-slate-50 font-bold text-base mb-3">
-                  Priority Actions
-                </Text>
-                <ScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  contentContainerStyle={{ paddingHorizontal: 20 }}
-                >
-                  {priorityList.map((item, idx) => {
-                    const isMissed =
-                      isBefore(new Date(item.readingTime), now) &&
-                      !item.isCompleted;
-                    const gradientColors = isMissed
-                      ? ["#ef4444", "#b91c1c"] // Red for Missed
-                      : ["#3b82f6", "#1d4ed8"]; // Blue for Next/Upcoming
+            {loading ? (
+              <ChillerFormSkeleton />
+            ) : (
+              <View className="py-6">
+                <SearchableSelect
+                  label="Site"
+                  options={sites}
+                  value={selectedSite}
+                  onChange={(val) => {
+                    setSelectedSite(val);
+                    updateField("chillerId", ""); // Clear selection when site changes
+                  }}
+                  loading={loadingSites}
+                  placeholder="Select Site"
+                  disabled={!!params.id} // Disable site change for existing records
+                />
 
-                    return (
-                      <TouchableOpacity
-                        key={`priority-${idx}-${item.chillerId}`}
-                        onPress={() =>
-                          handleSlotPress(item.chillerId, item.readingTime)
-                        }
-                        activeOpacity={0.9}
-                        className="mr-3"
-                      >
-                        <LinearGradient
-                          colors={gradientColors as any}
-                          start={{ x: 0, y: 0 }}
-                          end={{ x: 1, y: 1 }}
-                          className="w-40 p-4 rounded-2xl h-32 justify-between"
-                          style={{
-                            shadowColor: gradientColors[0],
-                            shadowOffset: { width: 0, height: 4 },
-                            shadowOpacity: 0.3,
-                            shadowRadius: 8,
-                            elevation: 5,
-                          }}
-                        >
-                          <View className="flex-row justify-between items-start">
-                            <View className="bg-white/20 p-1.5 rounded-lg">
-                              <Clock size={14} color="white" />
-                            </View>
-                            <View className="bg-white/20 px-2 py-0.5 rounded text-xs">
-                              <Text className="text-white text-[10px] font-bold uppercase">
-                                {isMissed ? "Overdue" : "Upcoming"}
-                              </Text>
-                            </View>
-                          </View>
+                <SearchableSelect
+                  label="Chiller ID"
+                  options={assets}
+                  value={formData.chillerId}
+                  onChange={(val) => updateField("chillerId", val)}
+                  loading={loadingAssets}
+                  placeholder="Select Chiller"
+                  disabled={params.isNew !== "true" && !!params.chillerId}
+                />
 
-                          <View>
-                            <Text className="text-white/80 text-xs font-bold mb-0.5">
-                              {item.timeLabel} • {siteCode}
-                            </Text>
-                            <Text className="text-white font-bold text-lg leading-6">
-                              {item.chillerId}
-                            </Text>
-                          </View>
-                        </LinearGradient>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </ScrollView>
-              </View>
-            )}
-
-            {/* Main List */}
-            <View className="px-5 pt-6">
-              <Text className="text-slate-900 dark:text-slate-50 font-bold text-base mb-3">
-                Schedule
-              </Text>
-              {finalDisplay.length === 0 ? (
-                <View className="items-center justify-center p-10 bg-white dark:bg-slate-900 rounded-2xl mx-5 border border-dashed border-slate-200 dark:border-slate-800">
-                  <Text className="text-slate-400 font-medium">
-                    No logs found.
+                {/* Temperatures Section */}
+                <View className="flex-row items-center mt-4 mb-4">
+                  <Thermometer size={18} color="#ef4444" strokeWidth={2.5} />
+                  <Text className="text-slate-900 dark:text-slate-50 font-bold text-base ml-2">
+                    Temperatures (°C)
                   </Text>
                 </View>
-              ) : (
-                finalDisplay.map((item) => (
-                  <View key={item.timeLabel} className="mb-6">
-                    <View className="flex-row items-center mb-3">
-                      <Text className="text-slate-400 dark:text-slate-500 font-bold text-xs uppercase tracking-wider">
-                        {item.timeLabel}
-                      </Text>
-                      <View className="h-[1px] bg-slate-100 dark:bg-slate-800 flex-1 ml-3" />
-                    </View>
+                <View className="flex-row flex-wrap justify-between">
+                  {renderInput(
+                    "Cond. Inlet",
+                    "condenserInletTemp",
+                    "0.0",
+                    "°C",
+                    "w-[48%]",
+                  )}
+                  {renderInput(
+                    "Cond. Outlet",
+                    "condenserOutletTemp",
+                    "0.0",
+                    "°C",
+                    "w-[48%]",
+                  )}
+                  {renderInput(
+                    "Evap. Inlet",
+                    "evaporatorInletTemp",
+                    "0.0",
+                    "°C",
+                    "w-[48%]",
+                  )}
+                  {renderInput(
+                    "Evap. Outlet",
+                    "evaporatorOutletTemp",
+                    "0.0",
+                    "°C",
+                    "w-[48%]",
+                  )}
+                  {renderInput(
+                    "Sat. Cond.",
+                    "saturatedCondenserTemp",
+                    "0.0",
+                    "°C",
+                    "w-[48%]",
+                  )}
+                  {renderInput(
+                    "Sat. Suction",
+                    "saturatedSuctionTemp",
+                    "0.0",
+                    "°C",
+                    "w-[48%]",
+                  )}
+                  {renderInput(
+                    "Comp. Suction",
+                    "compressorSuctionTemp",
+                    "0.0",
+                    "°C",
+                    "w-[48%]",
+                  )}
+                  {renderInput(
+                    "Motor Temp",
+                    "motorTemperature",
+                    "0.0",
+                    "°C",
+                    "w-[48%]",
+                  )}
+                  {renderInput(
+                    "Set Point",
+                    "setPointCelsius",
+                    "0.0",
+                    "°C",
+                    "w-[48%]",
+                  )}
+                </View>
 
-                    <View className="gap-3">
-                      {item.items.map((task, idx) => (
-                        <TouchableOpacity
-                          key={`${item.timeLabel}-${task.chillerId}`}
-                          onPress={() =>
-                            handleSlotPress(task.chillerId, task.readingTime)
-                          }
-                          activeOpacity={0.7}
-                          className="bg-white dark:bg-slate-900 rounded-2xl p-4 flex-row items-center"
-                          style={{
-                            shadowColor: "#000",
-                            shadowOffset: { width: 0, height: 2 },
-                            shadowOpacity: 0.03,
-                            shadowRadius: 8,
-                            elevation: 2,
-                          }}
-                        >
-                          <View
-                            className={`w-12 h-12 rounded-xl items-center justify-center mr-4 ${task.isCompleted ? "bg-green-50 dark:bg-green-900/20" : "bg-slate-50 dark:bg-slate-800"}`}
-                          >
-                            {task.isCompleted ? (
-                              <CheckCircle2 size={22} color="#16a34a" />
-                            ) : (
-                              <Snowflake
-                                size={22}
-                                color={task.isCompleted ? "#16a34a" : "#94a3b8"}
-                              />
-                            )}
-                          </View>
-                          <View className="flex-1">
-                            <Text className="font-bold text-base text-slate-900 dark:text-slate-50">
-                              {task.chillerId}
-                            </Text>
-                            <Text className="text-xs text-slate-400 dark:text-slate-500 font-medium mb-1">
-                              {siteCode}
-                            </Text>
-                            <View className="flex-row items-center mt-1">
-                              <View
-                                className={`w-2 h-2 rounded-full mr-2 ${task.isCompleted ? "bg-green-500" : "bg-amber-500"}`}
-                              />
-                              <Text className="text-xs font-semibold text-slate-500 dark:text-slate-400">
-                                {task.isCompleted
-                                  ? "Completed"
-                                  : "Pending Entry"}
-                              </Text>
-                            </View>
-                          </View>
-                          <View className="bg-slate-50 dark:bg-slate-800 w-8 h-8 rounded-full items-center justify-center">
-                            <ChevronRight size={16} color="#94a3b8" />
-                          </View>
-                        </TouchableOpacity>
-                      ))}
+                {/* Pressures Section */}
+                <View className="flex-row items-center mt-4 mb-4">
+                  <Gauge size={18} color="#3b82f6" strokeWidth={2.5} />
+                  <Text className="text-slate-900 dark:text-slate-50 font-bold text-base ml-2">
+                    Pressures (PSI)
+                  </Text>
+                </View>
+                <View className="flex-row flex-wrap justify-between">
+                  {renderInput(
+                    "Discharge",
+                    "dischargePressure",
+                    "0.0",
+                    "PSI",
+                    "w-[48%]",
+                  )}
+                  {renderInput(
+                    "Main Suction",
+                    "mainSuctionPressure",
+                    "0.0",
+                    "PSI",
+                    "w-[48%]",
+                  )}
+                  {renderInput(
+                    "Oil Pressure",
+                    "oilPressure",
+                    "0.0",
+                    "PSI",
+                    "w-[48%]",
+                  )}
+                  {renderInput(
+                    "Oil Diff.",
+                    "oilPressureDifference",
+                    "0.0",
+                    "PSI",
+                    "w-[48%]",
+                  )}
+                  {renderInput(
+                    "Cond. Inlet P.",
+                    "condenserInletPressure",
+                    "0.0",
+                    "PSI",
+                    "w-[48%]",
+                  )}
+                  {renderInput(
+                    "Cond. Outlet P.",
+                    "condenserOutletPressure",
+                    "0.0",
+                    "PSI",
+                    "w-[48%]",
+                  )}
+                  {renderInput(
+                    "Evap. Inlet P.",
+                    "evaporatorInletPressure",
+                    "0.0",
+                    "PSI",
+                    "w-[48%]",
+                  )}
+                  {renderInput(
+                    "Evap. Outlet P.",
+                    "evaporatorOutletPressure",
+                    "0.0",
+                    "PSI",
+                    "w-[48%]",
+                  )}
+                </View>
+
+                {/* Performance Section */}
+                <View className="flex-row items-center mt-4 mb-4">
+                  <Activity size={18} color="#10b981" strokeWidth={2.5} />
+                  <Text className="text-slate-900 dark:text-slate-50 font-bold text-base ml-2">
+                    Performance & Load
+                  </Text>
+                </View>
+                <View className="flex-row flex-wrap justify-between">
+                  {renderInput("Comp. Load", "load", "0", "%", "w-[48%]")}
+                  {renderInput(
+                    "BTU Meter",
+                    "inlineBtuMeter",
+                    "0.0",
+                    "TR",
+                    "w-[48%]",
+                  )}
+                </View>
+
+                {/* Attachments & Remarks */}
+                <View className="mt-4 mb-6">
+                  <Text className="text-slate-900 dark:text-slate-50 font-bold text-base mb-4">
+                    Evidence & Observation
+                  </Text>
+
+                  {formData.attachment ? (
+                    <View className="relative mb-4">
+                      <Image
+                        source={{ uri: formData.attachment }}
+                        className="w-full h-48 rounded-2xl bg-slate-100"
+                        resizeMode="cover"
+                      />
+                      <TouchableOpacity
+                        onPress={() => updateField("attachment", "")}
+                        className="absolute top-2 right-2 bg-red-500 w-8 h-8 rounded-full items-center justify-center"
+                      >
+                        <Trash2 size={16} color="white" />
+                      </TouchableOpacity>
                     </View>
-                  </View>
-                ))
-              )}
-            </View>
+                  ) : (
+                    <TouchableOpacity
+                      onPress={handleAttachment}
+                      disabled={uploading}
+                      className="w-full h-32 border-2 border-dashed border-slate-200 dark:border-slate-800 rounded-2xl items-center justify-center bg-white dark:bg-slate-900 mb-4"
+                    >
+                      {uploading ? (
+                        <ActivityIndicator color="#0d9488" />
+                      ) : (
+                        <>
+                          <Camera size={24} color="#94a3b8" />
+                          <Text className="text-slate-400 font-bold text-xs mt-2 uppercase tracking-wider">
+                            Add Photo Evidence
+                          </Text>
+                        </>
+                      )}
+                    </TouchableOpacity>
+                  )}
+
+                  <Text className="text-slate-500 dark:text-slate-400 text-[10px] font-bold uppercase tracking-widest mb-1.5 ml-1">
+                    Remarks
+                  </Text>
+                  <TextInput
+                    value={formData.remarks}
+                    onChangeText={(val) => updateField("remarks", val)}
+                    placeholder="Any technical observations..."
+                    multiline
+                    numberOfLines={3}
+                    textAlignVertical="top"
+                    className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-100 dark:border-slate-800 font-medium text-slate-900 dark:text-slate-50 min-h-[100px]"
+                  />
+                </View>
+
+                {/* Signature Pad */}
+                <View className="mb-10">
+                  <Text className="text-slate-900 dark:text-slate-50 font-bold text-base mb-4">
+                    Final Confirmation
+                  </Text>
+                  <SignaturePad
+                    onOK={(sig) => updateField("signature", sig)}
+                    description="Sign here to verify the above readings"
+                    trigger={(open) => (
+                      <TouchableOpacity
+                        onPress={open}
+                        className="w-full bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-xl p-4 flex-row items-center justify-between"
+                      >
+                        <View className="flex-row items-center">
+                          <PenTool
+                            size={20}
+                            color={formData.signature ? "#10b981" : "#64748b"}
+                          />
+                          <Text
+                            className={`ml-3 font-semibold ${formData.signature ? "text-green-600" : "text-slate-500"}`}
+                          >
+                            {formData.signature
+                              ? "Signature Captured"
+                              : "Click to Sign (Required to Complete)"}
+                          </Text>
+                        </View>
+                        {formData.signature && (
+                          <CheckCircle2 size={20} color="#10b981" />
+                        )}
+                      </TouchableOpacity>
+                    )}
+                  />
+                </View>
+              </View>
+            )}
           </ScrollView>
-        )}
+
+          {/* Action Buttons - Fixed at Bottom */}
+          <View
+            className="px-5 py-4 bg-white dark:bg-slate-900 border-t border-slate-100 dark:border-slate-800 flex-row gap-4"
+            style={{
+              shadowColor: "#000",
+              shadowOffset: { width: 0, height: -2 },
+              shadowOpacity: 0.05,
+              shadowRadius: 4,
+              elevation: 10,
+            }}
+          >
+            <TouchableOpacity
+              onPress={() => handleSubmission("Pending")}
+              disabled={saving}
+              className="flex-1 py-4 bg-slate-100 dark:bg-slate-800 rounded-xl flex-row items-center justify-center"
+            >
+              <Save size={20} color="#64748b" style={{ marginRight: 8 }} />
+              <Text className="text-slate-600 dark:text-slate-300 font-bold text-base uppercase tracking-wider">
+                Save
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={() => handleSubmission("Completed")}
+              disabled={saving}
+              activeOpacity={0.8}
+              className="flex-[2] rounded-xl overflow-hidden"
+            >
+              <LinearGradient
+                colors={["#0d9488", "#0f766e"]}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={StyleSheet.absoluteFill}
+              />
+              <View className="py-4 flex-row items-center justify-center">
+                {saving ? (
+                  <ActivityIndicator color="white" />
+                ) : (
+                  <>
+                    <CheckCircle2
+                      size={20}
+                      color="white"
+                      style={{ marginRight: 8 }}
+                    />
+                    <Text className="text-white font-bold text-base uppercase tracking-wider">
+                      Complete
+                    </Text>
+                  </>
+                )}
+              </View>
+            </TouchableOpacity>
+          </View>
+        </KeyboardAvoidingView>
       </SafeAreaView>
     </View>
   );

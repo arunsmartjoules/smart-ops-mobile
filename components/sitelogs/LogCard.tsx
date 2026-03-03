@@ -104,7 +104,7 @@ export const LogCard: React.FC<LogCardProps> = ({ log, type, onPress }) => {
                 isSynced ? "text-green-700" : "text-amber-700"
               }`}
             >
-              {isSynced ? "Synced" : "Pending"}
+              {isSynced ? "Synced" : "Pending Sync"}
             </Text>
           </View>
         </View>

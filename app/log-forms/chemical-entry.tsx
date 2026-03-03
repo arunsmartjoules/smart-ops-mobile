@@ -113,7 +113,7 @@ export default function ChemicalEntry() {
 
   const handleSave = async () => {
     if (!formData.chemicalDosing) {
-      Alert.alert("Error", "Please fill in the Chemical Dosing field");
+      Alert.alert("Error", "Please select Yes or No for Chemical Dosing");
       return;
     }
 
@@ -129,6 +129,7 @@ export default function ChemicalEntry() {
       await SiteLogService.saveSiteLog({
         siteCode: params.siteCode,
         executorId: user?.user_id || user?.id || "unknown",
+        assignedTo: user?.name || user?.user_id || "unknown", // Capture login user
         logName: "Chemical Dosing",
         taskName: params.areaName,
         chemicalDosing: formData.chemicalDosing,
@@ -136,7 +137,7 @@ export default function ChemicalEntry() {
         signature: formData.signature,
         entryTime: entryTime,
         endTime: endTime,
-        status: "completed",
+        status: "Completed",
         attachment: formData.attachment,
       });
 
@@ -166,7 +167,8 @@ export default function ChemicalEntry() {
               {params.areaName || "Chemical Log"}
             </Text>
             <Text className="text-slate-400 text-[10px] font-bold uppercase tracking-wider">
-              New Entry
+              Entry Status:{" "}
+              {formData.chemicalDosing ? "Selected" : "Not Selection"}
             </Text>
           </View>
           <View className="w-10" />
@@ -176,27 +178,37 @@ export default function ChemicalEntry() {
           <View className="mt-4">
             <View className="mb-6">
               <Text className="text-slate-500 dark:text-slate-400 text-[10px] font-bold uppercase tracking-widest mb-2 ml-1">
-                Chemical Dosing Details
+                Chemical Dosing Done?
               </Text>
-              <View
-                className="flex-row items-center bg-white dark:bg-slate-900 rounded-2xl border border-slate-100 dark:border-slate-800 px-4"
-                style={{
-                  shadowColor: "#000",
-                  shadowOffset: { width: 0, height: 1 },
-                  shadowOpacity: 0.05,
-                  shadowRadius: 4,
-                  elevation: 2,
-                }}
-              >
-                <View className="mr-3">
-                  <FlaskConical size={20} color="#a855f7" />
-                </View>
-                <TextInput
-                  value={formData.chemicalDosing}
-                  onChangeText={(val) => updateField("chemicalDosing", val)}
-                  placeholder="Enter dosing details..."
-                  className="flex-1 py-4 font-bold text-lg text-slate-900 dark:text-slate-50"
-                />
+              <View className="flex-row items-center mb-3">
+                <TouchableOpacity
+                  onPress={() => updateField("chemicalDosing", "Yes")}
+                  className={`flex-1 py-4 items-center justify-center rounded-l-2xl border ${
+                    formData.chemicalDosing === "Yes"
+                      ? "bg-purple-600 border-purple-600 shadow-md"
+                      : "bg-white dark:bg-slate-900 border-slate-100 dark:border-slate-800"
+                  }`}
+                >
+                  <Text
+                    className={`font-bold text-lg ${formData.chemicalDosing === "Yes" ? "text-white" : "text-slate-500"}`}
+                  >
+                    YES
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => updateField("chemicalDosing", "No")}
+                  className={`flex-1 py-4 items-center justify-center rounded-r-2xl border-y border-r ${
+                    formData.chemicalDosing === "No"
+                      ? "bg-purple-600 border-purple-600 shadow-md"
+                      : "bg-white dark:bg-slate-900 border-slate-100 dark:border-slate-800"
+                  }`}
+                >
+                  <Text
+                    className={`font-bold text-lg ${formData.chemicalDosing === "No" ? "text-white" : "text-slate-500"}`}
+                  >
+                    NO
+                  </Text>
+                </TouchableOpacity>
               </View>
             </View>
 

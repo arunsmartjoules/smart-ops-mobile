@@ -12,6 +12,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import SiteLogService from "@/services/SiteLogService";
 import LogFilterModal from "@/components/sitelogs/LogFilterModal";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { useFocusEffect } from "@react-navigation/native";
 import {
   Filter,
   MapPin,
@@ -59,13 +60,14 @@ export default function SiteLogs() {
         );
         setAvailableSites(sites);
         const currentSite = sites.find((s) => s.site_code === lastSiteCode);
-        if (currentSite) setSiteName(currentSite.name);
+        if (currentSite)
+          setSiteName(`${currentSite.site_code} - ${currentSite.name}`);
 
         if (!lastSiteCode && sites.length > 0) {
           const firstSiteCode = sites[0].site_code;
           if (firstSiteCode) {
             setSiteCode(firstSiteCode);
-            setSiteName(sites[0].name);
+            setSiteName(`${sites[0].site_code} - ${sites[0].name}`);
             await AsyncStorage.setItem(storageKey, firstSiteCode);
             fetchLogs();
             return;
@@ -101,9 +103,11 @@ export default function SiteLogs() {
     }
   }, [user?.user_id, refreshing, fromDate, toDate, isConnected]);
 
-  useEffect(() => {
-    fetchLogs();
-  }, [fetchLogs]);
+  useFocusEffect(
+    useCallback(() => {
+      fetchLogs();
+    }, [fetchLogs]),
+  );
 
   const onRefresh = () => {
     setRefreshing(true);
@@ -113,6 +117,7 @@ export default function SiteLogs() {
   const getLogName = (title: string) => {
     // Robust mapping
     if (title.includes("Temp")) return "Temp RH";
+    if (title === "Water") return "Water";
     if (title.includes("Water")) return "Water";
     if (title.includes("Chemical")) return "Chemical Dosing";
     if (title.includes("Chiller")) return "Chiller Logs";
@@ -144,7 +149,7 @@ export default function SiteLogs() {
     },
     {
       id: "water",
-      title: "Water Quality",
+      title: "Water",
       shortTitle: "Water",
       route: "/log-forms/water",
       subtitle: "TDS, pH, Hardness",
@@ -340,7 +345,12 @@ export default function SiteLogs() {
 
                     <View className="flex-row gap-3">
                       <TouchableOpacity
-                        onPress={() => router.push(item.route as any)}
+                        onPress={() =>
+                          router.push({
+                            pathname: item.route,
+                            params: { siteCode, isNew: "true" },
+                          })
+                        }
                         activeOpacity={0.8}
                         className="flex-1"
                       >
@@ -403,7 +413,7 @@ export default function SiteLogs() {
         onSiteSelect={async (id) => {
           setSiteCode(id);
           const s = availableSites.find((site) => site.site_code === id);
-          if (s) setSiteName(s.name);
+          if (s) setSiteName(`${s.site_code} - ${s.name}`);
           await AsyncStorage.setItem(
             `last_site_${user?.id || user?.user_id}`,
             id,

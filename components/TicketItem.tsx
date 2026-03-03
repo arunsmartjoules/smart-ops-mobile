@@ -142,16 +142,22 @@ const TicketItem = React.memo(
           }}
         >
           <View
-            style={{ flex: 1.2, flexDirection: "row", alignItems: "center" }}
+            style={{
+              flex: 1.5,
+              flexDirection: "row",
+              alignItems: "flex-start",
+            }}
           >
-            <MapPin size={12} color="#94a3b8" style={{ marginRight: 6 }} />
+            <MapPin
+              size={12}
+              color="#dc2626"
+              style={{ marginRight: 6, marginTop: 2 }}
+            />
             <Text
               className="text-slate-600 dark:text-slate-400"
-              style={{ fontSize: 11, fontWeight: "600" }}
-              numberOfLines={1}
-              ellipsizeMode="tail"
+              style={{ fontSize: 11, fontWeight: "700", flex: 1 }}
             >
-              {item.area_asset || item.location || "N/A"}
+              {item.area_asset || item.location || "General Area"}
             </Text>
           </View>
 

@@ -1,6 +1,14 @@
 import React from "react";
-import { View, Text, TouchableOpacity, Modal, ScrollView } from "react-native";
+import {
+  View,
+  Text,
+  TouchableOpacity,
+  Modal,
+  ScrollView,
+  Platform,
+} from "react-native";
 import { X, Calendar, Check } from "lucide-react-native";
+import DateTimePicker from "@react-native-community/datetimepicker";
 import { format } from "date-fns";
 import SearchableSelect from "../SearchableSelect";
 
@@ -29,11 +37,24 @@ const LogFilterModal = ({
   selectedSiteCode,
   onSiteSelect,
 }: LogFilterModalProps) => {
+  const [showStartPicker, setShowStartPicker] = React.useState(false);
+  const [showEndPicker, setShowEndPicker] = React.useState(false);
+
+  const onStartChange = (event: any, selectedDate?: Date) => {
+    setShowStartPicker(Platform.OS === "ios");
+    if (selectedDate) setFromDate(selectedDate);
+  };
+
+  const onEndChange = (event: any, selectedDate?: Date) => {
+    setShowEndPicker(Platform.OS === "ios");
+    if (selectedDate) setToDate(selectedDate);
+  };
+
   const siteOptions = React.useMemo(
     () =>
       availableSites.map((site) => ({
         value: site.site_code || site.id,
-        label: site.name,
+        label: `${site.site_code} - ${site.name}`,
         description: `${site.city || ""}, ${site.state || ""}`
           .trim()
           .replace(/^, |, $/g, ""),
@@ -112,18 +133,63 @@ const LogFilterModal = ({
                 />
               </View>
 
-              {/* Date Range Display */}
+              {/* Date Range Selection */}
               <View>
                 <Text className="text-slate-400 dark:text-slate-500 text-[10px] font-bold uppercase tracking-widest mb-3 ml-1">
                   Date Range
                 </Text>
-                <View className="bg-slate-50 dark:bg-slate-800 rounded-xl p-4 border border-slate-100 dark:border-slate-800 flex-row items-center">
-                  <Calendar size={18} color="#dc2626" />
-                  <Text className="text-slate-700 dark:text-slate-300 font-bold ml-3 text-sm">
-                    {fromDate ? format(fromDate, "dd MMM yyyy") : "Start Date"}{" "}
-                    - {toDate ? format(toDate, "dd MMM yyyy") : "End Date"}
-                  </Text>
+                <View className="flex-row gap-2">
+                  <TouchableOpacity
+                    onPress={() => setShowStartPicker(true)}
+                    className="flex-1 bg-slate-50 dark:bg-slate-800 rounded-xl p-3 border border-slate-100 dark:border-slate-800 flex-row items-center"
+                  >
+                    <Calendar size={14} color="#dc2626" />
+                    <View className="ml-2">
+                      <Text className="text-[10px] text-slate-400 dark:text-slate-500 font-bold uppercase">
+                        Start Date
+                      </Text>
+                      <Text className="text-slate-700 dark:text-slate-300 font-bold text-xs">
+                        {fromDate ? format(fromDate, "dd MMM yyyy") : "Select"}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    onPress={() => setShowEndPicker(true)}
+                    className="flex-1 bg-slate-50 dark:bg-slate-800 rounded-xl p-3 border border-slate-100 dark:border-slate-800 flex-row items-center"
+                  >
+                    <Calendar size={14} color="#dc2626" />
+                    <View className="ml-2">
+                      <Text className="text-[10px] text-slate-400 dark:text-slate-500 font-bold uppercase">
+                        End Date
+                      </Text>
+                      <Text className="text-slate-700 dark:text-slate-300 font-bold text-xs">
+                        {toDate ? format(toDate, "dd MMM yyyy") : "Select"}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
                 </View>
+
+                {showStartPicker && (
+                  <DateTimePicker
+                    value={fromDate || new Date()}
+                    mode="date"
+                    display={Platform.OS === "ios" ? "inline" : "default"}
+                    onChange={onStartChange}
+                    maximumDate={toDate || new Date()}
+                  />
+                )}
+
+                {showEndPicker && (
+                  <DateTimePicker
+                    value={toDate || new Date()}
+                    mode="date"
+                    display={Platform.OS === "ios" ? "inline" : "default"}
+                    onChange={onEndChange}
+                    minimumDate={fromDate || undefined}
+                    maximumDate={new Date()}
+                  />
+                )}
               </View>
             </View>
 
