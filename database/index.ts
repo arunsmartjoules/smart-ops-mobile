@@ -11,6 +11,9 @@ import UserSite from "./models/UserSite";
 import SiteLog from "./models/SiteLog";
 import ChillerReading from "./models/ChillerReading";
 import PMInstance from "./models/PMInstance";
+import PMChecklistMaster from "./models/PMChecklistMaster";
+import PMChecklistItem from "./models/PMChecklistItem";
+import PMResponse from "./models/PMResponse";
 
 // Choose adapter based on platform and availability
 // We check for the native bridge to decide between SQLite (Production/Dev Client)
@@ -29,7 +32,7 @@ const getAdapter = () => {
 
   return new SQLiteAdapter({
     schema,
-    jsi: false, // JSI can be enabled for performance in fully native builds
+    jsi: true,
     onSetUpError: (error) => {
       console.error("Database setup error:", error);
     },
@@ -50,6 +53,9 @@ export const database = new Database({
     SiteLog,
     ChillerReading,
     PMInstance,
+    PMChecklistMaster,
+    PMChecklistItem,
+    PMResponse,
   ],
 });
 
@@ -64,3 +70,9 @@ export const siteLogCollection = database.get<SiteLog>("site_logs");
 export const chillerReadingCollection =
   database.get<ChillerReading>("chiller_readings");
 export const pmInstanceCollection = database.get<PMInstance>("pm_instances");
+export const pmChecklistMasterCollection = database.get<PMChecklistMaster>(
+  "pm_checklist_master",
+);
+export const pmChecklistItemCollection =
+  database.get<PMChecklistItem>("pm_checklist_items");
+export const pmResponseCollection = database.get<PMResponse>("pm_responses");

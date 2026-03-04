@@ -8,6 +8,8 @@ interface SignaturePadProps {
   onClear?: () => void;
   description?: string;
   trigger?: (open: () => void) => React.ReactNode;
+  standalone?: boolean;
+  okText?: string;
 }
 
 export default function SignaturePad({
@@ -15,6 +17,8 @@ export default function SignaturePad({
   onClear,
   description = "Please sign here",
   trigger,
+  standalone = false,
+  okText = "Save Signature",
 }: SignaturePadProps) {
   const ref = useRef<any>(null);
   const [visible, setVisible] = useState(false);
@@ -22,8 +26,10 @@ export default function SignaturePad({
 
   const handleOK = (signature: string) => {
     onOK(signature);
-    setSignature(signature); // Store for potential preview (not implemented yet)
-    setVisible(false);
+    setSignature(signature);
+    if (!standalone) {
+      setVisible(false);
+    }
   };
 
   const handleClear = () => {
@@ -34,14 +40,73 @@ export default function SignaturePad({
     setSignature(null);
   };
 
-  const handleEmpty = () => {
-    // Called when user clicks ok with no signature
-    // console.log("Empty signature");
-  };
+  const handleEmpty = () => {};
 
   const handleEnd = () => {
     ref.current.readSignature();
   };
+
+  const renderContent = () => (
+    <View
+      className={`${standalone ? "flex-1" : "bg-white dark:bg-slate-900 h-[70%] rounded-t-3xl overflow-hidden"}`}
+    >
+      {/* Header - Only for Modal mode */}
+      {!standalone && (
+        <View className="flex-row items-center justify-between px-5 py-4 border-b border-slate-100 dark:border-slate-800">
+          <Text className="text-slate-900 dark:text-slate-50 font-bold text-lg">
+            Sign Below
+          </Text>
+          <TouchableOpacity
+            onPress={() => setVisible(false)}
+            className="w-10 h-10 bg-slate-100 dark:bg-slate-800 rounded-full items-center justify-center"
+          >
+            <X size={20} color="#64748b" />
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {/* Canvas */}
+      <View className="flex-1 bg-white">
+        <SignatureScreen
+          ref={ref}
+          onOK={handleOK}
+          onEmpty={handleEmpty}
+          onClear={handleClear}
+          autoClear={false}
+          descriptionText={description}
+          backgroundColor={"#ffffff"}
+          penColor={"black"}
+          webStyle={`
+              .m-signature-pad--footer {display: none; margin: 0px;}
+              .m-signature-pad {box-shadow: none; border: none; margin-left: 0px; margin-top: 0px;}
+              body,html {width: 100%; height: 100%;}
+          `}
+        />
+      </View>
+
+      {/* Footer */}
+      <View className="flex-row p-5 gap-3 bg-white dark:bg-slate-900 border-t border-slate-50 dark:border-slate-800">
+        <TouchableOpacity
+          onPress={handleClear}
+          className="flex-1 py-4 bg-slate-100 dark:bg-slate-800 rounded-xl items-center"
+        >
+          <Text className="font-bold text-slate-700 dark:text-slate-300">
+            Clear
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={handleEnd}
+          className="flex-1 py-4 bg-blue-600 rounded-xl items-center"
+        >
+          <Text className="font-bold text-white">{okText}</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+
+  if (standalone) {
+    return renderContent();
+  }
 
   return (
     <View>
@@ -64,57 +129,7 @@ export default function SignaturePad({
         onRequestClose={() => setVisible(false)}
       >
         <View className="flex-1 bg-black/50 justify-end">
-          <View className="bg-white dark:bg-slate-900 h-[70%] rounded-t-3xl overflow-hidden">
-            {/* Header */}
-            <View className="flex-row items-center justify-between px-5 py-4 border-b border-slate-100 dark:border-slate-800">
-              <Text className="text-slate-900 dark:text-slate-50 font-bold text-lg">
-                Sign Below
-              </Text>
-              <TouchableOpacity
-                onPress={() => setVisible(false)}
-                className="w-10 h-10 bg-slate-100 dark:bg-slate-800 rounded-full items-center justify-center"
-              >
-                <X size={20} color="#64748b" />
-              </TouchableOpacity>
-            </View>
-
-            {/* Canvas */}
-            <View className="flex-1 bg-white">
-              <SignatureScreen
-                ref={ref}
-                onOK={handleOK}
-                onEmpty={handleEmpty}
-                onClear={handleClear}
-                autoClear={false}
-                descriptionText={description}
-                backgroundColor={"#ffffff"}
-                penColor={"black"}
-                webStyle={`
-                    .m-signature-pad--footer {display: none; margin: 0px;}
-                    .m-signature-pad {box-shadow: none; border: none; margin-left: 0px; margin-top: 0px;}
-                    body,html {width: 100%; height: 100%;}
-                `}
-              />
-            </View>
-
-            {/* Footer */}
-            <View className="flex-row p-5 gap-3 bg-white dark:bg-slate-900 border-t border-slate-50 dark:border-slate-800">
-              <TouchableOpacity
-                onPress={handleClear}
-                className="flex-1 py-4 bg-slate-100 dark:bg-slate-800 rounded-xl items-center"
-              >
-                <Text className="font-bold text-slate-700 dark:text-slate-300">
-                  Clear
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={handleEnd}
-                className="flex-1 py-4 bg-blue-600 rounded-xl items-center"
-              >
-                <Text className="font-bold text-white">Save Signature</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
+          {renderContent()}
         </View>
       </Modal>
     </View>

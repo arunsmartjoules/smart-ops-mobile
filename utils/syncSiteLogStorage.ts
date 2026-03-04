@@ -12,6 +12,16 @@ const SITE_LOG_SYNC_STATUS_KEY = "@site_log_sync_status";
 const CHILLER_DELETION_QUEUE_KEY = "@chiller_deletion_queue";
 const SITE_LOG_DELETION_QUEUE_KEY = "@site_log_deletion_queue";
 
+const normalizeLogName = (serverLogName: string): string => {
+  if (!serverLogName) return serverLogName;
+  const lower = serverLogName.toLowerCase();
+  if (lower.includes("temp")) return "Temp RH";
+  if (lower.includes("chemical")) return "Chemical Dosing";
+  if (lower.includes("chiller")) return "Chiller Logs";
+  if (lower.includes("water")) return "Water";
+  return serverLogName;
+};
+
 export interface SiteLogSyncStatus {
   lastSynced: string | null;
   pendingCount: number;
@@ -190,6 +200,8 @@ export async function syncPendingSiteLogs(
               tds: log.tds,
               ph: log.ph,
               hardness: log.hardness,
+              task_name: log.taskName,
+              status: log.status || "Completed",
               chemical_dosing: log.chemicalDosing,
               remarks: log.remarks,
               signature: log.signature,
@@ -337,66 +349,87 @@ export async function pullRecentSiteLogs(
       const logs = result.data || [];
 
       if (logs.length > 0) {
+        // Fetch existing records in batch
+        const serverIds = logs.map((l: any) => l.id);
+        const existingRecords = await siteLogCollection
+          .query(Q.where("server_id", Q.oneOf(serverIds)))
+          .fetch();
+        const localMap = new Map(existingRecords.map((r) => [r.serverId, r]));
+
         await database.write(async () => {
+          const batch: any[] = [];
           for (const logData of logs) {
-            // Check if exists
-            const existing = await siteLogCollection
-              .query(Q.where("server_id", logData.id))
-              .fetch();
+            const existing = localMap.get(logData.id);
 
             const safeNum = (val: any) =>
               val !== undefined && val !== null && val !== ""
                 ? Number(val)
                 : null;
 
-            if (existing.length > 0) {
-              await existing[0].update((r) => {
-                r.siteCode = (logData.site_code || logData.site_id) ?? "";
-                r.executorId = logData.executor_id;
-                r.logName = logData.log_name;
-                r.taskName = logData.task_name;
-                r.temperature = safeNum(logData.temperature);
-                r.rh = safeNum(logData.rh);
-                r.tds = safeNum(logData.tds);
-                r.ph = safeNum(logData.ph);
-                r.hardness = safeNum(logData.hardness);
-                r.chemicalDosing = logData.chemical_dosing;
-                r.remarks = logData.remarks;
-                r.signature = logData.signature;
-                r.entryTime = logData.entry_time
-                  ? Number(new Date(logData.entry_time))
-                  : null;
-                r.endTime = logData.end_time
-                  ? Number(new Date(logData.end_time))
-                  : null;
-                r.isSynced = true;
-              });
+            if (existing) {
+              batch.push(
+                existing.prepareUpdate((r) => {
+                  r.siteCode = (logData.site_code || logData.site_id) ?? "";
+                  r.executorId = logData.executor_id;
+                  r.logName = normalizeLogName(logData.log_name);
+                  r.taskName = logData.task_name;
+                  r.temperature = safeNum(logData.temperature);
+                  r.rh = safeNum(logData.rh);
+                  r.tds = safeNum(logData.tds);
+                  r.ph = safeNum(logData.ph);
+                  r.hardness = safeNum(logData.hardness);
+                  r.chemicalDosing = logData.chemical_dosing;
+                  r.remarks = logData.remarks;
+                  // Only update signature if it exists in server response
+                  if (logData.signature) {
+                    r.signature = logData.signature;
+                  }
+                  r.entryTime = logData.entry_time
+                    ? Number(new Date(logData.entry_time))
+                    : null;
+                  r.endTime = logData.end_time
+                    ? Number(new Date(logData.end_time))
+                    : null;
+                  r.status = logData.status;
+                  r.isSynced = true;
+                  if (logData.created_at) {
+                    r.createdAt = new Date(logData.created_at);
+                  }
+                }),
+              );
             } else {
-              await siteLogCollection.create((r) => {
-                r.serverId = logData.id;
-                r.siteCode = (logData.site_code || logData.site_id) ?? "";
-                r.executorId = logData.executor_id;
-                r.logName = logData.log_name;
-                r.taskName = logData.task_name;
-                r.temperature = safeNum(logData.temperature);
-                r.rh = safeNum(logData.rh);
-                r.tds = safeNum(logData.tds);
-                r.ph = safeNum(logData.ph);
-                r.hardness = safeNum(logData.hardness);
-                r.chemicalDosing = logData.chemical_dosing;
-                r.remarks = logData.remarks;
-                r.signature = logData.signature;
-                r.entryTime = logData.entry_time
-                  ? Number(new Date(logData.entry_time))
-                  : null;
-                r.endTime = logData.end_time
-                  ? Number(new Date(logData.end_time))
-                  : null;
-                r.isSynced = true;
-              });
+              batch.push(
+                siteLogCollection.prepareCreate((r) => {
+                  r.serverId = logData.id;
+                  r.siteCode = (logData.site_code || logData.site_id) ?? "";
+                  r.executorId = logData.executor_id;
+                  r.logName = normalizeLogName(logData.log_name);
+                  r.taskName = logData.task_name;
+                  r.temperature = safeNum(logData.temperature);
+                  r.rh = safeNum(logData.rh);
+                  r.tds = safeNum(logData.tds);
+                  r.ph = safeNum(logData.ph);
+                  r.hardness = safeNum(logData.hardness);
+                  r.chemicalDosing = logData.chemical_dosing;
+                  r.remarks = logData.remarks;
+                  r.signature = logData.signature;
+                  r.entryTime = logData.entry_time
+                    ? Number(new Date(logData.entry_time))
+                    : null;
+                  r.endTime = logData.end_time
+                    ? Number(new Date(logData.end_time))
+                    : null;
+                  r.status = logData.status;
+                  r.isSynced = true;
+                  if (logData.created_at) {
+                    r.createdAt = new Date(logData.created_at);
+                  }
+                }),
+              );
             }
             pulled++;
           }
+          await database.batch(batch);
         });
       }
     }
@@ -437,11 +470,17 @@ export async function pullRecentChillerReadings(
       const logs = result.data || [];
 
       if (logs.length > 0) {
+        // Fetch existing records in batch
+        const serverIds = logs.map((l: any) => l.id);
+        const existingRecords = await chillerReadingCollection
+          .query(Q.where("server_id", Q.oneOf(serverIds)))
+          .fetch();
+        const localMap = new Map(existingRecords.map((r) => [r.serverId, r]));
+
         await database.write(async () => {
+          const batch: any[] = [];
           for (const serverLog of logs) {
-            const existing = await chillerReadingCollection
-              .query(Q.where("server_id", serverLog.id))
-              .fetch();
+            const existing = localMap.get(serverLog.id);
 
             const readingTime = serverLog.reading_time
               ? new Date(serverLog.reading_time).getTime()
@@ -458,142 +497,151 @@ export async function pullRecentChillerReadings(
                 ? Number(val)
                 : null;
 
-            if (existing.length > 0) {
-              await existing[0].update((record) => {
-                record.siteCode = serverLog.site_code || record.siteCode;
-                record.chillerId = serverLog.chiller_id;
-                record.equipmentId = serverLog.equipment_id;
-                record.assetName = serverLog.asset_name;
-                record.assignedTo = serverLog.assigned_to;
-                record.assetType = serverLog.asset_type;
-                record.executorId = serverLog.executor_id || "unknown";
-                record.reading_time = readingTime;
-                record.start_datetime = startDateTime;
-                record.end_datetime = endDateTime;
-                record.condenserInletTemp = safeNum(
-                  serverLog.condenser_inlet_temp,
-                );
-                record.condenserOutletTemp = safeNum(
-                  serverLog.condenser_outlet_temp,
-                );
-                record.evaporatorInletTemp = safeNum(
-                  serverLog.evaporator_inlet_temp,
-                );
-                record.evaporatorOutletTemp = safeNum(
-                  serverLog.evaporator_outlet_temp,
-                );
-                record.compressorSuctionTemp = safeNum(
-                  serverLog.compressor_suction_temp,
-                );
-                record.motorTemperature = safeNum(serverLog.motor_temperature);
-                record.saturatedCondenserTemp = safeNum(
-                  serverLog.saturated_condenser_temp,
-                );
-                record.saturatedSuctionTemp = safeNum(
-                  serverLog.saturated_suction_temp,
-                );
-                record.setPointCelsius = safeNum(serverLog.set_point_celsius);
-                record.dischargePressure = safeNum(
-                  serverLog.discharge_pressure,
-                );
-                record.mainSuctionPressure = safeNum(
-                  serverLog.main_suction_pressure,
-                );
-                record.oilPressure = safeNum(serverLog.oil_pressure);
-                record.oilPressureDifference = safeNum(
-                  serverLog.oil_pressure_difference,
-                );
-                record.condenserInletPressure = safeNum(
-                  serverLog.condenser_inlet_pressure,
-                );
-                record.condenserOutletPressure = safeNum(
-                  serverLog.condenser_outlet_pressure,
-                );
-                record.evaporatorInletPressure = safeNum(
-                  serverLog.evaporator_inlet_pressure,
-                );
-                record.evaporatorOutletPressure = safeNum(
-                  serverLog.evaporator_outlet_pressure,
-                );
-                record.compressorLoadPercentage = safeNum(
-                  serverLog.compressor_load_percentage,
-                );
-                record.inlineBtuMeter = safeNum(serverLog.inline_btu_meter);
-                record.remarks = serverLog.remarks;
-                record.status = serverLog.status || "Completed";
-                record.isSynced = true;
-              });
+            if (existing) {
+              batch.push(
+                existing.prepareUpdate((record) => {
+                  record.siteCode = serverLog.site_code || record.siteCode;
+                  record.chillerId = serverLog.chiller_id;
+                  record.equipmentId = serverLog.equipment_id;
+                  record.assetName = serverLog.asset_name;
+                  record.assignedTo = serverLog.assigned_to;
+                  record.assetType = serverLog.asset_type;
+                  record.executorId = serverLog.executor_id || "unknown";
+                  record.reading_time = readingTime;
+                  record.start_datetime = startDateTime;
+                  record.end_datetime = endDateTime;
+                  record.condenserInletTemp = safeNum(
+                    serverLog.condenser_inlet_temp,
+                  );
+                  record.condenserOutletTemp = safeNum(
+                    serverLog.condenser_outlet_temp,
+                  );
+                  record.evaporatorInletTemp = safeNum(
+                    serverLog.evaporator_inlet_temp,
+                  );
+                  record.evaporatorOutletTemp = safeNum(
+                    serverLog.evaporator_outlet_temp,
+                  );
+                  record.compressorSuctionTemp = safeNum(
+                    serverLog.compressor_suction_temp,
+                  );
+                  record.motorTemperature = safeNum(
+                    serverLog.motor_temperature,
+                  );
+                  record.saturatedCondenserTemp = safeNum(
+                    serverLog.saturated_condenser_temp,
+                  );
+                  record.saturatedSuctionTemp = safeNum(
+                    serverLog.saturated_suction_temp,
+                  );
+                  record.setPointCelsius = safeNum(serverLog.set_point_celsius);
+                  record.dischargePressure = safeNum(
+                    serverLog.discharge_pressure,
+                  );
+                  record.mainSuctionPressure = safeNum(
+                    serverLog.main_suction_pressure,
+                  );
+                  record.oilPressure = safeNum(serverLog.oil_pressure);
+                  record.oilPressureDifference = safeNum(
+                    serverLog.oil_pressure_difference,
+                  );
+                  record.condenserInletPressure = safeNum(
+                    serverLog.condenser_inlet_pressure,
+                  );
+                  record.condenserOutletPressure = safeNum(
+                    serverLog.condenser_outlet_pressure,
+                  );
+                  record.evaporatorInletPressure = safeNum(
+                    serverLog.evaporator_inlet_pressure,
+                  );
+                  record.evaporatorOutletPressure = safeNum(
+                    serverLog.evaporator_outlet_pressure,
+                  );
+                  record.compressorLoadPercentage = safeNum(
+                    serverLog.compressor_load_percentage,
+                  );
+                  record.inlineBtuMeter = safeNum(serverLog.inline_btu_meter);
+                  record.remarks = serverLog.remarks;
+                  record.status = serverLog.status || "Completed";
+                  record.isSynced = true;
+                }),
+              );
             } else {
-              await chillerReadingCollection.create((record) => {
-                record.serverId = serverLog.id;
-                record.siteCode = serverLog.site_code;
-                record.chillerId = serverLog.chiller_id;
-                record.equipmentId = serverLog.equipment_id;
-                record.assetName = serverLog.asset_name;
-                record.assignedTo = serverLog.assigned_to;
-                record.assetType = serverLog.asset_type;
-                record.executorId = serverLog.executor_id || "unknown";
-                record.dateShift = serverLog.date_shift;
-                record.reading_time = readingTime;
-                record.start_datetime = startDateTime;
-                record.end_datetime = endDateTime;
-                record.condenserInletTemp = safeNum(
-                  serverLog.condenser_inlet_temp,
-                );
-                record.condenserOutletTemp = safeNum(
-                  serverLog.condenser_outlet_temp,
-                );
-                record.evaporatorInletTemp = safeNum(
-                  serverLog.evaporator_inlet_temp,
-                );
-                record.evaporatorOutletTemp = safeNum(
-                  serverLog.evaporator_outlet_temp,
-                );
-                record.compressorSuctionTemp = safeNum(
-                  serverLog.compressor_suction_temp,
-                );
-                record.motorTemperature = safeNum(serverLog.motor_temperature);
-                record.saturatedCondenserTemp = safeNum(
-                  serverLog.saturated_condenser_temp,
-                );
-                record.saturatedSuctionTemp = safeNum(
-                  serverLog.saturated_suction_temp,
-                );
-                record.setPointCelsius = safeNum(serverLog.set_point_celsius);
-                record.dischargePressure = safeNum(
-                  serverLog.discharge_pressure,
-                );
-                record.mainSuctionPressure = safeNum(
-                  serverLog.main_suction_pressure,
-                );
-                record.oilPressure = safeNum(serverLog.oil_pressure);
-                record.oilPressureDifference = safeNum(
-                  serverLog.oil_pressure_difference,
-                );
-                record.condenserInletPressure = safeNum(
-                  serverLog.condenser_inlet_pressure,
-                );
-                record.condenserOutletPressure = safeNum(
-                  serverLog.condenser_outlet_pressure,
-                );
-                record.evaporatorInletPressure = safeNum(
-                  serverLog.evaporator_inlet_pressure,
-                );
-                record.evaporatorOutletPressure = safeNum(
-                  serverLog.evaporator_outlet_pressure,
-                );
-                record.compressorLoadPercentage = safeNum(
-                  serverLog.compressor_load_percentage,
-                );
-                record.inlineBtuMeter = safeNum(serverLog.inline_btu_meter);
-                record.remarks = serverLog.remarks;
-                record.signatureText = serverLog.signature_text;
-                record.status = serverLog.status || "Completed";
-                record.isSynced = true;
-              });
+              batch.push(
+                chillerReadingCollection.prepareCreate((record) => {
+                  record.serverId = serverLog.id;
+                  record.siteCode = serverLog.site_code;
+                  record.chillerId = serverLog.chiller_id;
+                  record.equipmentId = serverLog.equipment_id;
+                  record.assetName = serverLog.asset_name;
+                  record.assignedTo = serverLog.assigned_to;
+                  record.assetType = serverLog.asset_type;
+                  record.executorId = serverLog.executor_id || "unknown";
+                  record.dateShift = serverLog.date_shift;
+                  record.reading_time = readingTime;
+                  record.start_datetime = startDateTime;
+                  record.end_datetime = endDateTime;
+                  record.condenserInletTemp = safeNum(
+                    serverLog.condenser_inlet_temp,
+                  );
+                  record.condenserOutletTemp = safeNum(
+                    serverLog.condenser_outlet_temp,
+                  );
+                  record.evaporatorInletTemp = safeNum(
+                    serverLog.evaporator_inlet_temp,
+                  );
+                  record.evaporatorOutletTemp = safeNum(
+                    serverLog.evaporator_outlet_temp,
+                  );
+                  record.compressorSuctionTemp = safeNum(
+                    serverLog.compressor_suction_temp,
+                  );
+                  record.motorTemperature = safeNum(
+                    serverLog.motor_temperature,
+                  );
+                  record.saturatedCondenserTemp = safeNum(
+                    serverLog.saturated_condenser_temp,
+                  );
+                  record.saturatedSuctionTemp = safeNum(
+                    serverLog.saturated_suction_temp,
+                  );
+                  record.setPointCelsius = safeNum(serverLog.set_point_celsius);
+                  record.dischargePressure = safeNum(
+                    serverLog.discharge_pressure,
+                  );
+                  record.mainSuctionPressure = safeNum(
+                    serverLog.main_suction_pressure,
+                  );
+                  record.oilPressure = safeNum(serverLog.oil_pressure);
+                  record.oilPressureDifference = safeNum(
+                    serverLog.oil_pressure_difference,
+                  );
+                  record.condenserInletPressure = safeNum(
+                    serverLog.condenser_inlet_pressure,
+                  );
+                  record.condenserOutletPressure = safeNum(
+                    serverLog.condenser_outlet_pressure,
+                  );
+                  record.evaporatorInletPressure = safeNum(
+                    serverLog.evaporator_inlet_pressure,
+                  );
+                  record.evaporatorOutletPressure = safeNum(
+                    serverLog.evaporator_outlet_pressure,
+                  );
+                  record.compressorLoadPercentage = safeNum(
+                    serverLog.compressor_load_percentage,
+                  );
+                  record.inlineBtuMeter = safeNum(serverLog.inline_btu_meter);
+                  record.remarks = serverLog.remarks;
+                  record.signatureText = serverLog.signature_text;
+                  record.status = serverLog.status || "Completed";
+                  record.isSynced = true;
+                }),
+              );
             }
             pulled++;
           }
+          await database.batch(batch);
         });
       }
     }

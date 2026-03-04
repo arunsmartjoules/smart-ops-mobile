@@ -1,4 +1,5 @@
 import React, { useCallback } from "react";
+import { format } from "date-fns";
 import { View, Text, TouchableOpacity } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
@@ -133,12 +134,9 @@ export default function Profile() {
                     </Text>
                     <Text className="text-slate-900 dark:text-slate-50 text-xs font-medium">
                       {(user as any)?.created_at
-                        ? new Date((user as any).created_at).toLocaleDateString(
-                            "en-US",
-                            {
-                              month: "short",
-                              year: "numeric",
-                            },
+                        ? format(
+                            new Date((user as any).created_at),
+                            "MMM yyyy",
                           )
                         : "N/A"}
                     </Text>

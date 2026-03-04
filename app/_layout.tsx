@@ -70,6 +70,15 @@ export default function RootLayout() {
                 <Stack.Screen name="notifications" />
                 <Stack.Screen name="new-sitelog" />
                 <Stack.Screen name="sitelog-detail" />
+                <Stack.Screen name="chemical-entry" />
+                <Stack.Screen name="temp-rh-entry" />
+                <Stack.Screen name="water-entry" />
+                <Stack.Screen name="chemical" />
+                <Stack.Screen name="temp-rh" />
+                <Stack.Screen name="water" />
+                <Stack.Screen name="chiller" />
+                <Stack.Screen name="history/site-history" />
+                <Stack.Screen name="pm-execution" />
               </Stack>
             </ThemeProvider>
           </AuthGuard>

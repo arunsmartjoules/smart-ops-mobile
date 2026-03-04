@@ -1,7 +1,7 @@
 import { appSchema, tableSchema } from "@nozbe/watermelondb";
 
 export const schema = appSchema({
-  version: 11,
+  version: 12,
   tables: [
     // Tickets for offline access and updates
     tableSchema({
@@ -181,6 +181,62 @@ export const schema = appSchema({
         { name: "progress", type: "number" },
         { name: "assigned_to_name", type: "string", isOptional: true },
         { name: "start_due_date", type: "number", isOptional: true },
+        { name: "maintenance_id", type: "string", isOptional: true },
+        { name: "client_sign", type: "string", isOptional: true },
+        { name: "before_image", type: "string", isOptional: true },
+        { name: "after_image", type: "string", isOptional: true },
+        { name: "is_synced", type: "boolean" },
+        { name: "created_at", type: "number" },
+        { name: "updated_at", type: "number" },
+      ],
+    }),
+    tableSchema({
+      name: "pm_checklist_master",
+      columns: [
+        {
+          name: "server_id",
+          type: "string",
+          isOptional: true,
+          isIndexed: true,
+        },
+        { name: "title", type: "string" },
+        { name: "asset_type", type: "string", isOptional: true },
+        { name: "frequency", type: "string", isOptional: true },
+        { name: "cached_at", type: "number" },
+      ],
+    }),
+    tableSchema({
+      name: "pm_checklist_items",
+      columns: [
+        {
+          name: "server_id",
+          type: "string",
+          isOptional: true,
+          isIndexed: true,
+        },
+        { name: "checklist_master_id", type: "string", isIndexed: true },
+        { name: "task_name", type: "string" },
+        { name: "field_type", type: "string", isOptional: true },
+        { name: "sequence_no", type: "number", isOptional: true },
+        { name: "image_mandatory", type: "boolean", isOptional: true },
+        { name: "remarks_mandatory", type: "boolean", isOptional: true },
+        { name: "cached_at", type: "number" },
+      ],
+    }),
+    tableSchema({
+      name: "pm_responses",
+      columns: [
+        {
+          name: "server_id",
+          type: "string",
+          isOptional: true,
+          isIndexed: true,
+        },
+        { name: "instance_id", type: "string", isIndexed: true },
+        { name: "checklist_item_id", type: "string", isIndexed: true },
+        { name: "response_value", type: "string", isOptional: true },
+        { name: "remarks", type: "string", isOptional: true },
+        { name: "image_url", type: "string", isOptional: true },
         { name: "is_synced", type: "boolean" },
         { name: "created_at", type: "number" },
         { name: "updated_at", type: "number" },

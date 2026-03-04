@@ -14,6 +14,10 @@ export default class PMInstance extends Model {
   @field("progress") progress!: number;
   @text("assigned_to_name") assignedToName!: string | null;
   @field("start_due_date") startDueDate!: number | null;
+  @text("maintenance_id") maintenanceId!: string | null;
+  @text("client_sign") clientSign!: string | null;
+  @text("before_image") beforeImage!: string | null;
+  @text("after_image") afterImage!: string | null;
   @field("is_synced") isSynced!: boolean;
 
   @readonly @date("created_at") createdAt!: Date;

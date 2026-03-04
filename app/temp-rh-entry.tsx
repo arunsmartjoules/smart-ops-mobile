@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   View,
   Text,
@@ -7,15 +7,15 @@ import {
   TextInput,
   Alert,
   ActivityIndicator,
+  Image,
+  Modal,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { router, useLocalSearchParams } from "expo-router";
 import {
   ChevronLeft,
-  Droplets,
-  Info,
-  Activity,
-  Beaker,
+  Thermometer,
+  CloudRain,
   Camera,
   Trash2,
 } from "lucide-react-native";
@@ -23,34 +23,59 @@ import SiteLogService from "@/services/SiteLogService";
 import { useAuth } from "@/contexts/AuthContext";
 import * as ImagePicker from "expo-image-picker";
 import { StorageService } from "@/services/StorageService";
-import { Image } from "react-native";
+import SignaturePad from "@/components/SignaturePad";
 
-export default function WaterEntry() {
+export default function TempRHEntry() {
   const { user } = useAuth();
   const params = useLocalSearchParams<{
-    areaId: string;
-    areaName: string;
-    siteCode: string;
+    id?: string;
+    areaId?: string;
+    areaName?: string;
+    siteCode?: string;
+    mode?: string;
   }>();
 
+  const isEditMode = params.mode === "edit" && !!params.id;
+
   const [formData, setFormData] = useState({
-    tds: "",
-    ph: "",
-    hardness: "",
+    temperature: "",
+    rh: "",
     remarks: "",
     signature: "",
     attachment: "",
   });
-  const [entryTime] = useState(new Date().getTime()); // Start timer on mount
+  const [entryTime] = useState(new Date().getTime());
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [loadingEdit, setLoadingEdit] = useState(false);
+  const [signatureModalVisible, setSignatureModalVisible] = useState(false);
 
-  // Pre-fill remarks if empty
-  React.useEffect(() => {
-    if (!formData.remarks && params.areaName) {
-      setFormData((prev) => ({ ...prev, remarks: `Area: ${params.areaName}` }));
+  // Load existing data in edit mode
+  useEffect(() => {
+    if (isEditMode && params.id) {
+      loadExistingLog(params.id);
     }
-  }, [params.areaName]);
+  }, [params.id, isEditMode]);
+
+  const loadExistingLog = async (id: string) => {
+    try {
+      setLoadingEdit(true);
+      const log = await SiteLogService.getSiteLogById(id);
+      if (log) {
+        setFormData({
+          temperature: log.temperature != null ? String(log.temperature) : "",
+          rh: log.rh != null ? String(log.rh) : "",
+          remarks: log.remarks || "",
+          signature: log.signature || "",
+          attachment: log.attachment || "",
+        });
+      }
+    } catch (e) {
+      console.error("Failed to load log for edit", e);
+    } finally {
+      setLoadingEdit(false);
+    }
+  };
 
   const updateField = (field: string, value: string) => {
     setFormData((prev) => ({ ...prev, [field]: value }));
@@ -61,20 +86,16 @@ export default function WaterEntry() {
       setUploading(true);
       try {
         const uri = result.assets[0].uri;
-        const filename = `water/${params.siteCode}/${Date.now()}.jpg`;
+        const filename = `temprh/${params.siteCode}/${Date.now()}.jpg`;
         const publicUrl = await StorageService.uploadFile(
           "site-log-attachments",
           filename,
           uri,
         );
-
         if (publicUrl) {
           updateField("attachment", publicUrl);
         } else {
-          Alert.alert(
-            "Upload Failed",
-            "Could not upload image. Please try again.",
-          );
+          Alert.alert("Upload Failed", "Could not upload image.");
         }
       } catch (e: any) {
         Alert.alert("Error", e.message);
@@ -115,47 +136,67 @@ export default function WaterEntry() {
     ]);
   };
 
-  const handleSave = async () => {
-    if (!formData.signature || formData.signature.trim().length === 0) {
-      Alert.alert("Error", "Signature is mandatory");
-      return;
-    }
+  const handleCompletePress = () => {
+    // Open signature modal
+    setSignatureModalVisible(true);
+  };
 
-    const hasData = !!(
-      (formData.tds && formData.tds.trim().length > 0) ||
-      (formData.ph && formData.ph.trim().length > 0) ||
-      (formData.hardness && formData.hardness.trim().length > 0)
-    );
-
-    if (!hasData && !formData.remarks) {
-      Alert.alert("Error", "Please enter at least one value or a remark");
-      return;
-    }
+  const handleSaveWithSignature = async (sig: string) => {
+    setSignatureModalVisible(false);
 
     try {
       setSaving(true);
       const endTime = new Date().getTime();
 
-      await SiteLogService.saveSiteLog({
-        siteCode: params.siteCode,
-        executorId: user?.user_id || user?.id || "unknown",
-        assignedTo: user?.name || user?.user_id || "unknown", // Capture login user
-        logName: "Water",
-        taskName: params.areaName,
-        tds: formData.tds ? parseFloat(formData.tds) : null,
-        ph: formData.ph ? parseFloat(formData.ph) : null,
-        hardness: formData.hardness ? parseFloat(formData.hardness) : null,
-        remarks: formData.remarks,
-        signature: formData.signature,
-        entryTime: entryTime,
-        endTime: endTime,
-        status: "Completed",
-        attachment: formData.attachment,
-      });
+      // Determine status
+      let status: "Open" | "Inprogress" | "Completed" = "Open";
+      const hasTemp = !!(
+        formData.temperature && formData.temperature.trim().length > 0
+      );
+      const hasRH = !!(formData.rh && formData.rh.trim().length > 0);
 
-      Alert.alert("Success", "Log saved successfully", [
-        { text: "OK", onPress: () => router.back() },
-      ]);
+      if (hasTemp && hasRH) {
+        status = "Completed";
+      } else if (hasTemp || hasRH) {
+        status = "Inprogress";
+      }
+
+      if (isEditMode && params.id) {
+        // Update existing log
+        await SiteLogService.updateSiteLog(params.id, {
+          temperature: hasTemp ? parseFloat(formData.temperature) : null,
+          rh: hasRH ? parseFloat(formData.rh) : null,
+          remarks: formData.remarks,
+          signature: sig,
+          endTime: endTime,
+          status: status,
+          attachment: formData.attachment,
+          assignedTo: user?.name || user?.user_id || "unknown",
+        });
+      } else {
+        // Create new log
+        await SiteLogService.saveSiteLog({
+          siteCode: params.siteCode,
+          executorId: user?.user_id || user?.id || "unknown",
+          assignedTo: user?.name || user?.user_id || "unknown",
+          logName: "Temp RH",
+          taskName: params.areaName,
+          temperature: hasTemp ? parseFloat(formData.temperature) : null,
+          rh: hasRH ? parseFloat(formData.rh) : null,
+          remarks: formData.remarks,
+          signature: sig,
+          entryTime: entryTime,
+          endTime: endTime,
+          status: status,
+          attachment: formData.attachment,
+        });
+      }
+
+      Alert.alert(
+        "Success",
+        isEditMode ? "Log updated successfully" : "Log saved successfully",
+        [{ text: "OK", onPress: () => router.back() }],
+      );
     } catch (error: any) {
       Alert.alert("Error", error.message || "Failed to save log");
     } finally {
@@ -197,6 +238,15 @@ export default function WaterEntry() {
     </View>
   );
 
+  if (loadingEdit) {
+    return (
+      <View className="flex-1 bg-slate-50 dark:bg-slate-950 items-center justify-center">
+        <ActivityIndicator size="large" color="#dc2626" />
+        <Text className="text-slate-500 mt-4 font-bold">Loading log...</Text>
+      </View>
+    );
+  }
+
   return (
     <View className="flex-1 bg-slate-50 dark:bg-slate-950">
       <SafeAreaView className="flex-1" edges={["top"]}>
@@ -210,10 +260,10 @@ export default function WaterEntry() {
           </TouchableOpacity>
           <View className="items-center">
             <Text className="text-slate-900 dark:text-slate-50 font-bold text-lg">
-              Water Parameters
+              {params.areaName || "Temp/RH Log"}
             </Text>
             <Text className="text-slate-400 text-[10px] font-bold uppercase tracking-wider">
-              {params.areaName || "New Entry"}
+              {isEditMode ? "Edit Entry" : "New Entry"}
             </Text>
           </View>
           <View className="w-10" />
@@ -222,25 +272,18 @@ export default function WaterEntry() {
         <ScrollView className="flex-1 p-5" showsVerticalScrollIndicator={false}>
           <View className="mt-4">
             {renderInput(
-              "TDS",
-              "tds",
-              "150",
-              <Droplets size={20} color="#3b82f6" />,
-              "ppm",
+              "Temperature",
+              "temperature",
+              "24.5",
+              <Thermometer size={20} color="#ef4444" />,
+              "°C",
             )}
             {renderInput(
-              "pH Level",
-              "ph",
-              "7.0",
-              <Activity size={20} color="#10b981" />,
-              "pH",
-            )}
-            {renderInput(
-              "Hardness",
-              "hardness",
-              "100",
-              <Beaker size={20} color="#8b5cf6" />,
-              "ppm",
+              "Relative Humidity",
+              "rh",
+              "55",
+              <CloudRain size={20} color="#3b82f6" />,
+              "%",
             )}
 
             <View className="mb-6 mt-2">
@@ -303,53 +346,66 @@ export default function WaterEntry() {
               />
             </View>
 
-            <View className="mb-8">
-              <Text className="text-slate-500 dark:text-slate-400 text-[10px] font-bold uppercase tracking-widest mb-2 ml-1">
-                Signature (Required)
-              </Text>
-              <TextInput
-                value={formData.signature}
-                onChangeText={(val) => updateField("signature", val)}
-                placeholder="Type name to sign..."
-                className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-100 dark:border-slate-800 font-bold text-slate-900 dark:text-slate-50"
-                style={{
-                  shadowColor: "#000",
-                  shadowOffset: { width: 0, height: 1 },
-                  shadowOpacity: 0.05,
-                  shadowRadius: 4,
-                  elevation: 2,
-                }}
-              />
-            </View>
-
-            <TouchableOpacity
-              onPress={handleSave}
-              disabled={saving}
-              activeOpacity={0.8}
-              className={`py-4 rounded-xl flex-row items-center justify-center mb-10 ${saving ? "bg-slate-200" : "bg-blue-600 shadow-md shadow-blue-600/20"}`}
-              style={
-                !saving
-                  ? {
-                      shadowColor: "#2563eb",
-                      shadowOffset: { width: 0, height: 4 },
-                      shadowOpacity: 0.2,
-                      shadowRadius: 8,
-                      elevation: 4,
-                    }
-                  : {}
-              }
-            >
-              {saving ? (
-                <ActivityIndicator color="white" />
-              ) : (
-                <Text className="text-white font-bold text-base uppercase tracking-widest">
-                  Submit Log
-                </Text>
-              )}
-            </TouchableOpacity>
+            {/* Spacer for fixed bottom button */}
+            <View className="h-24" />
           </View>
         </ScrollView>
+
+        {/* Fixed Bottom Submit Button */}
+        <View className="absolute bottom-0 left-0 right-0 bg-white dark:bg-slate-900 border-t border-slate-100 dark:border-slate-800 px-5 pb-8 pt-4">
+          <TouchableOpacity
+            onPress={handleCompletePress}
+            disabled={saving}
+            activeOpacity={0.8}
+            className={`py-4 rounded-xl flex-row items-center justify-center ${saving ? "bg-slate-200" : "bg-red-600 shadow-md shadow-red-600/20"}`}
+            style={
+              !saving
+                ? {
+                    shadowColor: "#dc2626",
+                    shadowOffset: { width: 0, height: 4 },
+                    shadowOpacity: 0.2,
+                    shadowRadius: 8,
+                    elevation: 4,
+                  }
+                : {}
+            }
+          >
+            {saving ? (
+              <ActivityIndicator color="white" />
+            ) : (
+              <Text className="text-white font-bold text-base uppercase tracking-widest">
+                {isEditMode ? "Update Log" : "Complete & Sign"}
+              </Text>
+            )}
+          </TouchableOpacity>
+        </View>
       </SafeAreaView>
+
+      {/* Signature Modal */}
+      <Modal
+        visible={signatureModalVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setSignatureModalVisible(false)}
+      >
+        <View className="flex-1 bg-black/50 justify-end">
+          <View className="bg-white dark:bg-slate-900 rounded-t-3xl h-[60%] overflow-hidden">
+            <View className="flex-row items-center justify-between px-6 py-4 border-b border-slate-100 dark:border-slate-800">
+              <Text className="text-slate-900 dark:text-slate-50 font-bold text-lg">
+                Sign to {isEditMode ? "Update" : "Complete"}
+              </Text>
+              <TouchableOpacity onPress={() => setSignatureModalVisible(false)}>
+                <Text className="text-purple-600 font-bold">Close</Text>
+              </TouchableOpacity>
+            </View>
+            <SignaturePad
+              standalone
+              okText={isEditMode ? "Update Log" : "Complete Log"}
+              onOK={(sig: string) => handleSaveWithSignature(sig)}
+            />
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }

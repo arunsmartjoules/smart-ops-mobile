@@ -9,7 +9,8 @@
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.arundev2025.jouleops"
     },
     "android": {
       "adaptiveIcon": {
@@ -44,7 +45,23 @@
       "expo-font",
       "expo-web-browser",
       "expo-secure-store",
-      "@react-native-community/datetimepicker"
+      "@react-native-community/datetimepicker",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/images/android-icon-monochrome.png",
+          "color": "#1A73E8",
+          "defaultChannel": "default"
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "SmartOps needs your location to log attendance at your work site."
+        }
+      ],
+      "expo-task-manager",
+      "expo-background-task"
     ],
     "experiments": {
       "typedRoutes": true

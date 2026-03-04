@@ -51,6 +51,7 @@ import { useNetworkStatus } from "@/hooks/useNetworkStatus";
 import logger from "@/utils/logger";
 
 import { API_BASE_URL } from "../constants/api";
+import { format } from "date-fns";
 
 const API_URL = API_BASE_URL;
 
@@ -216,7 +217,7 @@ export default function AppSettings() {
     if (diffMins < 1) return "Just now";
     if (diffMins < 60) return `${diffMins}m ago`;
     if (diffHours < 24) return `${diffHours}h ago`;
-    return date.toLocaleDateString();
+    return format(date, "dd MMM yyyy");
   }, []);
 
   const totalPending = useMemo(

@@ -74,7 +74,7 @@ const AdvancedFilterModal = ({
   if (!visible) return null;
 
   return (
-    <Modal visible={visible} animationType="slide" transparent={true}>
+    <Modal visible={visible} animationType="slide" transparent={true} statusBarTranslucent={true}>
       <View
         style={{
           flex: 1,

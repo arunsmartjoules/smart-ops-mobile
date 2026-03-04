@@ -17,6 +17,10 @@ export interface TaskItem {
   meta?: any;
 }
 
+const taskCache: Record<string, string[]> = {};
+const lastCacheTime: Record<string, number> = {};
+const CACHE_TTL = 1000 * 60 * 60; // 1 hour
+
 export const SiteConfigService = {
   /**
    * Get all Tasks (Areas) for a Site and Log Type.
@@ -24,57 +28,92 @@ export const SiteConfigService = {
    */
   async getLogTasks(siteCode: string, logName: string): Promise<TaskItem[]> {
     try {
-      // 1. Fetch distinct Task Names (Areas) from recent logs
-      const recentLogs = await siteLogCollection
-        .query(
-          Q.where("site_code", siteCode),
-          Q.where("log_name", logName),
-          Q.sortBy("created_at", Q.desc),
-          Q.take(500),
-        )
-        .fetch();
+      const cacheKey = `${siteCode}_${logName}`;
+      const now = Date.now();
+      let uniqueTaskNames: string[] = [];
 
-      const uniqueTasks = new Set<string>();
-      recentLogs.forEach((l) => {
-        if (l.taskName) uniqueTasks.add(l.taskName);
-      });
+      // 1. Fetch distinct Task Names (Areas) from recent logs (with caching)
+      if (taskCache[cacheKey] && now - lastCacheTime[cacheKey] < CACHE_TTL) {
+        uniqueTaskNames = taskCache[cacheKey];
+      } else {
+        const recentLogs = await siteLogCollection
+          .query(
+            Q.where("site_code", siteCode),
+            Q.where("log_name", logName),
+            Q.sortBy("created_at", Q.desc),
+            Q.take(500),
+          )
+          .fetch();
 
-      if (uniqueTasks.size === 0) {
+        const uniqueSet = new Set<string>();
+        recentLogs.forEach((l) => {
+          if (l.taskName) uniqueSet.add(l.taskName);
+        });
+        uniqueTaskNames = Array.from(uniqueSet);
+
+        // Update cache
+        taskCache[cacheKey] = uniqueTaskNames;
+        lastCacheTime[cacheKey] = now;
+      }
+
+      if (uniqueTaskNames.length === 0) {
         return [];
       }
 
-      // 2. Fetch logs for TODAY to check completion status
+      // 2. Fetch logs for TODAY + any Inprogress logs from the last 24h
+      const nowTs = Date.now();
       const start = startOfDay(new Date()).getTime();
       const end = endOfDay(new Date()).getTime();
+      const twentyFourHoursAgo = nowTs - 24 * 60 * 60 * 1000;
 
-      const todaysLogs = await siteLogCollection
+      const candidates = await siteLogCollection
         .query(
           Q.where("site_code", siteCode),
           Q.where("log_name", logName),
-          Q.where("created_at", Q.gte(start)),
-          Q.where("created_at", Q.lte(end)),
+          Q.where("created_at", Q.gte(twentyFourHoursAgo)),
+          Q.sortBy("created_at", Q.desc),
         )
         .fetch();
 
       // 3. Map to Task Items
-      const tasks: TaskItem[] = Array.from(uniqueTasks).map((taskName) => {
-        const completedLog = todaysLogs.find((l) => l.taskName === taskName);
+      const tasks: TaskItem[] = uniqueTaskNames.map((taskName) => {
+        // Find the latest log for this task
+        const latestLog = candidates.find((l) => l.taskName === taskName);
 
         // Determine status based on the log
         let status: "Open" | "Inprogress" | "Completed" = "Open";
-        if (completedLog) {
-          if (completedLog.status === "Completed") {
-            status = "Completed";
-          } else if (completedLog.status === "Inprogress") {
+        let meta: any = null;
+
+        if (latestLog) {
+          const rawStatus = (latestLog.status || "")
+            .toLowerCase()
+            .replace(/\s/g, "");
+
+          const isToday = latestLog.createdAt?.getTime() >= start && latestLog.createdAt?.getTime() <= end;
+
+          if (rawStatus === "inprogress") {
             status = "Inprogress";
-          } else if (!completedLog.status) {
-            // Backward compatibility
-            status = "Completed";
+          } else if (rawStatus === "completed" || !latestLog.status) {
+            // Only count as completed if it was done TODAY
+            status = isToday ? "Completed" : "Open";
+          }
+
+          // If in progress, include log data for pre-filling
+          if (status === "Inprogress") {
+            meta = {
+              temperature: latestLog.temperature,
+              rh: latestLog.rh,
+              tds: latestLog.tds,
+              ph: latestLog.ph,
+              hardness: latestLog.hardness,
+              chemicalDosing: latestLog.chemicalDosing,
+              remarks: latestLog.remarks,
+            };
           }
         }
 
         const isCompleted = status === "Completed";
-        const lastLogId = completedLog?.id;
+        const lastLogId = latestLog?.id;
 
         return {
           id: taskName,
@@ -83,6 +122,7 @@ export const SiteConfigService = {
           isCompleted,
           status,
           lastLogId,
+          meta,
         };
       });
 
@@ -132,19 +172,32 @@ export const SiteConfigService = {
           Q.where("site_code", siteCode),
           Q.where("created_at", Q.gte(start)),
           Q.where("created_at", Q.lte(end)),
+          Q.sortBy("created_at", Q.desc),
         )
         .fetch();
 
       const tasks: TaskItem[] = Array.from(uniqueChillers).map((chillerId) => {
-        const isCompleted = todaysReadings.some(
-          (r) => r.chillerId === chillerId,
-        );
+        const reading = todaysReadings.find((r) => r.chillerId === chillerId);
+
+        let status: "Open" | "Inprogress" | "Completed" = "Open";
+        if (reading) {
+          const rawStatus = (reading.status || "")
+            .toLowerCase()
+            .replace(/\s/g, "");
+          if (rawStatus === "completed" || !reading.status) {
+            status = "Completed";
+          } else if (rawStatus === "inprogress") {
+            status = "Inprogress";
+          }
+        }
+
+        const isCompleted = status === "Completed";
         return {
           id: chillerId,
           name: chillerId, // e.g. "CH-01"
           type: "asset",
           isCompleted,
-          status: isCompleted ? "Completed" : "Open",
+          status,
         };
       });
 

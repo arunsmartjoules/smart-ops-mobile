@@ -43,6 +43,7 @@ export default function SiteLogs() {
   const [filterVisible, setFilterVisible] = useState(false);
   const [fromDate, setFromDate] = useState<Date | null>(null);
   const [toDate, setToDate] = useState<Date | null>(null);
+  const [lastSync, setLastSync] = useState<Record<string, number>>({});
   const { isConnected } = useNetworkStatus();
 
   const fetchLogs = useCallback(async () => {
@@ -60,14 +61,13 @@ export default function SiteLogs() {
         );
         setAvailableSites(sites);
         const currentSite = sites.find((s) => s.site_code === lastSiteCode);
-        if (currentSite)
-          setSiteName(`${currentSite.site_code} - ${currentSite.name}`);
+        if (currentSite) setSiteName(currentSite.site_code);
 
         if (!lastSiteCode && sites.length > 0) {
           const firstSiteCode = sites[0].site_code;
           if (firstSiteCode) {
             setSiteCode(firstSiteCode);
-            setSiteName(`${sites[0].site_code} - ${sites[0].name}`);
+            setSiteName(sites[0].site_code);
             await AsyncStorage.setItem(storageKey, firstSiteCode);
             fetchLogs();
             return;
@@ -76,8 +76,12 @@ export default function SiteLogs() {
       }
 
       if (lastSiteCode) {
-        // ... fetching logic ...
-        if (isConnected) {
+        const now = Date.now();
+        const lastSyncTime = lastSync[lastSiteCode] || 0;
+        const shouldSync =
+          isConnected && (refreshing || now - lastSyncTime > 1000 * 60 * 10); // 10 minutes cooldown
+
+        if (shouldSync) {
           try {
             const pullOptions = {
               fromDate: fromDate?.getTime(),
@@ -87,6 +91,7 @@ export default function SiteLogs() {
               SiteLogService.pullSiteLogs(lastSiteCode, pullOptions),
               SiteLogService.pullChillerReadings(lastSiteCode, pullOptions),
             ]);
+            setLastSync((prev) => ({ ...prev, [lastSiteCode]: now }));
           } catch (e) {
             console.log("Sync warning", e);
           }
@@ -129,7 +134,7 @@ export default function SiteLogs() {
       id: "temp-rh",
       title: "Temp & Humidity",
       shortTitle: "Temp",
-      route: "/log-forms/temp-rh",
+      route: "/temp-rh",
       subtitle: "Monitoring Points",
       icon: Thermometer,
       colors: ["#ef4444", "#f87171"],
@@ -140,7 +145,7 @@ export default function SiteLogs() {
       id: "chiller",
       title: "Chiller Readings",
       shortTitle: "Chiller",
-      route: "/log-forms/chiller",
+      route: "/chiller",
       subtitle: "Performance Logs",
       icon: Snowflake,
       colors: ["#0d9488", "#14b8a6"],
@@ -151,7 +156,7 @@ export default function SiteLogs() {
       id: "water",
       title: "Water",
       shortTitle: "Water",
-      route: "/log-forms/water",
+      route: "/water",
       subtitle: "TDS, pH, Hardness",
       icon: Droplets,
       colors: ["#3b82f6", "#60a5fa"],
@@ -162,7 +167,7 @@ export default function SiteLogs() {
       id: "chemical",
       title: "Chemical Dosing",
       shortTitle: "Chemical",
-      route: "/log-forms/chemical",
+      route: "/chemical",
       subtitle: "Consumption Logs",
       icon: FlaskRound,
       colors: ["#8b5cf6", "#a78bfa"],
@@ -185,10 +190,12 @@ export default function SiteLogs() {
                 onPress={() => setFilterVisible(true)}
                 className="flex-row items-center"
               >
-                <MapPin size={22} color="#dc2626" />
+                <MapPin size={20} color="#dc2626" />
                 <Text
-                  className="text-slate-900 dark:text-slate-50 text-2xl font-bold ml-2 mr-1"
+                  className="text-slate-900 dark:text-slate-50 text-xl font-bold ml-2 mr-1 flex-shrink"
                   numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.8}
                 >
                   {siteName}
                 </Text>
@@ -413,7 +420,7 @@ export default function SiteLogs() {
         onSiteSelect={async (id) => {
           setSiteCode(id);
           const s = availableSites.find((site) => site.site_code === id);
-          if (s) setSiteName(`${s.site_code} - ${s.name}`);
+          if (s) setSiteName(s.site_code);
           await AsyncStorage.setItem(
             `last_site_${user?.id || user?.user_id}`,
             id,

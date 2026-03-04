@@ -11,6 +11,7 @@ import {
   StyleSheet,
   KeyboardAvoidingView,
   Platform,
+  Modal,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { router, useLocalSearchParams } from "expo-router";
@@ -88,6 +89,7 @@ export default function ChillerEntry() {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [signatureModalVisible, setSignatureModalVisible] = useState(false);
 
   useEffect(() => {
     loadSites();
@@ -285,13 +287,15 @@ export default function ChillerEntry() {
     ]);
   };
 
-  const handleSubmission = async (status: string) => {
+  const handleSubmission = async (status: string, sig?: string) => {
     if (!formData.chillerId) {
       Alert.alert("Error", "Please select a Chiller asset");
       return;
     }
 
-    if (status === "Completed" && !formData.signature) {
+    const finalSignature = sig || formData.signature;
+
+    if (status === "Completed" && !finalSignature) {
       Alert.alert("Error", "Signature is required to complete the log");
       return;
     }
@@ -328,7 +332,7 @@ export default function ChillerEntry() {
         inlineBtuMeter: parseFloat(formData.inlineBtuMeter),
         remarks: formData.remarks,
         assignedTo: user?.full_name || user?.name || "unknown",
-        signature: formData.signature,
+        signature: finalSignature,
         status: status,
         readingTime: params.readingTime
           ? parseInt(params.readingTime)
@@ -342,6 +346,7 @@ export default function ChillerEntry() {
         await SiteLogService.saveChillerReading(payload);
       }
 
+      setSignatureModalVisible(false);
       Alert.alert("Success", `Reading ${status.toLowerCase()} successfully`, [
         { text: "OK", onPress: () => router.back() },
       ]);
@@ -422,6 +427,7 @@ export default function ChillerEntry() {
               paddingBottom: 120,
             }}
             showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
           >
             {loading ? (
               <ChillerFormSkeleton />
@@ -660,39 +666,7 @@ export default function ChillerEntry() {
                   />
                 </View>
 
-                {/* Signature Pad */}
-                <View className="mb-10">
-                  <Text className="text-slate-900 dark:text-slate-50 font-bold text-base mb-4">
-                    Final Confirmation
-                  </Text>
-                  <SignaturePad
-                    onOK={(sig) => updateField("signature", sig)}
-                    description="Sign here to verify the above readings"
-                    trigger={(open) => (
-                      <TouchableOpacity
-                        onPress={open}
-                        className="w-full bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-xl p-4 flex-row items-center justify-between"
-                      >
-                        <View className="flex-row items-center">
-                          <PenTool
-                            size={20}
-                            color={formData.signature ? "#10b981" : "#64748b"}
-                          />
-                          <Text
-                            className={`ml-3 font-semibold ${formData.signature ? "text-green-600" : "text-slate-500"}`}
-                          >
-                            {formData.signature
-                              ? "Signature Captured"
-                              : "Click to Sign (Required to Complete)"}
-                          </Text>
-                        </View>
-                        {formData.signature && (
-                          <CheckCircle2 size={20} color="#10b981" />
-                        )}
-                      </TouchableOpacity>
-                    )}
-                  />
-                </View>
+                {/* Removed Inline Signature Pad and integrated into 2-click modal flow */}
               </View>
             )}
           </ScrollView>
@@ -720,7 +694,7 @@ export default function ChillerEntry() {
             </TouchableOpacity>
 
             <TouchableOpacity
-              onPress={() => handleSubmission("Completed")}
+              onPress={() => setSignatureModalVisible(true)}
               disabled={saving}
               activeOpacity={0.8}
               className="flex-[2] rounded-xl overflow-hidden"
@@ -751,6 +725,32 @@ export default function ChillerEntry() {
           </View>
         </KeyboardAvoidingView>
       </SafeAreaView>
+
+      {/* Signature Modal for 2-Click Streamlined Flow */}
+      <Modal
+        visible={signatureModalVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setSignatureModalVisible(false)}
+      >
+        <View className="flex-1 bg-black/50 justify-end">
+          <View className="bg-white dark:bg-slate-900 rounded-t-3xl h-[60%] overflow-hidden">
+            <View className="flex-row items-center justify-between px-6 py-4 border-b border-slate-100 dark:border-slate-800">
+              <Text className="text-slate-900 dark:text-slate-50 font-bold text-lg">
+                Sign to {params.id ? "Update" : "Complete"} Reading
+              </Text>
+              <TouchableOpacity onPress={() => setSignatureModalVisible(false)}>
+                <Text className="text-purple-600 font-bold">Close</Text>
+              </TouchableOpacity>
+            </View>
+            <SignaturePad
+              standalone
+              okText={params.id ? "Update Reading" : "Complete Reading"}
+              onOK={(sig: string) => handleSubmission("Completed", sig)}
+            />
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }

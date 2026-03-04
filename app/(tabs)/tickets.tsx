@@ -204,7 +204,7 @@ export default function Tickets() {
       logger.debug("Site ready, triggering fetch", { module: "TICKETS" });
       const currentSite = sites.find((s) => s.site_code === selectedSiteCode);
       if (currentSite) {
-        setSiteName(`${currentSite.site_code} - ${currentSite.name}`);
+        setSiteName(currentSite.site_code);
       }
       resetAndFetch();
       fetchStats();
@@ -283,9 +283,7 @@ export default function Tickets() {
             (s: Site) => s.site_code === lastSiteCode,
           );
           if (currentSite) {
-            setSiteName(
-              `${currentSite.site_code} - ${currentSite.name || (currentSite as any).siteName || ""}`,
-            );
+            setSiteName(currentSite.site_code);
           }
         }
       }
@@ -340,9 +338,7 @@ export default function Tickets() {
         );
         if (currentSite) {
           setSiteName(
-            siteToSelect === "all"
-              ? currentSite.name
-              : `${currentSite.site_code} - ${currentSite.name}`,
+            siteToSelect === "all" ? currentSite.name : currentSite.site_code,
           );
         }
 
@@ -683,10 +679,12 @@ export default function Tickets() {
                 onPress={() => setShowFiltersModal(true)}
                 className="flex-row items-center"
               >
-                <MapPin size={22} color="#dc2626" />
+                <MapPin size={20} color="#dc2626" />
                 <Text
-                  className="text-slate-900 dark:text-slate-50 text-2xl font-bold ml-2 mr-1"
+                  className="text-slate-900 dark:text-slate-50 text-xl font-bold ml-2 mr-1 flex-shrink"
                   numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.8}
                 >
                   {siteName}
                 </Text>

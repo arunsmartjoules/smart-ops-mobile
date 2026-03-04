@@ -65,7 +65,7 @@ const LogFilterModal = ({
   if (!visible) return null;
 
   return (
-    <Modal visible={visible} animationType="slide" transparent={true}>
+    <Modal visible={visible} animationType="slide" transparent={true} statusBarTranslucent={true}>
       <View className="flex-1 bg-black/60 justify-end">
         <View className="bg-white dark:bg-slate-900 rounded-t-3xl p-6 max-h-[85%] border-t border-slate-100 dark:border-slate-800">
           <View className="flex-row items-center justify-between mb-6">

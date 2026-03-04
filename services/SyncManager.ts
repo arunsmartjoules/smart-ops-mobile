@@ -14,9 +14,18 @@ import logger from "@/utils/logger";
 
 // We need to avoid hardcoded URLs if possible, but for sync we need API connection
 // Ideally this comes from a config or env
+import * as BackgroundTask from "expo-background-task";
+import * as TaskManager from "expo-task-manager";
 import { API_BASE_URL } from "../constants/api";
 
 const API_URL = API_BASE_URL;
+const BACKGROUND_SYNC_TASK = "BACKGROUND_SYNC_TASK";
+
+// Register background task in the global scope
+TaskManager.defineTask(BACKGROUND_SYNC_TASK, async () => {
+  const manager = SyncManager.getInstance();
+  await manager.triggerSync("background");
+});
 
 class SyncManager {
   private static instance: SyncManager;
@@ -45,7 +54,31 @@ class SyncManager {
   initialize(): void {
     this.setupNetworkListener();
     this.setupAppStateListener();
+    this.registerBackgroundFetchAsync();
     logger.info("SyncManager initialized", { module: "SYNC_MANAGER" });
+  }
+
+  /**
+   * Register background fetch task
+   */
+  private async registerBackgroundFetchAsync(): Promise<void> {
+    try {
+      const isRegistered =
+        await TaskManager.isTaskRegisteredAsync(BACKGROUND_SYNC_TASK);
+      if (!isRegistered) {
+        await BackgroundTask.registerTaskAsync(BACKGROUND_SYNC_TASK, {
+          minimumInterval: 15 * 60, // 15 minutes
+        });
+        logger.info("Background sync task registered", {
+          module: "SYNC_MANAGER",
+        });
+      }
+    } catch (err: any) {
+      logger.error("Failed to register background fetch", {
+        module: "SYNC_MANAGER",
+        error: err.message,
+      });
+    }
   }
 
   /**
@@ -107,9 +140,15 @@ class SyncManager {
   async triggerSync(reason: string = "manual"): Promise<void> {
     const now = Date.now();
 
-    // Cooldown check (except for manual sync)
-    // If reason is manual, we bypass cooldown
-    if (reason !== "manual" && now - this.lastSyncTime < this.syncCooldown) {
+    // Cooldown check (except for manual sync and background)
+    const isBackground = reason === "background";
+    const isManual = reason === "manual";
+
+    if (
+      !isManual &&
+      !isBackground &&
+      now - this.lastSyncTime < this.syncCooldown
+    ) {
       logger.debug("Sync skipped - cooldown active", {
         module: "SYNC_MANAGER",
       });
@@ -249,6 +288,24 @@ class SyncManager {
         });
       } catch (err: any) {
         logger.error("Error syncing site logs/history", {
+          module: "SYNC_MANAGER",
+          error: err.message,
+        });
+      }
+
+      // Sync PM responses and pull PM instances
+      try {
+        const PMService = (await import("./PMService")).default;
+        await PMService.pushPendingResponses();
+
+        const siteCode = await authService.getCurrentSiteCode();
+        if (siteCode) {
+          await PMService.pullFromServer(siteCode);
+        }
+
+        logger.info("PM sync complete", { module: "SYNC_MANAGER" });
+      } catch (err: any) {
+        logger.error("PM sync failed", {
           module: "SYNC_MANAGER",
           error: err.message,
         });

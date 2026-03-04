@@ -31,6 +31,6 @@ export default class SiteLog extends Model {
   @text("status") status!: string | null;
   @field("is_synced") isSynced!: boolean;
 
-  @readonly @date("created_at") createdAt!: Date;
+  @date("created_at") createdAt!: Date;
   @readonly @date("updated_at") updatedAt!: Date;
 }
