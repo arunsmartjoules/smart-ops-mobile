@@ -3,6 +3,7 @@ import SQLiteAdapter from "@nozbe/watermelondb/adapters/sqlite";
 import LokiJSAdapter from "@nozbe/watermelondb/adapters/lokijs";
 import { Platform, NativeModules } from "react-native";
 import { schema } from "./schema";
+import { migrations } from "./migrations";
 import Ticket from "./models/Ticket";
 import TicketUpdate from "./models/TicketUpdate";
 import Area from "./models/Area";
@@ -25,6 +26,7 @@ const getAdapter = () => {
   if (!isNative || !hasNativeBridge) {
     return new LokiJSAdapter({
       schema,
+      migrations,
       useWebWorker: false,
       useIncrementalIndexedDB: false, // More stable for simple local storage shims
     });
@@ -32,6 +34,7 @@ const getAdapter = () => {
 
   return new SQLiteAdapter({
     schema,
+    migrations,
     jsi: true,
     onSetUpError: (error) => {
       console.error("Database setup error:", error);

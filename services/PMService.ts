@@ -130,8 +130,9 @@ const PMService = {
             batch.push(
               existing[0].prepareUpdate((record: any) => {
                 record.title = inst.title || "";
-                record.status = inst.status || "Open";
-                record.progress = parseFloat(inst.progress || "0") || 0;
+                record.assetId = inst.asset_id || null;
+                record.status = inst.status || "Pending";
+                record.progress = String(inst.progress || "0");
                 record.frequency = inst.frequency || "";
                 record.assetType = inst.asset_type || "";
                 record.location = inst.location || "";
@@ -139,7 +140,8 @@ const PMService = {
                 record.startDueDate = inst.start_due_date
                   ? new Date(inst.start_due_date).getTime()
                   : null;
-                record.maintenanceId = inst.maintenance_id || null;
+                record.maintenanceId =
+                  inst.maintenance_id || inst.checklist_id || null;
                 record.clientSign = inst.client_sign || null;
                 record.beforeImage = inst.before_image || null;
                 record.afterImage = inst.after_image || null;
@@ -152,8 +154,9 @@ const PMService = {
                 record.serverId = inst.id;
                 record.siteCode = siteCode;
                 record.title = inst.title || "";
-                record.status = inst.status || "Open";
-                record.progress = parseFloat(inst.progress || "0") || 0;
+                record.assetId = inst.asset_id || null;
+                record.status = inst.status || "Pending";
+                record.progress = String(inst.progress || "0");
                 record.frequency = inst.frequency || "";
                 record.assetType = inst.asset_type || "";
                 record.location = inst.location || "";
@@ -161,7 +164,8 @@ const PMService = {
                 record.startDueDate = inst.start_due_date
                   ? new Date(inst.start_due_date).getTime()
                   : null;
-                record.maintenanceId = inst.maintenance_id || null;
+                record.maintenanceId =
+                  inst.maintenance_id || inst.checklist_id || null;
                 record.clientSign = inst.client_sign || null;
                 record.beforeImage = inst.before_image || null;
                 record.afterImage = inst.after_image || null;
@@ -189,7 +193,9 @@ const PMService = {
    */
   async pullChecklistItems(maintenanceId: string): Promise<void> {
     try {
-      const response = await apiFetch(`/api/pm-checklists/${maintenanceId}`);
+      const response = await apiFetch(
+        `/api/pm-checklist?checklist_id=${encodeURIComponent(maintenanceId)}&status=All`,
+      );
       if (!response.ok) return;
 
       const json = await response.json();

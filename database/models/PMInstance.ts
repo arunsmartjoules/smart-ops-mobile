@@ -7,11 +7,12 @@ export default class PMInstance extends Model {
   @field("server_id") serverId!: string | null;
   @text("site_code") siteCode!: string;
   @text("title") title!: string;
+  @text("asset_id") assetId!: string | null;
   @text("asset_type") assetType!: string;
   @text("location") location!: string;
   @text("frequency") frequency!: string;
   @text("status") status!: string;
-  @field("progress") progress!: number;
+  @text("progress") progress!: string;
   @text("assigned_to_name") assignedToName!: string | null;
   @field("start_due_date") startDueDate!: number | null;
   @text("maintenance_id") maintenanceId!: string | null;
