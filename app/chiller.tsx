@@ -683,7 +683,7 @@ export default function ChillerEntry() {
             }}
           >
             <TouchableOpacity
-              onPress={() => handleSubmission("Pending")}
+              onPress={() => handleSubmission("In-progress")}
               disabled={saving}
               className="flex-1 py-4 bg-slate-100 dark:bg-slate-800 rounded-xl flex-row items-center justify-center"
             >

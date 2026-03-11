@@ -125,6 +125,53 @@ const TicketItem = React.memo(
                 {item.status}
               </Text>
             </View>
+
+            {item.priority && (
+              <View
+                style={{
+                  paddingHorizontal: 10,
+                  paddingVertical: 4,
+                  borderRadius: 999,
+                  marginLeft: 8,
+                  backgroundColor:
+                    item.priority.toLowerCase() === "very high"
+                      ? "#fdf2f8"
+                      : item.priority.toLowerCase() === "high"
+                        ? "#fee2e2"
+                        : item.priority.toLowerCase() === "medium"
+                          ? "#ffedd5"
+                          : "#f1f5f9",
+                  borderWidth: 1,
+                  borderColor:
+                    item.priority.toLowerCase() === "very high"
+                      ? "#fbcfe8"
+                      : item.priority.toLowerCase() === "high"
+                        ? "#fecaca"
+                        : item.priority.toLowerCase() === "medium"
+                          ? "#fed7aa"
+                          : "#e2e8f0",
+                }}
+              >
+                <Text
+                  style={{
+                    fontSize: 10,
+                    fontWeight: "900",
+                    textTransform: "uppercase",
+                    color:
+                      item.priority.toLowerCase() === "very high"
+                        ? "#be185d"
+                        : item.priority.toLowerCase() === "high"
+                          ? "#dc2626"
+                          : item.priority.toLowerCase() === "medium"
+                            ? "#ea580c"
+                            : "#64748b",
+                  }}
+                >
+                  {item.priority}
+                </Text>
+              </View>
+            )}
+
             <View style={{ marginLeft: 8 }}>
               <ChevronRight size={16} color="#94a3b8" />
             </View>

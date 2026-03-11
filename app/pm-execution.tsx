@@ -29,6 +29,9 @@ import * as ImagePicker from "expo-image-picker";
 import PMService from "@/services/PMService";
 import PMChecklistItem from "@/database/models/PMChecklistItem";
 import { useNetworkStatus } from "@/hooks/useNetworkStatus";
+import SignaturePad from "@/components/SignaturePad";
+import logger from "@/utils/logger";
+import Skeleton from "@/components/Skeleton";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 interface ResponseMap {
@@ -182,7 +185,30 @@ const TaskRow = React.memo(
   (prev, next) =>
     prev.item.id === next.item.id &&
     prev.response?.response_value === next.response?.response_value &&
-    prev.response?.remarks === next.response?.remarks,
+    prev.response?.remarks === next.response?.remarks &&
+    prev.response?.image_url === next.response?.image_url,
+);
+
+// ─── Checklist Skeleton ─────────────────────────────────────────────────────
+const ChecklistSkeleton = () => (
+  <View style={styles.listContent}>
+    {[1, 2, 3, 4, 5].map((i) => (
+      <View key={i} style={styles.taskCard}>
+        <View style={styles.taskHeader}>
+          <Skeleton width={24} height={24} borderRadius={12} style={{ marginRight: 10 }} />
+          <Skeleton width="70%" height={16} />
+        </View>
+        <View style={styles.choiceRow}>
+          <Skeleton width="48%" height={40} borderRadius={12} />
+          <Skeleton width="48%" height={40} borderRadius={12} />
+        </View>
+        <View style={styles.actionRow}>
+          <Skeleton width={100} height={36} borderRadius={10} />
+          <Skeleton width="50%" height={36} borderRadius={12} />
+        </View>
+      </View>
+    ))}
+  </View>
 );
 
 // ─── Main Screen ────────────────────────────────────────────────────────────
@@ -199,7 +225,6 @@ export default function PMExecutionScreen() {
   const [showCompletionModal, setShowCompletionModal] = useState(false);
   const [clientSignature, setClientSignature] = useState("");
 
-  const loadedRef = useRef(false);
 
   // ── Load instance then checklist ──────────────────────────────────────────
   const loadData = useCallback(
@@ -215,12 +240,17 @@ export default function PMExecutionScreen() {
           // 1. Try local cache
           let items = await PMService.getChecklistItems(inst.maintenanceId);
 
-          // 2. If empty or forced, fetch from server
-          if ((items.length === 0 || forceServerFetch) && isConnected) {
+          // 2. If online, always attempt a background pull to ensure fresh data
+          if (isConnected) {
             setFetchingChecklist(true);
-            await PMService.pullChecklistItems(inst.maintenanceId);
-            items = await PMService.getChecklistItems(inst.maintenanceId);
-            setFetchingChecklist(false);
+            try {
+              await PMService.pullChecklistItems(inst.maintenanceId);
+              items = await PMService.getChecklistItems(inst.maintenanceId);
+            } catch (err) {
+              logger.error("Failed to fetch fresh checklist", { error: err });
+            } finally {
+              setFetchingChecklist(false);
+            }
           }
 
           setChecklistItems(items);
@@ -240,7 +270,7 @@ export default function PMExecutionScreen() {
           setResponses(responseMap);
         }
       } catch (err) {
-        console.error("Error loading PM execution data:", err);
+        logger.error("Error loading PM execution data:", { error: err });
       } finally {
         setLoading(false);
         setFetchingChecklist(false);
@@ -282,11 +312,10 @@ export default function PMExecutionScreen() {
   );
 
   useEffect(() => {
-    if (!loadedRef.current) {
-      loadedRef.current = true;
+    if (instanceId) {
       loadData(false);
     }
-  }, [loadData]);
+  }, [instanceId, isConnected]);
 
   // ── Response handler ──────────────────────────────────────────────────────
   const handleResponseChange = useCallback(
@@ -310,60 +339,86 @@ export default function PMExecutionScreen() {
   const answered = Object.values(responses).filter(
     (r) => r.response_value,
   ).length;
-  const progress =
-    checklistItems.length > 0
-      ? Math.round((answered / checklistItems.length) * 100)
-      : 0;
+  const total = checklistItems.length;
+  // Visual percentage for the progress bar fill
+  const progressPercent = total > 0 ? (answered / total) * 100 : 0;
 
-  // ── Save ──────────────────────────────────────────────────────────────────
-  const handleSave = useCallback(async () => {
-    setSaving(true);
-    try {
-      for (const [itemId, resp] of Object.entries(responses)) {
-        if (resp.response_value !== undefined) {
-          await PMService.saveResponseLocally({
-            instanceServerId: instanceId as string,
+  const handleSave = useCallback(
+    async (quiet = false) => {
+      setSaving(true);
+      try {
+        const responseData = Object.entries(responses)
+          .filter(([_, resp]) => resp.response_value !== undefined)
+          .map(([itemId, resp]) => ({
             checklist_item_id: itemId,
             response_value: resp.response_value,
             remarks: resp.remarks || null,
             image_url: resp.image_url || null,
-          });
+          }));
+
+        if (responseData.length > 0) {
+          await PMService.saveResponsesBatch(
+            instanceId as string,
+            responseData,
+          );
+
+          // If current status is Pending, automatically move it to In Progress
+          if (instance?.status === "Pending") {
+            try {
+              await PMService.startInstance(instanceId as string);
+              const updated = await PMService.getInstanceByServerId(
+                instanceId as string,
+              );
+              if (updated) setInstance(updated);
+            } catch (statusErr) {
+              logger.error("Failed to auto-update status to In Progress", {
+                error: statusErr,
+              });
+            }
+          }
         }
+
+        if (!quiet) Alert.alert("Saved", "Progress saved locally.");
+        return true;
+      } catch (err) {
+        logger.error("Failed to save responses", { error: err });
+        if (!quiet) Alert.alert("Error", "Failed to save. Please try again.");
+        return false;
+      } finally {
+        setSaving(false);
       }
-      Alert.alert("Saved", "Progress saved locally.");
-    } catch {
-      Alert.alert("Error", "Failed to save. Please try again.");
-    } finally {
-      setSaving(false);
-    }
-  }, [responses, instanceId]);
+    },
+    [responses, instanceId],
+  );
 
-  const handleStartPM = useCallback(async () => {
-    if (!instanceId) return;
-    await PMService.startInstance(instanceId as string);
-    const updated = await PMService.getInstanceByServerId(instanceId as string);
-    setInstance(updated);
-  }, [instanceId]);
 
-  const handleComplete = useCallback(async () => {
-    if (!clientSignature.trim()) {
-      Alert.alert("Required", "Please enter client signature.");
-      return;
-    }
-    setSaving(true);
-    try {
-      await handleSave();
-      await PMService.completeInstance(instanceId as string, clientSignature);
-      setShowCompletionModal(false);
-      Alert.alert("Completed", "PM task marked as complete!", [
-        { text: "OK", onPress: () => router.back() },
-      ]);
-    } catch {
-      Alert.alert("Error", "Failed to complete. Please try again.");
-    } finally {
-      setSaving(false);
-    }
-  }, [clientSignature, handleSave, instanceId]);
+  const handleComplete = useCallback(
+    async (signature: string) => {
+      if (!signature) {
+        Alert.alert("Required", "Please provide a signature.");
+        return;
+      }
+
+      setSaving(true);
+      try {
+        const saved = await handleSave(true);
+        if (!saved)
+          throw new Error("Failed to save responses before completion");
+
+        await PMService.completeInstance(instanceId as string, signature);
+        setShowCompletionModal(false);
+        Alert.alert("Completed", "PM task marked as complete!", [
+          { text: "OK", onPress: () => router.back() },
+        ]);
+      } catch (err) {
+        logger.error("Failed to complete PM", { error: err });
+        Alert.alert("Error", "Failed to complete. Please try again.");
+      } finally {
+        setSaving(false);
+      }
+    },
+    [handleSave, instanceId],
+  );
 
   // ── FlatList setup ────────────────────────────────────────────────────────
   const renderItem: ListRenderItem<PMChecklistItem> = useCallback(
@@ -381,82 +436,34 @@ export default function PMExecutionScreen() {
 
   const keyExtractor = useCallback((item: PMChecklistItem) => item.id, []);
 
-  const ListHeader = (
-    <>
-      {/* Progress Bar */}
-      <View style={styles.progressSection}>
-        <View style={styles.progressTrack}>
-          <View
-            style={[styles.progressFill, { width: `${progress}%` as any }]}
-          />
-        </View>
-        <Text style={styles.progressSub}>
-          {answered} of {checklistItems.length} tasks completed
-        </Text>
-      </View>
-
-      {checklistItems.length > 0 && (
-        <View style={styles.sectionRow}>
-          <Text style={styles.sectionTitle}>
-            Checklist ({checklistItems.length} tasks)
-          </Text>
-          {isConnected && (
-            <TouchableOpacity
-              onPress={() => loadData(true)}
-              style={styles.refreshBtn}
-              disabled={fetchingChecklist}
-            >
-              {fetchingChecklist ? (
-                <ActivityIndicator size="small" color="#3b82f6" />
-              ) : (
-                <RefreshCw size={14} color="#94a3b8" />
-              )}
-            </TouchableOpacity>
-          )}
-        </View>
-      )}
-    </>
-  );
-
   const ListEmpty = (
-    <View style={styles.emptyChecklist}>
+    <View style={styles.flex}>
       {fetchingChecklist ? (
-        <>
-          <ActivityIndicator color="#3b82f6" />
-          <Text style={styles.emptyText}>Fetching checklist items...</Text>
-        </>
+        <ChecklistSkeleton />
       ) : (
-        <>
+        <View style={styles.emptyChecklist}>
           <Text style={styles.emptyText}>No checklist items found.</Text>
           {!instance?.maintenanceId && (
             <Text style={styles.emptySubText}>
               No checklist linked to this PM instance.
             </Text>
           )}
-          {instance?.maintenanceId && isConnected && (
-            <ActivityIndicator color="#3b82f6" style={{ marginTop: 20 }} />
-          )}
-        </>
+        </View>
       )}
     </View>
   );
 
   const isCompleted = instance?.status === "Completed";
-  const isStarted = instance?.status === "In-progress";
-  const canComplete = progress === 100 || Object.keys(responses).length > 0;
+  const canComplete =
+    progressPercent === 100 || Object.keys(responses).length > 0;
 
-  if (loading) {
-    return (
-      <View style={styles.loadingScreen}>
-        <ActivityIndicator size="large" color="#3b82f6" />
-        <Text style={styles.loadingText}>Loading PM...</Text>
-      </View>
-    );
+  if (loading && !instance) {
+    return <ChecklistSkeleton />;
   }
 
   return (
     <View style={styles.flex}>
-      <SafeAreaView style={styles.flex}>
+      <SafeAreaView style={styles.flex} edges={["top"]}>
         {/* Header */}
         <View style={styles.header}>
           <TouchableOpacity
@@ -473,45 +480,61 @@ export default function PMExecutionScreen() {
               {instance?.title} · {instance?.assetType}
             </Text>
           </View>
-          {fetchingChecklist && (
-            <ActivityIndicator
-              size="small"
-              color="#3b82f6"
-              style={{ marginLeft: 8 }}
-            />
+          {isConnected && (
+            <TouchableOpacity
+              onPress={() => loadData(true)}
+              style={styles.refreshBtn}
+              disabled={fetchingChecklist}
+            >
+              {fetchingChecklist ? (
+                <ActivityIndicator size="small" color="#3b82f6" />
+              ) : (
+                <RefreshCw size={14} color="#94a3b8" />
+              )}
+            </TouchableOpacity>
           )}
         </View>
 
+        {/* Fixed Progress Bar */}
+        <View style={styles.progressSection}>
+          <View style={styles.progressTrack}>
+            <View
+              style={[
+                styles.progressFill,
+                { width: `${progressPercent}%` as any },
+              ]}
+            />
+          </View>
+          <Text style={styles.progressSub}>
+            {answered} of {total} tasks completed
+          </Text>
+        </View>
+
         {/* Checklist via FlatList */}
-        <FlatList
-          data={checklistItems}
-          renderItem={renderItem}
-          keyExtractor={keyExtractor}
-          ListHeaderComponent={ListHeader}
-          ListEmptyComponent={ListEmpty}
-          contentContainerStyle={styles.listContent}
-          showsVerticalScrollIndicator={false}
-          removeClippedSubviews
-          maxToRenderPerBatch={15}
-          windowSize={7}
-          initialNumToRender={10}
-          keyboardShouldPersistTaps="handled"
-        />
+        {(loading || fetchingChecklist) && checklistItems.length === 0 ? (
+          <ChecklistSkeleton />
+        ) : (
+          <FlatList
+            data={checklistItems}
+            renderItem={renderItem}
+            keyExtractor={keyExtractor}
+            ListEmptyComponent={ListEmpty}
+            contentContainerStyle={styles.listContent}
+            showsVerticalScrollIndicator={false}
+            removeClippedSubviews
+            maxToRenderPerBatch={15}
+            windowSize={7}
+            initialNumToRender={10}
+            keyboardShouldPersistTaps="handled"
+          />
+        )}
 
         {/* Footer Actions */}
         {!isCompleted && (
           <View style={styles.footer}>
             <View style={styles.footerBtns}>
-              {!isStarted && (
-                <TouchableOpacity
-                  onPress={handleStartPM}
-                  style={[styles.footerBtn, { backgroundColor: "#f59e0b" }]}
-                >
-                  <Text style={styles.footerBtnText}>Start PM</Text>
-                </TouchableOpacity>
-              )}
               <TouchableOpacity
-                onPress={handleSave}
+                onPress={() => handleSave()}
                 disabled={saving}
                 style={[styles.footerBtn, { backgroundColor: "#dbeafe" }]}
               >
@@ -551,7 +574,7 @@ export default function PMExecutionScreen() {
         )}
       </SafeAreaView>
 
-      {/* Completion Modal */}
+      {/* Completion Modal with Signature Pad */}
       <Modal
         visible={showCompletionModal}
         transparent
@@ -560,59 +583,36 @@ export default function PMExecutionScreen() {
       >
         <View style={styles.modalBg}>
           <View style={styles.modalSheet}>
-            <Text style={styles.modalTitle}>Complete PM Task</Text>
-            <Text style={styles.modalSub}>
-              Enter the client's signature to confirm completion.
-            </Text>
-
-            <Text style={styles.inputLabel}>Client Signature (Name)</Text>
-            <View style={styles.sigRow}>
-              <View style={styles.sigIcon}>
-                <Pen size={18} color="#94a3b8" />
+            <View style={styles.modalHeader}>
+              <View>
+                <Text style={styles.modalTitle}>Complete PM Task</Text>
+                <Text style={styles.modalSub}>
+                  Please provide the client's signature below.
+                </Text>
               </View>
-              <TextInput
-                value={clientSignature}
-                onChangeText={setClientSignature}
-                placeholder="Enter client name / signature text"
-                style={styles.sigInput}
+              <TouchableOpacity
+                onPress={() => setShowCompletionModal(false)}
+                style={styles.closeBtn}
+              >
+                <X size={20} color="#94a3b8" />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.signatureContainer}>
+              <SignaturePad
+                standalone
+                onOK={handleComplete}
+                description="Sign here to confirm PM completion"
+                okText="Confirm & Complete"
               />
             </View>
 
-            <View style={styles.modalBtns}>
-              <TouchableOpacity
-                onPress={() => setShowCompletionModal(false)}
-                style={styles.cancelBtn}
-              >
-                <Text style={styles.cancelBtnText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={handleComplete}
-                disabled={saving || !clientSignature.trim()}
-                style={[
-                  styles.confirmBtn,
-                  {
-                    backgroundColor: clientSignature.trim()
-                      ? "#22c55e"
-                      : "#e2e8f0",
-                  },
-                ]}
-              >
-                {saving ? (
-                  <ActivityIndicator size="small" color="#fff" />
-                ) : (
-                  <Text
-                    style={[
-                      styles.confirmBtnText,
-                      {
-                        color: clientSignature.trim() ? "#fff" : "#94a3b8",
-                      },
-                    ]}
-                  >
-                    Confirm Complete
-                  </Text>
-                )}
-              </TouchableOpacity>
-            </View>
+            {saving && (
+              <View style={styles.savingOverlay}>
+                <ActivityIndicator size="large" color="#3b82f6" />
+                <Text style={styles.savingText}>Processing completion...</Text>
+              </View>
+            )}
           </View>
         </View>
       </Modal>
@@ -630,7 +630,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   loadingText: { color: "#94a3b8", fontSize: 13, marginTop: 12 },
-  listContent: { paddingHorizontal: 20, paddingBottom: 140 },
+  listContent: { paddingHorizontal: 20, paddingBottom: 40, paddingTop: 10 },
 
   // Header
   header: {
@@ -655,23 +655,22 @@ const styles = StyleSheet.create({
   headerText: { flex: 1 },
   headerTitle: { fontSize: 16, fontWeight: "700", color: "#0f172a" },
   headerSub: { fontSize: 12, color: "#94a3b8" },
+  refreshBtn: {
+    padding: 6,
+    borderRadius: 8,
+    backgroundColor: "#f8fafc",
+    borderWidth: 1,
+    borderColor: "#f1f5f9",
+  },
 
   // Progress
   progressSection: {
     backgroundColor: "#fff",
     paddingHorizontal: 20,
     paddingVertical: 16,
-    marginBottom: 4,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: "#f1f5f9",
   },
-  progressHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginBottom: 6,
-  },
-  progressLabel: { fontSize: 12, fontWeight: "600", color: "#64748b" },
-  progressPct: { fontSize: 12, fontWeight: "800", color: "#3b82f6" },
   progressTrack: {
     height: 8,
     backgroundColor: "#e2e8f0",
@@ -684,23 +683,6 @@ const styles = StyleSheet.create({
     backgroundColor: "#3b82f6",
   },
   progressSub: { fontSize: 11, color: "#94a3b8", marginTop: 6 },
-
-  // Section heading
-  sectionRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    paddingTop: 20,
-    paddingBottom: 8,
-  },
-  sectionTitle: { fontSize: 14, fontWeight: "700", color: "#0f172a" },
-  refreshBtn: {
-    padding: 6,
-    borderRadius: 8,
-    backgroundColor: "#f8fafc",
-    borderWidth: 1,
-    borderColor: "#f1f5f9",
-  },
 
   // Task Card
   taskCard: {
@@ -846,14 +828,6 @@ const styles = StyleSheet.create({
     marginTop: 6,
     textAlign: "center",
   },
-  fetchBtn: {
-    marginTop: 16,
-    backgroundColor: "#3b82f6",
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    borderRadius: 12,
-  },
-  fetchBtnText: { color: "#fff", fontWeight: "700", fontSize: 14 },
 
   // Footer
   footer: {
@@ -898,9 +872,16 @@ const styles = StyleSheet.create({
     backgroundColor: "#fff",
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,
+    height: "90%",
+    paddingBottom: 20,
+  },
+  modalHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
     paddingHorizontal: 24,
     paddingTop: 24,
-    paddingBottom: 40,
+    paddingBottom: 16,
   },
   modalTitle: {
     fontSize: 18,
@@ -908,44 +889,37 @@ const styles = StyleSheet.create({
     color: "#0f172a",
     marginBottom: 4,
   },
-  modalSub: { fontSize: 13, color: "#94a3b8", marginBottom: 20 },
-  inputLabel: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: "#64748b",
-    marginBottom: 8,
-  },
-  sigRow: {
-    flexDirection: "row",
+  modalSub: { fontSize: 13, color: "#94a3b8" },
+  closeBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: "#f1f5f9",
     alignItems: "center",
+    justifyContent: "center",
+  },
+  signatureContainer: {
+    flex: 1,
+    marginHorizontal: 20,
+    marginBottom: 20,
+    borderRadius: 16,
+    overflow: "hidden",
     borderWidth: 1,
     borderColor: "#e2e8f0",
-    borderRadius: 14,
-    overflow: "hidden",
-    marginBottom: 20,
   },
-  sigIcon: { padding: 12, backgroundColor: "#f8fafc" },
-  sigInput: {
-    flex: 1,
-    paddingHorizontal: 12,
-    paddingVertical: 14,
+  savingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(255,255,255,0.8)",
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 10,
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+  },
+  savingText: {
+    marginTop: 12,
     fontSize: 14,
+    fontWeight: "600",
     color: "#0f172a",
   },
-  modalBtns: { flexDirection: "row", gap: 12 },
-  cancelBtn: {
-    flex: 1,
-    paddingVertical: 14,
-    backgroundColor: "#f1f5f9",
-    borderRadius: 14,
-    alignItems: "center",
-  },
-  cancelBtnText: { color: "#64748b", fontWeight: "600", fontSize: 14 },
-  confirmBtn: {
-    flex: 1,
-    paddingVertical: 14,
-    borderRadius: 14,
-    alignItems: "center",
-  },
-  confirmBtnText: { fontWeight: "700", fontSize: 14 },
 });

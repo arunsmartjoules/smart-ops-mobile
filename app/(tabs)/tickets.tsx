@@ -88,6 +88,7 @@ export default function Tickets() {
 
   // Filters
   const [statusFilter, setStatusFilter] = useState("Open");
+  const [priorityFilter, setPriorityFilter] = useState("All");
   const [searchQuery, setSearchQuery] = useState("");
   const [showFiltersModal, setShowFiltersModal] = useState(false);
   const [tempSearch, setTempSearch] = useState("");
@@ -210,7 +211,14 @@ export default function Tickets() {
       fetchStats();
       loadAreasAndCategories();
     }
-  }, [selectedSiteCode, statusFilter, searchQuery, fromDate, toDate]);
+  }, [
+    selectedSiteCode,
+    statusFilter,
+    priorityFilter,
+    searchQuery,
+    fromDate,
+    toDate,
+  ]);
 
   // Load areas (from assets table) and categories for the dropdown
   const loadAreasAndCategories = useCallback(async () => {
@@ -406,6 +414,7 @@ export default function Tickets() {
           page: p,
           limit: PAGE_SIZE,
           status: statusFilter,
+          priority: priorityFilter === "All" ? undefined : priorityFilter,
           search: searchQuery,
           fromDate: fromDate,
           toDate: toDate,
@@ -445,7 +454,14 @@ export default function Tickets() {
         setRefreshing(false);
       }
     },
-    [selectedSiteCode, statusFilter, searchQuery, fromDate, toDate],
+    [
+      selectedSiteCode,
+      statusFilter,
+      priorityFilter,
+      searchQuery,
+      fromDate,
+      toDate,
+    ],
   );
 
   const resetAndFetch = useCallback(() => {
@@ -464,6 +480,7 @@ export default function Tickets() {
     setTempFromDate(null);
     setTempToDate(null);
     setStatusFilter("Open");
+    setPriorityFilter("All");
   }, []);
 
   const handleLoadMore = useCallback(() => {
@@ -787,6 +804,8 @@ export default function Tickets() {
             user={user}
             statusFilter={statusFilter}
             setStatusFilter={setStatusFilter}
+            priorityFilter={priorityFilter}
+            setPriorityFilter={setPriorityFilter}
             applyAdvancedFilters={applyAdvancedFilters}
           />
         )}

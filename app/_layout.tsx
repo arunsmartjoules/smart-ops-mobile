@@ -8,6 +8,7 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 import { useEffect } from "react";
 import { syncManager } from "@/services/SyncManager";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
+import "@/services/SyncManager"; // Ensure background task is defined early
 
 function AuthGuard({ children }: { children: React.ReactNode }) {
   const { user, isLoading } = useAuth();
@@ -68,7 +69,6 @@ export default function RootLayout() {
                 <Stack.Screen name="app-settings" />
                 <Stack.Screen name="notification-settings" />
                 <Stack.Screen name="notifications" />
-                <Stack.Screen name="new-sitelog" />
                 <Stack.Screen name="sitelog-detail" />
                 <Stack.Screen name="chemical-entry" />
                 <Stack.Screen name="temp-rh-entry" />

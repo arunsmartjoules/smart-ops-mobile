@@ -14,6 +14,8 @@ import {
   ListRenderItem,
   StyleSheet,
   ScrollView,
+  RefreshControl,
+  TextInput,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import {
@@ -28,6 +30,9 @@ import {
   Briefcase,
   AlertCircle,
   CheckCircle2,
+  Search,
+  ChevronLeft,
+  Calendar as CalendarIcon,
 } from "lucide-react-native";
 import { router, useFocusEffect } from "expo-router";
 import { useAuth } from "@/contexts/AuthContext";
@@ -35,13 +40,21 @@ import { useNetworkStatus } from "@/hooks/useNetworkStatus";
 import PMService from "@/services/PMService";
 import { AttendanceService, type Site } from "@/services/AttendanceService";
 import PMInstance from "@/database/models/PMInstance";
-import { format } from "date-fns";
+import { format, addDays, startOfDay, endOfDay } from "date-fns";
 import AdvancedFilterModal from "@/components/AdvancedFilterModal";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import logger from "@/utils/logger";
+import Skeleton from "@/components/Skeleton";
 
 // Constants
-const PAGE_SIZE = 50;
+const PAGE_SIZE = 20;
+
+const safeFormat = (date: any, formatStr: string) => {
+  if (!date || isNaN(new Date(date).getTime())) {
+    return "Invalid Date";
+  }
+  return format(date, formatStr);
+};
 
 const STATUS_COLORS: Record<string, { bg: string; text: string; dot: string }> =
   {
@@ -51,7 +64,41 @@ const STATUS_COLORS: Record<string, { bg: string; text: string; dot: string }> =
     Overdue: { bg: "#fef2f2", text: "#dc2626", dot: "#ef4444" },
   };
 
-const STATUS_OPTIONS = ["All", "Pending", "In-progress", "Completed"];
+const STATUS_OPTIONS = ["Pending", "In-progress", "Completed"];
+
+// ─── PMSkeleton ──────────────────────────────────────────────────────────────
+const PMSkeleton = () => (
+  <View style={styles.listContent}>
+    {[1, 2, 3, 4].map((i) => (
+      <View key={i} style={styles.card}>
+        <View style={styles.cardTopRow}>
+          <Skeleton width={80} height={18} borderRadius={8} />
+          <Skeleton width={70} height={18} borderRadius={8} />
+        </View>
+        <View style={styles.cardBody}>
+          <Skeleton
+            width={48}
+            height={48}
+            borderRadius={16}
+            style={{ marginRight: 12 }}
+          />
+          <View style={{ flex: 1 }}>
+            <Skeleton width="60%" height={16} style={{ marginBottom: 6 }} />
+            <Skeleton width="40%" height={14} style={{ marginBottom: 10 }} />
+            <View style={{ flexDirection: "row", gap: 8 }}>
+              <Skeleton width={60} height={14} />
+              <Skeleton width={40} height={14} />
+            </View>
+          </View>
+        </View>
+        <View style={styles.cardFooter}>
+          <Skeleton width={100} height={14} />
+          <Skeleton width={80} height={14} />
+        </View>
+      </View>
+    ))}
+  </View>
+);
 
 // ─── Memoized PM Card ──────────────────────────────────────────────────────────
 const PMCard = React.memo(
@@ -99,6 +146,13 @@ const PMCard = React.memo(
                   {instance.assetType || "General Asset"}
                 </Text>
               </View>
+              {instance.maintenanceId ? (
+                <View style={styles.idBadge}>
+                  <Text style={styles.idText}>
+                    ID: {instance.maintenanceId}
+                  </Text>
+                </View>
+              ) : null}
               {instance.progress ? (
                 <View style={styles.progressBadge}>
                   <Text style={styles.progressText}>{instance.progress}</Text>
@@ -143,7 +197,7 @@ const PMCard = React.memo(
     prev.instance.progress === next.instance.progress,
 );
 
-// ─── Stat Card ─────────────────────────────────────────────────────────────────
+// ─── Stat Card (non-clickable) ─────────────────────────────────────────────────
 const StatCard = React.memo(
   ({
     icon,
@@ -160,7 +214,7 @@ const StatCard = React.memo(
   }) => (
     <View style={styles.statCard}>
       <View style={[styles.statIcon, { backgroundColor: bg }]}>{icon}</View>
-      <Text style={styles.statValue}>{value}</Text>
+      <Text style={[styles.statValue, { color }]}>{value}</Text>
       <Text style={styles.statLabel}>{label}</Text>
     </View>
   ),
@@ -181,14 +235,19 @@ export default function PreventiveMaintenance() {
   const [sites, setSites] = useState<Site[]>([]);
   const [siteName, setSiteName] = useState("Select Site");
   const [showFiltersModal, setShowFiltersModal] = useState(false);
-  const [fromDate, setFromDate] = useState<string | null>(null);
-  const [toDate, setToDate] = useState<string | null>(null);
+
+  // Date handling
+  const [currentDate, setCurrentDate] = useState(new Date());
+
   const [tempSearch, setTempSearch] = useState("");
-  const [tempFromDate, setTempFromDate] = useState<string | null>(null);
-  const [tempToDate, setTempToDate] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [tempFromDate, setTempFromDate] = useState<string | null>(
+    format(new Date(), "yyyy-MM-dd"),
+  );
 
   // Guard against re-fetching while server pull is in progress
   const isFetchingRef = useRef(false);
+  const [syncing, setSyncing] = useState(false);
 
   // ── Load Sites ──────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -236,9 +295,19 @@ export default function PreventiveMaintenance() {
       if (!siteCode) return;
       if (resetPage) setLoading(true);
       try {
-        // Always fetch all site instances once to calculate dashboard stats
-        const allData = await PMService.getLocalInstances(siteCode);
-        setAllInstances(allData);
+        const fromTs = startOfDay(currentDate).getTime();
+        const toTs = endOfDay(currentDate).getTime();
+
+        // Fetch only for current day
+        const data = await PMService.getLocalInstances(
+          siteCode,
+          undefined,
+          undefined,
+          undefined,
+          fromTs,
+          toTs,
+        );
+        setAllInstances(data);
 
         if (resetPage) setPage(1);
       } catch (err) {
@@ -247,10 +316,17 @@ export default function PreventiveMaintenance() {
         setLoading(false);
       }
     },
-    [siteCode],
+    [siteCode, currentDate],
   );
 
-  // ── Focus effect: load local first, then background pull ───────────────────
+  // ── Reload local data when date or site changes ─────────────────────────────
+  useEffect(() => {
+    if (siteCode) {
+      loadLocalData(true);
+    }
+  }, [currentDate, siteCode, loadLocalData]);
+
+  // ── Focus effect: background pull ───────────────────
   useFocusEffect(
     useCallback(() => {
       if (!siteCode) return;
@@ -258,14 +334,16 @@ export default function PreventiveMaintenance() {
 
       if (isConnected && !isFetchingRef.current) {
         isFetchingRef.current = true;
-        PMService.pullFromServer(siteCode)
+        setSyncing(true);
+        PMService.pullFromServer(siteCode, currentDate)
           .then(() => loadLocalData(true))
           .catch(() => {})
           .finally(() => {
             isFetchingRef.current = false;
+            setSyncing(false);
           });
       }
-    }, [loadLocalData, isConnected, siteCode]),
+    }, [loadLocalData, isConnected, siteCode, currentDate]),
   );
 
   // ── Pull-to-refresh ─────────────────────────────────────────────────────────
@@ -273,12 +351,12 @@ export default function PreventiveMaintenance() {
     setRefreshing(true);
     if (isConnected && siteCode) {
       try {
-        await PMService.pullFromServer(siteCode);
+        await PMService.pullFromServer(siteCode, currentDate);
       } catch {}
     }
     await loadLocalData(true);
     setRefreshing(false);
-  }, [siteCode, isConnected, loadLocalData]);
+  }, [siteCode, isConnected, loadLocalData, currentDate]);
 
   // ── Filtered Data for List ────────────────────────────────────────────────
   const filteredInstances = useMemo(() => {
@@ -286,8 +364,17 @@ export default function PreventiveMaintenance() {
     if (statusFilter !== "All") {
       list = list.filter((i) => i.status === statusFilter);
     }
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      list = list.filter(
+        (i) =>
+          (i.title && i.title.toLowerCase().includes(q)) ||
+          (i.assetId && i.assetId.toLowerCase().includes(q)) ||
+          (i.maintenanceId && i.maintenanceId.toLowerCase().includes(q)),
+      );
+    }
     return list;
-  }, [allInstances, statusFilter]);
+  }, [allInstances, statusFilter, searchQuery]);
 
   // ── Pagination: visible slice ───────────────────────────────────────────────
   const visibleInstances = useMemo(
@@ -300,7 +387,6 @@ export default function PreventiveMaintenance() {
   const loadMore = useCallback(() => {
     if (loadingMore || !hasMore) return;
     setLoadingMore(true);
-    // Defer slice extension to next tick so the loading indicator renders first
     setTimeout(() => {
       setPage((p) => p + 1);
       setLoadingMore(false);
@@ -309,7 +395,6 @@ export default function PreventiveMaintenance() {
 
   // ── Statistics ──────────────────────────────────────────────────────────────
   const stats = useMemo(() => {
-    // Show stats for the entire site (allInstances as loaded from server/local)
     return {
       total: allInstances.length,
       pending: allInstances.filter((i) => i.status === "Pending").length,
@@ -321,7 +406,6 @@ export default function PreventiveMaintenance() {
   // ── Handlers ────────────────────────────────────────────────────────────────
   const handlePMCardPress = useCallback(
     (instance: PMInstance) => {
-      // Pre-fetch checklist items in background before navigating
       if (instance.maintenanceId && isConnected) {
         PMService.pullChecklistItems(instance.maintenanceId).catch(() => {});
       }
@@ -334,11 +418,22 @@ export default function PreventiveMaintenance() {
   );
 
   const applyAdvancedFilters = useCallback(() => {
-    setFromDate(tempFromDate);
-    setToDate(tempToDate);
+    setSearchQuery(tempSearch);
+    if (tempFromDate) {
+      const d = new Date(tempFromDate.replace(/-/g, "/"));
+      if (!isNaN(d.getTime())) {
+        setCurrentDate(d);
+      }
+    }
     setShowFiltersModal(false);
-    loadLocalData(true);
-  }, [tempFromDate, tempToDate, loadLocalData]);
+  }, [tempSearch, tempFromDate]);
+
+  const navigateDate = (days: number) => {
+    setCurrentDate((prev) => {
+      const next = addDays(prev, days);
+      return isNaN(next.getTime()) ? prev : next;
+    });
+  };
 
   // ── FlatList Render ──────────────────────────────────────────────────────────
   const renderItem: ListRenderItem<PMInstance> = useCallback(
@@ -354,42 +449,38 @@ export default function PreventiveMaintenance() {
     () => (
       <View style={styles.listHeader}>
         <View style={styles.sectionRow}>
-          <Text style={styles.sectionTitle}>Upcoming Maintenance</Text>
+          <Text style={styles.sectionTitle}>
+            Tasks for {safeFormat(currentDate, "d MMM yyyy")}
+          </Text>
           <Text style={styles.sectionCount}>
             {filteredInstances.length} Tasks
           </Text>
         </View>
       </View>
     ),
-    [filteredInstances.length],
+    [filteredInstances.length, currentDate],
   );
 
   const ListEmpty = useMemo(
-    () =>
-      loading ? (
-        <View style={styles.center}>
-          <ActivityIndicator color="#3b82f6" />
-          <Text style={styles.loadingText}>Fetching PM schedule...</Text>
+    () => (
+      <View style={styles.emptyState}>
+        <View style={styles.emptyIcon}>
+          <Wrench size={32} color="#cbd5e1" />
         </View>
-      ) : (
-        <View style={styles.emptyState}>
-          <View style={styles.emptyIcon}>
-            <Wrench size={32} color="#cbd5e1" />
-          </View>
-          <Text style={styles.emptyTitle}>No PM tasks found</Text>
-          <Text style={styles.emptyBody}>
-            Try adjusting your filters or site selection.
-          </Text>
-        </View>
-      ),
-    [loading],
+        <Text style={styles.emptyTitle}>No PM tasks found</Text>
+        <Text style={styles.emptyBody}>
+          No tasks scheduled for {safeFormat(currentDate, "PPPP")}.
+        </Text>
+      </View>
+    ),
+    [currentDate],
   );
 
   const ListFooter = useMemo(
     () =>
       loadingMore ? (
         <View style={styles.footerLoader}>
-          <ActivityIndicator size="small" color="#3b82f6" />
+          <ActivityIndicator size="small" color="#dc2626" />
         </View>
       ) : null,
     [loadingMore],
@@ -398,7 +489,7 @@ export default function PreventiveMaintenance() {
   return (
     <View style={styles.container}>
       <SafeAreaView style={styles.flex} edges={["top"]}>
-        {/* Fixed Header & Stats */}
+        {/* Fixed Header & Navigation */}
         <View style={styles.fixedArea}>
           <View style={styles.header}>
             <View style={styles.headerLeft}>
@@ -407,32 +498,16 @@ export default function PreventiveMaintenance() {
                 onPress={() => setShowFiltersModal(true)}
                 style={styles.siteRow}
               >
-                <MapPin size={20} color="#3b82f6" />
+                <MapPin size={20} color="#dc2626" />
                 <Text style={styles.siteName} numberOfLines={1}>
                   {siteName}
                 </Text>
                 <ChevronDown size={20} color="#94a3b8" />
               </TouchableOpacity>
             </View>
-            <TouchableOpacity
-              onPress={() => setShowFiltersModal(true)}
-              style={[
-                styles.filterBtn,
-                fromDate ? styles.filterBtnActive : null,
-              ]}
-            >
-              <Filter size={20} color={fromDate ? "#3b82f6" : "#64748b"} />
-            </TouchableOpacity>
           </View>
 
           <View style={styles.statsRow}>
-            <StatCard
-              icon={<ListChecks size={16} color="#3b82f6" />}
-              value={stats.total}
-              label="Total"
-              bg="#eff6ff"
-              color="#3b82f6"
-            />
             <StatCard
               icon={<AlertCircle size={16} color="#f97316" />}
               value={stats.pending}
@@ -441,76 +516,125 @@ export default function PreventiveMaintenance() {
               color="#f97316"
             />
             <StatCard
-              icon={<Clock size={16} color="#fbbf24" />}
+              icon={<Clock size={16} color="#3b82f6" />}
               value={stats.inProgress}
-              label="Active"
-              bg="#fffbeb"
-              color="#fbbf24"
+              label="In Progress"
+              bg="#eff6ff"
+              color="#3b82f6"
             />
             <StatCard
               icon={<CheckCircle2 size={16} color="#22c55e" />}
               value={stats.completed}
-              label="Done"
+              label="Completed"
               bg="#f0fdf4"
               color="#22c55e"
             />
           </View>
 
-          <View style={styles.quickFilters}>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-              <View style={styles.filterChipRow}>
-                {STATUS_OPTIONS.map((s) => (
-                  <TouchableOpacity
-                    key={s}
-                    onPress={() => setStatusFilter(s)}
-                    style={[
-                      styles.filterChip,
-                      statusFilter === s ? styles.filterChipActive : null,
-                    ]}
-                  >
-                    <Text
-                      style={[
-                        styles.filterChipText,
-                        statusFilter === s ? styles.filterChipTextActive : null,
-                      ]}
-                    >
-                      {s}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            </ScrollView>
+          <View style={styles.actionHeaderRow}>
+            {/* Date Navigation Group (Approx 70%) */}
+            <View style={styles.navGroup}>
+              <TouchableOpacity
+                onPress={() => navigateDate(-1)}
+                style={styles.navIconBtn}
+              >
+                <ChevronLeft size={22} color="#64748b" />
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={() => setShowFiltersModal(true)}
+                style={styles.dateDisplayValue}
+              >
+                <Text style={styles.dateDisplayText}>
+                  {safeFormat(currentDate, "eee, d MMM")}
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={() => navigateDate(1)}
+                style={styles.navIconBtn}
+              >
+                <ChevronRight size={22} color="#64748b" />
+              </TouchableOpacity>
+            </View>
+
+            {/* Action Group (Approx 30%) */}
+            <View style={styles.actionGroup}>
+              <TouchableOpacity
+                onPress={() => setShowFiltersModal(true)}
+                style={styles.actionIconBtn}
+              >
+                <Filter size={20} color="#dc2626" />
+              </TouchableOpacity>
+            </View>
           </View>
+
+          {/* Status Filter Row */}
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={styles.statusFilterRow}
+            contentContainerStyle={styles.statusFilterContent}
+          >
+            {STATUS_OPTIONS.map((s) => (
+              <TouchableOpacity
+                key={s}
+                onPress={() => setStatusFilter(s === "All" ? "All" : s)}
+                style={[
+                  styles.statusPill,
+                  statusFilter === s && styles.statusPillActive,
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.statusPillText,
+                    statusFilter === s && styles.statusPillTextActive,
+                  ]}
+                >
+                  {s}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
         </View>
 
-        <FlatList
-          data={visibleInstances}
-          renderItem={renderItem}
-          keyExtractor={keyExtractor}
-          ListHeaderComponent={ListHeader}
-          ListEmptyComponent={ListEmpty}
-          ListFooterComponent={ListFooter}
-          onEndReached={loadMore}
-          onEndReachedThreshold={0.4}
-          refreshing={refreshing}
-          onRefresh={onRefresh}
-          contentContainerStyle={styles.listContent}
-          showsVerticalScrollIndicator={false}
-          removeClippedSubviews
-          maxToRenderPerBatch={10}
-          initialNumToRender={10}
-          windowSize={5}
-        />
+        {(loading || syncing) ? (
+          <PMSkeleton />
+        ) : (
+          <FlatList
+            data={visibleInstances}
+            renderItem={renderItem}
+            keyExtractor={keyExtractor}
+            ListHeaderComponent={ListHeader}
+            ListEmptyComponent={ListEmpty}
+            ListFooterComponent={ListFooter}
+            onEndReached={loadMore}
+            onEndReachedThreshold={0.4}
+            refreshControl={
+              <RefreshControl
+                refreshing={refreshing}
+                onRefresh={onRefresh}
+                tintColor="#dc2626"
+              />
+            }
+            contentContainerStyle={styles.listContent}
+            showsVerticalScrollIndicator={false}
+            removeClippedSubviews
+            maxToRenderPerBatch={10}
+            initialNumToRender={10}
+            windowSize={5}
+          />
+        )}
 
         <AdvancedFilterModal
           visible={showFiltersModal}
           onClose={() => setShowFiltersModal(false)}
+          title="Filter PM Tasks"
+          statusOptions={STATUS_OPTIONS}
           tempSearch={tempSearch}
           setTempSearch={setTempSearch}
           tempFromDate={tempFromDate}
           setTempFromDate={setTempFromDate}
-          tempToDate={tempToDate}
-          setTempToDate={setTempToDate}
           sites={sites}
           selectedSiteCode={siteCode}
           setSelectedSiteCode={(code) => {
@@ -555,43 +679,82 @@ const styles = StyleSheet.create({
     paddingBottom: 12,
   },
   headerLeft: { flex: 1 },
+  headerRight: { flexDirection: "row", alignItems: "center" },
   headerSub: {
-    fontSize: 13,
+    fontSize: 12,
+    fontWeight: "600",
     color: "#94a3b8",
-    fontWeight: "500",
-    marginBottom: 2,
+    marginBottom: 4,
   },
   siteRow: { flexDirection: "row", alignItems: "center" },
   siteName: {
     fontSize: 20,
-    fontWeight: "700",
+    fontWeight: "800",
     color: "#0f172a",
     marginLeft: 8,
     marginRight: 4,
-    flexShrink: 1,
+    marginHorizontal: 4,
   },
-  filterBtn: {
-    width: 44,
-    height: 44,
-    borderRadius: 12,
+
+  // Action Header Row (Date + Icons)
+  actionHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: 12,
+    gap: 8,
+  },
+  navGroup: {
+    flex: 0.7,
+    flexDirection: "row",
+    alignItems: "center",
     backgroundColor: "#fff",
+    borderRadius: 12,
+    height: 46,
+    borderWidth: 1,
+    borderColor: "#f1f5f9",
+    paddingHorizontal: 4,
+  },
+  navIconBtn: {
+    width: 36,
+    height: 36,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  dateDisplayValue: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  dateDisplayText: {
+    fontSize: 14,
+    fontWeight: "800",
+    color: "#0f172a",
+  },
+  actionGroup: {
+    flex: 0.3,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "flex-end",
+    gap: 8,
+  },
+  actionIconBtn: {
+    width: 46,
+    height: 46,
+    backgroundColor: "#fff",
+    borderRadius: 12,
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
     borderColor: "#f1f5f9",
-    elevation: 2,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.04,
-    shadowRadius: 8,
   },
-  filterBtnActive: { borderColor: "#3b82f6" },
 
   // Stats
   statsRow: {
     flexDirection: "row",
     gap: 10,
     marginBottom: 16,
+    marginTop: 4,
   },
   statCard: {
     flex: 1,
@@ -609,33 +772,63 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     marginBottom: 6,
   },
-  statValue: { fontSize: 16, fontWeight: "700", color: "#0f172a" },
+  statValue: { fontSize: 18, fontWeight: "900", color: "#0f172a" },
   statLabel: {
-    fontSize: 9,
+    fontSize: 10,
     fontWeight: "700",
     color: "#94a3b8",
     textTransform: "uppercase",
   },
 
-  // Quick Filters
-  quickFilters: {
-    marginBottom: 12,
-  },
-  filterChipRow: {
+  // Filter Section
+  filterSection: {
     flexDirection: "row",
-    gap: 8,
+    alignItems: "center",
+    gap: 10,
+    marginBottom: 16,
   },
-  filterChip: {
-    paddingHorizontal: 14,
-    paddingVertical: 7,
-    borderRadius: 10,
+  searchBar: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
     backgroundColor: "#fff",
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderColor: "#f1f5f9",
+    height: 44,
+  },
+  searchInput: {
+    flex: 1,
+    marginLeft: 8,
+    fontSize: 14,
+    color: "#0f172a",
+    fontWeight: "500",
+  },
+  clearText: { fontSize: 12, color: "#dc2626", fontWeight: "600" },
+  applyBtn: {
+    backgroundColor: "#dc2626",
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 10,
+    justifyContent: "center",
+  },
+  applyBtnText: {
+    color: "#fff",
+    fontSize: 12,
+    fontWeight: "800",
+    textTransform: "uppercase",
+  },
+  filterIconBtn: {
+    width: 44,
+    height: 44,
+    backgroundColor: "#fff",
+    borderRadius: 11,
+    alignItems: "center",
+    justifyContent: "center",
     borderWidth: 1,
     borderColor: "#f1f5f9",
   },
-  filterChipActive: { backgroundColor: "#3b82f6", borderColor: "#3b82f6" },
-  filterChipText: { fontSize: 11, fontWeight: "700", color: "#64748b" },
-  filterChipTextActive: { color: "#fff" },
 
   // Section heading
   sectionRow: {
@@ -718,6 +911,13 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   assetText: { fontSize: 12, color: "#94a3b8", marginLeft: 4, flexShrink: 1 },
+  idBadge: {
+    backgroundColor: "#f1f5f9",
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  idText: { fontSize: 10, color: "#64748b", fontWeight: "600" },
   progressBadge: {
     backgroundColor: "#f1f5f9",
     paddingHorizontal: 8,
@@ -757,8 +957,6 @@ const styles = StyleSheet.create({
   unassigned: { fontSize: 10, color: "#cbd5e1", fontStyle: "italic" },
 
   // States
-  center: { alignItems: "center", paddingTop: 48 },
-  loadingText: { color: "#94a3b8", fontSize: 13, marginTop: 8 },
   emptyState: { alignItems: "center", paddingTop: 80 },
   emptyIcon: {
     width: 80,
@@ -778,4 +976,33 @@ const styles = StyleSheet.create({
     paddingHorizontal: 40,
   },
   footerLoader: { paddingVertical: 20, alignItems: "center" },
+
+  // Status Filter Row
+  statusFilterRow: {
+    marginBottom: 8,
+  },
+  statusFilterContent: {
+    gap: 8,
+    paddingVertical: 4,
+  },
+  statusPill: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: "#fff",
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+  },
+  statusPillActive: {
+    backgroundColor: "#dc2626",
+    borderColor: "#dc2626",
+  },
+  statusPillText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#64748b",
+  },
+  statusPillTextActive: {
+    color: "#fff",
+  },
 });

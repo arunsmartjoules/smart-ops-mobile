@@ -14,8 +14,11 @@ import {
 } from "../services/NotificationService";
 import logger from "../utils/logger";
 import { SecureStorage, SECURE_KEYS } from "../utils/secureStorage";
+import * as WebBrowser from "expo-web-browser";
 import { performLogoutCleanup } from "../services/CleanupService";
 import { syncManager } from "../services/SyncManager";
+
+WebBrowser.maybeCompleteAuthSession();
 
 import { API_BASE_URL } from "../constants/api";
 
@@ -38,6 +41,7 @@ interface AuthContextType {
   token: string | null;
   isLoading: boolean;
   signIn: (email: string, password: string) => Promise<{ error: any }>;
+  signInWithGoogle: (idToken: string) => Promise<{ error: any }>;
   signUp: (
     email: string,
     password: string,
@@ -57,6 +61,7 @@ const AuthContext = createContext<AuthContextType>({
   token: null,
   isLoading: true,
   signIn: async () => ({ error: null }),
+  signInWithGoogle: async () => ({ error: null }),
   signUp: async () => ({ error: null }),
   signOut: async () => {},
   resetPassword: async () => ({ error: null }),
@@ -177,6 +182,73 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         module: "AUTH_CONTEXT",
         error: error.message,
         email,
+      });
+      return { error: error.message };
+    }
+  }, []);
+
+  const signInWithGoogle = useCallback(async (idToken: string) => {
+    try {
+      const response = await fetch(`${BACKEND_URL}/api/auth/google`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ idToken }),
+      });
+
+      let result;
+      try {
+        result = await response.json();
+      } catch (e) {
+        logger.error("Google Login JSON parse error", {
+          module: "AUTH_CONTEXT",
+          status: response.status,
+        });
+        return {
+          error: `Server error (${response.status}). Please try again later.`,
+        };
+      }
+
+      if (!result.success) {
+        logger.warn("Google Login failed", {
+          module: "AUTH_CONTEXT",
+          error: result.error,
+        });
+        return { error: result.error || "Google login failed" };
+      }
+
+      const { token, refresh_token, user: userData } = result.data;
+
+      const mappedUser = {
+        ...userData,
+        user_id: userData.user_id || userData.id,
+        id: userData.user_id || userData.id,
+      };
+
+      await SecureStorage.setItem(SECURE_KEYS.AUTH_TOKEN, token);
+      await SecureStorage.setItem(SECURE_KEYS.REFRESH_TOKEN, refresh_token);
+      await SecureStorage.setItem("user_id", mappedUser.user_id);
+      await AsyncStorage.setItem("auth_user", JSON.stringify(mappedUser));
+
+      setToken(token);
+      setUser(mappedUser);
+
+      if (userData) {
+        // Register for push notifications (don't block login if it fails)
+        registerForPushNotifications(userData.user_id, token).catch((error) => {
+          logger.warn("Push registration failure after Google login", {
+            module: "AUTH_CONTEXT",
+            error: error.message,
+          });
+        });
+      }
+
+      return { error: null };
+    } catch (error: any) {
+      logger.error("Google Login network error", {
+        module: "AUTH_CONTEXT",
+        error: error.message,
       });
       return { error: error.message };
     }
@@ -362,6 +434,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       token,
       isLoading,
       signIn,
+      signInWithGoogle,
       signUp,
       signOut,
       resetPassword,
@@ -372,6 +445,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       token,
       isLoading,
       signIn,
+      signInWithGoogle,
       signUp,
       signOut,
       resetPassword,

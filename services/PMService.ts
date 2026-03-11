@@ -55,8 +55,14 @@ const PMService = {
     statusFilter?: string[],
     frequencyFilter?: string,
     assetTypeFilter?: string,
+    fromDate?: number | null,
+    toDate?: number | null,
   ): Promise<PMInstance[]> {
-    const conditions: any[] = [Q.where("site_code", siteCode)];
+    const conditions: any[] = [];
+
+    if (siteCode && siteCode !== "all") {
+      conditions.push(Q.where("site_code", siteCode));
+    }
 
     if (statusFilter && statusFilter.length > 0) {
       conditions.push(Q.where("status", Q.oneOf(statusFilter)));
@@ -66,6 +72,13 @@ const PMService = {
     }
     if (assetTypeFilter) {
       conditions.push(Q.where("asset_type", assetTypeFilter));
+    }
+    if (fromDate && toDate) {
+      conditions.push(Q.where("start_due_date", Q.between(fromDate, toDate)));
+    } else if (fromDate) {
+      conditions.push(Q.where("start_due_date", Q.gte(fromDate)));
+    } else if (toDate) {
+      conditions.push(Q.where("start_due_date", Q.lte(toDate)));
     }
 
     return pmInstanceCollection
@@ -77,10 +90,18 @@ const PMService = {
    * Get a single PM instance by server ID.
    */
   async getInstanceByServerId(serverId: string): Promise<PMInstance | null> {
+    // Try by server_id first
     const results = await pmInstanceCollection
       .query(Q.where("server_id", serverId))
       .fetch();
-    return results[0] || null;
+    if (results.length > 0) return results[0];
+
+    // Fallback: try by internal WatermelonDB id
+    try {
+      return await pmInstanceCollection.find(serverId);
+    } catch {
+      return null;
+    }
   },
 
   /**
@@ -107,12 +128,22 @@ const PMService = {
   },
 
   /**
-   * Pull PM instances & checklists from backend and cache locally.
+   * Pull PM instances from backend for a specific date and site.
+   * Fetches all statuses for the given date to ensure complete local data.
    */
-  async pullFromServer(siteCode: string): Promise<void> {
+  async pullFromServer(siteCode: string, date?: Date): Promise<void> {
     try {
+      const siteParam = siteCode === "all" ? "all" : siteCode;
+      const targetDate = date || new Date();
+      const dateStr = targetDate.toISOString().split("T")[0];
+
+      // Fetch instances for the specific date
+      const filters = JSON.stringify([
+        { fieldId: "start_due_date", operator: "between", value: dateStr, valueEnd: dateStr }
+      ]);
+
       const response = await apiFetch(
-        `/api/pm-instances/site/${siteCode}?limit=200`,
+        `/api/pm-instances/site/${siteParam}?limit=500&filters=${encodeURIComponent(filters)}`,
       );
       if (!response.ok) return;
 
@@ -126,36 +157,46 @@ const PMService = {
             .query(Q.where("server_id", inst.id))
             .fetch();
 
+          // Normalize status
+          let normalizedStatus = inst.status || "Pending";
+          if (normalizedStatus === "In Progress" || normalizedStatus === "Inprogress") {
+            normalizedStatus = "In-progress";
+          }
+
           if (existing.length > 0) {
-            batch.push(
-              existing[0].prepareUpdate((record: any) => {
-                record.title = inst.title || "";
-                record.assetId = inst.asset_id || null;
-                record.status = inst.status || "Pending";
-                record.progress = String(inst.progress || "0");
-                record.frequency = inst.frequency || "";
-                record.assetType = inst.asset_type || "";
-                record.location = inst.location || "";
-                record.assignedToName = inst.assigned_to_name || null;
-                record.startDueDate = inst.start_due_date
-                  ? new Date(inst.start_due_date).getTime()
-                  : null;
-                record.maintenanceId =
-                  inst.maintenance_id || inst.checklist_id || null;
-                record.clientSign = inst.client_sign || null;
-                record.beforeImage = inst.before_image || null;
-                record.afterImage = inst.after_image || null;
-                record.isSynced = true;
-              }),
-            );
+            const record = existing[0];
+            // Only update if local is already synced to avoid overwriting local changes
+            if (record.isSynced) {
+              batch.push(
+                record.prepareUpdate((r: any) => {
+                  r.title = inst.title || "";
+                  r.assetId = inst.asset_id || null;
+                  r.status = normalizedStatus;
+                  r.progress = String(inst.progress || "0");
+                  r.frequency = inst.frequency || "";
+                  r.assetType = inst.asset_type || "";
+                  r.location = inst.location || "";
+                  r.assignedToName = inst.assigned_to_name || null;
+                  r.startDueDate = inst.start_due_date
+                    ? new Date(inst.start_due_date).getTime()
+                    : null;
+                  r.maintenanceId =
+                    inst.maintenance_id || inst.checklist_id || null;
+                  r.clientSign = inst.client_sign || null;
+                  r.beforeImage = inst.before_image || null;
+                  r.afterImage = inst.after_image || null;
+                  r.isSynced = true;
+                }),
+              );
+            }
           } else {
             batch.push(
               pmInstanceCollection.prepareCreate((record: any) => {
                 record.serverId = inst.id;
-                record.siteCode = siteCode;
+                record.siteCode = inst.site_code || siteCode;
                 record.title = inst.title || "";
                 record.assetId = inst.asset_id || null;
-                record.status = inst.status || "Pending";
+                record.status = normalizedStatus;
                 record.progress = String(inst.progress || "0");
                 record.frequency = inst.frequency || "";
                 record.assetType = inst.asset_type || "";
@@ -177,7 +218,7 @@ const PMService = {
         await database.batch(batch);
       });
 
-      logger.info(`Pulled ${instances.length} PM instances for ${siteCode}`, {
+      logger.info(`Pulled ${instances.length} PM instances for ${siteCode} on ${dateStr}`, {
         module: "PM_SERVICE",
       });
     } catch (error: any) {
@@ -249,7 +290,76 @@ const PMService = {
   },
 
   /**
-   * Save a single PM response locally.
+   * Save multiple PM responses locally in a single batch.
+   */
+  async saveResponsesBatch(
+    instanceServerId: string,
+    responses: PMResponseData[],
+  ): Promise<void> {
+    await database.write(async () => {
+      const recordsToBatch = [];
+
+      for (const data of responses) {
+        const existing = await pmResponseCollection
+          .query(
+            Q.where("instance_id", instanceServerId),
+            Q.where("checklist_item_id", data.checklist_item_id),
+          )
+          .fetch();
+
+        if (existing.length > 0) {
+          recordsToBatch.push(
+            existing[0].prepareUpdate((record: any) => {
+              record.responseValue = data.response_value;
+              record.remarks = data.remarks;
+              record.imageUrl = data.image_url;
+              record.isSynced = false;
+            }),
+          );
+        } else {
+          recordsToBatch.push(
+            pmResponseCollection.prepareCreate((record: any) => {
+              record.serverId = null;
+              record.instanceId = instanceServerId;
+              record.checklistItemId = data.checklist_item_id;
+              record.responseValue = data.response_value;
+              record.remarks = data.remarks;
+              record.imageUrl = data.image_url;
+              record.isSynced = false;
+            }),
+          );
+        }
+      }
+
+      // Prepare instance progress update
+      const local = await this.getInstanceByServerId(instanceServerId);
+      if (local) {
+        const checklistItems = await this.getChecklistItems(
+          local.maintenanceId!,
+        );
+        const answered = responses.filter((r) => r.response_value).length;
+        // Note: we might need to count existing ones not in this batch,
+        // but typically responses passed here are the full current state.
+        // For reliability, let's fetch all responses after batch (but we are in a transaction).
+        // Actually, we can just calculate it here if 'responses' is the full set.
+        // In pm-execution, 'responses' IS the full set.
+        const total = checklistItems.length;
+        const progressStr = `${answered}/${total}`;
+
+        recordsToBatch.push(
+          local.prepareUpdate((r: any) => {
+            r.progress = progressStr;
+            r.isSynced = false;
+          }),
+        );
+      }
+
+      await database.batch(...recordsToBatch);
+    });
+  },
+
+  /**
+   * Save a single PM response locally. (Legacy, still useful for single updates)
    */
   async saveResponseLocally(
     data: PMResponseData & { instanceServerId: string },
@@ -263,6 +373,7 @@ const PMService = {
         )
         .fetch();
 
+      let resultRecord;
       if (existing.length > 0) {
         await existing[0].update((record: any) => {
           record.responseValue = data.response_value;
@@ -270,9 +381,9 @@ const PMService = {
           record.imageUrl = data.image_url;
           record.isSynced = false;
         });
-        return existing[0];
+        resultRecord = existing[0];
       } else {
-        return pmResponseCollection.create((record: any) => {
+        resultRecord = await pmResponseCollection.create((record: any) => {
           record.serverId = null;
           record.instanceId = data.instanceServerId;
           record.checklistItemId = data.checklist_item_id;
@@ -282,6 +393,50 @@ const PMService = {
           record.isSynced = false;
         });
       }
+
+      // Inline progress update into the same transaction to avoid nested write
+      const local = await this.getInstanceByServerId(data.instanceServerId);
+      if (local) {
+        const checklistItems = await this.getChecklistItems(
+          local.maintenanceId!,
+        );
+        const currentResponses = await this.getResponsesForInstance(
+          data.instanceServerId,
+        );
+        const answered = currentResponses.filter((r) => r.responseValue).length;
+        const total = checklistItems.length;
+        await local.update((r: any) => {
+          r.progress = `${answered}/${total}`;
+          r.isSynced = false;
+        });
+      }
+
+      return resultRecord;
+    });
+  },
+
+  /**
+   * Update local instance progress string 'X/Y'
+   */
+  async updateLocalInstanceProgress(instanceServerId: string): Promise<void> {
+    const local = await this.getInstanceByServerId(instanceServerId);
+    if (!local) return;
+
+    const checklistItems = await this.getChecklistItems(local.maintenanceId!);
+    const responses = await this.getResponsesForInstance(instanceServerId);
+
+    const answered = responses.filter((r) => r.responseValue).length;
+    const total = checklistItems.length;
+    const progressStr = `${answered}/${total}`;
+
+    // Ensure we only write if not already in a transaction (though safe call usually handles it)
+    // Best practice: this method should only be called if NOT in a write block,
+    // or we should allow passing the current record to update.
+    await database.write(async () => {
+      await local.update((r: any) => {
+        r.progress = progressStr;
+        r.isSynced = false;
+      });
     });
   },
 
@@ -315,10 +470,13 @@ const PMService = {
     // Update locally
     const local = await this.getInstanceByServerId(instanceServerId);
     if (local) {
+      const checklistItems = await this.getChecklistItems(local.maintenanceId!);
+      const total = checklistItems.length;
+
       await database.write(async () => {
         await local.update((r: any) => {
           r.status = "Completed";
-          r.progress = 100;
+          r.progress = `${total}/${total}`;
           r.clientSign = clientSign;
           r.beforeImage = beforeImage || null;
           r.afterImage = afterImage || null;
@@ -348,8 +506,12 @@ const PMService = {
           });
         });
       }
-    } catch {
-      // Offline - sync later
+    } catch (err) {
+      logger.error("Failed to sync PM completion immediately, will retry", {
+        instanceId: instanceServerId,
+        error: err,
+      });
+      // Already marked isSynced = false above, so it will be retried
     }
   },
 
@@ -384,6 +546,46 @@ const PMService = {
         }
       } catch {
         // Skip - will retry on next sync
+      }
+    }
+  },
+
+  /**
+   * Push pending PM instance status updates to backend.
+   */
+  async pushPendingInstances(): Promise<void> {
+    const pending = await pmInstanceCollection
+      .query(Q.where("is_synced", false))
+      .fetch();
+
+    for (const instance of pending) {
+      if (!instance.serverId) continue;
+      try {
+        const res = await apiFetch(
+          `/api/pm-instances/${instance.serverId}/status`,
+          {
+            method: "PATCH",
+            body: JSON.stringify({
+              status: instance.status,
+              client_sign: instance.clientSign,
+              before_image: instance.beforeImage,
+              after_image: instance.afterImage,
+            }),
+          },
+        );
+
+        if (res.ok) {
+          await database.write(async () => {
+            await instance.update((r: any) => {
+              r.isSynced = true;
+            });
+          });
+        }
+      } catch (err) {
+        logger.error("Failed to sync pending PM instance", {
+          instanceId: instance.serverId,
+          error: err,
+        });
       }
     }
   },

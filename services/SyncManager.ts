@@ -14,7 +14,7 @@ import logger from "@/utils/logger";
 
 // We need to avoid hardcoded URLs if possible, but for sync we need API connection
 // Ideally this comes from a config or env
-import * as BackgroundTask from "expo-background-task";
+import * as BackgroundFetch from "expo-background-fetch";
 import * as TaskManager from "expo-task-manager";
 import { API_BASE_URL } from "../constants/api";
 
@@ -22,9 +22,25 @@ const API_URL = API_BASE_URL;
 const BACKGROUND_SYNC_TASK = "BACKGROUND_SYNC_TASK";
 
 // Register background task in the global scope
+// CRITICAL: This must be defined before SyncManager instance is used
 TaskManager.defineTask(BACKGROUND_SYNC_TASK, async () => {
-  const manager = SyncManager.getInstance();
-  await manager.triggerSync("background");
+  try {
+    logger.info("Background sync task starting...", {
+      module: "SYNC_MANAGER",
+    });
+    // Use the singleton instance
+    const manager = SyncManager.getInstance();
+    await manager.triggerSync("background");
+    logger.info("Background sync task completed successfully", {
+      module: "SYNC_MANAGER",
+    });
+  } catch (err: any) {
+    logger.error("Background sync task failed", {
+      module: "SYNC_MANAGER",
+      error: err.message,
+    });
+    throw err;
+  }
 });
 
 class SyncManager {
@@ -66,8 +82,10 @@ class SyncManager {
       const isRegistered =
         await TaskManager.isTaskRegisteredAsync(BACKGROUND_SYNC_TASK);
       if (!isRegistered) {
-        await BackgroundTask.registerTaskAsync(BACKGROUND_SYNC_TASK, {
+        await BackgroundFetch.registerTaskAsync(BACKGROUND_SYNC_TASK, {
           minimumInterval: 15 * 60, // 15 minutes
+          stopOnTerminate: false,
+          startOnBoot: true,
         });
         logger.info("Background sync task registered", {
           module: "SYNC_MANAGER",
@@ -297,6 +315,7 @@ class SyncManager {
       try {
         const PMService = (await import("./PMService")).default;
         await PMService.pushPendingResponses();
+        await PMService.pushPendingInstances();
 
         const siteCode = await authService.getCurrentSiteCode();
         if (siteCode) {

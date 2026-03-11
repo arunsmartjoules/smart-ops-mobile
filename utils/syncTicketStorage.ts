@@ -51,18 +51,22 @@ export async function pullRecentTickets(
               .fetch();
 
             if (existing.length > 0) {
-              await existing[0].update((record) => {
-                record.ticketNumber = t.ticket_no;
-                record.title = t.title;
-                record.description = t.description || t.internal_remarks;
-                record.status = t.status;
-                record.priority = t.priority;
-                record.category = t.category;
-                record.area = t.area_asset || t.location;
-                record.assignedTo = t.assigned_to;
-                record.createdBy = t.created_user || "unknown";
-                record.isSynced = true;
-              });
+              const record = existing[0];
+              // Only update if local is already synced to avoid overwriting local changes
+              if (record.isSynced) {
+                await record.update((r) => {
+                  r.ticketNumber = t.ticket_no;
+                  r.title = t.title;
+                  r.description = t.description || t.internal_remarks;
+                  r.status = t.status;
+                  r.priority = t.priority;
+                  r.category = t.category;
+                  r.area = t.area_asset || t.location;
+                  r.assignedTo = t.assigned_to;
+                  r.createdBy = t.created_user || "unknown";
+                  r.isSynced = true;
+                });
+              }
             } else {
               await ticketCollection.create((record) => {
                 record.serverId = t.ticket_id || t.id;

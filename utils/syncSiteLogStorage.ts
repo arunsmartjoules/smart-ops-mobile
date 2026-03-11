@@ -367,8 +367,10 @@ export async function pullRecentSiteLogs(
                 : null;
 
             if (existing) {
-              batch.push(
-                existing.prepareUpdate((r) => {
+              // Only update if local is already synced to avoid overwriting local-only changes
+              if (existing.isSynced) {
+                batch.push(
+                  existing.prepareUpdate((r) => {
                   r.siteCode = (logData.site_code || logData.site_id) ?? "";
                   r.executorId = logData.executor_id;
                   r.logName = normalizeLogName(logData.log_name);
@@ -397,6 +399,7 @@ export async function pullRecentSiteLogs(
                   }
                 }),
               );
+              }
             } else {
               batch.push(
                 siteLogCollection.prepareCreate((r) => {
@@ -498,8 +501,10 @@ export async function pullRecentChillerReadings(
                 : null;
 
             if (existing) {
-              batch.push(
-                existing.prepareUpdate((record) => {
+              // Only update if local is already synced to avoid overwriting local-only changes
+              if (existing.isSynced) {
+                batch.push(
+                  existing.prepareUpdate((record) => {
                   record.siteCode = serverLog.site_code || record.siteCode;
                   record.chillerId = serverLog.chiller_id;
                   record.equipmentId = serverLog.equipment_id;
@@ -566,6 +571,7 @@ export async function pullRecentChillerReadings(
                   record.isSynced = true;
                 }),
               );
+              }
             } else {
               batch.push(
                 chillerReadingCollection.prepareCreate((record) => {

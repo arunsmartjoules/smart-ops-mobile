@@ -15,6 +15,19 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { type Site } from "@/services/AttendanceService";
 import SearchableSelect, { type SelectOption } from "./SearchableSelect";
 
+const parseLocal = (dateStr: string | null) => {
+  if (!dateStr) return new Date();
+  const d = new Date(dateStr.replace(/-/g, "/"));
+  return isNaN(d.getTime()) ? new Date() : d;
+};
+
+const safeFormat = (date: any, formatStr: string) => {
+  if (!date) return "Pick a date";
+  const d = date instanceof Date ? date : new Date(date);
+  if (isNaN(d.getTime())) return "Invalid Date";
+  return format(d, formatStr);
+};
+
 interface AdvancedFilterModalProps {
   visible: boolean;
   onClose: () => void;
@@ -22,14 +35,18 @@ interface AdvancedFilterModalProps {
   setTempSearch: (s: string) => void;
   tempFromDate: string | null;
   setTempFromDate: (s: string | null) => void;
-  tempToDate: string | null;
-  setTempToDate: (s: string | null) => void;
+  tempToDate?: string | null;
+  setTempToDate?: (s: string | null) => void;
   sites: Site[];
   selectedSiteCode: string;
   setSelectedSiteCode: (s: string) => void;
   user: any;
-  statusFilter: string;
-  setStatusFilter: (status: string) => void;
+  statusFilter?: string;
+  setStatusFilter?: (status: string) => void;
+  statusOptions?: string[];
+  priorityFilter?: string;
+  setPriorityFilter?: (priority: string) => void;
+  title?: string;
   applyAdvancedFilters: () => void;
 }
 
@@ -48,19 +65,17 @@ const AdvancedFilterModal = ({
   user,
   statusFilter,
   setStatusFilter,
+  statusOptions,
+  priorityFilter,
+  setPriorityFilter,
+  title = "Filter Tickets",
   applyAdvancedFilters,
 }: AdvancedFilterModalProps) => {
   const [showStartPicker, setShowStartPicker] = React.useState(false);
-  const [showEndPicker, setShowEndPicker] = React.useState(false);
 
   const onStartChange = (event: any, selectedDate?: Date) => {
     setShowStartPicker(Platform.OS === "ios");
     if (selectedDate) setTempFromDate(format(selectedDate, "yyyy-MM-dd"));
-  };
-
-  const onEndChange = (event: any, selectedDate?: Date) => {
-    setShowEndPicker(Platform.OS === "ios");
-    if (selectedDate) setTempToDate(format(selectedDate, "yyyy-MM-dd"));
   };
   const siteOptions = React.useMemo(
     () =>
@@ -74,7 +89,12 @@ const AdvancedFilterModal = ({
   if (!visible) return null;
 
   return (
-    <Modal visible={visible} animationType="slide" transparent={true} statusBarTranslucent={true}>
+    <Modal
+      visible={visible}
+      animationType="slide"
+      transparent={true}
+      statusBarTranslucent={true}
+    >
       <View
         style={{
           flex: 1,
@@ -107,7 +127,7 @@ const AdvancedFilterModal = ({
                 letterSpacing: -0.5,
               }}
             >
-              Filter Tickets
+              {title}
             </Text>
             <TouchableOpacity
               onPress={onClose}
@@ -178,121 +198,55 @@ const AdvancedFilterModal = ({
                   marginLeft: 4,
                 }}
               >
-                Date Range
+                {setTempToDate ? "Date Range" : "Select Date"}
               </Text>
-              <View style={{ flexDirection: "row", gap: 8, marginBottom: 12 }}>
-                {[
-                  {
-                    label: "Today",
-                    value: format(new Date(), "yyyy-MM-dd"),
-                  },
-                  {
-                    label: "7 Days",
-                    value: format(
-                      new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
-                      "yyyy-MM-dd",
-                    ),
-                  },
-                  {
-                    label: "30 Days",
-                    value: format(
-                      new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
-                      "yyyy-MM-dd",
-                    ),
-                  },
-                ].map((preset) => (
-                  <TouchableOpacity
-                    key={preset.label}
-                    onPress={() => {
-                      setTempFromDate(preset.value);
-                      setTempToDate(format(new Date(), "yyyy-MM-dd"));
-                    }}
-                    style={{
-                      paddingHorizontal: 16,
-                      paddingVertical: 8,
-                      borderRadius: 12,
-                      borderWidth: 1,
-                      backgroundColor:
-                        tempFromDate === preset.value ? "#fef2f2" : "#f8fafc",
-                      borderColor:
-                        tempFromDate === preset.value ? "#fecaca" : "#f1f5f9",
-                    }}
-                  >
-                    <Text
-                      style={{
-                        fontSize: 11,
-                        fontWeight: "700",
-                        color:
-                          tempFromDate === preset.value ? "#dc2626" : "#64748b",
-                      }}
-                    >
-                      {preset.label}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-                <TouchableOpacity
-                  onPress={() => {
-                    setTempFromDate(null);
-                    setTempToDate(null);
-                  }}
-                  style={{
-                    paddingHorizontal: 16,
-                    paddingVertical: 8,
-                    borderRadius: 12,
-                    borderWidth: 1,
-                    backgroundColor: "#f8fafc",
-                    borderColor: "#f1f5f9",
-                  }}
-                >
+
+              <TouchableOpacity
+                onPress={() => setShowStartPicker(true)}
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  backgroundColor: "#f8fafc",
+                  borderRadius: 16,
+                  paddingHorizontal: 20,
+                  paddingVertical: 16,
+                  borderWidth: 1,
+                  borderColor: "#f1f5f9",
+                  justifyContent: "space-between",
+                }}
+              >
+                <View style={{ flexDirection: "row", alignItems: "center" }}>
+                  <Calendar size={20} color="#dc2626" />
                   <Text
                     style={{
-                      fontSize: 11,
+                      marginLeft: 12,
+                      color: tempFromDate ? "#0f172a" : "#94a3b8",
                       fontWeight: "700",
-                      color: "#64748b",
+                      fontSize: 15,
                     }}
                   >
-                    Clear
+                    {tempFromDate
+                      ? safeFormat(
+                          parseLocal(tempFromDate),
+                          "eeee, dd MMMM yyyy",
+                        )
+                      : "Pick a date"}
                   </Text>
-                </TouchableOpacity>
-              </View>
-
-              {tempFromDate && (
-                <View
-                  style={{
-                    backgroundColor: "#f8fafc",
-                    borderRadius: 16,
-                    padding: 16,
-                    borderWidth: 1,
-                    borderColor: "#f1f5f9",
-                  }}
-                >
-                  <View
-                    style={{
-                      flexDirection: "row",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                    }}
-                  >
-                    <View
-                      style={{ flexDirection: "row", alignItems: "center" }}
-                    >
-                      <Calendar size={16} color="#dc2626" />
-                      <Text
-                        style={{
-                          color: "#475569",
-                          fontSize: 12,
-                          fontWeight: "700",
-                          marginLeft: 8,
-                        }}
-                      >
-                        {format(new Date(tempFromDate), "dd MMM")} -{" "}
-                        {tempToDate
-                          ? format(new Date(tempToDate), "dd MMM, yyyy")
-                          : "Present"}
-                      </Text>
-                    </View>
-                  </View>
                 </View>
+                <Text
+                  style={{ color: "#3b82f6", fontSize: 12, fontWeight: "700" }}
+                >
+                  Change
+                </Text>
+              </TouchableOpacity>
+
+              {showStartPicker && (
+                <DateTimePicker
+                  value={parseLocal(tempFromDate)}
+                  mode="date"
+                  display={Platform.OS === "ios" ? "spinner" : "default"}
+                  onChange={onStartChange}
+                />
               )}
             </View>
 
@@ -326,15 +280,110 @@ const AdvancedFilterModal = ({
                 }}
               />
             </View>
+
+            {setStatusFilter && (
+              <View>
+                <Text
+                  style={{
+                    color: "#94a3b8",
+                    fontSize: 10,
+                    fontWeight: "900",
+                    textTransform: "uppercase",
+                    letterSpacing: 1.5,
+                    marginBottom: 12,
+                    marginLeft: 4,
+                  }}
+                >
+                  Status
+                </Text>
+                <View
+                  style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}
+                >
+                  {(statusOptions || ["All", "Pending", "In-progress", "Completed"]).map((s) => (
+                    <TouchableOpacity
+                      key={s}
+                      onPress={() => setStatusFilter?.(s)}
+                      style={{
+                        paddingHorizontal: 16,
+                        paddingVertical: 10,
+                        borderRadius: 14,
+                        borderWidth: 1,
+                        backgroundColor:
+                          statusFilter === s ? "#fef2f2" : "#f8fafc",
+                        borderColor: statusFilter === s ? "#fecaca" : "#f1f5f9",
+                      }}
+                    >
+                      <Text
+                        style={{
+                          fontSize: 12,
+                          fontWeight: "700",
+                          color: statusFilter === s ? "#dc2626" : "#475569",
+                        }}
+                      >
+                        {s}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+            )}
+
+            {setPriorityFilter && (
+              <View>
+                <Text
+                  style={{
+                    color: "#94a3b8",
+                    fontSize: 10,
+                    fontWeight: "900",
+                    textTransform: "uppercase",
+                    letterSpacing: 1.5,
+                    marginBottom: 12,
+                    marginLeft: 4,
+                  }}
+                >
+                  Priority
+                </Text>
+                <View
+                  style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}
+                >
+                  {["All", "Medium", "High", "Very High"].map((p) => (
+                    <TouchableOpacity
+                      key={p}
+                      onPress={() => setPriorityFilter?.(p)}
+                      style={{
+                        paddingHorizontal: 16,
+                        paddingVertical: 10,
+                        borderRadius: 14,
+                        borderWidth: 1,
+                        backgroundColor:
+                          priorityFilter === p ? "#fef2f2" : "#f8fafc",
+                        borderColor:
+                          priorityFilter === p ? "#fecaca" : "#f1f5f9",
+                      }}
+                    >
+                      <Text
+                        style={{
+                          fontSize: 12,
+                          fontWeight: "700",
+                          color: priorityFilter === p ? "#dc2626" : "#475569",
+                        }}
+                      >
+                        {p}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+            )}
           </View>
 
           <View style={{ flexDirection: "row", gap: 16, marginTop: 40 }}>
             <TouchableOpacity
               onPress={() => {
                 setTempSearch("");
-                setTempFromDate(null);
-                setTempToDate(null);
-                setStatusFilter("Open");
+                setTempFromDate(format(new Date(), "yyyy-MM-dd"));
+                setStatusFilter?.("Open");
+                setPriorityFilter?.("All");
               }}
               style={{
                 flex: 1,

@@ -122,7 +122,15 @@ export const TicketsService = {
    * Get tickets for a site with filters
    */
   async getTickets(siteCode: string, options: any = {}) {
-    const { status, fromDate, toDate, search, page = 1, limit = 50 } = options;
+    const {
+      status,
+      fromDate,
+      toDate,
+      search,
+      priority,
+      page = 1,
+      limit = 50,
+    } = options;
 
     // 1. Return local data if searching/filtering within standard view
     if (page === 1) {
@@ -132,10 +140,10 @@ export const TicketsService = {
           queryConditions.unshift(Q.where("site_code", siteCode));
         }
 
-        let query = ticketCollection.query(...(queryConditions as any));
-
         const conditions: any[] = [];
         if (status) conditions.push(Q.where("status", status));
+        if (priority && priority !== "All")
+          conditions.push(Q.where("priority", priority));
         if (search) {
           conditions.push(
             Q.where("title", Q.like(`%${Q.sanitizeLikeString(search)}%`)),
@@ -150,39 +158,60 @@ export const TicketsService = {
           if (siteCode !== "all") {
             finalConditions.unshift(Q.where("site_code", siteCode));
           }
-          query = ticketCollection.query(...finalConditions);
-        }
+          const localTickets = await ticketCollection
+            .query(...finalConditions)
+            .fetch();
 
-        const localTickets = await query.fetch();
-        if (localTickets.length > 0) {
-          // Fire background sync if online
-          const token = await authService.getValidToken();
-          if (token) {
-            pullRecentTickets(siteCode, token, BACKEND_URL).catch((e) =>
-              logger.debug("Background ticket pull failed", {
-                error: e.message,
-              }),
-            );
+          if (localTickets.length > 0) {
+            // Fire background sync if online
+            const token = await authService.getValidToken();
+            if (token) {
+              pullRecentTickets(siteCode, token, BACKEND_URL).catch((e) =>
+                logger.debug("Background ticket pull failed", {
+                  error: e.message,
+                }),
+              );
+            }
+
+            // Priority Precedence for local sorting
+            const priorityOrder: Record<string, number> = {
+              "Very High": 1,
+              High: 2,
+              Medium: 3,
+            };
+
+            const sortedTickets = localTickets
+              .map((t) => ({
+                id: t.serverId,
+                ticket_no: t.ticketNumber,
+                title: t.title,
+                description: t.description,
+                status: t.status,
+                priority: t.priority,
+                category: t.category,
+                location: t.area,
+                assigned_to: t.assignedTo,
+                created_user: t.createdBy,
+                site_code: t.siteCode,
+                created_at: t.createdAt.toISOString(),
+              }))
+              .sort((a, b) => {
+                const pA = priorityOrder[a.priority || ""] || 4;
+                const pB = priorityOrder[b.priority || ""] || 4;
+                if (pA !== pB) return pA - pB;
+                // Secondary sort: Newest first
+                return (
+                  new Date(b.created_at).getTime() -
+                  new Date(a.created_at).getTime()
+                );
+              });
+
+            return {
+              success: true,
+              data: sortedTickets,
+              isFromCache: true,
+            };
           }
-
-          return {
-            success: true,
-            data: localTickets.map((t) => ({
-              id: t.serverId,
-              ticket_no: t.ticketNumber,
-              title: t.title,
-              description: t.description,
-              status: t.status,
-              priority: t.priority,
-              category: t.category,
-              location: t.area,
-              assigned_to: t.assignedTo,
-              created_user: t.createdBy,
-              site_code: t.siteCode,
-              created_at: t.createdAt.toISOString(),
-            })),
-            isFromCache: true,
-          };
         }
       } catch (err) {
         logger.error("Error fetching local tickets", { error: err });
@@ -192,6 +221,7 @@ export const TicketsService = {
     // 2. Fallback to API if no local data or requested specific page
     const params = new URLSearchParams();
     if (status) params.append("status", status);
+    if (priority) params.append("priority", priority);
     if (fromDate) params.append("fromDate", fromDate);
     if (toDate) params.append("toDate", toDate);
     if (search) params.append("search", search);

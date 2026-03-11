@@ -10,16 +10,45 @@ import {
   ActivityIndicator,
 } from "react-native";
 import { Mail, Lock, Zap, Eye, EyeOff } from "lucide-react-native";
+import * as Google from "expo-auth-session/providers/google";
 import { router } from "expo-router";
 import { useAuth } from "@/contexts/AuthContext";
 import { showAlert } from "@/utils/alert";
+import { useEffect } from "react";
 
 export default function SignIn() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
-  const { signIn } = useAuth();
+  const { signIn, signInWithGoogle } = useAuth();
+
+  const [request, response, promptAsync] = Google.useAuthRequest({
+    androidClientId: process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID,
+    iosClientId: process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID,
+    webClientId: process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID,
+  });
+
+  useEffect(() => {
+    if (response?.type === "success") {
+      const { id_token } = response.params;
+      if (id_token) {
+        handleGoogleSignIn(id_token);
+      }
+    }
+  }, [response]);
+
+  const handleGoogleSignIn = async (idToken: string) => {
+    setLoading(true);
+    const { error } = await signInWithGoogle(idToken);
+    setLoading(false);
+
+    if (error) {
+      showAlert("❌ Google Sign In Failed", error);
+    } else {
+      router.replace("/(tabs)/dashboard");
+    }
+  };
 
   const handleSignIn = async () => {
     if (!email || !password) {
@@ -150,6 +179,17 @@ export default function SignIn() {
                     Secure Sign In
                   </Text>
                 )}
+              </TouchableOpacity>
+
+              {/* Google Sign In */}
+              <TouchableOpacity
+                onPress={() => promptAsync()}
+                disabled={loading || !request}
+                className="mt-4 flex-row items-center justify-center bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 py-3 rounded-lg shadow-sm active:scale-95"
+              >
+                <Text className="text-gray-700 dark:text-slate-50 font-semibold ml-2">
+                  Sign in with Google
+                </Text>
               </TouchableOpacity>
 
               {/* Sign Up */}
