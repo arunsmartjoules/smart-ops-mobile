@@ -1,7 +1,7 @@
 import { appSchema, tableSchema } from "@nozbe/watermelondb";
 
 export const schema = appSchema({
-  version: 13,
+  version: 14,
   tables: [
     // Tickets for offline access and updates
     tableSchema({
@@ -236,6 +236,7 @@ export const schema = appSchema({
         { name: "instance_id", type: "string", isIndexed: true },
         { name: "checklist_item_id", type: "string", isIndexed: true },
         { name: "response_value", type: "string", isOptional: true },
+        { name: "readings", type: "string", isOptional: true },
         { name: "remarks", type: "string", isOptional: true },
         { name: "image_url", type: "string", isOptional: true },
         { name: "is_synced", type: "boolean" },

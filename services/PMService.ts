@@ -11,6 +11,9 @@ import PMResponse from "../database/models/PMResponse";
 import { authService } from "./AuthService";
 import { fetchWithTimeout } from "../utils/apiHelper";
 import { syncManager } from "./SyncManager";
+import { StorageService } from "./StorageService";
+import NetInfo from "@react-native-community/netinfo";
+import { format } from "date-fns";
 import logger from "../utils/logger";
 import { API_BASE_URL } from "../constants/api";
 
@@ -41,9 +44,33 @@ export interface PMChecklistItemData {
 export interface PMResponseData {
   checklist_item_id: string;
   response_value: string | null;
+  readings: string | null;
   remarks: string | null;
   image_url: string | null;
 }
+
+const LOCAL_URI_PREFIXES = ["file://", "content://", "ph://", "asset-library://"];
+
+const isLikelyLocalUri = (value?: string | null) =>
+  !!value && LOCAL_URI_PREFIXES.some((prefix) => value.startsWith(prefix));
+
+const uploadPendingAssetIfNeeded = async (
+  uriOrUrl: string | null | undefined,
+  folder: "pm-checklists" | "pm-completion",
+  recordId: string,
+): Promise<string | null> => {
+  if (!uriOrUrl) return null;
+  if (!isLikelyLocalUri(uriOrUrl)) return uriOrUrl;
+
+  const fileName = `${folder}/${recordId}_${Date.now()}.jpg`;
+  const uploadedUrl = await StorageService.uploadFile(
+    "jouleops-attachments",
+    fileName,
+    uriOrUrl,
+  );
+
+  return uploadedUrl;
+};
 
 const PMService = {
   /**
@@ -131,15 +158,31 @@ const PMService = {
    * Pull PM instances from backend for a specific date and site.
    * Fetches all statuses for the given date to ensure complete local data.
    */
-  async pullFromServer(siteCode: string, date?: Date): Promise<void> {
+  async pullFromServer(siteCode: string, fromDate?: Date, toDate?: Date): Promise<void> {
     try {
       const siteParam = siteCode === "all" ? "all" : siteCode;
-      const targetDate = date || new Date();
-      const dateStr = targetDate.toISOString().split("T")[0];
+      
+      let fromDateStr: string;
+      let toDateStr: string;
 
-      // Fetch instances for the specific date
+      if (fromDate && toDate) {
+        fromDateStr = format(fromDate, "yyyy-MM-dd");
+        toDateStr = format(toDate, "yyyy-MM-dd");
+      } else if (fromDate) {
+        fromDateStr = format(fromDate, "yyyy-MM-dd");
+        toDateStr = fromDateStr;
+      } else {
+        const today = new Date();
+        toDateStr = format(today, "yyyy-MM-dd");
+
+        const ninetyDaysAgo = new Date();
+        ninetyDaysAgo.setDate(today.getDate() - 90);
+        fromDateStr = format(ninetyDaysAgo, "yyyy-MM-dd");
+      }
+
+      // Fetch instances for the specific date range
       const filters = JSON.stringify([
-        { fieldId: "start_due_date", operator: "between", value: dateStr, valueEnd: dateStr }
+        { fieldId: "start_due_date", operator: "between", value: fromDateStr, valueEnd: toDateStr }
       ]);
 
       const response = await apiFetch(
@@ -218,7 +261,7 @@ const PMService = {
         await database.batch(batch);
       });
 
-      logger.info(`Pulled ${instances.length} PM instances for ${siteCode} on ${dateStr}`, {
+      logger.info(`Pulled ${instances.length} PM instances for ${siteCode} from ${fromDateStr} to ${toDateStr}`, {
         module: "PM_SERVICE",
       });
     } catch (error: any) {
@@ -311,6 +354,7 @@ const PMService = {
           recordsToBatch.push(
             existing[0].prepareUpdate((record: any) => {
               record.responseValue = data.response_value;
+              record.readings = data.readings;
               record.remarks = data.remarks;
               record.imageUrl = data.image_url;
               record.isSynced = false;
@@ -323,6 +367,7 @@ const PMService = {
               record.instanceId = instanceServerId;
               record.checklistItemId = data.checklist_item_id;
               record.responseValue = data.response_value;
+              record.readings = data.readings;
               record.remarks = data.remarks;
               record.imageUrl = data.image_url;
               record.isSynced = false;
@@ -356,6 +401,8 @@ const PMService = {
 
       await database.batch(...recordsToBatch);
     });
+
+    syncManager.triggerSync("manual").catch(() => {});
   },
 
   /**
@@ -364,7 +411,7 @@ const PMService = {
   async saveResponseLocally(
     data: PMResponseData & { instanceServerId: string },
   ): Promise<PMResponse> {
-    return database.write(async () => {
+    const result = await database.write(async () => {
       // Check if response already exists
       const existing = await pmResponseCollection
         .query(
@@ -377,6 +424,7 @@ const PMService = {
       if (existing.length > 0) {
         await existing[0].update((record: any) => {
           record.responseValue = data.response_value;
+          record.readings = data.readings;
           record.remarks = data.remarks;
           record.imageUrl = data.image_url;
           record.isSynced = false;
@@ -388,6 +436,7 @@ const PMService = {
           record.instanceId = data.instanceServerId;
           record.checklistItemId = data.checklist_item_id;
           record.responseValue = data.response_value;
+          record.readings = data.readings;
           record.remarks = data.remarks;
           record.imageUrl = data.image_url;
           record.isSynced = false;
@@ -413,6 +462,9 @@ const PMService = {
 
       return resultRecord;
     });
+
+    syncManager.triggerSync("manual").catch(() => {});
+    return result;
   },
 
   /**
@@ -512,6 +564,8 @@ const PMService = {
         error: err,
       });
       // Already marked isSynced = false above, so it will be retried
+    } finally {
+      syncManager.triggerSync("manual").catch(() => {});
     }
   },
 
@@ -519,20 +573,51 @@ const PMService = {
    * Push pending PM responses to backend.
    */
   async pushPendingResponses(): Promise<void> {
+    const networkState = await NetInfo.fetch();
+    if (!networkState.isConnected || networkState.isInternetReachable === false) {
+      return;
+    }
+
     const pending = await pmResponseCollection
       .query(Q.where("is_synced", false))
       .fetch();
 
     for (const response of pending) {
       try {
+        let resolvedImageUrl = response.imageUrl;
+
+        if (isLikelyLocalUri(resolvedImageUrl)) {
+          const uploadedUrl = await uploadPendingAssetIfNeeded(
+            resolvedImageUrl,
+            "pm-checklists",
+            response.id,
+          );
+
+          if (!uploadedUrl) {
+            logger.warn("Skipping PM response sync - image upload pending", {
+              module: "PM_SERVICE",
+              responseId: response.id,
+            });
+            continue;
+          }
+
+          resolvedImageUrl = uploadedUrl;
+          await database.write(async () => {
+            await response.update((r: any) => {
+              r.imageUrl = uploadedUrl;
+            });
+          });
+        }
+
         const res = await apiFetch("/api/pm-checklists/responses", {
           method: "POST",
           body: JSON.stringify({
             instance_id: response.instanceId,
             checklist_id: response.checklistItemId,
             response_value: response.responseValue,
+            readings: response.readings,
             remarks: response.remarks,
-            image_url: response.imageUrl,
+            image_url: resolvedImageUrl,
           }),
         });
         if (res.ok) {
@@ -554,6 +639,11 @@ const PMService = {
    * Push pending PM instance status updates to backend.
    */
   async pushPendingInstances(): Promise<void> {
+    const networkState = await NetInfo.fetch();
+    if (!networkState.isConnected || networkState.isInternetReachable === false) {
+      return;
+    }
+
     const pending = await pmInstanceCollection
       .query(Q.where("is_synced", false))
       .fetch();
@@ -561,6 +651,53 @@ const PMService = {
     for (const instance of pending) {
       if (!instance.serverId) continue;
       try {
+        let resolvedBeforeImage = instance.beforeImage;
+        let resolvedAfterImage = instance.afterImage;
+
+        if (isLikelyLocalUri(resolvedBeforeImage)) {
+          const uploadedBefore = await uploadPendingAssetIfNeeded(
+            resolvedBeforeImage,
+            "pm-completion",
+            `${instance.id}_before`,
+          );
+          if (!uploadedBefore) {
+            logger.warn("Skipping PM instance sync - before image upload pending", {
+              module: "PM_SERVICE",
+              instanceId: instance.serverId,
+            });
+            continue;
+          }
+          resolvedBeforeImage = uploadedBefore;
+        }
+
+        if (isLikelyLocalUri(resolvedAfterImage)) {
+          const uploadedAfter = await uploadPendingAssetIfNeeded(
+            resolvedAfterImage,
+            "pm-completion",
+            `${instance.id}_after`,
+          );
+          if (!uploadedAfter) {
+            logger.warn("Skipping PM instance sync - after image upload pending", {
+              module: "PM_SERVICE",
+              instanceId: instance.serverId,
+            });
+            continue;
+          }
+          resolvedAfterImage = uploadedAfter;
+        }
+
+        if (
+          resolvedBeforeImage !== instance.beforeImage ||
+          resolvedAfterImage !== instance.afterImage
+        ) {
+          await database.write(async () => {
+            await instance.update((r: any) => {
+              r.beforeImage = resolvedBeforeImage || null;
+              r.afterImage = resolvedAfterImage || null;
+            });
+          });
+        }
+
         const res = await apiFetch(
           `/api/pm-instances/${instance.serverId}/status`,
           {
@@ -568,8 +705,8 @@ const PMService = {
             body: JSON.stringify({
               status: instance.status,
               client_sign: instance.clientSign,
-              before_image: instance.beforeImage,
-              after_image: instance.afterImage,
+              before_image: resolvedBeforeImage,
+              after_image: resolvedAfterImage,
             }),
           },
         );

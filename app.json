@@ -2,12 +2,15 @@
   "expo": {
     "name": "smart-ops",
     "slug": "smart-ops",
-    "version": "1.0.0",
+    "version": "1.0.0 (Beta)",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "jouleops",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
+    "updates": {
+      "url": "https://u.expo.dev/d1868472-0103-49d5-978e-ece327af4c3e"
+    },
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.arundev2025.jouleops"

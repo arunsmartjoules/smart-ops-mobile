@@ -16,6 +16,7 @@ import {
   ScrollView,
   RefreshControl,
   TextInput,
+  useColorScheme,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import {
@@ -40,7 +41,7 @@ import { useNetworkStatus } from "@/hooks/useNetworkStatus";
 import PMService from "@/services/PMService";
 import { AttendanceService, type Site } from "@/services/AttendanceService";
 import PMInstance from "@/database/models/PMInstance";
-import { format, addDays, startOfDay, endOfDay } from "date-fns";
+import { format, addDays, startOfDay, endOfDay, parseISO, isValid } from "date-fns";
 import AdvancedFilterModal from "@/components/AdvancedFilterModal";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import logger from "@/utils/logger";
@@ -50,10 +51,17 @@ import Skeleton from "@/components/Skeleton";
 const PAGE_SIZE = 20;
 
 const safeFormat = (date: any, formatStr: string) => {
-  if (!date || isNaN(new Date(date).getTime())) {
+  if (!date) return "N/A";
+  const d =
+    date instanceof Date
+      ? date
+      : typeof date === "string"
+        ? parseISO(date)
+        : new Date(date);
+  if (!isValid(d)) {
     return "Invalid Date";
   }
-  return format(date, formatStr);
+  return format(d, formatStr);
 };
 
 const STATUS_COLORS: Record<string, { bg: string; text: string; dot: string }> =
@@ -103,6 +111,7 @@ const PMSkeleton = () => (
 // ─── Memoized PM Card ──────────────────────────────────────────────────────────
 const PMCard = React.memo(
   ({ instance, onPress }: { instance: PMInstance; onPress: () => void }) => {
+    const isDark = useColorScheme() === "dark";
     const statusInfo =
       STATUS_COLORS[instance.status] || STATUS_COLORS["Pending"];
 
@@ -110,17 +119,40 @@ const PMCard = React.memo(
       <TouchableOpacity
         onPress={onPress}
         activeOpacity={0.7}
-        style={styles.card}
+        className="bg-white dark:bg-slate-900 mb-3 border border-slate-100 dark:border-slate-800 rounded-2xl p-4"
+        style={{
+          shadowColor: "#000",
+          shadowOffset: { width: 0, height: 2 },
+          shadowOpacity: isDark ? 0 : 0.04,
+          shadowRadius: 8,
+          elevation: 2,
+        }}
       >
         <View style={styles.cardTopRow}>
-          <View style={styles.freqBadge}>
-            <Clock size={12} color="#64748b" />
-            <Text style={styles.freqText}>{instance.frequency || "ONCE"}</Text>
+          <View
+            className="bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 flex-row items-center px-2 py-1 rounded-lg gap-1.5"
+          >
+            <Clock size={12} color={isDark ? "#94a3b8" : "#64748b"} />
+            <Text
+              className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase"
+            >
+              {instance.frequency || "ONCE"}
+            </Text>
           </View>
           <View
-            style={[styles.statusBadge, { backgroundColor: statusInfo.bg }]}
+            style={[
+              styles.statusBadge,
+              {
+                backgroundColor: isDark ? statusInfo.bg + "20" : statusInfo.bg,
+              },
+            ]}
           >
-            <Text style={[styles.statusText, { color: statusInfo.text }]}>
+            <Text
+              style={[
+                styles.statusText,
+                { color: isDark ? statusInfo.dot : statusInfo.text },
+              ]}
+            >
               {instance.status}
             </Text>
           </View>
@@ -128,34 +160,49 @@ const PMCard = React.memo(
 
         <View style={styles.cardBody}>
           <View
-            style={[styles.iconWrap, { backgroundColor: statusInfo.bg + "40" }]}
+            style={[
+              styles.iconWrap,
+              {
+                backgroundColor: isDark
+                  ? statusInfo.dot + "20"
+                  : statusInfo.bg + "40",
+              },
+            ]}
           >
             <Wrench size={22} color={statusInfo.dot} />
           </View>
           <View style={styles.cardBodyText}>
-            <Text style={styles.cardTitle} numberOfLines={1}>
+            <Text
+              className="text-slate-900 dark:text-slate-50 text-base font-bold mb-0.5"
+              numberOfLines={1}
+            >
               {instance.assetId || "Unknown Asset"}
             </Text>
-            <Text style={styles.cardSubTitle} numberOfLines={1}>
+            <Text
+              className="text-slate-500 dark:text-slate-400 text-sm mb-2"
+              numberOfLines={1}
+            >
               {instance.title}
             </Text>
-            <View style={styles.attrRow}>
-              <View style={styles.assetRow}>
+            <View className="flex-row items-center gap-2">
+              <View className="flex-row items-center gap-1">
                 <Briefcase size={12} color="#94a3b8" />
-                <Text style={styles.assetText} numberOfLines={1}>
+                <Text
+                  className="text-slate-400 dark:text-slate-500 text-xs font-medium"
+                  numberOfLines={1}
+                >
                   {instance.assetType || "General Asset"}
                 </Text>
               </View>
               {instance.maintenanceId ? (
-                <View style={styles.idBadge}>
-                  <Text style={styles.idText}>
+                <View
+                  className="bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded-md"
+                >
+                  <Text
+                    className="text-slate-500 dark:text-slate-400 text-[10px] font-bold"
+                  >
                     ID: {instance.maintenanceId}
                   </Text>
-                </View>
-              ) : null}
-              {instance.progress ? (
-                <View style={styles.progressBadge}>
-                  <Text style={styles.progressText}>{instance.progress}</Text>
                 </View>
               ) : null}
             </View>
@@ -163,29 +210,31 @@ const PMCard = React.memo(
           <ChevronRight size={18} color="#cbd5e1" />
         </View>
 
-        <View style={styles.cardFooter}>
-          <View style={styles.footerLeft}>
+        <View className="mt-4 pt-3 border-t border-slate-50 dark:border-slate-800 flex-row items-center justify-between">
+          <View className="flex-row items-center gap-1.5">
             <Clock size={12} color="#94a3b8" />
-            <Text style={styles.footerText}>
+            <Text className="text-slate-400 dark:text-slate-500 text-xs font-medium">
               Due:{" "}
-              {instance.startDueDate
-                ? format(new Date(instance.startDueDate), "d MMM yyyy")
-                : "N/A"}
+              <Text className="text-slate-600 dark:text-slate-300 font-bold">
+                {instance.startDueDate
+                  ? format(new Date(instance.startDueDate), "d MMM yyyy")
+                  : "N/A"}
+              </Text>
             </Text>
           </View>
           {instance.assignedToName ? (
-            <View style={styles.footerRight}>
-              <View style={styles.avatar}>
-                <Text style={styles.avatarText}>
+            <View className="flex-row items-center gap-2">
+              <View className="w-6 h-6 rounded-full bg-red-100 items-center justify-center">
+                <Text className="text-red-700 text-[10px] font-bold">
                   {instance.assignedToName.charAt(0)}
                 </Text>
               </View>
-              <Text style={styles.assigneeName} numberOfLines={1}>
+              <Text className="text-slate-600 dark:text-slate-300 text-xs font-bold" numberOfLines={1}>
                 {instance.assignedToName}
               </Text>
             </View>
           ) : (
-            <Text style={styles.unassigned}>Unassigned</Text>
+            <Text className="text-slate-400 dark:text-slate-500 text-xs italic">Unassigned</Text>
           )}
         </View>
       </TouchableOpacity>
@@ -197,7 +246,7 @@ const PMCard = React.memo(
     prev.instance.progress === next.instance.progress,
 );
 
-// ─── Stat Card (non-clickable) ─────────────────────────────────────────────────
+// ─── Stat Card ─────────────────────────────────────────────────────────────────
 const StatCard = React.memo(
   ({
     icon,
@@ -205,25 +254,54 @@ const StatCard = React.memo(
     label,
     bg,
     color,
+    isActive,
+    onPress,
   }: {
     icon: React.ReactNode;
     value: number;
     label: string;
     bg: string;
     color: string;
-  }) => (
-    <View style={styles.statCard}>
-      <View style={[styles.statIcon, { backgroundColor: bg }]}>{icon}</View>
-      <Text style={[styles.statValue, { color }]}>{value}</Text>
-      <Text style={styles.statLabel}>{label}</Text>
-    </View>
-  ),
+    isActive: boolean;
+    onPress: () => void;
+  }) => {
+    return (
+      <TouchableOpacity
+        onPress={onPress}
+        activeOpacity={0.7}
+        className="flex-1 rounded-xl p-3 bg-white dark:bg-slate-900"
+        style={{
+          shadowColor: "#000",
+          shadowOffset: { width: 0, height: 1 },
+          shadowOpacity: 0.05,
+          shadowRadius: 4,
+          elevation: 2,
+          borderWidth: isActive ? 1 : 0,
+          borderColor: isActive ? color : "transparent",
+        }}
+      >
+        <View
+          className="w-8 h-8 rounded-lg items-center justify-center mb-2"
+          style={{ backgroundColor: bg }}
+        >
+          {icon}
+        </View>
+        <Text className="text-slate-900 dark:text-slate-50 text-xl font-bold">
+          {value}
+        </Text>
+        <Text className="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+          {label}
+        </Text>
+      </TouchableOpacity>
+    );
+  },
 );
 
 // ─── Main Screen ───────────────────────────────────────────────────────────────
 export default function PreventiveMaintenance() {
   const { user } = useAuth();
   const { isConnected } = useNetworkStatus();
+  const isDark = useColorScheme() === "dark";
 
   const [allInstances, setAllInstances] = useState<PMInstance[]>([]);
   const [page, setPage] = useState(1);
@@ -236,18 +314,30 @@ export default function PreventiveMaintenance() {
   const [siteName, setSiteName] = useState("Select Site");
   const [showFiltersModal, setShowFiltersModal] = useState(false);
 
-  // Date handling
-  const [currentDate, setCurrentDate] = useState(new Date());
+  // Date handling (using strings for consistency and to avoid stale closures)
+  const [currentDate, setCurrentDate] = useState(format(new Date(), "yyyy-MM-dd"));
+  const [toDate, setToDate] = useState(format(new Date(), "yyyy-MM-dd"));
 
   const [tempSearch, setTempSearch] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [tempFromDate, setTempFromDate] = useState<string | null>(
     format(new Date(), "yyyy-MM-dd"),
   );
+  const [tempToDate, setTempToDate] = useState<string | null>(
+    format(new Date(), "yyyy-MM-dd"),
+  );
 
   // Guard against re-fetching while server pull is in progress
   const isFetchingRef = useRef(false);
   const [syncing, setSyncing] = useState(false);
+
+  // Sync temp dates when modal opens
+  useEffect(() => {
+    if (showFiltersModal) {
+      setTempFromDate(currentDate);
+      setTempToDate(toDate);
+    }
+  }, [showFiltersModal, currentDate, toDate]);
 
   // ── Load Sites ──────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -295,10 +385,13 @@ export default function PreventiveMaintenance() {
       if (!siteCode) return;
       if (resetPage) setLoading(true);
       try {
-        const fromTs = startOfDay(currentDate).getTime();
-        const toTs = endOfDay(currentDate).getTime();
+        // Fetch for date range
+        const fromDateObj = parseISO(currentDate);
+        const toDateObj = parseISO(toDate);
+        if (!isValid(fromDateObj) || !isValid(toDateObj)) return;
+        const fromTs = startOfDay(fromDateObj).getTime();
+        const toTs = endOfDay(toDateObj).getTime();
 
-        // Fetch only for current day
         const data = await PMService.getLocalInstances(
           siteCode,
           undefined,
@@ -316,7 +409,7 @@ export default function PreventiveMaintenance() {
         setLoading(false);
       }
     },
-    [siteCode, currentDate],
+    [siteCode, currentDate, toDate],
   );
 
   // ── Reload local data when date or site changes ─────────────────────────────
@@ -324,7 +417,7 @@ export default function PreventiveMaintenance() {
     if (siteCode) {
       loadLocalData(true);
     }
-  }, [currentDate, siteCode, loadLocalData]);
+  }, [currentDate, toDate, siteCode, loadLocalData]);
 
   // ── Focus effect: background pull ───────────────────
   useFocusEffect(
@@ -333,9 +426,12 @@ export default function PreventiveMaintenance() {
       loadLocalData(true);
 
       if (isConnected && !isFetchingRef.current) {
+        const fromDateObj = parseISO(currentDate);
+        const toDateObj = parseISO(toDate);
+        if (!isValid(fromDateObj) || !isValid(toDateObj)) return;
         isFetchingRef.current = true;
         setSyncing(true);
-        PMService.pullFromServer(siteCode, currentDate)
+        PMService.pullFromServer(siteCode, fromDateObj, toDateObj)
           .then(() => loadLocalData(true))
           .catch(() => {})
           .finally(() => {
@@ -343,20 +439,26 @@ export default function PreventiveMaintenance() {
             setSyncing(false);
           });
       }
-    }, [loadLocalData, isConnected, siteCode, currentDate]),
+    }, [loadLocalData, isConnected, siteCode, currentDate, toDate]),
   );
 
   // ── Pull-to-refresh ─────────────────────────────────────────────────────────
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     if (isConnected && siteCode) {
+      const fromDateObj = parseISO(currentDate);
+      const toDateObj = parseISO(toDate);
+      if (!isValid(fromDateObj) || !isValid(toDateObj)) {
+        setRefreshing(false);
+        return;
+      }
       try {
-        await PMService.pullFromServer(siteCode, currentDate);
+        await PMService.pullFromServer(siteCode, fromDateObj, toDateObj);
       } catch {}
     }
     await loadLocalData(true);
     setRefreshing(false);
-  }, [siteCode, isConnected, loadLocalData, currentDate]);
+  }, [siteCode, isConnected, loadLocalData, currentDate, toDate]);
 
   // ── Filtered Data for List ────────────────────────────────────────────────
   const filteredInstances = useMemo(() => {
@@ -420,20 +522,13 @@ export default function PreventiveMaintenance() {
   const applyAdvancedFilters = useCallback(() => {
     setSearchQuery(tempSearch);
     if (tempFromDate) {
-      const d = new Date(tempFromDate.replace(/-/g, "/"));
-      if (!isNaN(d.getTime())) {
-        setCurrentDate(d);
-      }
+      setCurrentDate(tempFromDate);
+    }
+    if (tempToDate) {
+      setToDate(tempToDate);
     }
     setShowFiltersModal(false);
-  }, [tempSearch, tempFromDate]);
-
-  const navigateDate = (days: number) => {
-    setCurrentDate((prev) => {
-      const next = addDays(prev, days);
-      return isNaN(next.getTime()) ? prev : next;
-    });
-  };
+  }, [tempSearch, tempFromDate, tempToDate]);
 
   // ── FlatList Render ──────────────────────────────────────────────────────────
   const renderItem: ListRenderItem<PMInstance> = useCallback(
@@ -445,22 +540,6 @@ export default function PreventiveMaintenance() {
 
   const keyExtractor = useCallback((item: PMInstance) => item.id, []);
 
-  const ListHeader = useMemo(
-    () => (
-      <View style={styles.listHeader}>
-        <View style={styles.sectionRow}>
-          <Text style={styles.sectionTitle}>
-            Tasks for {safeFormat(currentDate, "d MMM yyyy")}
-          </Text>
-          <Text style={styles.sectionCount}>
-            {filteredInstances.length} Tasks
-          </Text>
-        </View>
-      </View>
-    ),
-    [filteredInstances.length, currentDate],
-  );
-
   const ListEmpty = useMemo(
     () => (
       <View style={styles.emptyState}>
@@ -469,11 +548,11 @@ export default function PreventiveMaintenance() {
         </View>
         <Text style={styles.emptyTitle}>No PM tasks found</Text>
         <Text style={styles.emptyBody}>
-          No tasks scheduled for {safeFormat(currentDate, "PPPP")}.
+          No tasks scheduled for the selected date range.
         </Text>
       </View>
     ),
-    [currentDate],
+    [],
   );
 
   const ListFooter = useMemo(
@@ -487,125 +566,126 @@ export default function PreventiveMaintenance() {
   );
 
   return (
-    <View style={styles.container}>
+    <View className="flex-1 bg-slate-50 dark:bg-slate-950">
       <SafeAreaView style={styles.flex} edges={["top"]}>
         {/* Fixed Header & Navigation */}
-        <View style={styles.fixedArea}>
-          <View style={styles.header}>
-            <View style={styles.headerLeft}>
-              <Text style={styles.headerSub}>Site Operations</Text>
+        <View className="px-5 pt-2 pb-3 bg-slate-50 dark:bg-slate-950">
+          <View className="flex-row items-center justify-between mb-4">
+            <View className="flex-1">
+              <Text className="text-slate-400 dark:text-slate-500 text-sm font-medium mb-1">
+                Site Operations
+              </Text>
               <TouchableOpacity
                 onPress={() => setShowFiltersModal(true)}
-                style={styles.siteRow}
+                className="flex-row items-center"
               >
                 <MapPin size={20} color="#dc2626" />
-                <Text style={styles.siteName} numberOfLines={1}>
+                <Text
+                  className="text-slate-900 dark:text-slate-50 text-xl font-bold ml-2 mr-1 flex-shrink"
+                  numberOfLines={1}
+                >
                   {siteName}
                 </Text>
                 <ChevronDown size={20} color="#94a3b8" />
               </TouchableOpacity>
             </View>
+
+            <TouchableOpacity
+              onPress={() => setShowFiltersModal(true)}
+              className="flex-shrink-0"
+            >
+              <View className="items-end">
+                <View className="flex-row items-center bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded-lg mb-1">
+                  <CalendarIcon size={12} color="#64748b" />
+                  <Text className="text-[10px] font-bold text-slate-500 ml-1">
+                    {safeFormat(currentDate, "d MMM")}
+                    {currentDate !== toDate ? ` - ${safeFormat(toDate, "d MMM")}` : ""}
+                  </Text>
+                </View>
+                <View
+                  className="w-11 h-11 rounded-xl bg-white dark:bg-slate-900 items-center justify-center"
+                  style={{
+                    shadowColor: "#000",
+                    shadowOffset: { width: 0, height: 2 },
+                    shadowOpacity: 0.08,
+                    shadowRadius: 8,
+                    elevation: 3,
+                  }}
+                >
+                  <Filter
+                    size={20}
+                    color={
+                      tempFromDate !== format(new Date(), "yyyy-MM-dd") ||
+                      tempToDate !== format(new Date(), "yyyy-MM-dd")
+                        ? "#dc2626" : "#64748b"
+                    }
+                  />
+                </View>
+              </View>
+            </TouchableOpacity>
           </View>
 
-          <View style={styles.statsRow}>
+          {/* Stats Row */}
+          <View className="flex-row gap-2 mb-3">
             <StatCard
-              icon={<AlertCircle size={16} color="#f97316" />}
+              icon={<AlertCircle size={14} color="#f97316" />}
               value={stats.pending}
               label="Pending"
               bg="#fff7ed"
               color="#f97316"
+              isActive={statusFilter === "Pending"}
+              onPress={() => setStatusFilter("Pending")}
             />
             <StatCard
-              icon={<Clock size={16} color="#3b82f6" />}
+              icon={<Clock size={14} color="#3b82f6" />}
               value={stats.inProgress}
               label="In Progress"
               bg="#eff6ff"
               color="#3b82f6"
+              isActive={statusFilter === "In-progress"}
+              onPress={() => setStatusFilter("In-progress")}
             />
             <StatCard
-              icon={<CheckCircle2 size={16} color="#22c55e" />}
+              icon={<CheckCircle2 size={14} color="#22c55e" />}
               value={stats.completed}
               label="Completed"
               bg="#f0fdf4"
               color="#22c55e"
+              isActive={statusFilter === "Completed"}
+              onPress={() => setStatusFilter("Completed")}
             />
           </View>
 
-          <View style={styles.actionHeaderRow}>
-            {/* Date Navigation Group (Approx 70%) */}
-            <View style={styles.navGroup}>
-              <TouchableOpacity
-                onPress={() => navigateDate(-1)}
-                style={styles.navIconBtn}
-              >
-                <ChevronLeft size={22} color="#64748b" />
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                onPress={() => setShowFiltersModal(true)}
-                style={styles.dateDisplayValue}
-              >
-                <Text style={styles.dateDisplayText}>
-                  {safeFormat(currentDate, "eee, d MMM")}
-                </Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                onPress={() => navigateDate(1)}
-                style={styles.navIconBtn}
-              >
-                <ChevronRight size={22} color="#64748b" />
-              </TouchableOpacity>
-            </View>
-
-            {/* Action Group (Approx 30%) */}
-            <View style={styles.actionGroup}>
-              <TouchableOpacity
-                onPress={() => setShowFiltersModal(true)}
-                style={styles.actionIconBtn}
-              >
-                <Filter size={20} color="#dc2626" />
-              </TouchableOpacity>
-            </View>
-          </View>
-
-          {/* Status Filter Row */}
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            style={styles.statusFilterRow}
-            contentContainerStyle={styles.statusFilterContent}
+          {/* Search Row - Moved Down */}
+          <View
+            style={styles.searchBarContainer}
+            className="bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800"
           >
-            {STATUS_OPTIONS.map((s) => (
-              <TouchableOpacity
-                key={s}
-                onPress={() => setStatusFilter(s === "All" ? "All" : s)}
-                style={[
-                  styles.statusPill,
-                  statusFilter === s && styles.statusPillActive,
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.statusPillText,
-                    statusFilter === s && styles.statusPillTextActive,
-                  ]}
-                >
-                  {s}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
+            <Search size={18} color="#94a3b8" />
+            <TextInput
+              placeholder="Search by ID, asset or name..."
+              className="text-slate-900 dark:text-slate-50 font-medium ml-2 flex-1"
+              placeholderTextColor="#94a3b8"
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+            />
+          </View>
         </View>
 
-        {(loading || syncing) ? (
+        <View style={styles.listHeader}>
+          <View style={styles.sectionRow}>
+            <Text style={styles.sectionTitle}>Maintenance Tasks</Text>
+            <Text style={styles.sectionCount}>{filteredInstances.length} Tasks</Text>
+          </View>
+        </View>
+
+        {loading || syncing ? (
           <PMSkeleton />
         ) : (
           <FlatList
             data={visibleInstances}
             renderItem={renderItem}
             keyExtractor={keyExtractor}
-            ListHeaderComponent={ListHeader}
             ListEmptyComponent={ListEmpty}
             ListFooterComponent={ListFooter}
             onEndReached={loadMore}
@@ -630,11 +710,14 @@ export default function PreventiveMaintenance() {
           visible={showFiltersModal}
           onClose={() => setShowFiltersModal(false)}
           title="Filter PM Tasks"
+          dateMode="date-range"
           statusOptions={STATUS_OPTIONS}
           tempSearch={tempSearch}
           setTempSearch={setTempSearch}
           tempFromDate={tempFromDate}
           setTempFromDate={setTempFromDate}
+          tempToDate={tempToDate}
+          setTempToDate={setTempToDate}
           sites={sites}
           selectedSiteCode={siteCode}
           setSelectedSiteCode={(code) => {
@@ -659,17 +742,15 @@ export default function PreventiveMaintenance() {
 // ─── Styles ────────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
   flex: { flex: 1 },
-  container: { flex: 1, backgroundColor: "#f8fafc" },
-  listHeader: { paddingTop: 8 },
-  listContent: { paddingHorizontal: 20, paddingBottom: 120 },
+  container: { flex: 1 },
+  listHeader: { paddingTop: 2, paddingHorizontal: 20 },
+  listContent: { paddingHorizontal: 20, paddingBottom: 60 },
 
   // Header
   fixedArea: {
     paddingHorizontal: 20,
-    backgroundColor: "#f8fafc",
+    backgroundColor: "transparent",
     paddingBottom: 4,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: "#e2e8f0",
   },
   header: {
     flexDirection: "row",
@@ -696,47 +777,23 @@ const styles = StyleSheet.create({
     marginHorizontal: 4,
   },
 
-  // Action Header Row (Date + Icons)
-  actionHeaderRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingVertical: 12,
-    gap: 8,
-  },
-  navGroup: {
-    flex: 0.7,
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#fff",
-    borderRadius: 12,
-    height: 46,
-    borderWidth: 1,
-    borderColor: "#f1f5f9",
-    paddingHorizontal: 4,
-  },
-  navIconBtn: {
-    width: 36,
-    height: 36,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  dateDisplayValue: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  dateDisplayText: {
-    fontSize: 14,
+  headerTitle: {
+    fontSize: 20,
     fontWeight: "800",
     color: "#0f172a",
   },
-  actionGroup: {
-    flex: 0.3,
+  searchBarContainer: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "flex-end",
-    gap: 8,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    height: 46,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.04,
+    shadowRadius: 10,
+    elevation: 2,
   },
   actionIconBtn: {
     width: 46,
@@ -749,93 +806,11 @@ const styles = StyleSheet.create({
     borderColor: "#f1f5f9",
   },
 
-  // Stats
-  statsRow: {
-    flexDirection: "row",
-    gap: 10,
-    marginBottom: 16,
-    marginTop: 4,
-  },
-  statCard: {
-    flex: 1,
-    backgroundColor: "#fff",
-    padding: 10,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: "#f1f5f9",
-  },
-  statIcon: {
-    width: 28,
-    height: 28,
-    borderRadius: 8,
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 6,
-  },
-  statValue: { fontSize: 18, fontWeight: "900", color: "#0f172a" },
-  statLabel: {
-    fontSize: 10,
-    fontWeight: "700",
-    color: "#94a3b8",
-    textTransform: "uppercase",
-  },
-
-  // Filter Section
-  filterSection: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    marginBottom: 16,
-  },
-  searchBar: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#fff",
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    borderWidth: 1,
-    borderColor: "#f1f5f9",
-    height: 44,
-  },
-  searchInput: {
-    flex: 1,
-    marginLeft: 8,
-    fontSize: 14,
-    color: "#0f172a",
-    fontWeight: "500",
-  },
-  clearText: { fontSize: 12, color: "#dc2626", fontWeight: "600" },
-  applyBtn: {
-    backgroundColor: "#dc2626",
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderRadius: 10,
-    justifyContent: "center",
-  },
-  applyBtnText: {
-    color: "#fff",
-    fontSize: 12,
-    fontWeight: "800",
-    textTransform: "uppercase",
-  },
-  filterIconBtn: {
-    width: 44,
-    height: 44,
-    backgroundColor: "#fff",
-    borderRadius: 11,
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: 1,
-    borderColor: "#f1f5f9",
-  },
-
-  // Section heading
   sectionRow: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 12,
+    marginBottom: 8,
   },
   sectionTitle: { fontSize: 14, fontWeight: "700", color: "#0f172a" },
   sectionCount: { fontSize: 12, fontWeight: "500", color: "#94a3b8" },
@@ -844,8 +819,8 @@ const styles = StyleSheet.create({
   card: {
     backgroundColor: "#fff",
     borderRadius: 16,
-    padding: 16,
-    marginBottom: 12,
+    padding: 14,
+    marginBottom: 6,
     borderWidth: 1,
     borderColor: "#f1f5f9",
     elevation: 2,
@@ -976,33 +951,4 @@ const styles = StyleSheet.create({
     paddingHorizontal: 40,
   },
   footerLoader: { paddingVertical: 20, alignItems: "center" },
-
-  // Status Filter Row
-  statusFilterRow: {
-    marginBottom: 8,
-  },
-  statusFilterContent: {
-    gap: 8,
-    paddingVertical: 4,
-  },
-  statusPill: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 8,
-    backgroundColor: "#fff",
-    borderWidth: 1,
-    borderColor: "#e2e8f0",
-  },
-  statusPillActive: {
-    backgroundColor: "#dc2626",
-    borderColor: "#dc2626",
-  },
-  statusPillText: {
-    fontSize: 11,
-    fontWeight: "700",
-    color: "#64748b",
-  },
-  statusPillTextActive: {
-    color: "#fff",
-  },
 });

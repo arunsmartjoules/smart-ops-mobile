@@ -20,13 +20,13 @@ import {
   Database,
   CheckCircle,
   Ticket,
-  UserCheck,
   HardDrive,
   Wifi,
   WifiOff,
 } from "lucide-react-native";
 import { router } from "expo-router";
 import { useAuth } from "@/contexts/AuthContext";
+// Removed UpdateService import from here
 import {
   getSiteLogSyncStatus,
   getPendingSiteLogsCount,
@@ -583,9 +583,7 @@ export default function AppSettings() {
             {/* Info */}
             <View className="mt-2 mb-8 items-center px-4">
               <Text className="text-slate-400 text-xs text-center leading-5">
-                This app is designed to work offline. Your attendance and ticket
-                updates{"\n"}
-                are saved locally and synced automatically when you're online.
+                This app is designed to work offline.
               </Text>
             </View>
           </ScrollView>

@@ -148,14 +148,7 @@ const TicketDetailInfo = ({ ticket }: TicketDetailInfoProps) => {
               <Layers size={14} color="#f59e0b" style={{ marginTop: 2 }} />
               <View style={{ flex: 1 }}>
                 <Text
-                  style={{
-                    fontSize: 9,
-                    fontWeight: "700",
-                    textTransform: "uppercase",
-                    letterSpacing: 1.2,
-                    color: "#d97706",
-                    marginBottom: 3,
-                  }}
+                  className="text-amber-600 dark:text-amber-400 font-bold uppercase text-[9px] tracking-widest mb-1"
                 >
                   Customer Inputs
                 </Text>
@@ -185,14 +178,7 @@ const TicketDetailInfo = ({ ticket }: TicketDetailInfoProps) => {
               <FileText size={14} color="#6366f1" style={{ marginTop: 2 }} />
               <View style={{ flex: 1 }}>
                 <Text
-                  style={{
-                    fontSize: 9,
-                    fontWeight: "700",
-                    textTransform: "uppercase",
-                    letterSpacing: 1.2,
-                    color: "#6366f1",
-                    marginBottom: 3,
-                  }}
+                  className="text-indigo-600 dark:text-indigo-400 font-bold uppercase text-[9px] tracking-widest mb-1"
                 >
                   Internal Remarks
                 </Text>

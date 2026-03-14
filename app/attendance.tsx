@@ -19,6 +19,7 @@ import {
   Clock,
   MapPin,
   Calendar,
+  ChevronRight,
   LogIn,
   LogOut,
   AlertTriangle,
@@ -32,6 +33,7 @@ import AttendanceService, {
   type AttendanceLog,
   type Site,
   type LocationValidationResult,
+  getISTDateString,
 } from "@/services/AttendanceService";
 import { syncManager } from "@/services/SyncManager";
 import logger from "@/utils/logger";
@@ -50,6 +52,12 @@ const HistoryItem = React.memo(
     log: AttendanceLog;
     getDuration: (log: AttendanceLog) => string;
   }) => {
+    const isToday =
+      log.date &&
+      getISTDateString(new Date(log.date)) === getISTDateString(new Date());
+    const hasMissedCheckout =
+      !isToday && !log.check_out_time && log.status !== "Leave";
+
     return (
       <View
         className="bg-white dark:bg-slate-900 rounded-2xl p-4"
@@ -61,67 +69,81 @@ const HistoryItem = React.memo(
           elevation: 2,
         }}
       >
+        {/* Top Row: Date + Duration / Missed Checkout */}
         <View className="flex-row items-center justify-between mb-3">
           <View className="flex-row items-center">
             <View className="w-8 h-8 rounded-lg bg-red-50 items-center justify-center mr-2">
               <Calendar size={16} color="#dc2626" />
             </View>
-            <View>
-              <Text className="text-slate-900 dark:text-slate-50 font-semibold">
-                {format(parseISO(log.date), "EEE, d MMM")}
-              </Text>
-            </View>
-          </View>
-          <View className="bg-slate-100 px-2 py-1 rounded-lg">
-            <Text className="text-slate-600 text-xs font-medium">
-              {getDuration(log)}
+            <Text className="text-slate-900 dark:text-slate-50 font-semibold">
+              {format(new Date(log.date), "EEE, d MMM")}
             </Text>
           </View>
-        </View>
-
-        <View className="gap-2">
-          <View className="flex-row items-center bg-slate-50 rounded-xl p-3">
-            <View className="w-8 h-8 rounded-lg bg-green-100 items-center justify-center mr-3">
-              <LogIn size={16} color="#22c55e" />
+          {log.status === "Leave" ? (
+            <View className="bg-red-50 px-2.5 py-1 rounded-lg">
+              <Text className="text-red-500 text-xs font-bold">LEAVE</Text>
             </View>
-            <View className="flex-1">
-              <Text className="text-slate-700 dark:text-slate-300 font-medium text-sm">
-                Check In
+          ) : hasMissedCheckout ? (
+            <View className="bg-amber-50 px-2.5 py-1 rounded-lg">
+              <Text className="text-amber-600 text-xs font-bold">
+                Missed Checkout
               </Text>
-              <View className="flex-row items-center mt-0.5">
-                <Clock size={10} color="#94a3b8" />
-                <Text className="text-slate-400 dark:text-slate-500 text-xs ml-1">
-                  {format(new Date(log.check_in_time!), "h:mm a")}
-                </Text>
-              </View>
             </View>
-          </View>
-
-          {log.check_out_time && (
-            <View className="flex-row items-center bg-slate-50 rounded-xl p-3">
-              <View className="w-8 h-8 rounded-lg bg-orange-100 items-center justify-center mr-3">
-                <LogOut size={16} color="#f97316" />
-              </View>
-              <View className="flex-1">
-                <Text className="text-slate-700 dark:text-slate-300 font-medium text-sm">
-                  Check Out
-                </Text>
-                <View className="flex-row items-center mt-0.5">
-                  <Clock size={10} color="#94a3b8" />
-                  <Text className="text-slate-400 dark:text-slate-500 text-xs ml-1">
-                    {format(new Date(log.check_out_time), "h:mm a")}
-                  </Text>
-                </View>
-              </View>
+          ) : (
+            <View className="bg-slate-100 px-2.5 py-1 rounded-lg">
+              <Text className="text-slate-600 text-xs font-medium">
+                {getDuration(log)}
+              </Text>
             </View>
           )}
         </View>
 
-        {log.status === "Leave" && (
-          <View className="mt-2 bg-red-50 p-2 rounded-lg">
-            <Text className="text-red-500 text-xs text-center font-bold">
-              LEAVE
-            </Text>
+        {/* Check-in / Check-out in a single row */}
+        {log.check_in_time && (
+          <View className="flex-row items-center bg-slate-50 rounded-xl px-3 py-2.5">
+            {/* Check In */}
+            <View className="flex-1 flex-row items-center">
+              <View className="w-7 h-7 rounded-md bg-green-100 items-center justify-center mr-2">
+                <LogIn size={14} color="#22c55e" />
+              </View>
+              <View>
+                <Text className="text-slate-500 text-[10px] font-medium uppercase">
+                  In
+                </Text>
+                <Text className="text-slate-800 dark:text-slate-200 text-sm font-semibold">
+                  {format(new Date(log.check_in_time), "h:mm a")}
+                </Text>
+              </View>
+            </View>
+
+            {/* Separator */}
+            <View className="mx-2">
+              <ChevronRight size={14} color="#cbd5e1" />
+            </View>
+
+            {/* Check Out */}
+            <View className="flex-1 flex-row items-center">
+              <View
+                className={`w-7 h-7 rounded-md items-center justify-center mr-2 ${log.check_out_time ? "bg-orange-100" : "bg-slate-200"}`}
+              >
+                <LogOut
+                  size={14}
+                  color={log.check_out_time ? "#f97316" : "#94a3b8"}
+                />
+              </View>
+              <View>
+                <Text className="text-slate-500 text-[10px] font-medium uppercase">
+                  Out
+                </Text>
+                <Text
+                  className={`text-sm font-semibold ${log.check_out_time ? "text-slate-800 dark:text-slate-200" : "text-slate-400"}`}
+                >
+                  {log.check_out_time
+                    ? format(new Date(log.check_out_time), "h:mm a")
+                    : "--:--"}
+                </Text>
+              </View>
+            </View>
           </View>
         )}
       </View>
@@ -197,16 +219,16 @@ const SiteItem = React.memo(
     return (
       <TouchableOpacity
         onPress={handleSelect}
-        className="bg-slate-50 border border-slate-200 p-4 rounded-xl mb-3 flex-row items-center"
+        className="bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 p-4 rounded-xl mb-3 flex-row items-center"
       >
         <View className="w-10 h-10 rounded-full bg-red-100 items-center justify-center mr-3">
           <LucideMap size={20} color="#dc2626" />
         </View>
         <View className="flex-1">
-          <Text className="font-bold text-slate-900 dark:text-slate-50 dark:bg-slate-800">
+          <Text className="font-bold text-slate-900 dark:text-slate-100">
             {site.name}
           </Text>
-          <Text className="text-slate-500 text-xs">{site.address}</Text>
+          <Text className="text-slate-500 dark:text-slate-400 text-xs">{site.address}</Text>
         </View>
         {site.distance !== undefined && (
           <View className="bg-green-100 px-2 py-1 rounded">
@@ -245,20 +267,32 @@ export default function AttendancePage() {
   const [earlyCheckoutHours, setEarlyCheckoutHours] = useState("");
   const [currentTime, setCurrentTime] = useState(new Date());
 
+  // Safety timer to clear loading no matter what
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setLoading(prev => {
+        if (prev) logger.debug("Attendance safety timeout triggered", { module: "ATTENDANCE_SCREEN" });
+        return false;
+      });
+    }, 10000);
+    return () => clearTimeout(timer);
+  }, []);
+
   const fetchData = React.useCallback(async () => {
-    if (!user?.id) return;
+    if (!user?.id) {
+      setLoading(false);
+      return;
+    }
+    
     try {
       // 1. Show cached data immediately (SWR)
-      const cachedToday = await AttendanceService.getTodayAttendance(user.id);
-      if (cachedToday) setTodayAttendance(cachedToday);
+      const [cachedToday, cachedHistory] = await Promise.all([
+        AttendanceService.getTodayAttendance(user.id).catch(() => null),
+        AttendanceService.getAttendanceHistory(user.id, 1, 30).catch(() => ({ data: [], pagination: {} }))
+      ]);
 
-      const cachedHistory = await AttendanceService.getAttendanceHistory(
-        user.id,
-        1,
-        30,
-      );
-      if (cachedHistory.data.length > 0)
-        setAttendanceHistory(cachedHistory.data);
+      if (cachedToday) setTodayAttendance(cachedToday);
+      if (cachedHistory.data.length > 0) setAttendanceHistory(cachedHistory.data);
 
       if (cachedToday || cachedHistory.data.length > 0) {
         setLoading(false);
@@ -283,9 +317,22 @@ export default function AttendancePage() {
     }
   }, [user?.id]);
 
-  // Robust location getter
+  // Track when location was last fetched
+  const locationTimestampRef = React.useRef<number>(0);
+  const LOCATION_FRESHNESS_MS = 5 * 60 * 1000; // 5 minutes
+
+  // Robust location getter — optimized for speed
   const ensureLocation =
-    useCallback(async (): Promise<Location.LocationObject | null> => {
+    useCallback(async (forceRefresh = false): Promise<Location.LocationObject | null> => {
+      // Reuse cached location if fresh (< 5 min old)
+      if (
+        !forceRefresh &&
+        location &&
+        Date.now() - locationTimestampRef.current < LOCATION_FRESHNESS_MS
+      ) {
+        return location;
+      }
+
       try {
         // 1. Check services
         const enabled = await Location.hasServicesEnabledAsync();
@@ -317,11 +364,24 @@ export default function AttendancePage() {
           return null;
         }
 
-        // 3. Get Position
+        // 3. Try last-known first for instant response
+        const lastKnown = await Location.getLastKnownPositionAsync({});
+        if (
+          lastKnown &&
+          Date.now() - lastKnown.timestamp < LOCATION_FRESHNESS_MS
+        ) {
+          setLocation(lastKnown);
+          locationTimestampRef.current = Date.now();
+          setLocationError(null);
+          return lastKnown;
+        }
+
+        // 4. Fall back to getCurrentPosition with low accuracy for speed
         const locationResult = await Location.getCurrentPositionAsync({
-          accuracy: Location.Accuracy.Balanced,
+          accuracy: Location.Accuracy.Low,
         });
-        setLocation(locationResult); // Update state as well
+        setLocation(locationResult);
+        locationTimestampRef.current = Date.now();
         setLocationError(null);
         return locationResult;
       } catch (error: any) {
@@ -331,6 +391,7 @@ export default function AttendancePage() {
           const lastKnown = await Location.getLastKnownPositionAsync({});
           if (lastKnown) {
             setLocation(lastKnown);
+            locationTimestampRef.current = Date.now();
             return lastKnown;
           }
         } catch (e) {}
@@ -342,7 +403,7 @@ export default function AttendancePage() {
         setLocationError("Could not fetch location");
         return null;
       }
-    }, [user?.work_location_type]);
+    }, [location, user?.work_location_type]);
 
   useFocusEffect(
     useCallback(() => {
@@ -414,21 +475,10 @@ export default function AttendancePage() {
       return;
     }
 
-    // Always ensure location is available for coordinate capture
-    if (!location) {
-      setValidatingLocation(true);
-      try {
-        const loc = await ensureLocation();
-        if (!loc) {
-          setValidatingLocation(false);
-          return; // ensureLocation handles alerts
-        }
-      } catch (e) {}
-    }
-
     setValidatingLocation(true);
     try {
-      const locToUse = location || (await ensureLocation());
+      // Reuse cached location if fresh, otherwise fetch quickly
+      const locToUse = await ensureLocation();
 
       if (!locToUse) {
         setValidatingLocation(false);
@@ -437,13 +487,12 @@ export default function AttendancePage() {
 
       const validation = await AttendanceService.validateLocation(
         user!.id,
-        locToUse?.coords.latitude,
-        locToUse?.coords.longitude,
+        locToUse.coords.latitude,
+        locToUse.coords.longitude,
       );
 
       if (validation.isValid) {
         if (validation.isWFH) {
-          // Confirm WFH check-in
           Alert.alert(
             "Work From Home",
             "You are checking in as Work From Home. Proceed?",
@@ -459,10 +508,8 @@ export default function AttendancePage() {
             ],
           );
         } else if (validation.allowedSites.length === 1) {
-          // Auto-select the only available site
           performCheckIn(validation.allowedSites[0].site_code);
         } else {
-          // Show site selection modal
           setAvailableSites(validation.allowedSites);
           setIsSiteModalVisible(true);
         }
@@ -482,7 +529,7 @@ export default function AttendancePage() {
     } finally {
       setValidatingLocation(false);
     }
-  }, [user, location, ensureLocation]);
+  }, [user, ensureLocation]);
 
   const performCheckIn = useCallback(
     async (siteCode: string) => {
@@ -501,7 +548,7 @@ export default function AttendancePage() {
           id: `opt-${Date.now()}`,
           user_id: user!.id,
           site_code: siteCode,
-          date: new Date().toISOString().split("T")[0],
+          date: getISTDateString(),
           check_in_time: new Date().toISOString(),
           status: "Present",
         };
@@ -533,47 +580,42 @@ export default function AttendancePage() {
   const handleCheckOutPress = useCallback(async () => {
     if (!todayAttendance) return;
 
-    // Offline allowed
-    // if (!isConnected) { ... }
-
-    // Refresh location for checkout
     setValidatingLocation(true);
-    let currentLoc = location;
     try {
-      // Check if location is stale (older than 1 minute) or null
-      // But safer to just ensure location again
-      const freshLoc = await ensureLocation();
-      if (freshLoc) {
-        currentLoc = freshLoc;
-      } else {
-        // ensureLocation handles alerts, but if it returns null, we stop
+      // Reuse cached location — no need to re-fetch for checkout
+      const currentLoc = await ensureLocation();
+      if (!currentLoc) {
         setValidatingLocation(false);
         return;
       }
-    } catch (e) {
-      // should be handled by ensureLocation
-      setValidatingLocation(false);
-      return;
-    }
 
-    try {
-      // Try checking out without reason first to see if it's early
+      // Optimistic UI: show checkout immediately
+      const previousAttendance = todayAttendance;
+      setTodayAttendance({
+        ...todayAttendance,
+        check_out_time: new Date().toISOString(),
+      });
+      setValidatingLocation(false);
+
+      // Fire API call in background
       const res = await AttendanceService.checkOut(
         todayAttendance.id,
-        currentLoc?.coords.latitude,
-        currentLoc?.coords.longitude,
+        currentLoc.coords.latitude,
+        currentLoc.coords.longitude,
       );
 
       if (res.success) {
         Alert.alert("Success", "Checked out successfully!");
-        fetchData();
+        fetchData(); // Refresh with server data
       } else if (res.isEarlyCheckout) {
-        // It failed because of early checkout
+        // Revert optimistic update — need reason
+        setTodayAttendance(previousAttendance);
         setEarlyCheckoutHours(res.hoursWorked || "0");
         setCheckoutReason("");
         setIsCheckoutModalVisible(true);
       } else {
-        // Check if the error message is about reason
+        // Revert optimistic update
+        setTodayAttendance(previousAttendance);
         if (res.error?.includes("reason") || res.isEarlyCheckout) {
           setEarlyCheckoutHours(res.hoursWorked || "0");
           setIsCheckoutModalVisible(true);
@@ -582,11 +624,12 @@ export default function AttendancePage() {
         Alert.alert("Failed", res.error || "Check-out failed");
       }
     } catch (error: any) {
+      // Revert on error
+      fetchData();
       Alert.alert("Error", error.message);
-    } finally {
       setValidatingLocation(false);
     }
-  }, [todayAttendance, location, fetchData]);
+  }, [todayAttendance, ensureLocation, fetchData]);
 
   const submitEarlyCheckout = useCallback(async () => {
     if (!checkoutReason.trim()) {
@@ -618,13 +661,31 @@ export default function AttendancePage() {
   // Helper to calculate duration
   const getDuration = useCallback(
     (log: AttendanceLog) => {
-      const start = new Date(log.check_in_time!);
-      const end = log.check_out_time
-        ? new Date(log.check_out_time)
-        : currentTime;
+      if (!log.check_in_time) return "--";
 
-      const minutes = differenceInMinutes(end, start);
-      if (minutes < 0) return "0h 0m";
+      const start = new Date(log.check_in_time);
+      if (isNaN(start.getTime())) return "--";
+
+      let end: Date;
+
+      if (log.check_out_time) {
+        end = new Date(log.check_out_time);
+      } else {
+        const todayStr = getISTDateString(currentTime);
+        // DB DATE column serializes as UTC (e.g. '2026-03-10T18:30:00.000Z' for Mar 11 IST)
+        // Convert to IST date string for accurate comparison
+        const logDateIST = getISTDateString(new Date(log.date));
+        if (logDateIST === todayStr) {
+          end = currentTime;
+        } else {
+          // Past day without checkout — cap at 11:59:59 PM of that IST day
+          const [y, m, d] = logDateIST.split("-").map(Number);
+          end = new Date(y, m - 1, d, 23, 59, 59);
+        }
+      }
+
+      const minutes = Math.floor((end.getTime() - start.getTime()) / 60000);
+      if (isNaN(minutes) || minutes < 0) return "0h 0m";
 
       const hours = Math.floor(minutes / 60);
       const mins = minutes % 60;
@@ -817,10 +878,10 @@ export default function AttendancePage() {
                     style={{ marginRight: 12 }}
                   />
                   <View className="flex-1">
-                    <Text className="text-lg font-bold text-slate-900 dark:text-slate-50 dark:bg-slate-800">
+                    <Text className="text-lg font-bold text-slate-900 dark:text-slate-50">
                       Early Checkout
                     </Text>
-                    <Text className="text-slate-500 text-sm mt-1">
+                    <Text className="text-slate-500 dark:text-slate-400 text-sm mt-1">
                       You worked {earlyCheckoutHours} hours (less than 7h).
                       Please provide a reason.
                     </Text>
@@ -828,8 +889,9 @@ export default function AttendancePage() {
                 </View>
 
                 <TextInput
-                  className="bg-slate-50 border border-slate-200 rounded-xl p-3 h-24 text-slate-900 mb-4"
+                  className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-3 h-24 text-slate-900 dark:text-slate-100 mb-4"
                   placeholder="Enter reason here..."
+                  placeholderTextColor="#94a3b8"
                   multiline
                   textAlignVertical="top"
                   value={checkoutReason}
@@ -841,7 +903,7 @@ export default function AttendancePage() {
                     onPress={() => setIsCheckoutModalVisible(false)}
                     className="flex-1 py-3 items-center"
                   >
-                    <Text className="text-slate-500 font-bold">Cancel</Text>
+                    <Text className="text-slate-500 dark:text-slate-400 font-bold">Cancel</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
                     onPress={submitEarlyCheckout}
@@ -866,7 +928,7 @@ export default function AttendancePage() {
             <View className="flex-1 bg-black/50 justify-end">
               <View className="bg-white dark:bg-slate-900 rounded-t-3xl p-5 max-h-[80%]">
                 <View className="flex-row items-center justify-between mb-5">
-                  <Text className="text-xl font-bold text-slate-900 dark:text-slate-50 dark:bg-slate-800">
+                  <Text className="text-xl font-bold text-slate-900 dark:text-slate-50">
                     Select Site
                   </Text>
                   <TouchableOpacity
@@ -876,7 +938,7 @@ export default function AttendancePage() {
                   </TouchableOpacity>
                 </View>
 
-                <Text className="text-slate-500 mb-4">
+                <Text className="text-slate-500 dark:text-slate-400 mb-4">
                   Multiple sites are within range. Please select where you are
                   checking in.
                 </Text>

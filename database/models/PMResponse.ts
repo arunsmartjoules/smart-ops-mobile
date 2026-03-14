@@ -8,6 +8,7 @@ export default class PMResponse extends Model {
   @text("instance_id") instanceId!: string;
   @text("checklist_item_id") checklistItemId!: string;
   @text("response_value") responseValue!: string | null;
+  @text("readings") readings!: string | null;
   @text("remarks") remarks!: string | null;
   @text("image_url") imageUrl!: string | null;
   @field("is_synced") isSynced!: boolean;

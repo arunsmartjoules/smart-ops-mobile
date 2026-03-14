@@ -46,6 +46,17 @@ export default function SiteLogs() {
   const [lastSync, setLastSync] = useState<Record<string, number>>({});
   const { isConnected } = useNetworkStatus();
 
+  // Safety timer to clear loading no matter what
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setLoading(prev => {
+        if (prev) logger.debug("SiteLogs safety timeout triggered", { module: "SITE_LOGS_SCREEN" });
+        return false;
+      });
+    }, 10000);
+    return () => clearTimeout(timer);
+  }, []);
+
   const fetchLogs = useCallback(async () => {
     try {
       if (!refreshing) setLoading(true); // Show skeleton on initial load or site switch
@@ -96,8 +107,8 @@ export default function SiteLogs() {
             console.log("Sync warning", e);
           }
         }
-        // Get rich progress counts
-        const progress = await SiteLogService.getCategoryProgress(lastSiteCode);
+        // Get rich progress counts with date filters
+        const progress = await SiteLogService.getCategoryProgress(lastSiteCode, fromDate, toDate);
         setLogProgress(progress);
       }
     } catch (e) {
@@ -254,13 +265,13 @@ export default function SiteLogs() {
                         <cat.icon size={16} color={cat.accent} />
                       </View>
                       <Text className="text-xl font-bold text-slate-900 dark:text-slate-50">
-                        {pending}
+                        {cat.id === "chiller" ? progress.completed : pending}
                       </Text>
                       <Text
                         className="text-slate-400 dark:text-slate-500 text-[10px] font-bold uppercase tracking-tight"
                         numberOfLines={1}
                       >
-                        {cat.shortTitle || cat.title}
+                        {cat.id === "chiller" ? "Logged" : (cat.shortTitle || cat.title)}
                       </Text>
                     </View>
                   );
@@ -330,18 +341,28 @@ export default function SiteLogs() {
                           <Text className="text-slate-900 dark:text-slate-50 font-bold text-base">
                             {item.title}
                           </Text>
-                          {progress.total > 0 && (
-                            <View
-                              className={`px-2 py-0.5 rounded-md ${pending === 0 ? "bg-green-100" : "bg-red-50"}`}
-                            >
-                              <Text
-                                className={`text-xs font-bold ${pending === 0 ? "text-green-700" : "text-red-600"}`}
+                          {item.id === "chiller" ? (
+                            progress.completed > 0 && (
+                              <View className="px-2 py-0.5 rounded-md bg-teal-100 dark:bg-teal-900/30">
+                                <Text className="text-xs font-bold text-teal-700 dark:text-teal-400">
+                                  {progress.completed} Logged
+                                </Text>
+                              </View>
+                            )
+                          ) : (
+                            progress.total > 0 && (
+                              <View
+                                className={`px-2 py-0.5 rounded-md ${pending === 0 ? "bg-green-100" : "bg-red-50"}`}
                               >
-                                {pending === 0
-                                  ? "All Done"
-                                  : `${pending}/${progress.total} Pending`}
-                              </Text>
-                            </View>
+                                <Text
+                                  className={`text-xs font-bold ${pending === 0 ? "text-green-700" : "text-red-600"}`}
+                                >
+                                  {pending === 0
+                                    ? "All Done"
+                                    : `${pending}/${progress.total} Pending`}
+                                </Text>
+                              </View>
+                            )
                           )}
                         </View>
                         <Text className="text-slate-400 text-xs mt-0.5">

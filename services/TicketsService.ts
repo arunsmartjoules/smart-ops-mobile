@@ -15,6 +15,8 @@ import {
 } from "../database";
 import { Q } from "@nozbe/watermelondb";
 import { pullRecentTickets } from "../utils/syncTicketStorage";
+import { supabase } from "./supabase";
+import { StorageService } from "./StorageService";
 
 import { API_BASE_URL } from "../constants/api";
 
@@ -366,6 +368,30 @@ export const TicketsService = {
       method: "POST",
       body: JSON.stringify(data),
     });
+  },
+
+  /**
+   * Upload image to Supabase storage
+   */
+  async uploadImage(uri: string) {
+    try {
+      const fileName = `tickets/${Date.now()}_${Math.random().toString(36).substring(7)}.jpg`;
+
+      const publicUrl = await StorageService.uploadFile(
+        "jouleops-attachments",
+        fileName,
+        uri,
+      );
+
+      if (publicUrl) {
+        return { success: true, url: publicUrl };
+      } else {
+        return { success: false, error: "Upload failed via StorageService" };
+      }
+    } catch (error: any) {
+      logger.error("Upload image exception", { error: error.message });
+      return { success: false, error: error.message };
+    }
   },
 };
 

@@ -45,7 +45,7 @@ const TicketFilters = ({
           >
             <Text
               className={`text-xs font-semibold ${
-                statusFilter === item ? "text-white" : "text-slate-500"
+                statusFilter === item ? "text-white" : "text-slate-500 dark:text-slate-400"
               }`}
             >
               {item}

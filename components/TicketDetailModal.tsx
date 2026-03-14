@@ -14,6 +14,7 @@ import TicketDetailHeader from "./TicketDetailHeader";
 import TicketDetailInfo from "./TicketDetailInfo";
 import TicketDetailStatusUpdate from "./TicketDetailStatusUpdate";
 import TicketLineItems from "./TicketLineItems";
+import { useTheme } from "@/contexts/ThemeContext";
 
 interface TicketDetailModalProps {
   visible: boolean;
@@ -69,6 +70,8 @@ const TicketDetailModal = React.memo(
     }, [ticket, updateStatus, updateRemarks, updateArea, updateCategory]);
 
     const { height: windowHeight } = useWindowDimensions();
+    const { theme } = useTheme();
+    const isDark = theme === "dark";
 
     if (!ticket || !visible) return null;
 
@@ -85,7 +88,7 @@ const TicketDetailModal = React.memo(
         >
           <View
             style={{
-              backgroundColor: "#ffffff",
+              backgroundColor: isDark ? "#0f172a" : "#ffffff",
               borderTopLeftRadius: 36,
               borderTopRightRadius: 36,
               paddingHorizontal: 22,
@@ -95,7 +98,7 @@ const TicketDetailModal = React.memo(
               minHeight: 420,
               shadowColor: "#000",
               shadowOffset: { width: 0, height: -8 },
-              shadowOpacity: 0.12,
+              shadowOpacity: isDark ? 0.3 : 0.1,
               shadowRadius: 16,
               elevation: 12,
             }}
@@ -133,11 +136,7 @@ const TicketDetailModal = React.memo(
             </View>
 
             <View
-              style={{
-                paddingTop: 12,
-                borderTopWidth: 1,
-                borderTopColor: "#f1f5f9",
-              }}
+              className="border-t border-slate-100 dark:border-slate-800 pt-3"
             >
               <TouchableOpacity
                 onPress={handleUpdateStatus}

@@ -19,5 +19,14 @@ export const migrations = schemaMigrations({
         // existing data in that column might stay 'number' internally until rewritten.
       ],
     },
+    {
+      toVersion: 14,
+      steps: [
+        addColumns({
+          table: "pm_responses",
+          columns: [{ name: "readings", type: "string", isOptional: true }],
+        }),
+      ],
+    },
   ],
 });

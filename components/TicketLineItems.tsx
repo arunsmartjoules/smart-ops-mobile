@@ -77,16 +77,36 @@ const TicketLineItems = ({ ticketId }: TicketLineItemsProps) => {
   };
 
   const pickImage = async () => {
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true,
-      quality: 0.5,
-    });
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ["images"],
+        allowsEditing: true,
+        quality: 0.6,
+      });
 
-    if (!result.canceled && result.assets && result.assets.length > 0) {
-      alert(
-        "Image attachment requires an upload server. Implement upload to get URL, then save line item.",
-      );
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        setSubmitting(true);
+        const uploadRes = await TicketsService.uploadImage(result.assets[0].uri);
+
+        if (uploadRes.success && uploadRes.url) {
+          const res = await TicketsService.addLineItem(ticketId, {
+            image_url: uploadRes.url,
+          });
+
+          if (res.success) {
+            fetchItems();
+          } else {
+            alert("Failed to save image attachment: " + (res.error || "Unknown error"));
+          }
+        } else {
+          alert("Upload failed: " + (uploadRes.error || "Failed to upload image"));
+        }
+      }
+    } catch (error) {
+      console.error("Pick image error:", error);
+      alert("An error occurred while picking the image.");
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -256,8 +276,9 @@ const TicketLineItems = ({ ticketId }: TicketLineItemsProps) => {
               paddingVertical: 3,
               borderRadius: 8,
             }}
+            className="bg-red-50 dark:bg-red-900/30"
           >
-            <Text style={{ fontSize: 10, fontWeight: "800", color: "#dc2626" }}>
+            <Text style={{ fontSize: 10, fontWeight: "800", color: "#dc2626" }} className="dark:text-red-400">
               {items.length}
             </Text>
           </View>

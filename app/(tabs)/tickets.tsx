@@ -35,6 +35,7 @@ import {
   Calendar,
   ChevronDown,
 } from "lucide-react-native";
+import { useLocalSearchParams } from "expo-router";
 import { useAuth } from "@/contexts/AuthContext";
 import { useNetworkStatus } from "@/hooks/useNetworkStatus";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -277,88 +278,72 @@ export default function Tickets() {
   }, [selectedSiteCode, isConnected]);
 
   const loadSites = async (userId: string) => {
+    if (!userId) {
+      setLoading(false);
+      return;
+    }
+    
     setLoading(true);
     try {
-      // Load from cache first
-      const cachedSites = await getCachedSites(userId);
-      const lastSiteCode = await AsyncStorage.getItem(`last_site_${userId}`);
+      // 1. Try to load from cache and last site in parallel for instant UI
+      const [cachedSites, lastSiteCode] = await Promise.all([
+        getCachedSites(userId).catch(() => [] as Site[]),
+        AsyncStorage.getItem(`last_site_${userId}`).catch(() => null)
+      ]);
 
-      if (cachedSites.length > 0) {
+      if (cachedSites && cachedSites.length > 0) {
         setSites(cachedSites);
         if (lastSiteCode) {
           setSelectedSiteCode(lastSiteCode);
-          const currentSite = cachedSites.find(
-            (s: Site) => s.site_code === lastSiteCode,
-          );
-          if (currentSite) {
-            setSiteName(currentSite.site_code);
-          }
+          const currentSite = cachedSites.find((s: Site) => s.site_code === lastSiteCode);
+          if (currentSite) setSiteName(currentSite.site_code);
         }
       }
 
+      // 2. Fetch fresh sites from API
       let userSites: Site[] = [];
-      const isAdmin = user?.role === "admin" || user?.role === "Admin";
+      const isAdmin = user?.role?.toLowerCase() === "admin";
 
       if (isAdmin) {
-        logger.debug("Admin user detected, fetching all sites", {
-          module: "TICKETS",
+        userSites = await AttendanceService.getAllSites().catch(e => {
+          logger.warn("All sites fetch failed", { module: "TICKETS", error: e });
+          return [] as Site[];
         });
-        userSites = await AttendanceService.getAllSites();
       } else {
-        logger.debug("Fetching sites for user", { module: "TICKETS", userId });
-        userSites = await AttendanceService.getUserSites(userId, "JouleCool");
+        userSites = await AttendanceService.getUserSites(userId, "JouleCool").catch(e => {
+          logger.warn("User sites fetch failed", { module: "TICKETS", error: e });
+          return [] as Site[];
+        });
       }
 
-      logger.debug("Sites response", {
-        module: "TICKETS",
-        count: userSites.length,
-      });
-
       let finalSites: Site[] = [];
-
       if (isAdmin) {
-        const allSitesOption: Site = {
-          site_code: "all",
-          name: "All Sites",
-        };
-        finalSites = [allSitesOption, ...userSites];
+        finalSites = [{ site_code: "all", name: "All Sites" }, ...userSites];
       } else {
         finalSites = userSites;
       }
 
-      setSites(finalSites);
-
-      // Default selection logic
+      // If we got fresh sites, update state and cache
       if (finalSites.length > 0) {
+        setSites(finalSites);
+        
         let siteToSelect = lastSiteCode || "";
-
-        // If last site code is invalid or doesn't exist in the new list, pick the first one
-        if (
-          !siteToSelect ||
-          !finalSites.find((s) => s.site_code === siteToSelect)
-        ) {
+        if (!siteToSelect || !finalSites.find(s => s.site_code === siteToSelect)) {
           siteToSelect = finalSites[0].site_code;
         }
 
         setSelectedSiteCode(siteToSelect);
-        const currentSite = finalSites.find(
-          (s) => s.site_code === siteToSelect,
-        );
+        const currentSite = finalSites.find(s => s.site_code === siteToSelect);
         if (currentSite) {
-          setSiteName(
-            siteToSelect === "all" ? currentSite.name : currentSite.site_code,
-          );
+          setSiteName(siteToSelect === "all" ? "All Sites" : currentSite.site_code);
         }
-
+        
         await AsyncStorage.setItem(`last_site_${userId}`, siteToSelect);
-      } else {
-        setLoading(false);
+        await cacheSites(userId, finalSites);
       }
-
-      // Save to cache
-      await cacheSites(userId, finalSites);
     } catch (error) {
-      logger.warn("loadSites error", { module: "TICKETS", error });
+      logger.error("loadSites critical error", { module: "TICKETS", error });
+    } finally {
       setLoading(false);
     }
   };
@@ -424,29 +409,20 @@ export default function Tickets() {
           const newTickets = res.data || [];
           if (reset) {
             setTickets(newTickets);
-            // Cache page 1
-            await cacheTickets(selectedSiteCode, newTickets);
+            if (p === 1) await cacheTickets(selectedSiteCode, newTickets);
           } else {
             setTickets((prev) => {
-              // Avoid duplicates
               const existingIds = new Set(prev.map((t) => t.id));
-              const uniqueNew = newTickets.filter(
-                (t: Ticket) => !existingIds.has(t.id),
-              );
+              const uniqueNew = newTickets.filter((t: Ticket) => !existingIds.has(t.id));
               return [...prev, ...uniqueNew];
             });
           }
           setHasMore(newTickets.length === PAGE_SIZE);
         } else {
-          // API call failed, stop pagination
-          logger.debug("API call failed, stopping pagination", {
-            module: "TICKETS",
-          });
           setHasMore(false);
         }
       } catch (error) {
         logger.warn("fetchTickets error", { module: "TICKETS", error });
-        // On error, stop pagination to prevent infinite loops
         setHasMore(false);
       } finally {
         setLoading(false);
@@ -522,10 +498,6 @@ export default function Tickets() {
       status: ticket.status,
     });
 
-    if (ticket.status !== "Open" && ticket.status !== "Inprogress") {
-      // Still allow viewing some details, but not updates for terminal statuses
-      // return;
-    }
     setSelectedTicket(ticket);
     setUpdateStatus(ticket.status);
     setUpdateRemarks(ticket.internal_remarks || "");
@@ -533,6 +505,25 @@ export default function Tickets() {
     setUpdateCategory(ticket.category || "");
     setIsDetailVisible(true);
   }, []);
+
+  const params = useLocalSearchParams<{ ticketId: string }>();
+  const { ticketId } = params;
+
+  // Handle opening ticket from dashboard/params
+  useEffect(() => {
+    if (ticketId && tickets.length > 0) {
+      const ticket = tickets.find(
+        (t) => t.id.toString() === ticketId.toString(),
+      );
+      if (ticket) {
+        logger.debug("Opening ticket from params", {
+          module: "TICKETS",
+          ticketId,
+        });
+        handleTicketPress(ticket);
+      }
+    }
+  }, [ticketId, tickets, handleTicketPress]);
 
   const handleTicketLongPress = useCallback((ticket: Ticket) => {
     if (ticket.status !== "Open") return;
@@ -553,6 +544,7 @@ export default function Tickets() {
     ({ item }: { item: Ticket }) => (
       <TicketItem
         item={item}
+        isCompact={true}
         onPress={handleTicketPress}
         onLongPress={handleTicketLongPress}
       />
@@ -792,6 +784,7 @@ export default function Tickets() {
           <AdvancedFilterModal
             visible={showFiltersModal}
             onClose={handleCloseFilters}
+            dateMode="date-range"
             tempSearch={tempSearch}
             setTempSearch={setTempSearch}
             tempFromDate={tempFromDate}

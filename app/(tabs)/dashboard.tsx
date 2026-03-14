@@ -12,12 +12,16 @@ import {
   View,
   RefreshControl,
   ActivityIndicator,
+  AppState,
+  Alert,
 } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as Location from "expo-location";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import {
   UserCheck,
-  Ticket,
+  Ticket as TicketIcon,
   ListChecks,
   Activity,
   Thermometer,
@@ -25,60 +29,297 @@ import {
   ChevronRight,
   Bell,
   MapPin,
+  Clock,
+  Calendar,
+  Droplets,
+  Beaker,
+  ClipboardList,
+  ThermometerSun,
+  Zap,
+  Navigation,
+  ShieldCheck,
+  History,
+  LogIn,
+  LogOut,
 } from "lucide-react-native";
 import { router, useFocusEffect } from "expo-router";
 import { useAuth } from "@/contexts/AuthContext";
 import AttendanceService, {
   type AttendanceLog,
+  getISTDateString,
+  type Site,
 } from "@/services/AttendanceService";
 import { format } from "date-fns";
 import { useNetworkStatus } from "@/hooks/useNetworkStatus";
 import { WifiOff } from "lucide-react-native";
 import { syncManager } from "@/services/SyncManager";
+import Skeleton from "@/components/Skeleton";
+import TicketsService, { type Ticket } from "@/services/TicketsService";
+import TicketItem from "@/components/TicketItem";
+import { SiteConfigService, type TaskItem } from "@/services/SiteConfigService";
+import { SiteLogService } from "@/services/SiteLogService";
 
-// Task List Data
-const taskListData = [
-  {
-    id: 1,
-    type: "Ticket",
-    title: "HVAC Unit 4 Cooling Failure",
-    due: "Today",
-    color: "#ef4444",
-    bgColor: "#fef2f2",
+interface PendingItem {
+  id: string;
+  title: string;
+  subtitle: string;
+  category: "Ticket" | "Temp RH" | "Chiller" | "Water" | "Chemical";
+  status: string;
+  route: string;
+  timestamp: string;
+  priority?: string;
+  priorityOrder?: number;
+}
+
+// --- Memoized Skeleton Component ---
+const DashboardSkeleton = React.memo(() => {
+  return (
+    <View className="flex-1 bg-slate-50 dark:bg-slate-950 px-6 pt-6">
+      {/* Header Skeleton */}
+      <View className="flex-row items-center justify-between mb-8">
+        <View>
+          <Skeleton
+            width={100}
+            height={10}
+            borderRadius={2}
+            style={{ marginBottom: 8 }}
+          />
+          <Skeleton width={160} height={28} borderRadius={6} />
+        </View>
+        <Skeleton width={40} height={40} borderRadius={20} />
+      </View>
+
+      {/* Attendance Section Skeleton */}
+      <View className="bg-white dark:bg-slate-900 rounded-3xl p-4 border border-slate-100 dark:border-slate-800 mb-6">
+        <View className="flex-row items-center mb-6">
+          <Skeleton width={40} height={40} borderRadius={12} style={{ marginRight: 12 }} />
+          <View>
+            <Skeleton width={80} height={8} borderRadius={2} style={{ marginBottom: 6 }} />
+            <Skeleton width={120} height={18} borderRadius={4} />
+          </View>
+        </View>
+        <View className="flex-row items-center justify-between">
+          <Skeleton width={120} height={40} borderRadius={12} />
+          <View className="items-end">
+            <Skeleton width={60} height={8} borderRadius={2} style={{ marginBottom: 6 }} />
+            <Skeleton width={80} height={14} borderRadius={4} />
+          </View>
+        </View>
+      </View>
+
+      {/* Log Counts Header */}
+      <Skeleton width={140} height={20} borderRadius={4} style={{ marginBottom: 16 }} />
+
+      {/* Log Counts Row */}
+      <View className="flex-row gap-2 mb-8">
+        {[1, 2, 3].map((i) => (
+          <View key={i} className="flex-1 bg-white dark:bg-slate-900 rounded-2xl p-3 border border-slate-100 dark:border-slate-800">
+            <Skeleton width={32} height={32} borderRadius={8} style={{ marginBottom: 12 }} />
+            <Skeleton width={40} height={24} borderRadius={4} style={{ marginBottom: 6 }} />
+            <Skeleton width={60} height={10} borderRadius={2} />
+          </View>
+        ))}
+      </View>
+
+      {/* Pending Tickets Header */}
+      <View className="flex-row items-center justify-between mb-4">
+        <Skeleton width={130} height={22} borderRadius={4} />
+        <Skeleton width={50} height={14} borderRadius={4} />
+      </View>
+
+      {/* Ticket List Skeleton */}
+      <View className="gap-3">
+        {[1, 2, 3].map((i) => (
+          <View key={i} className="bg-white dark:bg-slate-900 rounded-2xl p-4 border border-slate-100 dark:border-slate-800 flex-row items-center">
+            <Skeleton width={40} height={40} borderRadius={12} />
+            <View className="flex-1 ml-3">
+              <Skeleton width="70%" height={16} borderRadius={4} style={{ marginBottom: 8 }} />
+              <Skeleton width="40%" height={10} borderRadius={2} />
+            </View>
+            <Skeleton width={16} height={16} borderRadius={4} />
+          </View>
+        ))}
+      </View>
+    </View>
+  );
+});
+
+// --- Pending Item Row Component ---
+const PendingItemRow = React.memo(
+  ({ item, onPress, showPriority = true }: { item: PendingItem; onPress: () => void; showPriority?: boolean }) => {
+    const Icon = useMemo(() => {
+      switch (item.category) {
+        case "Ticket":
+          return TicketIcon;
+        case "Temp RH":
+          return ThermometerSun;
+        case "Chiller":
+          return Thermometer;
+        case "Water":
+          return Droplets;
+        case "Chemical":
+          return Beaker;
+        default:
+          return ClipboardList;
+      }
+    }, [item.category]);
+
+    const priorityColors = useMemo(() => {
+      if (item.category !== "Ticket" || !item.priority) return null;
+      const p = item.priority.toLowerCase();
+      if (p.includes("very high"))
+        return { accent: "#ec4899", bg: "bg-pink-50", text: "text-pink-600" };
+      if (p.includes("high"))
+        return { accent: "#dc2626", bg: "bg-red-50", text: "text-red-600" };
+      if (p.includes("medium"))
+        return {
+          accent: "#f97316",
+          bg: "bg-orange-50",
+          text: "text-orange-600",
+        };
+      if (p.includes("low"))
+        return { accent: "#3b82f6", bg: "bg-blue-50", text: "text-blue-600" };
+      return null;
+    }, [item.category, item.priority]);
+
+    const color = useMemo(() => {
+      if (priorityColors && item.category === "Ticket")
+        return priorityColors.accent;
+      switch (item.category) {
+        case "Temp RH":
+          return "#f59e0b";
+        case "Chiller":
+          return "#ef4444";
+        case "Water":
+          return "#3b82f6";
+        case "Chemical":
+          return "#ec4899";
+        default:
+          return "#64748b";
+      }
+    }, [item.category, priorityColors]);
+
+    const bgColor = useMemo(() => {
+      switch (item.category) {
+        case "Ticket":
+          return "bg-slate-50 dark:bg-slate-900"; // Neutral background for tickets
+        case "Temp RH":
+          return "bg-amber-50 dark:bg-amber-950/20";
+        case "Chiller":
+          return "bg-red-50 dark:bg-red-950/20";
+        case "Water":
+          return "bg-blue-50 dark:bg-blue-950/20";
+        case "Chemical":
+          return "bg-pink-50 dark:bg-pink-950/20";
+        default:
+          return "bg-slate-50 dark:bg-slate-900";
+      }
+    }, [item.category]);
+
+    return (
+      <TouchableOpacity
+        onPress={onPress}
+        activeOpacity={0.7}
+        className="bg-white dark:bg-slate-900 px-4 py-3 rounded-2xl mb-3 flex-row items-center border border-slate-200 dark:border-slate-800 relative overflow-hidden"
+        style={{
+          shadowColor: "#000",
+          shadowOffset: { width: 0, height: 2 },
+          shadowOpacity: 0.03,
+          shadowRadius: 8,
+          elevation: 1,
+        }}
+      >
+        {/* Priority Accent Bar */}
+        {priorityColors && showPriority && (
+          <View
+            className="absolute left-0 top-0 bottom-0 w-[4px]"
+            style={{ backgroundColor: priorityColors.accent }}
+          />
+        )}
+
+        <View
+          className={`w-10 h-10 rounded-xl items-center justify-center ${bgColor} ${(priorityColors && showPriority) ? "ml-1" : ""}`}
+        >
+          <Icon size={18} color={color} />
+        </View>
+
+        <View className="flex-1 ml-3 mr-2">
+          <View className="flex-row items-center justify-between mb-0.5">
+            <Text
+              className="text-slate-900 dark:text-slate-50 font-bold text-sm"
+              numberOfLines={1}
+            >
+              {item.title}
+            </Text>
+            {priorityColors && showPriority && (
+              <View
+                className={`${priorityColors.bg} px-1.5 py-0.5 rounded-md border border-slate-100 dark:border-slate-800`}
+              >
+                <Text
+                  className={`${priorityColors.text} text-[8px] font-black uppercase tracking-tighter`}
+                >
+                  {item.priority}
+                </Text>
+              </View>
+            )}
+          </View>
+          <Text
+            className="text-slate-400 dark:text-slate-500 text-[10px] font-bold"
+            numberOfLines={1}
+          >
+            {item.subtitle} • {item.status}
+          </Text>
+        </View>
+
+        <ChevronRight size={14} color="#cbd5e1" />
+      </TouchableOpacity>
+    );
   },
-  {
-    id: 2,
-    type: "PM",
-    title: "Quarterly Chiller Inspection",
-    due: "Tomorrow",
-    color: "#3b82f6",
-    bgColor: "#eff6ff",
-  },
-  {
-    id: 3,
-    type: "Log",
-    title: "Submit 14:00 Chiller Log",
-    due: "2:00 PM",
-    color: "#f59e0b",
-    bgColor: "#fffbeb",
-  },
-  {
-    id: 4,
-    type: "Ticket",
-    title: "Water Leak in Boiler Room",
-    due: "Now",
-    color: "#ef4444",
-    bgColor: "#fef2f2",
-  },
-  {
-    id: 5,
-    type: "PM",
-    title: "Fire Extinguisher Check",
-    due: "2 Days",
-    color: "#3b82f6",
-    bgColor: "#eff6ff",
-  },
-];
+);
+
+const LogCountCard = React.memo(
+  ({
+    count,
+    label,
+    icon: Icon,
+    color,
+    bgColor,
+    onPress,
+  }: {
+    count: number;
+    label: string;
+    icon: any;
+    color: string;
+    bgColor: string;
+    onPress: () => void;
+  }) => (
+    <TouchableOpacity
+      onPress={onPress}
+      activeOpacity={0.7}
+      className="flex-1 rounded-2xl p-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800"
+      style={{
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.03,
+        shadowRadius: 8,
+        elevation: 1,
+      }}
+    >
+      <View
+        className="w-8 h-8 rounded-lg items-center justify-center mb-2"
+        style={{ backgroundColor: bgColor }}
+      >
+        <Icon size={16} color={color} />
+      </View>
+      <Text className="text-slate-900 dark:text-slate-50 text-xl font-bold leading-tight">
+        {count}
+      </Text>
+      <Text className="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+        {label}
+      </Text>
+    </TouchableOpacity>
+  ),
+);
 
 export default function Dashboard() {
   const { isConnected } = useNetworkStatus();
@@ -88,9 +329,32 @@ export default function Dashboard() {
     null,
   );
   const [loadingAttendance, setLoadingAttendance] = useState(true);
+  const [pendingTickets, setPendingTickets] = useState<PendingItem[]>([]);
+  const [pendingTempRH, setPendingTempRH] = useState<PendingItem[]>([]);
+  const [pendingWater, setPendingWater] = useState<PendingItem[]>([]);
+  const [pendingChemical, setPendingChemical] = useState<PendingItem[]>([]);
+  const [loadingPending, setLoadingPending] = useState(true);
+  const [validatingLocation, setValidatingLocation] = useState(false);
+  const [currentTime, setCurrentTime] = useState(new Date());
 
   // Ref for timeout cleanup
   const refreshTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Safety timer to ensure loading icons are never stuck
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setLoadingPending((prev) => {
+        if (prev) console.log("[Dashboard] Pending safety timeout triggered");
+        return false;
+      });
+      setLoadingAttendance((prev) => {
+        if (prev)
+          console.log("[Dashboard] Attendance safety timeout triggered");
+        return false;
+      });
+    }, 8000); // 8 seconds safety
+    return () => clearTimeout(timer);
+  }, []);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -99,69 +363,325 @@ export default function Dashboard() {
     };
   }, []);
 
-  const fetchAttendance = React.useCallback(async () => {
-    if (user?.id) {
-      try {
-        // 1. Service now returns cache first, then API
-        const data = await AttendanceService.getTodayAttendance(user.id);
-        if (data) {
-          setTodayAttendance(data);
-          setLoadingAttendance(false);
+  // Live timer for attendance duration
+  useEffect(() => {
+    let interval: any = null;
+
+    const handleAppStateChange = (nextAppState: string) => {
+      if (nextAppState === "active") {
+        if (todayAttendance && !todayAttendance.check_out_time) {
+          if (!interval) {
+            setCurrentTime(new Date());
+            interval = setInterval(() => {
+              setCurrentTime(new Date());
+            }, 60000);
+          }
         }
-      } catch (error) {
-        console.error("Failed to fetch attendance:", error);
-      } finally {
-        setLoadingAttendance(false);
+      } else {
+        if (interval) {
+          clearInterval(interval);
+          interval = null;
+        }
       }
+    };
+
+    const subscription = AppState.addEventListener(
+      "change",
+      handleAppStateChange,
+    );
+
+    if (todayAttendance && !todayAttendance.check_out_time) {
+      setCurrentTime(new Date());
+      interval = setInterval(() => {
+        setCurrentTime(new Date());
+      }, 60000);
     }
-  }, [user?.id]);
 
-  const navigateToNotifications = useCallback(() => {
-    router.push("/notifications");
-  }, []);
+    return () => {
+      subscription.remove();
+      if (interval) clearInterval(interval);
+    };
+  }, [todayAttendance]);
 
-  const navigateToProfile = useCallback(() => {
-    router.push("/profile");
-  }, []);
+  const fetchData = React.useCallback(async () => {
+    // Safety exit if no user
+    if (!user?.user_id && !user?.id) {
+      setLoadingPending(false);
+      setLoadingAttendance(false);
+      return;
+    }
 
-  const navigateToAttendance = useCallback(() => {
-    router.push("/attendance");
-  }, []);
+    const userId = user.user_id || user.id;
+
+    try {
+      setLoadingPending(true);
+
+      // 1. Fetch Today's Attendance and Sites in parallel
+      const [attData, sites] = await Promise.all([
+        AttendanceService.getTodayAttendance(userId).catch((e) => {
+          console.error("[Dashboard] Attendance fetch failed:", e);
+          return null;
+        }),
+        AttendanceService.getUserSites(userId, "JouleCool").catch((e) => {
+          console.error("[Dashboard] Sites fetch failed:", e);
+          return [] as Site[];
+        }),
+      ]);
+
+      if (attData) setTodayAttendance(attData);
+
+      // 2. Fetch Tickets - prioritizing offline cache if needed
+      const ticketResult = await TicketsService.getTickets("all", {
+        status: "Open",
+        limit: 10,
+      }).catch((e) => {
+        console.error("[Dashboard] Tickets fetch failed:", e);
+        return { success: false, data: [] };
+      });
+
+      const allTickets: PendingItem[] = [];
+      if (ticketResult?.success && ticketResult.data) {
+        ticketResult.data.slice(0, 5).forEach((t: Ticket) => {
+          allTickets.push({
+            id: t.id,
+            title: t.title,
+            subtitle: t.ticket_no,
+            category: "Ticket",
+            status: t.status,
+            priority: t.priority,
+            route: "/(tabs)/tickets",
+            timestamp: t.created_at,
+          });
+        });
+
+        const priorityOrder: Record<string, number> = {
+          "Very High": 1,
+          High: 2,
+          Medium: 3,
+          Low: 4,
+        };
+
+        allTickets.sort((a, b) => {
+          const pa = priorityOrder[a.priority || ""] || 5;
+          const pb = priorityOrder[b.priority || ""] || 5;
+          if (pa !== pb) return pa - pb;
+          return (
+            new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+          );
+        });
+      }
+      setPendingTickets(allTickets);
+
+      // 3. Aggregate Pending Logs from ALL Assigned Sites
+      let assignedSites = sites;
+      if (user.role?.toLowerCase() === "admin") {
+        try {
+          const allSites = await AttendanceService.getAllSites();
+          if (allSites && allSites.length > 0) assignedSites = allSites;
+        } catch (e) {
+          console.error("[Dashboard] Admin sites fetch failed:", e);
+        }
+      }
+
+      if (assignedSites.length > 0) {
+        const allTempRH: PendingItem[] = [];
+        const allWater: PendingItem[] = [];
+        const allChemical: PendingItem[] = [];
+
+        // Parallelize site log checks to avoid sequential waiting
+        await Promise.all(
+          assignedSites.map(async (site) => {
+            const siteCode = site.site_code;
+            if (!siteCode) return;
+
+            const logTypes: Array<"Temp RH" | "Water" | "Chemical"> = [
+              "Temp RH",
+              "Water",
+              "Chemical",
+            ];
+
+            await Promise.all(
+              logTypes.map(async (type) => {
+                const canonicalName =
+                  type === "Temp RH"
+                    ? "Temp RH"
+                    : type === "Water"
+                      ? "Water"
+                      : "Chemical Dosing";
+
+                try {
+                  const tasks = await SiteConfigService.getLogTasks(
+                    siteCode,
+                    canonicalName,
+                  );
+                  const pendingTasks = tasks.filter((t) => !t.isCompleted);
+
+                  pendingTasks.forEach((t) => {
+                    const item: PendingItem = {
+                      id: `${siteCode}-${type}-${t.id}`,
+                      title: t.name,
+                      subtitle: `${site.name || siteCode}`,
+                      category: type as any,
+                      status: t.status,
+                      route:
+                        type === "Temp RH"
+                          ? "/temp-rh"
+                          : type === "Water"
+                            ? "/water"
+                            : "/chemical",
+                      timestamp: new Date().toISOString(),
+                    };
+                    if (type === "Temp RH") allTempRH.push(item);
+                    else if (type === "Water") allWater.push(item);
+                    else if (type === "Chemical") allChemical.push(item);
+                  });
+                } catch (e) {
+                  console.error(
+                    `[Dashboard] Failed to fetch tasks for ${siteCode} - ${type}:`,
+                    e,
+                  );
+                }
+              }),
+            );
+          }),
+        );
+
+        setPendingTempRH(allTempRH);
+        setPendingWater(allWater);
+        setPendingChemical(allChemical);
+      }
+    } catch (error) {
+      console.error("Dashboard fetchData critical error:", error);
+    } finally {
+      setLoadingAttendance(false);
+      setLoadingPending(false);
+    }
+  }, [user]);
+
+  const navigateToAttendance = useCallback(
+    () => router.push("/attendance"),
+    [],
+  );
+  const navigateToNotifications = useCallback(
+    () => router.push("/notifications" as any),
+    [],
+  );
+  const navigateToProfile = useCallback(() => router.push("/app-settings"), []);
+
+  const handleQuickCheckIn = async () => {
+    if (!user?.id) return;
+    setValidatingLocation(true);
+    try {
+      // 1. Get site code (from last site)
+      const lastSiteCode = await AsyncStorage.getItem(`last_site_${user.id}`);
+      if (!lastSiteCode || lastSiteCode === "all") {
+        router.push("/attendance");
+        return;
+      }
+
+      // 2. Get location
+      const loc = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Balanced,
+      });
+
+      // 3. Validate
+      const validation = await AttendanceService.validateLocation(
+        user.id,
+        loc.coords.latitude,
+        loc.coords.longitude,
+      );
+
+      if (validation.isValid) {
+        // Find matching site
+        const siteToJoin =
+          validation.allowedSites.find((s) => s.site_code === lastSiteCode) ||
+          validation.allowedSites[0];
+
+        const res = await AttendanceService.checkIn(
+          user.id,
+          siteToJoin.site_code,
+          loc.coords.latitude,
+          loc.coords.longitude,
+        );
+        if (res.success) {
+          Alert.alert("Success", "Checked in successfully!");
+          fetchData();
+        } else {
+          Alert.alert("Failed", res.error || "Check-in failed");
+        }
+      } else {
+        Alert.alert(
+          "Location Failed",
+          "You are too far from the site. Please go to the Attendance screen for details.",
+        );
+      }
+    } catch (e: any) {
+      Alert.alert("Error", e.message);
+    } finally {
+      setValidatingLocation(false);
+    }
+  };
+
+  const handleQuickCheckOut = async () => {
+    if (!todayAttendance?.id) return;
+    setValidatingLocation(true);
+    try {
+      const loc = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Balanced,
+      });
+      const res = await AttendanceService.checkOut(
+        todayAttendance.id,
+        loc.coords.latitude,
+        loc.coords.longitude,
+      );
+      if (res.success) {
+        Alert.alert("Success", "Checked out successfully!");
+        fetchData();
+      } else if (res.isEarlyCheckout) {
+        // Reason required, navigate to attendance
+        router.push("/attendance");
+      } else {
+        Alert.alert("Failed", res.error || "Check-out failed");
+      }
+    } catch (e: any) {
+      Alert.alert("Error", e.message);
+    } finally {
+      setValidatingLocation(false);
+    }
+  };
 
   const navigateToAllTasks = useCallback(() => {
     router.push("/all-tasks");
   }, []);
 
-  const dashboardStats = useMemo(
-    () => [
-      { label: "Tickets", value: "14", color: "#ef4444", icon: Ticket },
-      { label: "PMs Due", value: "3", color: "#3b82f6", icon: ListChecks },
-      { label: "Logs", value: "2", color: "#f59e0b", icon: Activity },
-    ],
-    [],
-  );
-
   useFocusEffect(
     useCallback(() => {
-      fetchAttendance();
+      fetchData();
       syncManager.prefetchAll();
-    }, [fetchAttendance]),
+    }, [fetchData]),
   );
 
   const onRefresh = React.useCallback(async () => {
     setRefreshing(true);
-    await fetchAttendance();
+    await fetchData();
     // Simulate other API calls (with cleanup)
     if (refreshTimeoutRef.current) clearTimeout(refreshTimeoutRef.current);
     refreshTimeoutRef.current = setTimeout(() => {
       setRefreshing(false);
     }, 1000);
-  }, [fetchAttendance]);
+  }, [fetchData]);
 
-  const getStatusColor = useMemo(() => {
-    if (!todayAttendance) return ["#64748b", "#475569"]; // Neutral gray for not checked in
-    if (todayAttendance.check_out_time) return ["#16a34a", "#15803d"]; // Green for completed
-    return ["#dc2626", "#991b1b"]; // Red for currently checked in
+  const getStatusBgColor = useMemo(() => {
+    if (!todayAttendance) return "bg-slate-50 dark:bg-slate-900"; // Neutral
+    if (todayAttendance.check_out_time) return "bg-blue-50 dark:bg-blue-950/20"; // Completed
+    return "bg-emerald-50 dark:bg-emerald-950/20"; // Active
+  }, [todayAttendance]);
+
+  const getStatusBorderColor = useMemo(() => {
+    if (!todayAttendance) return "border-slate-100 dark:border-slate-800";
+    if (todayAttendance.check_out_time)
+      return "border-blue-100 dark:border-blue-900/50";
+    return "border-emerald-100 dark:border-emerald-900/50";
   }, [todayAttendance]);
 
   const getStatusText = useMemo(() => {
@@ -171,11 +691,37 @@ export default function Dashboard() {
   }, [todayAttendance]);
 
   const getStatusSubtext = useMemo(() => {
-    if (!todayAttendance) return "Tap to start shift";
-    if (todayAttendance.check_out_time)
+    if (!todayAttendance) return "Tap To Start Shift";
+    if (todayAttendance.check_out_time) {
       return `Out: ${format(new Date(todayAttendance.check_out_time), "h:mm a")}`;
-    return `In: ${format(new Date(todayAttendance.check_in_time!), "h:mm a")}`;
-  }, [todayAttendance]);
+    }
+
+    if (!todayAttendance.check_in_time) return "In: --";
+    const start = new Date(todayAttendance.check_in_time);
+    if (isNaN(start.getTime())) return "In: --";
+
+    let end: Date;
+    const todayStr = getISTDateString(currentTime);
+    const logDateIST = getISTDateString(new Date(todayAttendance.date));
+
+    if (logDateIST === todayStr) {
+      end = currentTime;
+    } else {
+      const [y, m, d] = logDateIST.split("-").map(Number);
+      end = new Date(y, m - 1, d, 23, 59, 59);
+    }
+
+    const minutes = Math.floor((end.getTime() - start.getTime()) / 60000);
+    if (isNaN(minutes) || minutes < 0) return "In: 0h 0m";
+
+    const hours = Math.floor(minutes / 60);
+    const mins = minutes % 60;
+    return `${hours}h ${mins}m`;
+  }, [todayAttendance, currentTime]);
+
+  if (loadingAttendance) {
+    return <DashboardSkeleton />;
+  }
 
   return (
     <View className="flex-1 bg-slate-50 dark:bg-slate-950">
@@ -190,149 +736,204 @@ export default function Dashboard() {
           </View>
         )}
 
-        {/* Header */}
-        <View className="px-5 pt-2 pb-3">
-          <View className="flex-row items-center justify-between">
-            <View>
-              <Text className="text-slate-400 dark:text-slate-50 text-sm font-medium">
-                Welcome back
-              </Text>
-              <Text className="text-slate-900 dark:text-slate-50 text-2xl font-bold mt-0.5">
-                {user?.full_name || user?.name || "JouleOps"}
-              </Text>
-            </View>
-            <View className="flex-row items-center gap-3">
-              <TouchableOpacity
-                onPress={navigateToNotifications}
-                className="w-10 h-10 rounded-full bg-white dark:bg-slate-900 items-center justify-center"
-                style={{
-                  shadowColor: "#000",
-                  shadowOffset: { width: 0, height: 2 },
-                  shadowOpacity: 0.08,
-                  shadowRadius: 8,
-                  elevation: 3,
-                }}
-              >
-                <Bell size={18} color="#64748b" />
-                <View className="absolute top-2 right-2 w-2 h-2 bg-red-500 rounded-full border border-white" />
-              </TouchableOpacity>
-              <TouchableOpacity onPress={navigateToProfile}>
-                <LinearGradient
-                  colors={["#dc2626", "#b91c1c"]}
-                  style={{
-                    width: 40,
-                    height: 40,
-                    borderRadius: 20,
-                    alignItems: "center",
-                    justifyContent: "center",
-                  }}
-                >
-                  <User size={18} color="white" />
-                </LinearGradient>
-              </TouchableOpacity>
-            </View>
+        {/* Header Section */}
+        <View className="px-6 pt-6 pb-4 flex-row items-center justify-between">
+          <View>
+            <Text className="text-slate-400 dark:text-slate-500 text-[10px] font-black uppercase tracking-[0.2em] mb-1">
+              JouleOps • Dashboard
+            </Text>
+            <Text className="text-slate-900 dark:text-slate-50 text-2xl font-black tracking-tight">
+              Site Overview
+            </Text>
           </View>
+          <TouchableOpacity className="w-10 h-10 rounded-full bg-white dark:bg-slate-900 items-center justify-center border border-slate-200 dark:border-slate-800">
+            <Activity size={18} color="#dc2626" />
+          </TouchableOpacity>
         </View>
 
-        {/* Status Card */}
-        <TouchableOpacity
-          className="px-5 mb-3"
-          onPress={navigateToAttendance}
-          activeOpacity={0.9}
-        >
-          <LinearGradient
-            colors={getStatusColor as any}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            className="rounded-2xl p-4"
+        {/* Premium Attendance Section */}
+        <View className="px-6 mb-4">
+          <TouchableOpacity
+            onPress={navigateToAttendance}
+            activeOpacity={0.9}
+            className="overflow-hidden rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800"
             style={{
-              shadowColor: getStatusColor[0],
+              shadowColor: "#000",
               shadowOffset: { width: 0, height: 4 },
-              shadowOpacity: 0.2,
+              shadowOpacity: 0.04,
               shadowRadius: 12,
-              elevation: 8,
+              elevation: 3,
             }}
           >
-            <View className="flex-row items-center justify-between">
-              <View className="flex-row items-center">
-                <View className="w-10 h-10 rounded-xl bg-white/20 items-center justify-center mr-3">
-                  {loadingAttendance ? (
-                    <ActivityIndicator color="white" size="small" />
-                  ) : (
-                    <UserCheck size={20} color="white" />
-                  )}
+            {/* Top Bar: Site Identity */}
+            <View className="p-4 flex-row items-center justify-between border-b border-slate-50 dark:border-slate-800/50">
+              <View className="flex-row items-center flex-1 pr-4">
+                <View className="w-10 h-10 rounded-xl bg-red-50 dark:bg-red-950/20 items-center justify-center border border-red-100 dark:border-red-900/50 mr-3">
+                  <Zap size={20} color="#dc2626" />
                 </View>
-                <View>
-                  <Text className="text-white/70 text-xs uppercase font-bold tracking-wider">
-                    Today's Status
+                <View className="flex-1">
+                  <Text className="text-slate-400 dark:text-slate-500 text-[8px] font-bold uppercase tracking-[0.1em] mb-0.5">
+                    Welcome back
                   </Text>
-                  <Text className="text-white text-lg font-bold">
-                    {getStatusText}
+                  <Text
+                    className="text-slate-900 dark:text-slate-50 text-base font-black leading-tight"
+                    numberOfLines={1}
+                  >
+                    {user?.full_name || user?.name || "Shift Operational"}
                   </Text>
                 </View>
               </View>
-              <View className="flex-row items-center">
-                <View className="bg-white/20 px-3 py-2 rounded-xl mr-2">
-                  <Text className="text-white font-semibold text-xs">
+
+              {/* Glassmorphism Status Pill */}
+              <View
+                className={`flex-row items-center px-3 py-1.5 rounded-full border ${getStatusBorderColor}`}
+                style={{
+                  backgroundColor: todayAttendance
+                    ? todayAttendance.check_out_time
+                      ? "rgba(59, 130, 246, 0.08)"
+                      : "rgba(5, 150, 105, 0.08)"
+                    : "rgba(148, 163, 184, 0.08)",
+                }}
+              >
+                <View
+                  className={`w-1.5 h-1.5 rounded-full mr-2 ${
+                    todayAttendance
+                      ? todayAttendance.check_out_time
+                        ? "bg-blue-500"
+                        : "bg-emerald-500"
+                      : "bg-slate-400"
+                  }`}
+                />
+                <Text
+                  className={`text-[9px] font-black uppercase tracking-widest ${
+                    todayAttendance
+                      ? todayAttendance.check_out_time
+                        ? "text-blue-600"
+                        : "text-emerald-600"
+                      : "text-slate-500"
+                  }`}
+                >
+                  {getStatusText}
+                </Text>
+              </View>
+            </View>
+
+            {/* Bottom Bar: Action & Time */}
+            <View className="p-3 bg-slate-50/50 dark:bg-white/5 flex-row items-center justify-between">
+              <TouchableOpacity
+                onPress={(e) => {
+                  e.stopPropagation();
+                  if (!todayAttendance || todayAttendance.check_out_time) {
+                    handleQuickCheckIn();
+                  } else {
+                    handleQuickCheckOut();
+                  }
+                }}
+                className="px-6 py-2.5 rounded-xl flex-row items-center shadow-sm bg-red-600"
+              >
+                {validatingLocation ? (
+                  <ActivityIndicator size="small" color="white" />
+                ) : (
+                  <>
+                    {!todayAttendance || todayAttendance.check_out_time ? (
+                      <LogIn size={14} color="white" />
+                    ) : (
+                      <LogOut size={14} color="white" />
+                    )}
+                    <Text className="text-white text-[11px] font-black uppercase ml-2 tracking-wide">
+                      {!todayAttendance || todayAttendance.check_out_time
+                        ? "Punch In"
+                        : "Punch Out"}
+                    </Text>
+                  </>
+                )}
+              </TouchableOpacity>
+
+              <View className="items-end">
+                <Text className="text-slate-400 dark:text-slate-500 text-[8px] font-bold uppercase mb-0.5">
+                  Shift Duration
+                </Text>
+                <View className="flex-row items-center">
+                  <ShieldCheck size={12} color="#64748b" className="mr-1" />
+                  <Text className="text-slate-700 dark:text-slate-200 font-black text-xs">
                     {getStatusSubtext}
                   </Text>
                 </View>
-                <ChevronRight size={18} color="rgba(255,255,255,0.7)" />
               </View>
             </View>
-          </LinearGradient>
-        </TouchableOpacity>
+          </TouchableOpacity>
+        </View>
 
-        {/* Quick Stats */}
-        <View className="px-5 mb-3">
-          <View className="flex-row gap-2">
-            {dashboardStats.map((stat, index) => {
-              let bgClass = "bg-slate-50 dark:bg-slate-800";
-              let iconColor = "#94a3b8";
+        <View className="px-6 mb-3">
+          <Text className="text-slate-900 dark:text-slate-50 text-base font-black">
+            Pending Site logs
+          </Text>
+        </View>
 
-              if (stat.label === "Tickets") {
-                bgClass = "bg-red-50 dark:bg-red-900/20";
-                iconColor = "#ef4444";
-              } else if (stat.label === "PMs Due") {
-                bgClass = "bg-blue-50 dark:bg-blue-900/20";
-                iconColor = "#3b82f6";
-              } else if (stat.label === "Logs") {
-                bgClass = "bg-amber-50 dark:bg-amber-900/20";
-                iconColor = "#f59e0b";
-              }
-
-              return (
-                <TouchableOpacity
-                  key={index}
-                  onPress={() => {
-                    if (stat.label === "Logs") router.push("/site-logs");
-                    else if (stat.label === "Tickets") router.push("/tickets");
-                    else if (stat.label === "PMs Due")
-                      router.push("/preventive-maintenance");
-                  }}
-                  className="flex-1 bg-white dark:bg-slate-900 rounded-xl p-3"
-                  style={{
-                    shadowColor: "#000",
-                    shadowOffset: { width: 0, height: 1 },
-                    shadowOpacity: 0.05,
-                    shadowRadius: 4,
-                    elevation: 2,
-                  }}
-                >
-                  <View
-                    className={`w-8 h-8 rounded-lg items-center justify-center mb-2 ${bgClass}`}
-                  >
-                    <stat.icon size={16} color={iconColor} />
-                  </View>
-                  <Text className="text-xl font-bold text-slate-900 dark:text-slate-50">
-                    {stat.value}
-                  </Text>
-                  <Text className="text-slate-400 dark:text-slate-500 text-xs">
-                    {stat.label}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
+        <View className="px-6 mb-6 flex-row gap-2">
+          <LogCountCard
+            icon={ThermometerSun}
+            count={pendingTempRH.length}
+            label="Temp & RH"
+            color="#f59e0b"
+            bgColor="rgba(245, 158, 11, 0.1)"
+            onPress={() =>
+              router.push({
+                pathname: "/history/site-history",
+                params: {
+                  logName: "Temp RH",
+                  siteCode: "all",
+                  status: "Open",
+                },
+              } as any)
+            }
+          />
+          <LogCountCard
+            icon={Droplets}
+            count={pendingWater.length}
+            label="Water"
+            color="#3b82f6"
+            bgColor="rgba(59, 130, 246, 0.1)"
+            onPress={() =>
+              router.push({
+                pathname: "/history/site-history",
+                params: {
+                  logName: "Water",
+                  siteCode: "all",
+                  status: "Open",
+                },
+              } as any)
+            }
+          />
+          <LogCountCard
+            icon={Beaker}
+            count={pendingChemical.length}
+            label="Chemical"
+            color="#ec4899"
+            bgColor="rgba(236, 72, 153, 0.1)"
+            onPress={() =>
+              router.push({
+                pathname: "/history/site-history",
+                params: {
+                  logName: "Chemical Dosing",
+                  siteCode: "all",
+                  status: "Open",
+                },
+              } as any)
+            }
+          />
+        </View>
+        {/* Pending Tickets Header Section - Fixed */}
+        <View className="px-6 mb-3">
+          <View className="flex-row items-center justify-between">
+            <Text className="text-slate-900 dark:text-slate-50 text-base font-black">
+              Pending Tickets
+            </Text>
+            <TouchableOpacity onPress={() => router.push("/(tabs)/tickets")}>
+              <Text className="text-red-600 text-[10px] font-black uppercase tracking-wider">
+                View All
+              </Text>
+            </TouchableOpacity>
           </View>
         </View>
 
@@ -341,133 +942,58 @@ export default function Dashboard() {
           contentContainerStyle={{ paddingBottom: 100 }}
           showsVerticalScrollIndicator={false}
           refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor="#dc2626"
+            />
           }
         >
-          <View className="px-5">
-            <View className="flex-row items-center justify-between mb-3">
-              <Text className="text-slate-900 dark:text-slate-50 text-base font-bold">
-                Pending Tasks
-              </Text>
-              <TouchableOpacity
-                className="flex-row items-center"
-                onPress={navigateToAllTasks}
-              >
-                <Text className="text-red-600 text-xs font-semibold mr-1">
-                  View All
-                </Text>
-                <ChevronRight size={14} color="#dc2626" />
-              </TouchableOpacity>
-            </View>
-
-            {/* Task Items */}
-            <View className="gap-2">
-              {taskListData.map((task) => {
-                let bgClass = "bg-slate-50 dark:bg-slate-800";
-                let textClass = "text-slate-600 dark:text-slate-400";
-                let indicatorColor = "#94a3b8";
-
-                if (task.type === "Ticket") {
-                  bgClass = "bg-red-50 dark:bg-red-900/20";
-                  textClass = "text-red-700 dark:text-red-400";
-                  indicatorColor = "#ef4444";
-                } else if (task.type === "PM") {
-                  bgClass = "bg-blue-50 dark:bg-blue-900/20";
-                  textClass = "text-blue-700 dark:text-blue-400";
-                  indicatorColor = "#3b82f6";
-                } else if (task.type === "Log") {
-                  bgClass = "bg-amber-50 dark:bg-amber-900/20";
-                  textClass = "text-amber-700 dark:text-amber-400";
-                  indicatorColor = "#f59e0b";
-                }
-
-                return (
-                  <TouchableOpacity
-                    key={task.id}
-                    className="bg-white dark:bg-slate-900 rounded-xl p-3 flex-row items-center"
-                    style={{
-                      shadowColor: "#000",
-                      shadowOffset: { width: 0, height: 1 },
-                      shadowOpacity: 0.05,
-                      shadowRadius: 4,
-                      elevation: 2,
-                    }}
+          {/* Pending Tickets List Section */}
+          <View className="px-6 mb-6">
+            {loadingPending ? (
+              <View className="gap-2">
+                {[1, 2].map((i) => (
+                  <View
+                    key={i}
+                    className="h-14 bg-white dark:bg-slate-900 rounded-2xl border border-slate-50 dark:border-slate-800 flex-row items-center px-4"
                   >
-                    <View
-                      className={`w-10 h-10 rounded-lg items-center justify-center mr-3 ${bgClass}`}
-                    >
-                      <View
-                        className="w-2 h-2 rounded-full"
-                        style={{ backgroundColor: indicatorColor }}
-                      />
-                    </View>
-                    <View className="flex-1">
-                      <Text
-                        className="text-slate-900 dark:text-slate-50 font-semibold text-sm"
-                        numberOfLines={1}
-                      >
-                        {task.title}
-                      </Text>
-                      <View className="flex-row items-center mt-0.5">
-                        <View
-                          className={`px-1.5 py-0.5 rounded mr-2 ${bgClass}`}
-                        >
-                          <Text className={`text-xs font-medium ${textClass}`}>
-                            {task.type}
-                          </Text>
-                        </View>
-                        <Text className="text-slate-400 dark:text-slate-500 text-xs">
-                          Due: {task.due}
-                        </Text>
-                      </View>
-                    </View>
-                    <ChevronRight size={18} color="#94a3b8" />
-                  </TouchableOpacity>
+                     <Skeleton width={32} height={32} borderRadius={8} />
+                     <View className="ml-3 flex-1">
+                        <Skeleton width="60%" height={12} borderRadius={4} style={{marginBottom: 6}} />
+                        <Skeleton width="40%" height={8} borderRadius={2} />
+                     </View>
+                  </View>
+                ))}
+              </View>
+            ) : pendingTickets.length > 0 ? (
+              pendingTickets.map((item) => {
+                const handleNav = () => {
+                  if (item.category === "Ticket") {
+                    router.push({
+                      pathname: "/(tabs)/tickets",
+                      params: { ticketId: item.id },
+                    });
+                    return;
+                  }
+                  if (item.route) router.push(item.route as any);
+                };
+                return (
+                  <PendingItemRow
+                    key={item.id}
+                    item={item}
+                    onPress={handleNav}
+                    showPriority={false}
+                  />
                 );
-              })}
-            </View>
-
-            {/* Quick Actions */}
-            <Text className="text-slate-900 dark:text-slate-50 text-base font-bold mt-4 mb-3">
-              Quick Actions
-            </Text>
-            <View className="flex-row gap-2">
-              <TouchableOpacity
-                onPress={() => router.push("/site-logs")}
-                className="flex-1 bg-white dark:bg-slate-900 rounded-xl p-3 flex-row items-center"
-                style={{
-                  shadowColor: "#000",
-                  shadowOffset: { width: 0, height: 1 },
-                  shadowOpacity: 0.05,
-                  shadowRadius: 4,
-                  elevation: 2,
-                }}
-              >
-                <View className="w-8 h-8 rounded-lg bg-red-50 items-center justify-center mr-2">
-                  <Thermometer size={16} color="#dc2626" />
-                </View>
-                <Text className="text-slate-700 dark:text-slate-300 font-semibold text-sm">
-                  Log Data
+              })
+            ) : (
+              <View className="py-2 items-center">
+                <Text className="text-slate-400 text-[10px] font-bold">
+                  No pending tickets
                 </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                className="flex-1 bg-white dark:bg-slate-900 rounded-xl p-3 flex-row items-center"
-                style={{
-                  shadowColor: "#000",
-                  shadowOffset: { width: 0, height: 1 },
-                  shadowOpacity: 0.05,
-                  shadowRadius: 4,
-                  elevation: 2,
-                }}
-              >
-                <View className="w-8 h-8 rounded-lg bg-blue-50 items-center justify-center mr-2">
-                  <Ticket size={16} color="#3b82f6" />
-                </View>
-                <Text className="text-slate-700 dark:text-slate-300 font-semibold text-sm">
-                  New Ticket
-                </Text>
-              </TouchableOpacity>
-            </View>
+              </View>
+            )}
           </View>
         </ScrollView>
       </SafeAreaView>

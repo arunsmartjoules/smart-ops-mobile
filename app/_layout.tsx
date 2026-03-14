@@ -9,6 +9,7 @@ import { useEffect } from "react";
 import { syncManager } from "@/services/SyncManager";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import "@/services/SyncManager"; // Ensure background task is defined early
+import UpdateService from "@/services/UpdateService";
 
 function AuthGuard({ children }: { children: React.ReactNode }) {
   const { user, isLoading } = useAuth();
@@ -40,6 +41,7 @@ export default function RootLayout() {
     const init = async () => {
       try {
         syncManager.initialize();
+        UpdateService.checkForUpdate(); // Check for updates on app start
       } catch (e) {
         console.error("SyncManager init error:", e);
       }

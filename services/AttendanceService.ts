@@ -11,7 +11,7 @@ import { API_BASE_URL } from "../constants/api";
 
 const BACKEND_URL = API_BASE_URL;
 
-const getISTDateString = (d: Date = new Date()) =>
+export const getISTDateString = (d: Date = new Date()) =>
   new Intl.DateTimeFormat("en-CA", {
     timeZone: "Asia/Kolkata",
     year: "numeric",
@@ -153,6 +153,7 @@ export interface AttendanceLog {
   check_out_address?: string;
   status: "Present" | "Absent" | "Half Day" | "Leave";
   remarks?: string;
+  site_name?: string;
 }
 
 export interface LocationValidationResult {
@@ -337,7 +338,7 @@ export const AttendanceService = {
   async getAttendanceHistory(
     userId: string,
     page: number = 1,
-    limit: number = 30,
+    limit: number = 100,
   ): Promise<{ data: AttendanceLog[]; pagination: any }> {
     const result = await apiFetch(
       `/api/attendance/user/${userId}?page=${page}&limit=${limit}`,

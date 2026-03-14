@@ -8,14 +8,29 @@ export default function TabsIndex() {
   const hasRedirected = useRef(false);
 
   useEffect(() => {
+    // Safety timeout: if loading takes > 5s, force a redirect based on current user state
+    const timer = setTimeout(() => {
+      if (!hasRedirected.current) {
+        hasRedirected.current = true;
+        if (user) {
+          router.replace("/(tabs)/dashboard");
+        } else {
+          router.replace("/sign-in");
+        }
+      }
+    }, 5000);
+
     if (!isLoading && !hasRedirected.current) {
       hasRedirected.current = true;
+      clearTimeout(timer);
       if (user) {
         router.replace("/(tabs)/dashboard");
       } else {
         router.replace("/sign-in");
       }
     }
+    
+    return () => clearTimeout(timer);
   }, [user, isLoading]);
 
   return (

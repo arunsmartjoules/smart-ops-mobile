@@ -1,10 +1,9 @@
-import React, { useCallback } from "react";
-import { format } from "date-fns";
-import { View, Text, TouchableOpacity } from "react-native";
+import { View, Text, TouchableOpacity, Alert, ActivityIndicator } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import { useAuth } from "@/contexts/AuthContext";
 import { useTheme } from "@/contexts/ThemeContext";
+import UpdateService from "@/services/UpdateService";
 import {
   Mail,
   User as UserIcon,
@@ -18,21 +17,21 @@ import {
   Moon,
   Sun,
   Monitor,
+  ArrowUpCircle,
+  Info,
 } from "lucide-react-native";
 import { router } from "expo-router";
-
-const menuItems = [
-  { icon: Bell, label: "Notifications", color: "#3b82f6" },
-  { icon: Shield, label: "Privacy & Security", color: "#22c55e" },
-  { icon: Settings, label: "Offline & Sync", color: "#64748b" },
-  { icon: HelpCircle, label: "Help & Support", color: "#f59e0b" },
-];
+import React, { useState, useCallback, useEffect } from "react";
+import { format } from "date-fns";
 
 export default function Profile() {
   const { user, signOut, refreshProfile } = useAuth();
   const { theme, setTheme } = useTheme();
 
-  React.useEffect(() => {
+  const [isCheckingUpdates, setIsCheckingUpdates] = useState(false);
+  const [updateAvailable, setUpdateAvailable] = useState(false);
+
+  useEffect(() => {
     refreshProfile();
   }, [refreshProfile]);
 
@@ -40,6 +39,82 @@ export default function Profile() {
     await signOut();
     router.replace("/sign-in");
   }, [signOut]);
+
+  const handleCheckUpdates = useCallback(async () => {
+    setIsCheckingUpdates(true);
+    try {
+      const result = await UpdateService.checkForUpdate(false);
+      if (result.available) {
+        setUpdateAvailable(true);
+        Alert.alert(
+          "Update Available",
+          "A new version is available. Would you like to download and install it now?",
+          [
+            { text: "Later", style: "cancel" },
+            {
+              text: "Download & Install",
+              onPress: async () => {
+                const fetchRes = await UpdateService.fetchUpdate();
+                if (fetchRes.success) {
+                  Alert.alert(
+                    "Success",
+                    "Update installed. The app will now restart.",
+                    [
+                      {
+                        text: "Restart",
+                        onPress: () => UpdateService.reloadApp(),
+                      },
+                    ],
+                  );
+                } else {
+                  Alert.alert(
+                    "Error",
+                    "Failed to download update. Please try again later.",
+                  );
+                }
+              },
+            },
+          ],
+        );
+      } else {
+        Alert.alert(
+          "Up to Date",
+          "You are using the latest version of SmartOps.",
+        );
+      }
+    } catch (e: any) {
+      Alert.alert("Error", "Failed to check for updates. " + e.message);
+    } finally {
+      setIsCheckingUpdates(false);
+    }
+  }, []);
+
+  const handleCycleTheme = useCallback(() => {
+    if (theme === "light") setTheme("dark");
+    else if (theme === "dark") setTheme("system");
+    else setTheme("light");
+  }, [theme, setTheme]);
+
+  const menuItems = [
+    { icon: Bell, label: "Notifications", color: "#3b82f6" },
+    { icon: Shield, label: "Privacy & Security", color: "#22c55e" },
+    { icon: Settings, label: "Offline & Sync", color: "#64748b" },
+    { 
+      icon: theme === "light" ? Sun : theme === "dark" ? Moon : Monitor, 
+      label: "Appearance", 
+      color: "#8b5cf6", 
+      value: theme.charAt(0).toUpperCase() + theme.slice(1) 
+    },
+    { icon: Info, label: "App Version", color: "#8b5cf6", value: "1.0.0 (Beta)" },
+    { 
+      icon: ArrowUpCircle, 
+      label: "Check for Updates", 
+      color: "#3b82f6", 
+      loading: isCheckingUpdates,
+      hasBadge: updateAvailable 
+    },
+    { icon: HelpCircle, label: "Help & Support", color: "#f59e0b" },
+  ];
 
   return (
     <View className="flex-1 bg-slate-50 dark:bg-slate-950">
@@ -147,104 +222,6 @@ export default function Profile() {
           </View>
         </View>
 
-        {/* Appearance Section */}
-        <View className="px-5 mb-4">
-          <View
-            className="bg-white dark:bg-slate-900 rounded-2xl p-5"
-            style={{
-              shadowColor: "#000",
-              shadowOffset: { width: 0, height: 2 },
-              shadowOpacity: 0.06,
-              shadowRadius: 12,
-              elevation: 3,
-            }}
-          >
-            <View className="flex-row items-center mb-4">
-              <View className="w-10 h-10 rounded-xl bg-violet-50 dark:bg-violet-900/20 items-center justify-center">
-                <Moon size={20} color="#8b5cf6" />
-              </View>
-              <View className="ml-3 flex-1">
-                <Text className="text-slate-900 dark:text-slate-50 font-bold">
-                  Appearance
-                </Text>
-                <Text className="text-slate-400 dark:text-slate-500 text-xs">
-                  Choose your preferred theme
-                </Text>
-              </View>
-            </View>
-
-            <View className="flex-row">
-              <TouchableOpacity
-                onPress={() => setTheme("light")}
-                className={`flex-1 items-center justify-center py-3 rounded-l-xl border ${
-                  theme === "light"
-                    ? "bg-violet-50 dark:bg-violet-900/30 border-violet-200 dark:border-violet-700"
-                    : "bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700"
-                }`}
-              >
-                <Sun
-                  size={20}
-                  color={theme === "light" ? "#8b5cf6" : "#94a3b8"}
-                />
-                <Text
-                  className={`text-xs font-semibold mt-1 ${
-                    theme === "light"
-                      ? "text-violet-700 dark:text-violet-300"
-                      : "text-slate-500 dark:text-slate-400"
-                  }`}
-                >
-                  Light
-                </Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                onPress={() => setTheme("dark")}
-                className={`flex-1 items-center justify-center py-3 border-y border-r ${
-                  theme === "dark"
-                    ? "bg-violet-50 dark:bg-violet-900/30 border-violet-200 dark:border-violet-700"
-                    : "bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700"
-                }`}
-              >
-                <Moon
-                  size={20}
-                  color={theme === "dark" ? "#8b5cf6" : "#94a3b8"}
-                />
-                <Text
-                  className={`text-xs font-semibold mt-1 ${
-                    theme === "dark"
-                      ? "text-violet-700 dark:text-violet-300"
-                      : "text-slate-500 dark:text-slate-400"
-                  }`}
-                >
-                  Dark
-                </Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                onPress={() => setTheme("system")}
-                className={`flex-1 items-center justify-center py-3 rounded-r-xl border-y border-r ${
-                  theme === "system"
-                    ? "bg-violet-50 dark:bg-violet-900/30 border-violet-200 dark:border-violet-700"
-                    : "bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700"
-                }`}
-              >
-                <Monitor
-                  size={20}
-                  color={theme === "system" ? "#8b5cf6" : "#94a3b8"}
-                />
-                <Text
-                  className={`text-xs font-semibold mt-1 ${
-                    theme === "system"
-                      ? "text-violet-700 dark:text-violet-300"
-                      : "text-slate-500 dark:text-slate-400"
-                  }`}
-                >
-                  System
-                </Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
 
         {/* Menu Items */}
         <View className="px-5 mb-4">
@@ -268,8 +245,13 @@ export default function Profile() {
                     router.push("/privacy-security");
                   } else if (item.label === "Offline & Sync") {
                     router.push("/app-settings");
+                  } else if (item.label === "Check for Updates") {
+                    handleCheckUpdates();
+                  } else if (item.label === "Appearance") {
+                    handleCycleTheme();
                   }
                 }}
+                disabled={item.label === "App Version" || item.loading}
                 className={`flex-row items-center p-3.5 ${
                   index < menuItems.length - 1
                     ? "border-b border-slate-100 dark:border-slate-800"
@@ -280,19 +262,36 @@ export default function Profile() {
                   className="w-9 h-9 rounded-xl items-center justify-center mr-3"
                   style={{ backgroundColor: item.color + "15" }}
                 >
-                  <item.icon size={18} color={item.color} />
+                  {item.loading ? (
+                    <ActivityIndicator size="small" color={item.color} />
+                  ) : (
+                    <item.icon size={18} color={item.color} />
+                  )}
                 </View>
                 <Text className="flex-1 text-slate-700 dark:text-slate-300 font-medium text-sm">
                   {item.label}
                 </Text>
-                <ChevronRight size={18} color="#94a3b8" />
+                
+                {item.value ? (
+                  <Text className="text-slate-400 dark:text-slate-500 text-xs font-bold mr-1">
+                    {item.value}
+                  </Text>
+                ) : item.label === "Check for Updates" ? (
+                  item.hasBadge && (
+                    <View className="bg-red-500 px-2 py-0.5 rounded-full mr-1">
+                      <Text className="text-white text-[10px] font-bold">NEW</Text>
+                    </View>
+                  )
+                ) : (
+                  <ChevronRight size={18} color="#94a3b8" />
+                )}
               </TouchableOpacity>
             ))}
           </View>
         </View>
 
         {/* Sign Out */}
-        <View className="px-5">
+        <View className="px-5 mb-8">
           <TouchableOpacity
             onPress={handleLogout}
             className="bg-red-50 rounded-2xl p-3.5 flex-row items-center justify-center"
@@ -311,13 +310,11 @@ export default function Profile() {
           </TouchableOpacity>
         </View>
 
-        {/* App Info - at bottom */}
-        <View className="flex-1 justify-end pb-4">
-          <View className="items-center">
-            <Text className="text-slate-300 dark:text-slate-600 text-xs">
-              JouleOps v1.0.0
-            </Text>
-          </View>
+        <View className="items-center pb-8">
+           <Text className="text-slate-300 dark:text-slate-600 text-xs text-center">
+             SmartOps v1.0.0-beta.1{"\n"}
+             Properly Optimized for Offline Use
+           </Text>
         </View>
       </SafeAreaView>
     </View>

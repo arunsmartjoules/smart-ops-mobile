@@ -31,6 +31,9 @@ import SiteLogService from "@/services/SiteLogService";
 import SignaturePad from "@/components/SignaturePad";
 import * as ImagePicker from "expo-image-picker";
 import { StorageService } from "@/services/StorageService";
+import Skeleton from "@/components/Skeleton";
+import SearchableSelect from "@/components/SearchableSelect";
+import AttendanceService, { Site } from "@/services/AttendanceService";
 
 // Memoized Log Item Component
 const LogItem = memo(
@@ -143,6 +146,8 @@ export default function TempRHTaskList() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [siteCode, setSiteCode] = useState<string | null>(null);
+  const [sites, setSites] = useState<Site[]>([]);
+  const [loadingSites, setLoadingSites] = useState(false);
 
   // Pagination state
   const [visibleCount, setVisibleCount] = useState(50);
@@ -163,6 +168,24 @@ export default function TempRHTaskList() {
     Record<string, boolean>
   >({});
   const [signatureModalVisible, setSignatureModalVisible] = useState(false);
+
+  useEffect(() => {
+    if (user) {
+      loadSites();
+    }
+  }, [user]);
+
+  const loadSites = async () => {
+    try {
+      setLoadingSites(true);
+      const userSites = await AttendanceService.getUserSites(user?.user_id || user?.id || "");
+      setSites(userSites);
+    } catch (error) {
+      console.error("Failed to load sites", error);
+    } finally {
+      setLoadingSites(false);
+    }
+  };
 
   useEffect(() => {
     if (siteCode) {
@@ -213,12 +236,16 @@ export default function TempRHTaskList() {
     try {
       if (showLoading) setLoading(true);
       const storageKey = `last_site_${user?.user_id || user?.id}`;
-      const savedSiteCode = await AsyncStorage.getItem(storageKey);
+      let currentSiteCode = siteCode;
+      
+      if (!currentSiteCode) {
+        currentSiteCode = await AsyncStorage.getItem(storageKey);
+      }
 
-      if (savedSiteCode) {
-        setSiteCode(savedSiteCode);
+      if (currentSiteCode) {
+        setSiteCode(currentSiteCode);
         const areaTasks = await SiteConfigService.getLogTasks(
-          savedSiteCode,
+          currentSiteCode,
           "Temp RH",
         );
         setTasks(areaTasks);
@@ -228,7 +255,7 @@ export default function TempRHTaskList() {
           { temp: string; rh: string; remarks?: string }
         > = {};
         areaTasks.forEach((task) => {
-          if (task.status === "Inprogress" && task.meta) {
+          if (task.meta) {
             initialValues[task.id] = {
               temp: task.meta.temperature?.toString() || "",
               rh: task.meta.rh?.toString() || "",
@@ -241,7 +268,7 @@ export default function TempRHTaskList() {
         setLogValues(initialValues);
 
         // Merge local draft on top (most recent edits)
-        await loadDraft(savedSiteCode);
+        await loadDraft(currentSiteCode);
       }
     } catch (e) {
       console.error("Failed to load temp rh tasks", e);
@@ -250,6 +277,12 @@ export default function TempRHTaskList() {
       setRefreshing(false);
     }
   };
+
+  useEffect(() => {
+    if (siteCode) {
+      loadTasks();
+    }
+  }, [siteCode]);
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
@@ -472,15 +505,28 @@ export default function TempRHTaskList() {
               >
                 <ChevronLeft size={20} color="#0f172a" />
               </TouchableOpacity>
-              <View>
-                <Text className="text-slate-900 dark:text-slate-50 font-bold text-lg text-center">
-                  Temp & RH
-                </Text>
-                <Text className="text-slate-400 text-xs font-bold uppercase tracking-wider text-center">
-                  {format(new Date(), "dd MMM yyyy")}
+              <View className="flex-1 mx-3">
+                <SearchableSelect
+                  label=""
+                  placeholder="Select Site"
+                  value={siteCode || ""}
+                  options={sites.map(s => ({
+                    label: s.name,
+                    value: s.site_code,
+                    description: s.site_code
+                  }))}
+                  onChange={(val) => {
+                    setSiteCode(val);
+                    AsyncStorage.setItem(`last_site_${user?.user_id || user?.id}`, val);
+                  }}
+                  loading={loadingSites}
+                />
+              </View>
+              <View className="items-center justify-center">
+                 <Text className="text-slate-400 text-[10px] font-bold uppercase tracking-wider text-center">
+                  {format(new Date(), "dd MMM")}
                 </Text>
               </View>
-              <View className="w-10" />
             </View>
 
             {/* Search Bar */}
@@ -499,8 +545,14 @@ export default function TempRHTaskList() {
           </View>
 
           {loading ? (
-            <View className="flex-1 items-center justify-center">
-              <ActivityIndicator color="#dc2626" />
+            <View className="px-5 pt-4">
+              {[1, 2, 3, 4, 5].map((i) => (
+                <Skeleton
+                  key={i}
+                  height={130}
+                  style={{ marginBottom: 12, borderRadius: 12 }}
+                />
+              ))}
             </View>
           ) : tasks.length === 0 ? (
             <View className="flex-1 items-center justify-center p-10">

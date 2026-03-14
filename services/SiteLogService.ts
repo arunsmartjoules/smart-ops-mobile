@@ -117,6 +117,8 @@ interface ISiteLogService {
   getSummaryCounts(siteCode: string): Promise<Record<string, number>>;
   getCategoryProgress(
     siteCode: string,
+    fromDate?: Date | null,
+    toDate?: Date | null,
   ): Promise<Record<string, { total: number; completed: number }>>;
   getUnsyncedCounts(): Promise<number>;
 }
@@ -766,6 +768,8 @@ export const SiteLogService: ISiteLogService = {
    */
   async getCategoryProgress(
     siteCode: string,
+    fromDate?: Date | null,
+    toDate?: Date | null,
   ): Promise<Record<string, { total: number; completed: number }>> {
     try {
       const SiteConfigService =
@@ -777,9 +781,9 @@ export const SiteLogService: ISiteLogService = {
       for (const type of types) {
         let tasks: TaskItem[] = [];
         if (type === "Chiller Logs") {
-          tasks = await SiteConfigService.getChillerTasks(siteCode);
+          tasks = await SiteConfigService.getChillerTasks(siteCode, fromDate, toDate);
         } else {
-          tasks = await SiteConfigService.getLogTasks(siteCode, type);
+          tasks = await SiteConfigService.getLogTasks(siteCode, type, fromDate, toDate);
         }
 
         const completed = tasks.filter((t) => t.isCompleted).length;

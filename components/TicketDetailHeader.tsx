@@ -24,12 +24,12 @@ const TicketDetailHeader = ({ ticket, onClose }: TicketDetailHeaderProps) => {
     <>
       {/* Drag Handle */}
       <View
+        className="bg-slate-200 dark:bg-slate-700"
         style={{
           alignSelf: "center",
           width: 40,
           height: 4,
           borderRadius: 999,
-          backgroundColor: "#e2e8f0",
           marginBottom: 16,
         }}
       />
@@ -45,20 +45,10 @@ const TicketDetailHeader = ({ ticket, onClose }: TicketDetailHeaderProps) => {
       >
         <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
           <View
-            style={{
-              backgroundColor: "#fef2f2",
-              paddingHorizontal: 10,
-              paddingVertical: 5,
-              borderRadius: 8,
-            }}
+            className="bg-red-50 dark:bg-red-900/20 px-2.5 py-1 rounded-lg"
           >
             <Text
-              style={{
-                color: "#dc2626",
-                fontWeight: "800",
-                fontSize: 11,
-                letterSpacing: 0.5,
-              }}
+              className="text-red-600 dark:text-red-400 font-extrabold text-[10px] tracking-tighter"
             >
               {ticket.ticket_no}
             </Text>
@@ -85,14 +75,7 @@ const TicketDetailHeader = ({ ticket, onClose }: TicketDetailHeaderProps) => {
         </View>
         <TouchableOpacity
           onPress={onClose}
-          style={{
-            width: 36,
-            height: 36,
-            backgroundColor: "#f1f5f9",
-            borderRadius: 12,
-            alignItems: "center",
-            justifyContent: "center",
-          }}
+          className="w-9 h-9 bg-slate-100 dark:bg-slate-800 rounded-xl items-center justify-center"
         >
           <X size={18} color="#94a3b8" />
         </TouchableOpacity>

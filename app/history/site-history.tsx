@@ -256,6 +256,7 @@ export default function SiteHistory() {
   const params = useLocalSearchParams<{
     siteCode: string;
     logName: string; // "Temp RH", "Water", etc.
+    status?: string;
   }>();
 
   const [logs, setLogs] = useState<any[]>([]);
@@ -273,7 +274,7 @@ export default function SiteHistory() {
   const [siteCode, setSiteCode] = useState<string>(params.siteCode || "");
   const [fromDate, setFromDate] = useState<Date | null>(null);
   const [toDate, setToDate] = useState<Date | null>(null);
-  const [selectedStatus, setSelectedStatus] = useState<string>("all");
+  const [selectedStatus, setSelectedStatus] = useState<string>(params.status || "all");
   const [resolvedNames, setResolvedNames] = useState<Map<string, string>>(
     new Map(),
   );
@@ -361,7 +362,8 @@ export default function SiteHistory() {
 
     if (selectedStatus !== "all") {
       filtered = filtered.filter((log) => {
-        const logStatus = log.status || "Completed";
+        let logStatus = log.status || "Completed";
+        if (logStatus.toLowerCase() === "pending") logStatus = "Open";
         return logStatus.toLowerCase() === selectedStatus.toLowerCase();
       });
     }
