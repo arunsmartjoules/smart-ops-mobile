@@ -4,13 +4,13 @@ import Skeleton from "./Skeleton";
 
 const TicketSkeletonItem = () => (
   <View
-    className="bg-white dark:bg-slate-900 rounded-2xl p-5 mb-4"
+    className="bg-white dark:bg-slate-900 rounded-3xl p-5 mb-4 border border-slate-100 dark:border-slate-800"
     style={{
       shadowColor: "#000",
-      shadowOffset: { width: 0, height: 2 },
-      shadowOpacity: 0.06,
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: 0.04,
       shadowRadius: 12,
-      elevation: 3,
+      elevation: 2,
     }}
   >
     <View
@@ -56,9 +56,10 @@ const TicketSkeletonItem = () => (
       style={{
         flexDirection: "row",
         alignItems: "center",
-        paddingTop: 12,
+        paddingTop: 16,
+        marginTop: 4,
         borderTopWidth: 1,
-        borderTopColor: "#f1f5f9",
+        borderTopColor: "rgba(226, 232, 240, 0.4)",
       }}
     >
       <View style={{ flexDirection: "row", alignItems: "center", flex: 1 }}>

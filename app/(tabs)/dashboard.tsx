@@ -14,6 +14,7 @@ import {
   ActivityIndicator,
   AppState,
   Alert,
+  Platform,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Location from "expo-location";
@@ -56,8 +57,12 @@ import { syncManager } from "@/services/SyncManager";
 import Skeleton from "@/components/Skeleton";
 import TicketsService, { type Ticket } from "@/services/TicketsService";
 import TicketItem from "@/components/TicketItem";
-import { SiteConfigService, type TaskItem } from "@/services/SiteConfigService";
-import { SiteLogService } from "@/services/SiteLogService";
+import TicketDetailModal from "@/components/TicketDetailModal";
+import { type SelectOption } from "@/components/SearchableSelect";
+import SiteLogService from "@/services/SiteLogService";
+import logger from "@/utils/logger";
+import { saveOfflineTicketUpdate } from "@/utils/offlineTicketStorage";
+import { WhatsAppService } from "@/services/WhatsAppService";
 
 interface PendingItem {
   id: string;
@@ -66,6 +71,7 @@ interface PendingItem {
   category: "Ticket" | "Temp RH" | "Chiller" | "Water" | "Chemical";
   status: string;
   route: string;
+  params?: Record<string, string>;
   timestamp: string;
   priority?: string;
   priorityOrder?: number;
@@ -92,30 +98,63 @@ const DashboardSkeleton = React.memo(() => {
       {/* Attendance Section Skeleton */}
       <View className="bg-white dark:bg-slate-900 rounded-3xl p-4 border border-slate-100 dark:border-slate-800 mb-6">
         <View className="flex-row items-center mb-6">
-          <Skeleton width={40} height={40} borderRadius={12} style={{ marginRight: 12 }} />
+          <Skeleton
+            width={40}
+            height={40}
+            borderRadius={12}
+            style={{ marginRight: 12 }}
+          />
           <View>
-            <Skeleton width={80} height={8} borderRadius={2} style={{ marginBottom: 6 }} />
+            <Skeleton
+              width={80}
+              height={8}
+              borderRadius={2}
+              style={{ marginBottom: 6 }}
+            />
             <Skeleton width={120} height={18} borderRadius={4} />
           </View>
         </View>
         <View className="flex-row items-center justify-between">
           <Skeleton width={120} height={40} borderRadius={12} />
           <View className="items-end">
-            <Skeleton width={60} height={8} borderRadius={2} style={{ marginBottom: 6 }} />
+            <Skeleton
+              width={60}
+              height={8}
+              borderRadius={2}
+              style={{ marginBottom: 6 }}
+            />
             <Skeleton width={80} height={14} borderRadius={4} />
           </View>
         </View>
       </View>
 
       {/* Log Counts Header */}
-      <Skeleton width={140} height={20} borderRadius={4} style={{ marginBottom: 16 }} />
+      <Skeleton
+        width={140}
+        height={20}
+        borderRadius={4}
+        style={{ marginBottom: 16 }}
+      />
 
       {/* Log Counts Row */}
       <View className="flex-row gap-2 mb-8">
         {[1, 2, 3].map((i) => (
-          <View key={i} className="flex-1 bg-white dark:bg-slate-900 rounded-2xl p-3 border border-slate-100 dark:border-slate-800">
-            <Skeleton width={32} height={32} borderRadius={8} style={{ marginBottom: 12 }} />
-            <Skeleton width={40} height={24} borderRadius={4} style={{ marginBottom: 6 }} />
+          <View
+            key={i}
+            className="flex-1 bg-white dark:bg-slate-900 rounded-2xl p-3 border border-slate-100 dark:border-slate-800"
+          >
+            <Skeleton
+              width={32}
+              height={32}
+              borderRadius={8}
+              style={{ marginBottom: 12 }}
+            />
+            <Skeleton
+              width={40}
+              height={24}
+              borderRadius={4}
+              style={{ marginBottom: 6 }}
+            />
             <Skeleton width={60} height={10} borderRadius={2} />
           </View>
         ))}
@@ -130,10 +169,18 @@ const DashboardSkeleton = React.memo(() => {
       {/* Ticket List Skeleton */}
       <View className="gap-3">
         {[1, 2, 3].map((i) => (
-          <View key={i} className="bg-white dark:bg-slate-900 rounded-2xl p-4 border border-slate-100 dark:border-slate-800 flex-row items-center">
+          <View
+            key={i}
+            className="bg-white dark:bg-slate-900 rounded-2xl p-4 border border-slate-100 dark:border-slate-800 flex-row items-center"
+          >
             <Skeleton width={40} height={40} borderRadius={12} />
             <View className="flex-1 ml-3">
-              <Skeleton width="70%" height={16} borderRadius={4} style={{ marginBottom: 8 }} />
+              <Skeleton
+                width="70%"
+                height={16}
+                borderRadius={4}
+                style={{ marginBottom: 8 }}
+              />
               <Skeleton width="40%" height={10} borderRadius={2} />
             </View>
             <Skeleton width={16} height={16} borderRadius={4} />
@@ -146,7 +193,15 @@ const DashboardSkeleton = React.memo(() => {
 
 // --- Pending Item Row Component ---
 const PendingItemRow = React.memo(
-  ({ item, onPress, showPriority = true }: { item: PendingItem; onPress: () => void; showPriority?: boolean }) => {
+  ({
+    item,
+    onPress,
+    showPriority = true,
+  }: {
+    item: PendingItem;
+    onPress: () => void;
+    showPriority?: boolean;
+  }) => {
     const Icon = useMemo(() => {
       switch (item.category) {
         case "Ticket":
@@ -238,7 +293,7 @@ const PendingItemRow = React.memo(
         )}
 
         <View
-          className={`w-10 h-10 rounded-xl items-center justify-center ${bgColor} ${(priorityColors && showPriority) ? "ml-1" : ""}`}
+          className={`w-10 h-10 rounded-xl items-center justify-center ${bgColor} ${priorityColors && showPriority ? "ml-1" : ""}`}
         >
           <Icon size={18} color={color} />
         </View>
@@ -336,6 +391,21 @@ export default function Dashboard() {
   const [loadingPending, setLoadingPending] = useState(true);
   const [validatingLocation, setValidatingLocation] = useState(false);
   const [currentTime, setCurrentTime] = useState(new Date());
+  const [earlyCheckoutReason, setEarlyCheckoutReason] = useState("");
+  const [showEarlyCheckoutModal, setShowEarlyCheckoutModal] = useState(false);
+  const [sites, setSites] = useState<Site[]>([]);
+
+  // Ticket Detail Modal State
+  const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null);
+  const [isDetailVisible, setIsDetailVisible] = useState(false);
+  const [updateStatus, setUpdateStatus] = useState("");
+  const [updateRemarks, setUpdateRemarks] = useState("");
+  const [updateArea, setUpdateArea] = useState("");
+  const [updateCategory, setUpdateCategory] = useState("");
+  const [isUpdating, setIsUpdating] = useState(false);
+  const [areaOptions, setAreaOptions] = useState<SelectOption[]>([]);
+  const [categoryOptions, setCategoryOptions] = useState<SelectOption[]>([]);
+  const [areasLoading, setAreasLoading] = useState(false);
 
   // Ref for timeout cleanup
   const refreshTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -404,17 +474,19 @@ export default function Dashboard() {
   }, [todayAttendance]);
 
   const fetchData = React.useCallback(async () => {
-    // Safety exit if no user
+    // Safety exit if no user — keep loading state as-is, auth will trigger re-fetch
     if (!user?.user_id && !user?.id) {
-      setLoadingPending(false);
-      setLoadingAttendance(false);
       return;
     }
 
     const userId = user.user_id || user.id;
 
     try {
+      // Always show loading on fresh fetch
       setLoadingPending(true);
+      if (!todayAttendance) {
+        setLoadingAttendance(true);
+      }
 
       // 1. Fetch Today's Attendance and Sites in parallel
       const [attData, sites] = await Promise.all([
@@ -428,10 +500,20 @@ export default function Dashboard() {
         }),
       ]);
 
+      console.log("[Dashboard] Fetched sites:", sites.length);
       if (attData) setTodayAttendance(attData);
+      setSites(sites);
+
+      if (sites.length === 0) {
+        console.warn("[Dashboard] No sites found, skipping further fetches");
+        setLoadingAttendance(false);
+        setLoadingPending(false);
+        return;
+      }
 
       // 2. Fetch Tickets - prioritizing offline cache if needed
-      const ticketResult = await TicketsService.getTickets("all", {
+      const fetchSiteCode = sites[0].site_code;
+      const ticketResult = await TicketsService.getTickets(fetchSiteCode, {
         status: "Open",
         limit: 10,
       }).catch((e) => {
@@ -472,83 +554,30 @@ export default function Dashboard() {
       }
       setPendingTickets(allTickets);
 
-      // 3. Aggregate Pending Logs from ALL Assigned Sites
-      let assignedSites = sites;
-      if (user.role?.toLowerCase() === "admin") {
-        try {
-          const allSites = await AttendanceService.getAllSites();
-          if (allSites && allSites.length > 0) assignedSites = allSites;
-        } catch (e) {
-          console.error("[Dashboard] Admin sites fetch failed:", e);
-        }
-      }
+      // 3. Fetch Open/Inprogress/Pending counts from backend for the primary site
+      if (sites.length > 0) {
+        const primarySiteCode = sites[0].site_code;
+        const counts = await SiteLogService.getOpenCounts(primarySiteCode).catch((): Record<string, number> => ({
+          "Temp RH": 0, "Water": 0, "Chemical Dosing": 0,
+        }));
 
-      if (assignedSites.length > 0) {
-        const allTempRH: PendingItem[] = [];
-        const allWater: PendingItem[] = [];
-        const allChemical: PendingItem[] = [];
+        console.log("[Dashboard] Open counts for", primarySiteCode, JSON.stringify(counts));
 
-        // Parallelize site log checks to avoid sequential waiting
-        await Promise.all(
-          assignedSites.map(async (site) => {
-            const siteCode = site.site_code;
-            if (!siteCode) return;
+        // Convert counts to PendingItem arrays (just need .length for the cards)
+        const toItems = (logName: string, route: string, category: "Temp RH" | "Water" | "Chemical"): PendingItem[] =>
+          Array.from({ length: (counts as Record<string, number>)[logName] ?? 0 }, (_, i) => ({
+            id: `${primarySiteCode}-${logName}-${i}`,
+            title: logName,
+            subtitle: sites[0].name || primarySiteCode,
+            category,
+            status: "Open",
+            route,
+            timestamp: new Date().toISOString(),
+          }));
 
-            const logTypes: Array<"Temp RH" | "Water" | "Chemical"> = [
-              "Temp RH",
-              "Water",
-              "Chemical",
-            ];
-
-            await Promise.all(
-              logTypes.map(async (type) => {
-                const canonicalName =
-                  type === "Temp RH"
-                    ? "Temp RH"
-                    : type === "Water"
-                      ? "Water"
-                      : "Chemical Dosing";
-
-                try {
-                  const tasks = await SiteConfigService.getLogTasks(
-                    siteCode,
-                    canonicalName,
-                  );
-                  const pendingTasks = tasks.filter((t) => !t.isCompleted);
-
-                  pendingTasks.forEach((t) => {
-                    const item: PendingItem = {
-                      id: `${siteCode}-${type}-${t.id}`,
-                      title: t.name,
-                      subtitle: `${site.name || siteCode}`,
-                      category: type as any,
-                      status: t.status,
-                      route:
-                        type === "Temp RH"
-                          ? "/temp-rh"
-                          : type === "Water"
-                            ? "/water"
-                            : "/chemical",
-                      timestamp: new Date().toISOString(),
-                    };
-                    if (type === "Temp RH") allTempRH.push(item);
-                    else if (type === "Water") allWater.push(item);
-                    else if (type === "Chemical") allChemical.push(item);
-                  });
-                } catch (e) {
-                  console.error(
-                    `[Dashboard] Failed to fetch tasks for ${siteCode} - ${type}:`,
-                    e,
-                  );
-                }
-              }),
-            );
-          }),
-        );
-
-        setPendingTempRH(allTempRH);
-        setPendingWater(allWater);
-        setPendingChemical(allChemical);
+        setPendingTempRH(toItems("Temp RH", "/temp-rh", "Temp RH"));
+        setPendingWater(toItems("Water", "/water", "Water"));
+        setPendingChemical(toItems("Chemical Dosing", "/chemical", "Chemical"));
       }
     } catch (error) {
       console.error("Dashboard fetchData critical error:", error);
@@ -557,6 +586,116 @@ export default function Dashboard() {
       setLoadingPending(false);
     }
   }, [user]);
+
+  const loadAreasAndCategories = useCallback(async () => {
+    if (sites.length === 0) return;
+    const selectedSiteCode = sites[0].site_code;
+
+    setAreasLoading(true);
+    try {
+      // Fetch assets for area dropdown (using asset_name)
+      const assetsResult = await TicketsService.getAssets(selectedSiteCode);
+      if (assetsResult?.data && assetsResult.data.length > 0) {
+        const areas = assetsResult.data.map((asset: any) => ({
+          value: asset.asset_name || asset.asset_id,
+          label: asset.asset_name,
+          description: `${asset.asset_type || ""} ${asset.location ? `- ${asset.location}` : ""}`.trim(),
+        }));
+        setAreaOptions(areas);
+      }
+
+      // Fetch complaint categories from backend
+      const categoriesResult = await TicketsService.getComplaintCategories();
+      if (categoriesResult?.data && categoriesResult.data.length > 0) {
+        const categories = categoriesResult.data.map((cat: any) => ({
+          value: cat.category,
+          label: cat.category,
+          description: cat.description || "",
+        }));
+        setCategoryOptions(categories);
+      }
+    } catch (error) {
+      logger.warn("Error loading areas/categories in dashboard", { error });
+    } finally {
+      setAreasLoading(false);
+    }
+  }, [sites]);
+
+  useEffect(() => {
+    if (sites.length > 0) {
+      loadAreasAndCategories();
+    }
+  }, [sites, loadAreasAndCategories]);
+
+  const handleTicketPress = useCallback((item: any) => {
+    // Only handle actual tickets
+    if (item.category !== "Ticket") return;
+
+    // We need the full ticket object for the modal
+    // Since pendingTickets only has PendingItem, we might need to fetch full details or map it
+    // But getTickets already gave us basic info. Let's try to pass what we have first
+    // If we need full details, we should fetch them here.
+    
+    // For now, let's assume we can use the item data or fetch if needed
+    TicketsService.getTickets(sites[0].site_code, { ticket_no: item.subtitle }).then(res => {
+      if (res.success && res.data && res.data.length > 0) {
+        const ticket = res.data[0];
+        setSelectedTicket(ticket);
+        setUpdateStatus(ticket.status);
+        setUpdateRemarks(ticket.internal_remarks || "");
+        setUpdateArea(ticket.area_asset || "");
+        setUpdateCategory(ticket.category || "");
+        setIsDetailVisible(true);
+      }
+    });
+  }, [sites]);
+
+  const handleUpdateStatus = async () => {
+    if (!selectedTicket || !user?.id) return;
+
+    const needsRemarks = ["Hold", "Cancelled", "Waiting", "Resolved"].includes(updateStatus);
+    if (needsRemarks && !updateRemarks.trim()) {
+      Alert.alert("Required", "Please provide remarks for this status update.");
+      return;
+    }
+
+    const payload: any = {
+      status: updateStatus,
+      internal_remarks: updateRemarks,
+      area_asset: updateArea || selectedTicket.area_asset,
+      category: updateCategory || selectedTicket.category,
+    };
+
+    if (updateStatus === "Inprogress" || updateStatus === "Cancelled") {
+      payload.assigned_to = user.full_name || user.name || "";
+    }
+
+    setIsUpdating(true);
+    try {
+      const res = await TicketsService.updateTicket(
+        selectedTicket.id || selectedTicket.ticket_no,
+        payload,
+      );
+      if (res.success) {
+        const updatedTicketForWA = { ...selectedTicket, ...payload };
+        WhatsAppService.sendStatusUpdate(
+          updatedTicketForWA,
+          updateStatus,
+          updateRemarks,
+        ).catch(e => logger.warn("Failed WhatsApp notification", { error: e }));
+
+        Alert.alert("Success", "Ticket updated successfully");
+        setIsDetailVisible(false);
+        fetchData(); // Refresh dashboard list
+      } else {
+        Alert.alert("Error", res.error || "Failed to update ticket");
+      }
+    } catch (error: any) {
+      Alert.alert("Error", error.message);
+    } finally {
+      setIsUpdating(false);
+    }
+  };
 
   const navigateToAttendance = useCallback(
     () => router.push("/attendance"),
@@ -574,7 +713,11 @@ export default function Dashboard() {
     try {
       // 1. Get site code (from last site)
       const lastSiteCode = await AsyncStorage.getItem(`last_site_${user.id}`);
-      if (!lastSiteCode || lastSiteCode === "all") {
+      let siteToUse = lastSiteCode;
+      if (!siteToUse || siteToUse === "all") {
+        siteToUse = sites.length > 0 ? sites[0].site_code : null;
+      }
+      if (!siteToUse) {
         router.push("/attendance");
         return;
       }
@@ -625,29 +768,48 @@ export default function Dashboard() {
   const handleQuickCheckOut = async () => {
     if (!todayAttendance?.id) return;
     setValidatingLocation(true);
-    try {
-      const loc = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.Balanced,
-      });
-      const res = await AttendanceService.checkOut(
-        todayAttendance.id,
-        loc.coords.latitude,
-        loc.coords.longitude,
-      );
-      if (res.success) {
-        Alert.alert("Success", "Checked out successfully!");
-        fetchData();
-      } else if (res.isEarlyCheckout) {
-        // Reason required, navigate to attendance
-        router.push("/attendance");
-      } else {
-        Alert.alert("Failed", res.error || "Check-out failed");
+
+    const performCheckOut = async (remarks?: string) => {
+      try {
+        const loc = await Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.Balanced,
+        });
+        const res = await AttendanceService.checkOut(
+          todayAttendance.id,
+          loc.coords.latitude,
+          loc.coords.longitude,
+          undefined,
+          remarks,
+        );
+
+        if (res.success) {
+          Alert.alert("Success", "Checked out successfully!");
+          fetchData();
+        } else if (res.error?.includes("Early checkout")) {
+          // Backend requires a reason; auto-provide a default reason so
+          // users can complete checkout directly from the dashboard.
+          await performCheckOut("Checked out from dashboard");
+        } else {
+          Alert.alert(
+            "Check-out Failed",
+            res.error || "Unable to check out. Please check your connection.",
+            [
+              { text: "OK", style: "cancel" },
+              {
+                text: "Go to Attendance",
+                onPress: () => router.push("/attendance"),
+              },
+            ],
+          );
+        }
+      } catch (e: any) {
+        Alert.alert("Error", e.message);
+      } finally {
+        setValidatingLocation(false);
       }
-    } catch (e: any) {
-      Alert.alert("Error", e.message);
-    } finally {
-      setValidatingLocation(false);
-    }
+    };
+
+    await performCheckOut();
   };
 
   const navigateToAllTasks = useCallback(() => {
@@ -864,79 +1026,96 @@ export default function Dashboard() {
           </TouchableOpacity>
         </View>
 
-        <View className="px-6 mb-3">
-          <Text className="text-slate-900 dark:text-slate-50 text-base font-black">
-            Pending Site logs
-          </Text>
-        </View>
-
-        <View className="px-6 mb-6 flex-row gap-2">
-          <LogCountCard
-            icon={ThermometerSun}
-            count={pendingTempRH.length}
-            label="Temp & RH"
-            color="#f59e0b"
-            bgColor="rgba(245, 158, 11, 0.1)"
-            onPress={() =>
-              router.push({
-                pathname: "/history/site-history",
-                params: {
-                  logName: "Temp RH",
-                  siteCode: "all",
-                  status: "Open",
-                },
-              } as any)
-            }
-          />
-          <LogCountCard
-            icon={Droplets}
-            count={pendingWater.length}
-            label="Water"
-            color="#3b82f6"
-            bgColor="rgba(59, 130, 246, 0.1)"
-            onPress={() =>
-              router.push({
-                pathname: "/history/site-history",
-                params: {
-                  logName: "Water",
-                  siteCode: "all",
-                  status: "Open",
-                },
-              } as any)
-            }
-          />
-          <LogCountCard
-            icon={Beaker}
-            count={pendingChemical.length}
-            label="Chemical"
-            color="#ec4899"
-            bgColor="rgba(236, 72, 153, 0.1)"
-            onPress={() =>
-              router.push({
-                pathname: "/history/site-history",
-                params: {
-                  logName: "Chemical Dosing",
-                  siteCode: "all",
-                  status: "Open",
-                },
-              } as any)
-            }
-          />
-        </View>
-        {/* Pending Tickets Header Section - Fixed */}
-        <View className="px-6 mb-3">
-          <View className="flex-row items-center justify-between">
-            <Text className="text-slate-900 dark:text-slate-50 text-base font-black">
-              Pending Tickets
-            </Text>
-            <TouchableOpacity onPress={() => router.push("/(tabs)/tickets")}>
-              <Text className="text-red-600 text-[10px] font-black uppercase tracking-wider">
-                View All
+        {sites.length > 0 && (
+          <>
+            <View className="px-6 mb-3">
+              <Text className="text-slate-900 dark:text-slate-50 text-base font-black">
+                Pending Site logs
               </Text>
-            </TouchableOpacity>
-          </View>
-        </View>
+            </View>
 
+            <View className="px-6 mb-6 flex-row gap-2">
+              {loadingPending ? (
+                // Skeletons while loading
+                [1, 2, 3].map((i) => (
+                  <View
+                    key={i}
+                    className="flex-1 bg-white dark:bg-slate-900 rounded-2xl p-3 border border-slate-100 dark:border-slate-800"
+                  >
+                    <Skeleton
+                      width={32}
+                      height={32}
+                      borderRadius={8}
+                      style={{ marginBottom: 16 }}
+                    />
+                    <Skeleton width={40} height={20} borderRadius={4} style={{ marginBottom: 6 }} />
+                    <Skeleton width={60} height={10} borderRadius={2} />
+                  </View>
+                ))
+              ) : (
+                // Actual data once loaded
+                (() => {
+                  const navSiteCode = sites.length > 0 ? sites[0].site_code : "";
+                  return (
+                    <>
+                      <LogCountCard
+                        icon={ThermometerSun}
+                        count={pendingTempRH.length}
+                        label="Temp & RH"
+                        color="#f59e0b"
+                        bgColor="rgba(245, 158, 11, 0.1)"
+                        onPress={() =>
+                          router.push({
+                            pathname: "/history/site-history",
+                            params: {
+                              logName: "Temp RH",
+                              siteCode: navSiteCode,
+                              status: "Open",
+                            },
+                          } as any)
+                        }
+                      />
+                      <LogCountCard
+                        icon={Droplets}
+                        count={pendingWater.length}
+                        label="Water"
+                        color="#3b82f6"
+                        bgColor="rgba(59, 130, 246, 0.1)"
+                        onPress={() =>
+                          router.push({
+                            pathname: "/history/site-history",
+                            params: {
+                              logName: "Water",
+                              siteCode: navSiteCode,
+                              status: "Open",
+                            },
+                          } as any)
+                        }
+                      />
+                      <LogCountCard
+                        icon={Beaker}
+                        count={pendingChemical.length}
+                        label="Chemical"
+                        color="#ec4899"
+                        bgColor="rgba(236, 72, 153, 0.1)"
+                        onPress={() =>
+                          router.push({
+                            pathname: "/history/site-history",
+                            params: {
+                              logName: "Chemical Dosing",
+                              siteCode: navSiteCode,
+                              status: "Open",
+                            },
+                          } as any)
+                        }
+                      />
+                    </>
+                  );
+                })()
+              )}
+            </View>
+          </>
+        )}
         <ScrollView
           className="flex-1"
           contentContainerStyle={{ paddingBottom: 100 }}
@@ -949,6 +1128,22 @@ export default function Dashboard() {
             />
           }
         >
+          {/* Main Area Counts Section - Logic handled by handleQuickCheckIn/Out and Stat Cards above */}
+
+          {/* Pending Tickets Section */}
+          <View className="px-6 mb-3">
+            <View className="flex-row items-center justify-between">
+              <Text className="text-slate-900 dark:text-slate-50 text-base font-black">
+                Pending Tickets
+              </Text>
+              <TouchableOpacity onPress={() => router.push("/(tabs)/tickets")}>
+                <Text className="text-red-600 text-[10px] font-black uppercase tracking-wider">
+                  View All
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+
           {/* Pending Tickets List Section */}
           <View className="px-6 mb-6">
             {loadingPending ? (
@@ -958,35 +1153,23 @@ export default function Dashboard() {
                     key={i}
                     className="h-14 bg-white dark:bg-slate-900 rounded-2xl border border-slate-50 dark:border-slate-800 flex-row items-center px-4"
                   >
-                     <Skeleton width={32} height={32} borderRadius={8} />
-                     <View className="ml-3 flex-1">
-                        <Skeleton width="60%" height={12} borderRadius={4} style={{marginBottom: 6}} />
-                        <Skeleton width="40%" height={8} borderRadius={2} />
-                     </View>
+                    <Skeleton width={32} height={32} borderRadius={8} />
+                    <View className="ml-3 flex-1">
+                      <Skeleton width="60%" height={12} borderRadius={4} style={{ marginBottom: 6 }} />
+                      <Skeleton width="40%" height={8} borderRadius={2} />
+                    </View>
                   </View>
                 ))}
               </View>
             ) : pendingTickets.length > 0 ? (
-              pendingTickets.map((item) => {
-                const handleNav = () => {
-                  if (item.category === "Ticket") {
-                    router.push({
-                      pathname: "/(tabs)/tickets",
-                      params: { ticketId: item.id },
-                    });
-                    return;
-                  }
-                  if (item.route) router.push(item.route as any);
-                };
-                return (
-                  <PendingItemRow
-                    key={item.id}
-                    item={item}
-                    onPress={handleNav}
-                    showPriority={false}
-                  />
-                );
-              })
+              pendingTickets.map((item) => (
+                <PendingItemRow
+                  key={item.id}
+                  item={item}
+                  onPress={() => handleTicketPress(item)}
+                  showPriority={false}
+                />
+              ))
             ) : (
               <View className="py-2 items-center">
                 <Text className="text-slate-400 text-[10px] font-bold">
@@ -996,6 +1179,25 @@ export default function Dashboard() {
             )}
           </View>
         </ScrollView>
+
+        <TicketDetailModal
+          visible={isDetailVisible}
+          onClose={() => setIsDetailVisible(false)}
+          ticket={selectedTicket}
+          updateStatus={updateStatus}
+          setUpdateStatus={setUpdateStatus}
+          updateRemarks={updateRemarks}
+          setUpdateRemarks={setUpdateRemarks}
+          updateArea={updateArea}
+          setUpdateArea={setUpdateArea}
+          updateCategory={updateCategory}
+          setUpdateCategory={setUpdateCategory}
+          isUpdating={isUpdating}
+          handleUpdateStatus={handleUpdateStatus}
+          areaOptions={areaOptions}
+          categoryOptions={categoryOptions}
+          areasLoading={areasLoading}
+        />
       </SafeAreaView>
     </View>
   );

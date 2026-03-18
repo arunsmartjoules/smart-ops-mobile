@@ -5,14 +5,14 @@ import {
   TouchableOpacity,
   TextInput,
   ActivityIndicator,
-  Alert,
   StyleSheet,
+  Alert,
   Modal,
-  FlatList,
   ListRenderItem,
   Image,
   useColorScheme,
 } from "react-native";
+import { FlashList } from "@shopify/flash-list";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { router, useLocalSearchParams } from "expo-router";
 import {
@@ -153,7 +153,7 @@ const TaskRow = React.memo(
 
         {/* Readings Input */}
         <View style={{ marginTop: 12 }}>
-          <Text style={styles.inputLabel}>Readings</Text>
+          <Text style={[styles.inputLabel, { color: isDark ? "#94a3b8" : "#64748b" }]}>Readings</Text>
           <TextInput
             value={response?.readings || ""}
             onChangeText={(val) =>
@@ -251,12 +251,11 @@ const TaskRow = React.memo(
 );
 
 // ─── Checklist Skeleton ─────────────────────────────────────────────────────
-const ChecklistSkeleton = () => {
-  const isDark = useColorScheme() === "dark";
+const ChecklistSkeleton = ({ cardBg, borderColor, isDark }: { cardBg: string; borderColor: string; isDark: boolean }) => {
   return (
     <View style={styles.listContent}>
       {[1, 2, 3, 4, 5].map((i) => (
-        <View key={i} style={[styles.taskCard, isDark && { backgroundColor: "#0f172a", borderColor: "#1e293b" }]}>
+        <View key={i} style={[styles.taskCard, { backgroundColor: cardBg, borderColor: borderColor }]}>
           <View style={styles.taskHeader}>
             <Skeleton
               width={24}
@@ -365,7 +364,7 @@ export default function PMExecutionScreen() {
     async (itemId: string, uri: string | null) => {
       if (uri === "PICK") {
         const result = await ImagePicker.launchCameraAsync({
-          mediaTypes: ["images"],
+        mediaTypes: ["images"],
           allowsEditing: true,
           quality: 0.7,
         });
@@ -632,9 +631,9 @@ export default function PMExecutionScreen() {
   const keyExtractor = useCallback((item: PMChecklistItem) => item.id, []);
 
   const ListEmpty = (
-    <View style={styles.flex}>
+    <View style={[styles.flex, { backgroundColor: bgColor }]}>
       {fetchingChecklist ? (
-        <ChecklistSkeleton />
+        <ChecklistSkeleton cardBg={cardBg} borderColor={borderColor} isDark={isDark} />
       ) : (
         <View style={styles.emptyChecklist}>
           <Text style={[styles.emptyText, isDark && { color: "#64748b" }]}>No checklist items found.</Text>
@@ -655,12 +654,16 @@ export default function PMExecutionScreen() {
     !!instance?.afterImage;
 
   if (loading && !instance) {
-    return <ChecklistSkeleton />;
+    return (
+      <View style={{ flex: 1, backgroundColor: isDark ? "#020617" : "#f8fafc" }}>
+        <ChecklistSkeleton cardBg={cardBg} borderColor={borderColor} isDark={isDark} />
+      </View>
+    );
   }
 
   return (
     <View style={[styles.flex, { backgroundColor: bgColor }]}>
-      <SafeAreaView style={styles.flex} edges={["top"]}>
+      <SafeAreaView style={[styles.flex, { backgroundColor: bgColor }]} edges={["top"]}>
         {/* Header */}
         <View style={[styles.header, { backgroundColor: isDark ? "#0f172a" : "#fff", borderBottomColor: borderColor }]}>
           <TouchableOpacity
@@ -815,19 +818,18 @@ export default function PMExecutionScreen() {
 
         {/* Checklist via FlatList */}
         {(loading || fetchingChecklist) && checklistItems.length === 0 ? (
-          <ChecklistSkeleton />
+          <ChecklistSkeleton cardBg={cardBg} borderColor={borderColor} isDark={isDark} />
         ) : (
-          <FlatList
+          <FlashList
             data={checklistItems}
+            // @ts-ignore
             renderItem={renderItem}
             keyExtractor={keyExtractor}
             ListEmptyComponent={ListEmpty}
-            contentContainerStyle={styles.listContent}
+            // @ts-ignore
+            estimatedItemSize={280}
+            contentContainerStyle={[styles.listContent, { backgroundColor: bgColor }]}
             showsVerticalScrollIndicator={false}
-            removeClippedSubviews
-            maxToRenderPerBatch={15}
-            windowSize={7}
-            initialNumToRender={10}
             keyboardShouldPersistTaps="handled"
           />
         )}
@@ -955,7 +957,7 @@ export default function PMExecutionScreen() {
 
 // ─── Styles ─────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
-  flex: { flex: 1, backgroundColor: "#f8fafc" },
+  flex: { flex: 1 },
   loadingScreen: {
     flex: 1,
     backgroundColor: "#f8fafc",
@@ -963,7 +965,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   loadingText: { color: "#94a3b8", fontSize: 13, marginTop: 12 },
-  listContent: { paddingHorizontal: 20, paddingBottom: 40, paddingTop: 10 },
+  listContent: { paddingHorizontal: 20, paddingBottom: 40, paddingTop: 10, flexGrow: 1 },
 
   // Header
   header: {

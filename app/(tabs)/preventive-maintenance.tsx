@@ -18,6 +18,7 @@ import {
   TextInput,
   useColorScheme,
 } from "react-native";
+import { FlashList } from "@shopify/flash-list";
 import { SafeAreaView } from "react-native-safe-area-context";
 import {
   ListChecks,
@@ -304,10 +305,8 @@ export default function PreventiveMaintenance() {
   const isDark = useColorScheme() === "dark";
 
   const [allInstances, setAllInstances] = useState<PMInstance[]>([]);
-  const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [loadingMore, setLoadingMore] = useState(false);
   const [statusFilter, setStatusFilter] = useState("Pending");
   const [siteCode, setSiteCode] = useState("");
   const [sites, setSites] = useState<Site[]>([]);
@@ -347,15 +346,11 @@ export default function PreventiveMaintenance() {
 
   const loadSites = async (userId: string) => {
     try {
-      const lastSiteCode = await AsyncStorage.getItem(`last_site_${userId}`);
-      const isAdmin = user?.role === "admin" || user?.role === "Admin";
-      const userSites = isAdmin
-        ? await AttendanceService.getAllSites()
-        : await AttendanceService.getUserSites(userId, "JouleCool");
+      const rawLastSiteCode = await AsyncStorage.getItem(`last_site_${userId}`);
+      const lastSiteCode = rawLastSiteCode === "all" ? null : rawLastSiteCode;
+      const userSites = await AttendanceService.getUserSites(userId);
 
-      const finalSites: Site[] = isAdmin
-        ? [{ site_code: "all", name: "All Sites" }, ...userSites]
-        : userSites;
+      const finalSites: Site[] = userSites;
 
       setSites(finalSites);
 
@@ -364,14 +359,14 @@ export default function PreventiveMaintenance() {
         if (!finalSites.find((s) => s.site_code === siteToSelect)) {
           siteToSelect = finalSites[0].site_code;
         }
+        // Persist the corrected site code
+        await AsyncStorage.setItem(`last_site_${userId}`, siteToSelect);
         setSiteCode(siteToSelect);
         const currentSite = finalSites.find(
           (s) => s.site_code === siteToSelect,
         );
         if (currentSite) {
-          setSiteName(
-            siteToSelect === "all" ? currentSite.name : currentSite.site_code,
-          );
+          setSiteName(currentSite.name || currentSite.site_code);
         }
       }
     } catch (error) {
@@ -383,7 +378,7 @@ export default function PreventiveMaintenance() {
   const loadLocalData = useCallback(
     async (resetPage = true) => {
       if (!siteCode) return;
-      if (resetPage) setLoading(true);
+      if (resetPage && allInstances.length === 0) setLoading(true);
       try {
         // Fetch for date range
         const fromDateObj = parseISO(currentDate);
@@ -401,8 +396,6 @@ export default function PreventiveMaintenance() {
           toTs,
         );
         setAllInstances(data);
-
-        if (resetPage) setPage(1);
       } catch (err) {
         logger.error("Error loading PM instances", { error: err });
       } finally {
@@ -478,22 +471,6 @@ export default function PreventiveMaintenance() {
     return list;
   }, [allInstances, statusFilter, searchQuery]);
 
-  // ── Pagination: visible slice ───────────────────────────────────────────────
-  const visibleInstances = useMemo(
-    () => filteredInstances.slice(0, page * PAGE_SIZE),
-    [filteredInstances, page],
-  );
-
-  const hasMore = visibleInstances.length < filteredInstances.length;
-
-  const loadMore = useCallback(() => {
-    if (loadingMore || !hasMore) return;
-    setLoadingMore(true);
-    setTimeout(() => {
-      setPage((p) => p + 1);
-      setLoadingMore(false);
-    }, 50);
-  }, [loadingMore, hasMore]);
 
   // ── Statistics ──────────────────────────────────────────────────────────────
   const stats = useMemo(() => {
@@ -555,15 +532,6 @@ export default function PreventiveMaintenance() {
     [],
   );
 
-  const ListFooter = useMemo(
-    () =>
-      loadingMore ? (
-        <View style={styles.footerLoader}>
-          <ActivityIndicator size="small" color="#dc2626" />
-        </View>
-      ) : null,
-    [loadingMore],
-  );
 
   return (
     <View className="flex-1 bg-slate-50 dark:bg-slate-950">
@@ -682,14 +650,14 @@ export default function PreventiveMaintenance() {
         {loading || syncing ? (
           <PMSkeleton />
         ) : (
-          <FlatList
-            data={visibleInstances}
+          <FlashList
+            data={filteredInstances}
+            // @ts-ignore
             renderItem={renderItem}
             keyExtractor={keyExtractor}
             ListEmptyComponent={ListEmpty}
-            ListFooterComponent={ListFooter}
-            onEndReached={loadMore}
-            onEndReachedThreshold={0.4}
+            // @ts-ignore
+            estimatedItemSize={160}
             refreshControl={
               <RefreshControl
                 refreshing={refreshing}
@@ -699,10 +667,6 @@ export default function PreventiveMaintenance() {
             }
             contentContainerStyle={styles.listContent}
             showsVerticalScrollIndicator={false}
-            removeClippedSubviews
-            maxToRenderPerBatch={10}
-            initialNumToRender={10}
-            windowSize={5}
           />
         )}
 
@@ -723,7 +687,7 @@ export default function PreventiveMaintenance() {
           setSelectedSiteCode={(code) => {
             setSiteCode(code);
             const site = sites.find((s) => s.site_code === code);
-            if (site) setSiteName(code === "all" ? site.name : site.site_code);
+            if (site) setSiteName(site.name || site.site_code);
             AsyncStorage.setItem(
               `last_site_${user?.user_id || user?.id}`,
               code,

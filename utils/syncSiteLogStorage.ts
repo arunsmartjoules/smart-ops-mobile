@@ -326,6 +326,7 @@ export async function syncPendingSiteLogs(
 export async function pullRecentSiteLogs(
   token: string,
   apiUrl: string,
+  siteCode?: string,
 ): Promise<{ pulled: number }> {
   let pulled = 0;
   try {
@@ -334,8 +335,12 @@ export async function pullRecentSiteLogs(
     ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
     const startDate = ninetyDaysAgo.toISOString();
 
+    const url = siteCode 
+      ? `${apiUrl}/api/site-logs/site/${siteCode}?limit=1000&fromDate=${startDate}`
+      : `${apiUrl}/api/site-logs?startDate=${startDate}&limit=1000`;
+
     const response = await fetchWithTimeout(
-      `${apiUrl}/api/site-logs?startDate=${startDate}&limit=1000`,
+      url,
       {
         method: "GET",
         headers: {
@@ -451,6 +456,7 @@ export async function pullRecentSiteLogs(
 export async function pullRecentChillerReadings(
   token: string,
   apiUrl: string,
+  siteCode: string = "all",
 ): Promise<{ pulled: number }> {
   let pulled = 0;
   try {
@@ -459,7 +465,7 @@ export async function pullRecentChillerReadings(
     const startDate = ninetyDaysAgo.toISOString();
 
     const response = await fetchWithTimeout(
-      `${apiUrl}/api/chiller-readings/site/all?limit=1000&fromDate=${startDate}`,
+      `${apiUrl}/api/chiller-readings/site/${siteCode}?limit=1000&fromDate=${startDate}`,
       {
         method: "GET",
         headers: {

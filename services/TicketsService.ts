@@ -6,7 +6,7 @@ import {
   cacheCategories,
   getCachedCategories,
 } from "../utils/offlineDataCache";
-import { authService } from "../services/AuthService";
+import { supabase } from "./supabase";
 import { fetchWithTimeout } from "../utils/apiHelper";
 import {
   database,
@@ -15,7 +15,6 @@ import {
 } from "../database";
 import { Q } from "@nozbe/watermelondb";
 import { pullRecentTickets } from "../utils/syncTicketStorage";
-import { supabase } from "./supabase";
 import { StorageService } from "./StorageService";
 
 import { API_BASE_URL } from "../constants/api";
@@ -24,8 +23,9 @@ const BACKEND_URL = API_BASE_URL;
 
 // Helper for API requests with auth and retry logic
 const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
-  // Get valid token (will refresh if needed)
-  let token = await authService.getValidToken();
+  // Get valid token from Supabase session (auto-refreshed by SDK)
+  const { data: { session } } = await supabase.auth.getSession();
+  let token = session?.access_token ?? null;
 
   const getHeaders = (t: string | null) => ({
     "Content-Type": "application/json",
@@ -38,23 +38,6 @@ const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
       ...options,
       headers: getHeaders(token),
     });
-
-    // If 401, try refresh once
-    if (response.status === 401) {
-      logger.debug(`401 on ${endpoint}, attempting refresh`, {
-        module: "TICKETS_SERVICE",
-      });
-      const newToken = await authService.refreshToken();
-
-      if (newToken) {
-        token = newToken;
-        // Retry with new token
-        response = await fetchWithTimeout(`${BACKEND_URL}${endpoint}`, {
-          ...options,
-          headers: getHeaders(token),
-        });
-      }
-    }
 
     const result = await response.json();
 
@@ -166,7 +149,8 @@ export const TicketsService = {
 
           if (localTickets.length > 0) {
             // Fire background sync if online
-            const token = await authService.getValidToken();
+            const { data: { session: bgSession } } = await supabase.auth.getSession();
+            const token = bgSession?.access_token ?? null;
             if (token) {
               pullRecentTickets(siteCode, token, BACKEND_URL).catch((e) =>
                 logger.debug("Background ticket pull failed", {

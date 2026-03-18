@@ -1,18 +1,10 @@
-import React, {
-  useState,
-  useEffect,
-  useCallback,
-  useMemo,
-  useRef,
-} from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import {
   View,
   Text,
   TouchableOpacity,
-  ScrollView,
   FlatList,
   RefreshControl,
-  ActivityIndicator,
   Dimensions,
   Alert,
 } from "react-native";
@@ -20,19 +12,8 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import * as Haptics from "expo-haptics";
 import {
   Ticket as TicketIcon,
-  Search,
   Filter,
-  ArrowUpDown,
-  TrendingUp,
-  CheckCircle,
-  X,
-  ChevronRight,
   MapPin,
-  Clock,
-  Briefcase,
-  Layers,
-  Layout,
-  Calendar,
   ChevronDown,
 } from "lucide-react-native";
 import { useLocalSearchParams } from "expo-router";
@@ -44,10 +25,7 @@ import SearchableSelect, {
 } from "@/components/SearchableSelect";
 import { TicketsService, type Ticket } from "@/services/TicketsService";
 import { AttendanceService, type Site } from "@/services/AttendanceService";
-import {
-  saveOfflineTicketUpdate,
-  syncPendingTicketUpdates,
-} from "@/utils/offlineTicketStorage";
+import { saveOfflineTicketUpdate } from "@/utils/offlineTicketStorage";
 import {
   getCachedSites,
   cacheSites,
@@ -55,11 +33,12 @@ import {
   getCachedAreas,
   cacheTickets,
   getCachedTickets,
+  cacheStats,
+  getCachedStats,
 } from "@/utils/offlineDataCache";
 import logger from "@/utils/logger";
 import TicketDetailModal from "@/components/TicketDetailModal";
 import AdvancedFilterModal from "@/components/AdvancedFilterModal";
-import Skeleton from "@/components/Skeleton";
 import { WhatsAppService } from "@/services/WhatsAppService";
 import TicketItem from "@/components/TicketItem";
 import TicketStats from "@/components/TicketStats";
@@ -282,68 +261,79 @@ export default function Tickets() {
       setLoading(false);
       return;
     }
-    
+
     setLoading(true);
     try {
       // 1. Try to load from cache and last site in parallel for instant UI
       const [cachedSites, lastSiteCode] = await Promise.all([
         getCachedSites(userId).catch(() => [] as Site[]),
-        AsyncStorage.getItem(`last_site_${userId}`).catch(() => null)
+        AsyncStorage.getItem(`last_site_${userId}`).catch(() => null),
       ]);
 
-      if (cachedSites && cachedSites.length > 0) {
-        setSites(cachedSites);
-        if (lastSiteCode) {
-          setSelectedSiteCode(lastSiteCode);
-          const currentSite = cachedSites.find((s: Site) => s.site_code === lastSiteCode);
-          if (currentSite) setSiteName(currentSite.site_code);
+      // Sanitize: remove stale "all" entries from cached sites
+      const validCachedSites = (cachedSites || []).filter(
+        (s: Site) => s.site_code && s.site_code !== "all",
+      );
+      let effectiveLastSite = lastSiteCode === "all" ? null : lastSiteCode;
+
+      if (validCachedSites.length > 0) {
+        setSites(validCachedSites);
+        if (effectiveLastSite) {
+          setSelectedSiteCode(effectiveLastSite);
+          const currentSite = validCachedSites.find(
+            (s: Site) => s.site_code === effectiveLastSite,
+          );
+          if (currentSite) setSiteName(currentSite.name || currentSite.site_code);
+        } else if (validCachedSites.length > 0) {
+          // "all" was stale, pick first valid site
+          const firstSite = validCachedSites[0];
+          setSelectedSiteCode(firstSite.site_code);
+          setSiteName(firstSite.name || firstSite.site_code);
+          await AsyncStorage.setItem(`last_site_${userId}`, firstSite.site_code);
         }
       }
 
       // 2. Fetch fresh sites from API
-      let userSites: Site[] = [];
       const isAdmin = user?.role?.toLowerCase() === "admin";
-
-      if (isAdmin) {
-        userSites = await AttendanceService.getAllSites().catch(e => {
-          logger.warn("All sites fetch failed", { module: "TICKETS", error: e });
-          return [] as Site[];
+      let userSites: Site[] = await AttendanceService.getUserSites(userId).catch((e) => {
+        logger.warn("User sites fetch failed", {
+          module: "TICKETS",
+          error: e,
         });
-      } else {
-        userSites = await AttendanceService.getUserSites(userId, "JouleCool").catch(e => {
-          logger.warn("User sites fetch failed", { module: "TICKETS", error: e });
-          return [] as Site[];
-        });
-      }
+        return [] as Site[];
+      });
 
-      let finalSites: Site[] = [];
-      if (isAdmin) {
-        finalSites = [{ site_code: "all", name: "All Sites" }, ...userSites];
-      } else {
-        finalSites = userSites;
-      }
+      let finalSites: Site[] = userSites;
 
       // If we got fresh sites, update state and cache
       if (finalSites.length > 0) {
         setSites(finalSites);
-        
+
         let siteToSelect = lastSiteCode || "";
-        if (!siteToSelect || !finalSites.find(s => s.site_code === siteToSelect)) {
+        if (
+          !siteToSelect ||
+          !finalSites.find((s) => s.site_code === siteToSelect)
+        ) {
           siteToSelect = finalSites[0].site_code;
         }
 
         setSelectedSiteCode(siteToSelect);
-        const currentSite = finalSites.find(s => s.site_code === siteToSelect);
+        const currentSite = finalSites.find(
+          (s) => s.site_code === siteToSelect,
+        );
         if (currentSite) {
-          setSiteName(siteToSelect === "all" ? "All Sites" : currentSite.site_code);
+          setSiteName(currentSite.name || currentSite.site_code);
         }
-        
+
         await AsyncStorage.setItem(`last_site_${userId}`, siteToSelect);
         await cacheSites(userId, finalSites);
+      } else if (validCachedSites.length === 0) {
+        // No sites at all — stop loading
+        setLoading(false);
       }
+      // Otherwise fetchTickets (triggered by selectedSiteCode change) will clear loading
     } catch (error) {
       logger.error("loadSites critical error", { module: "TICKETS", error });
-    } finally {
       setLoading(false);
     }
   };
@@ -354,10 +344,10 @@ export default function Tickets() {
       const res = await TicketsService.getStats(selectedSiteCode);
       if (res.success) {
         setStats(res.data);
-        await AsyncStorage.setItem(
-          `stats_${selectedSiteCode}`,
-          JSON.stringify(res.data),
-        );
+        await cacheStats(selectedSiteCode, res.data);
+      } else if (res.isNetworkError) {
+        const cached = await getCachedStats(selectedSiteCode);
+        if (cached) setStats(cached);
       }
     } catch (e) {}
   }, [selectedSiteCode]);
@@ -384,11 +374,16 @@ export default function Tickets() {
       }
 
       if (reset) {
-        setLoading(true);
-        // Load from cache first for reset
+        // Always show skeleton on reset unless we're doing a pull-to-refresh
+        if (!refreshing) {
+          setLoading(true);
+        }
+
+        // Load from cache first for instant content while fetching fresh data
         const cachedTickets = await getCachedTickets(selectedSiteCode);
         if (cachedTickets.length > 0) {
           setTickets(cachedTickets);
+          setLoading(false); // Show cached data immediately, no skeleton needed
         }
       } else {
         setIsFetchingMore(true);
@@ -413,7 +408,9 @@ export default function Tickets() {
           } else {
             setTickets((prev) => {
               const existingIds = new Set(prev.map((t) => t.id));
-              const uniqueNew = newTickets.filter((t: Ticket) => !existingIds.has(t.id));
+              const uniqueNew = newTickets.filter(
+                (t: Ticket) => !existingIds.has(t.id),
+              );
               return [...prev, ...uniqueNew];
             });
           }
@@ -615,6 +612,12 @@ export default function Tickets() {
           payload,
         );
         if (res.success) {
+          logger.activity("TICKET_UPDATE", "TICKETS", "Ticket updated", {
+            ticketId: selectedTicket.id,
+            ticketNo: selectedTicket.ticket_no,
+            ...payload,
+            offline: false,
+          });
           // Trigger WhatsApp template resolution and sending
           // Use updated ticket data for notification
           const updatedTicketForWA = {

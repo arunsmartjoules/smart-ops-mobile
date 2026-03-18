@@ -13,9 +13,10 @@ import {
   Modal,
   RefreshControl,
 } from "react-native";
+import { FlashList } from "@shopify/flash-list";
 import { useFocusEffect } from "@react-navigation/native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { router } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import {
   ChevronLeft,
   Thermometer,
@@ -29,11 +30,16 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { format } from "date-fns";
 import SiteLogService from "@/services/SiteLogService";
 import SignaturePad from "@/components/SignaturePad";
-import * as ImagePicker from "expo-image-picker";
 import { StorageService } from "@/services/StorageService";
 import Skeleton from "@/components/Skeleton";
 import SearchableSelect from "@/components/SearchableSelect";
 import AttendanceService, { Site } from "@/services/AttendanceService";
+import { LogImagePicker } from "@/components/sitelogs/LogImagePicker";
+import { SortIcon } from "@/components/SortIcon";
+import { sortBySequenceNumber, SortDirection } from "@/utils/sorting";
+import { logMasterCollection } from "@/database";
+import { Q } from "@nozbe/watermelondb";
+import logger from "@/utils/logger";
 
 // Memoized Log Item Component
 const LogItem = memo(
@@ -42,28 +48,31 @@ const LogItem = memo(
     value,
     isUploading,
     onUpdateValue,
-    onTakePhoto,
   }: {
     item: TaskItem;
     value: { temp: string; rh: string; attachment?: string; remarks?: string };
     isUploading: boolean;
     onUpdateValue: (
       taskId: string,
-      field: "temp" | "rh" | "remarks",
+      field: "temp" | "rh",
       value: string,
     ) => void;
-    onTakePhoto: (taskId: string) => void;
   }) => {
     return (
       <View
         className={`bg-white dark:bg-slate-900 rounded-xl p-4 mb-3 border ${item.isCompleted ? "border-green-200 dark:border-green-900" : "border-slate-100 dark:border-slate-800"}`}
       >
-        <View className="flex-row justify-between mb-3">
+        <View className="mb-3">
           <Text className="text-slate-900 dark:text-slate-50 font-bold text-base flex-1 mr-2">
-            {item.name}
+            {item.name || "Unnamed Area"}
           </Text>
+          {item.meta?.remarks && (
+            <Text className="text-slate-400 text-[10px] italic mt-0.5">
+              "{item.meta.remarks}"
+            </Text>
+          )}
           {item.isCompleted && (
-            <View className="flex-row items-center">
+            <View className="absolute top-0 right-0">
               <CheckCircle2 size={16} color="#16a34a" />
             </View>
           )}
@@ -98,30 +107,14 @@ const LogItem = memo(
             </View>
           </View>
 
-          <TouchableOpacity
-            onPress={() => onTakePhoto(item.id)}
+          <LogImagePicker
+            value={value.attachment}
+            onImageChange={(url) =>
+              onUpdateValue(item.id, "attachment" as any, url || "")
+            }
+            uploadPath={`temprh/${item.id}`}
+            compact
             disabled={isUploading}
-            className={`w-12 h-12 rounded-xl items-center justify-center border ${value.attachment ? "bg-slate-100 border-slate-200" : "bg-slate-50 border-dashed border-slate-300"}`}
-          >
-            {isUploading ? (
-              <ActivityIndicator size="small" color="#0d9488" />
-            ) : value.attachment ? (
-              <Image
-                source={{ uri: value.attachment }}
-                className="w-10 h-10 rounded-lg"
-              />
-            ) : (
-              <Camera size={20} color="#94a3b8" />
-            )}
-          </TouchableOpacity>
-        </View>
-
-        <View className="flex-row items-center bg-slate-50 dark:bg-slate-800 rounded-lg px-3 border border-slate-200 dark:border-slate-700">
-          <TextInput
-            value={value.remarks}
-            onChangeText={(t) => onUpdateValue(item.id, "remarks", t)}
-            placeholder="Remarks (optional)"
-            className="flex-1 py-3 font-medium text-slate-900 dark:text-slate-50 text-xs"
           />
         </View>
       </View>
@@ -134,14 +127,19 @@ const LogItem = memo(
       prevProps.isUploading === nextProps.isUploading &&
       prevProps.value.temp === nextProps.value.temp &&
       prevProps.value.rh === nextProps.value.rh &&
-      prevProps.value.attachment === nextProps.value.attachment &&
-      prevProps.value.remarks === nextProps.value.remarks
+      prevProps.value.attachment === nextProps.value.attachment
     );
   },
 );
 
 export default function TempRHTaskList() {
   const { user } = useAuth();
+  const { shift, id, editId, siteCode: initialSiteCode } = useLocalSearchParams<{
+    shift?: string;
+    id?: string;
+    editId?: string;
+    siteCode?: string;
+  }>();
   const [tasks, setTasks] = useState<TaskItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -149,25 +147,21 @@ export default function TempRHTaskList() {
   const [sites, setSites] = useState<Site[]>([]);
   const [loadingSites, setLoadingSites] = useState(false);
 
-  // Pagination state
-  const [visibleCount, setVisibleCount] = useState(50);
-  const PAGE_SIZE = 50;
-
   // Bulk Entry State
   const [logValues, setLogValues] = useState<
-    Record<
-      string,
-      { temp: string; rh: string; attachment?: string; remarks?: string }
-    >
+    Record<string, { temp: string; rh: string; attachment?: string }>
   >({});
   const [signature, setSignature] = useState("");
   const [entryTime] = useState(new Date().getTime());
   const [saving, setSaving] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [showCompleted, setShowCompleted] = useState(false);
   const [uploadingAttachments, setUploadingAttachments] = useState<
     Record<string, boolean>
   >({});
   const [signatureModalVisible, setSignatureModalVisible] = useState(false);
+  const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
+  const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
 
   useEffect(() => {
     if (user) {
@@ -176,19 +170,30 @@ export default function TempRHTaskList() {
   }, [user]);
 
   const loadSites = async () => {
+    setLoadingSites(true);
     try {
-      setLoadingSites(true);
-      const userSites = await AttendanceService.getUserSites(user?.user_id || user?.id || "");
+      const userSites = await AttendanceService.getUserSites(
+        user?.user_id || user?.id || "",
+      );
       setSites(userSites);
-    } catch (error) {
-      console.error("Failed to load sites", error);
+      
+      // Select first site if none selected (random site requirement)
+      if (!siteCode && userSites.length > 0) {
+        setSiteCode(userSites[0].site_code);
+        loadTasks(true);
+      }
+    } catch (e) {
+      console.error("Failed to load sites", e);
     } finally {
       setLoadingSites(false);
     }
   };
 
+  // Site selection logic: loadTasks is called by useFocusEffect and manually on change.
+  // No need for a separate siteCode useEffect which causes flickers.
+
   useEffect(() => {
-    if (siteCode) {
+    if (siteCode && user) {
       const saveDraft = async () => {
         try {
           const draftKey = `draft_temprh_${siteCode}_${user?.user_id}`;
@@ -203,42 +208,42 @@ export default function TempRHTaskList() {
       const timer = setTimeout(saveDraft, 500);
       return () => clearTimeout(timer);
     }
-  }, [logValues, signature, siteCode]);
+  }, [logValues, signature, siteCode, user]);
 
   useFocusEffect(
     useCallback(() => {
       if (user) {
-        loadTasks();
+        loadTasks(true);
       }
-    }, [user]),
-  );
-
-  const loadDraft = useCallback(
-    async (siteCodeToLoad: string) => {
-      try {
-        const draftKey = `draft_temprh_${siteCodeToLoad}_${user?.user_id}`;
-        const savedDraft = await AsyncStorage.getItem(draftKey);
-        if (savedDraft) {
-          const { values, signature: sig } = JSON.parse(savedDraft);
-          if (values && Object.keys(values).length > 0) {
-            setLogValues((prev) => ({ ...prev, ...values }));
-          }
-          if (sig) setSignature(sig || "");
-        }
-      } catch (e) {
-        console.error("Failed to load draft", e);
-      }
-    },
-    [user?.user_id],
+    }, [user, shift]), // Add shift to dependency to reload when shift changes
   );
 
   const loadTasks = async (showLoading = true) => {
     try {
-      if (showLoading) setLoading(true);
-      const storageKey = `last_site_${user?.user_id || user?.id}`;
+      if (showLoading) {
+        setLoading(true);
+      }
+
       let currentSiteCode = siteCode;
-      
+      let editRecord: any = null;
+      const actualEditId = editId || id;
+
+      // 1. If in edit mode, fetch the record FIRST to get the correct siteCode
+      if (actualEditId && actualEditId.length > 16) {
+        try {
+          editRecord = await SiteLogService.getSiteLogById(actualEditId);
+          if (editRecord && editRecord.siteCode) {
+            currentSiteCode = editRecord.siteCode;
+            setSiteCode(currentSiteCode); // Update state to match record
+          }
+        } catch (e) {
+          console.error("Failed to fetch edit record", e);
+        }
+      }
+
+      // 2. Fallback to storage if no siteCode is known yet
       if (!currentSiteCode) {
+        const storageKey = `last_site_${user?.user_id || user?.id}`;
         currentSiteCode = await AsyncStorage.getItem(storageKey);
       }
 
@@ -247,28 +252,68 @@ export default function TempRHTaskList() {
         const areaTasks = await SiteConfigService.getLogTasks(
           currentSiteCode,
           "Temp RH",
+          null,
+          null,
+          shift,
         );
+
         setTasks(areaTasks);
+
+        // AUTO-SYNC: If we have no areas at all for a valid site, trigger a pull.
+        if (areaTasks.length === 0 && currentSiteCode) {
+          logger.info(
+            `No local areas found for ${currentSiteCode}. Triggering auto-sync...`,
+          );
+          SiteLogService.pullLogMaster().then(() => {
+            SiteLogService.pullSiteLogs(currentSiteCode!, {
+              logName: "Temp RH",
+              status: "pending",
+            }).then(() => {
+              loadTasks(false);
+            });
+          });
+        }
 
         const initialValues: Record<
           string,
-          { temp: string; rh: string; remarks?: string }
+          { temp: string; rh: string; attachment?: string }
         > = {};
+
         areaTasks.forEach((task) => {
           if (task.meta) {
             initialValues[task.id] = {
               temp: task.meta.temperature?.toString() || "",
               rh: task.meta.rh?.toString() || "",
-              remarks: task.meta.remarks || "",
+              attachment: task.meta.attachment || "",
             };
           }
         });
 
-        // Reset log values to newly fetched state (replaces old drafts/stale data)
+        if (editRecord) {
+          const tId = editRecord.taskId || editRecord.id || actualEditId;
+          setEditingTaskId(tId);
+          initialValues[tId] = {
+            temp: editRecord.temperature?.toString() || "",
+            rh: editRecord.rh?.toString() || "",
+            attachment: editRecord.attachment || "",
+          };
+        } else {
+          // Normal mode: Load draft after merging with DB values
+          const draftKey = `draft_temprh_${currentSiteCode}_${user?.user_id}`;
+          const savedDraft = await AsyncStorage.getItem(draftKey);
+          if (savedDraft) {
+            try {
+              const { values, signature: sig } = JSON.parse(savedDraft);
+              if (values) {
+                Object.keys(values).forEach((k) => {
+                  initialValues[k] = { ...initialValues[k], ...values[k] };
+                });
+              }
+              if (sig) setSignature(sig);
+            } catch (e) {}
+          }
+        }
         setLogValues(initialValues);
-
-        // Merge local draft on top (most recent edits)
-        await loadDraft(currentSiteCode);
       }
     } catch (e) {
       console.error("Failed to load temp rh tasks", e);
@@ -278,23 +323,13 @@ export default function TempRHTaskList() {
     }
   };
 
-  useEffect(() => {
-    if (siteCode) {
-      loadTasks();
-    }
-  }, [siteCode]);
-
   const onRefresh = useCallback(() => {
     setRefreshing(true);
     loadTasks(false);
-  }, [siteCode, user]);
+  }, [siteCode, user, shift]);
 
   const updateValue = useCallback(
-    (
-      taskId: string,
-      field: "temp" | "rh" | "attachment" | "remarks",
-      value: string,
-    ) => {
+    (taskId: string, field: "temp" | "rh" | "attachment", value: string) => {
       setLogValues((prev) => ({
         ...prev,
         [taskId]: {
@@ -302,58 +337,12 @@ export default function TempRHTaskList() {
             temp: "",
             rh: "",
             attachment: "",
-            remarks: "",
           }),
           [field]: value,
         },
       }));
     },
     [],
-  );
-
-  const handleTakePhoto = useCallback(
-    async (taskId: string) => {
-      try {
-        const result = await ImagePicker.requestCameraPermissionsAsync();
-        if (!result.granted) {
-          Alert.alert("Permission Required", "Camera permission is required.");
-          return;
-        }
-
-        const pickerResult = await ImagePicker.launchCameraAsync({
-          mediaTypes: ImagePicker.MediaTypeOptions.Images,
-          quality: 0.5,
-          allowsEditing: false,
-        });
-
-        if (
-          !pickerResult.canceled &&
-          pickerResult.assets &&
-          pickerResult.assets.length > 0
-        ) {
-          setUploadingAttachments((prev) => ({ ...prev, [taskId]: true }));
-          const uri = pickerResult.assets[0].uri;
-
-          const filename = `temprh/${siteCode}/${taskId}_${Date.now()}.jpg`;
-          const publicUrl = await StorageService.uploadFile(
-            "site-log-attachments",
-            filename,
-            uri,
-          );
-
-          if (publicUrl) {
-            updateValue(taskId, "attachment", publicUrl);
-          } else {
-            Alert.alert("Upload Failed", "Could not upload image.");
-          }
-        }
-      } catch (e: any) {
-        Alert.alert("Error", e.message);
-      } finally {
-        setUploadingAttachments((prev) => ({ ...prev, [taskId]: false }));
-      }
-    },
-    [siteCode],
   );
 
   const clearDraft = async () => {
@@ -376,11 +365,11 @@ export default function TempRHTaskList() {
       endTime: new Date().getTime(),
     };
 
-    const filteredTasks = tasks.filter((t) =>
+    const allMatchedTasks = tasks.filter((t) =>
       t.name.toLowerCase().includes(searchQuery.toLowerCase()),
     );
 
-    for (const task of filteredTasks) {
+    for (const task of allMatchedTasks) {
       const input = logValues[task.id];
 
       let status: "Open" | "Inprogress" | "Completed" = "Open";
@@ -393,8 +382,21 @@ export default function TempRHTaskList() {
         status = "Inprogress";
       }
 
-      if (input && (hasTemp || hasRH || input.attachment || input.remarks)) {
+      if (input && (hasTemp || hasRH || input.attachment)) {
+        // Auto-generate remarks
+        const shiftLabel = shift
+          ? shift === "A"
+            ? "1/3"
+            : shift === "B"
+              ? "2/3"
+              : "3/3"
+          : "";
+        const autoRemarks = shiftLabel
+          ? `Temp RH (${shiftLabel}) - ${format(new Date(), "dd-MM-yyyy")}`
+          : "";
+
         entriesToSave.push({
+          id: task.id,
           siteCode: siteCode,
           executorId: user?.user_id || user?.id || "unknown",
           assignedTo: user?.name || user?.user_id || "unknown",
@@ -402,7 +404,7 @@ export default function TempRHTaskList() {
           taskName: task.name,
           temperature: hasTemp ? parseFloat(input.temp) : null,
           rh: hasRH ? parseFloat(input.rh) : null,
-          remarks: input.remarks || "",
+          remarks: autoRemarks,
           signature: sig,
           entryTime: timestamps.entryTime,
           endTime: timestamps.endTime,
@@ -421,12 +423,18 @@ export default function TempRHTaskList() {
 
     try {
       setSaving(true);
-      await SiteLogService.saveBulkSiteLogs(entriesToSave);
+      if (editId) {
+        await SiteLogService.updateSiteLog(editId, entriesToSave[0]);
+      } else {
+        await SiteLogService.saveBulkSiteLogs(entriesToSave);
+      }
       await clearDraft();
 
       Alert.alert(
         "Success",
-        `Saved ${entriesToSave.length} entries successfully.`,
+        editId
+          ? "Log updated successfully."
+          : `Saved ${entriesToSave.length} entries successfully.`,
         [{ text: "OK", onPress: () => router.back() }],
       );
     } catch (error: any) {
@@ -436,27 +444,42 @@ export default function TempRHTaskList() {
     }
   };
 
-  const filteredData = useMemo(
-    () =>
-      tasks.filter((task) => {
-        const matchesSearch = task.name
-          .toLowerCase()
-          .includes(searchQuery.toLowerCase());
-        const isNotCompleted = task.status !== "Completed";
-        return matchesSearch && isNotCompleted;
-      }),
-    [tasks, searchQuery],
-  );
+  const filteredData = useMemo(() => {
+    let filtered = tasks;
 
-  const paginatedData = useMemo(() => {
-    return filteredData.slice(0, visibleCount);
-  }, [filteredData, visibleCount]);
-
-  const loadMore = useCallback(() => {
-    if (visibleCount < filteredData.length) {
-      setVisibleCount((prev) => prev + PAGE_SIZE);
+    if (editId) {
+      if (!editingTaskId) return [];
+      // Strict match by ID or exact Name (SiteConfigService uses taskName as ID sometimes)
+      return filtered.filter(
+        (t) => t.id === editingTaskId || t.name === editingTaskId,
+      );
     }
-  }, [visibleCount, filteredData.length]);
+
+    filtered = filtered.filter((task) => {
+      // If task.name is empty, we don't want to show it in the bulk list
+      if (!task.name || task.name.trim() === "") return false;
+
+      const matchesSearch = task.name
+        .toLowerCase()
+        .includes(searchQuery.toLowerCase());
+
+      const isNotCompleted = task.status?.toLowerCase() !== "completed";
+
+      // If showCompleted is false, we only show non-completed tasks
+      // If showCompleted is true, we show everything that matches the search
+      if (!showCompleted) {
+        return matchesSearch && isNotCompleted;
+      }
+
+      return matchesSearch;
+    });
+
+    // Simplified sorting: just by name and direction
+    return [...filtered].sort((a, b) => {
+      const comparison = a.name.localeCompare(b.name);
+      return sortDirection === "desc" ? -comparison : comparison;
+    });
+  }, [tasks, searchQuery, sortDirection, editId, editingTaskId, showCompleted]);
 
   const renderItem = useCallback(
     ({ item }: { item: TaskItem }) => {
@@ -464,7 +487,6 @@ export default function TempRHTaskList() {
         temp: "",
         rh: "",
         attachment: "",
-        remarks: "",
       };
       const isUploading = !!uploadingAttachments[item.id];
 
@@ -474,20 +496,12 @@ export default function TempRHTaskList() {
           value={val}
           isUploading={isUploading}
           onUpdateValue={updateValue}
-          onTakePhoto={handleTakePhoto}
         />
       );
     },
-    [logValues, uploadingAttachments, updateValue, handleTakePhoto],
+    [logValues, uploadingAttachments, updateValue],
   );
 
-  const renderFooter = () => (
-    <View className="pb-28">
-      {visibleCount < filteredData.length && (
-        <ActivityIndicator size="small" color="#dc2626" className="py-4" />
-      )}
-    </View>
-  );
 
   return (
     <View className="flex-1 bg-slate-50 dark:bg-slate-950">
@@ -505,77 +519,138 @@ export default function TempRHTaskList() {
               >
                 <ChevronLeft size={20} color="#0f172a" />
               </TouchableOpacity>
-              <View className="flex-1 mx-3">
-                <SearchableSelect
-                  label=""
-                  placeholder="Select Site"
-                  value={siteCode || ""}
-                  options={sites.map(s => ({
-                    label: s.name,
-                    value: s.site_code,
-                    description: s.site_code
-                  }))}
-                  onChange={(val) => {
-                    setSiteCode(val);
-                    AsyncStorage.setItem(`last_site_${user?.user_id || user?.id}`, val);
-                  }}
-                  loading={loadingSites}
-                />
-              </View>
+
+              {editId ? (
+                <View className="flex-1 items-center">
+                  <Text className="text-lg font-bold text-slate-900 dark:text-slate-50">
+                    Edit Temp RH Log
+                  </Text>
+                  <Text className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">
+                    ID: {editId.slice(-8).toUpperCase()}
+                  </Text>
+                </View>
+              ) : (
+                <View className="flex-1 mx-3" style={{ minWidth: 150 }}>
+                  <SearchableSelect
+                    label=""
+                    placeholder="Select Site"
+                    value={siteCode || ""}
+                    options={sites.map((s) => ({
+                      label: s.name,
+                      value: s.site_code,
+                      description: s.site_code,
+                    }))}
+                    onChange={async (val) => {
+                      setSiteCode(val);
+                      await AsyncStorage.setItem(
+                        `last_site_${user?.user_id || user?.id}`,
+                        val,
+                      );
+                      // Force an immediate reload instead of waiting for useEffect
+                      loadTasks(true);
+                    }}
+                    loading={loadingSites}
+                  />
+                </View>
+              )}
               <View className="items-center justify-center">
-                 <Text className="text-slate-400 text-[10px] font-bold uppercase tracking-wider text-center">
+                <Text className="text-slate-400 text-[10px] font-bold uppercase tracking-wider text-center">
                   {format(new Date(), "dd MMM")}
                 </Text>
+                {shift && (
+                  <View className="mt-1 px-2 py-0.5 bg-red-100 rounded-md">
+                    <Text className="text-red-600 text-[9px] font-black uppercase tracking-tighter">
+                      Shift {shift} (
+                      {shift === "A" ? "1/3" : shift === "B" ? "2/3" : "3/3"})
+                    </Text>
+                  </View>
+                )}
               </View>
             </View>
 
-            {/* Search Bar */}
-            <View className="bg-slate-100 dark:bg-slate-800 rounded-xl px-4 py-2 flex-row items-center">
-              <TextInput
-                placeholder="Filter areas..."
-                value={searchQuery}
-                onChangeText={(t) => {
-                  setSearchQuery(t);
-                  setVisibleCount(PAGE_SIZE);
-                }}
-                className="flex-1 font-medium text-slate-900 dark:text-slate-50"
-                placeholderTextColor="#94a3b8"
-              />
-            </View>
+            {!editId && (
+              <View className="flex-row items-center gap-2">
+                <View className="flex-1 bg-slate-100 dark:bg-slate-800 rounded-xl px-4 py-2 flex-row items-center">
+                  <TextInput
+                    placeholder="Filter areas..."
+                    value={searchQuery}
+                    onChangeText={(t) => {
+                      setSearchQuery(t);
+                    }}
+                    className="flex-1 font-medium text-slate-900 dark:text-slate-50"
+                    placeholderTextColor="#94a3b8"
+                  />
+                </View>
+                <SortIcon
+                  direction={sortDirection}
+                  onPress={() => {
+                    setSortDirection((prev) =>
+                      prev === "asc" ? "desc" : prev === "desc" ? null : "asc",
+                    );
+                  }}
+                />
+                <TouchableOpacity
+                  onPress={() => setShowCompleted(!showCompleted)}
+                  className={`w-10 h-10 rounded-xl items-center justify-center border ${showCompleted ? "bg-green-50 border-green-200" : "bg-slate-50 border-slate-200 dark:bg-slate-800 dark:border-slate-700"}`}
+                >
+                  <CheckCircle2
+                    size={18}
+                    color={showCompleted ? "#16a34a" : "#94a3b8"}
+                  />
+                </TouchableOpacity>
+              </View>
+            )}
           </View>
 
-          {loading ? (
+          {loading && tasks.length === 0 ? (
             <View className="px-5 pt-4">
-              {[1, 2, 3, 4, 5].map((i) => (
+              {editId ? (
                 <Skeleton
-                  key={i}
                   height={130}
                   style={{ marginBottom: 12, borderRadius: 12 }}
                 />
-              ))}
+              ) : (
+                [1, 2, 3, 4, 5].map((i) => (
+                  <Skeleton
+                    key={i}
+                    height={130}
+                    style={{ marginBottom: 12, borderRadius: 12 }}
+                  />
+                ))
+              )}
             </View>
-          ) : tasks.length === 0 ? (
+          ) : filteredData.length === 0 ? (
             <View className="flex-1 items-center justify-center p-10">
               <View className="w-16 h-16 bg-slate-100 dark:bg-slate-800 rounded-full items-center justify-center mb-4">
                 <Thermometer size={24} color="#94a3b8" />
               </View>
-              <Text className="text-slate-900 dark:text-slate-50 font-bold text-lg text-center">
-                No Areas Found
+              <Text className="text-slate-900 dark:text-slate-50 font-bold text-lg text-center mb-2">
+                {!siteCode ? "Please Select a Site" : "No Areas Found"}
               </Text>
+              <Text className="text-slate-400 text-sm text-center mb-6">
+                {!siteCode
+                  ? "Choose a site from the dropdown above to view tasks."
+                  : "We couldn't find any temperature logs or areas for this site. Try pulling latest data."}
+              </Text>
+              {siteCode && (
+                <TouchableOpacity
+                  onPress={() => onRefresh()}
+                  className="bg-red-600 px-6 py-3 rounded-xl"
+                >
+                  <Text className="text-white font-bold uppercase tracking-wider text-xs">
+                    Pull Latest Data
+                  </Text>
+                </TouchableOpacity>
+              )}
             </View>
           ) : (
-            <FlatList
-              data={paginatedData}
+            <FlashList
+              data={filteredData}
               keyExtractor={(item) => item.id}
-              contentContainerStyle={{ padding: 20 }}
+              contentContainerStyle={{ padding: 20, paddingBottom: 150 }}
               renderItem={renderItem}
-              ListFooterComponent={renderFooter}
-              onEndReached={loadMore}
-              onEndReachedThreshold={0.5}
-              removeClippedSubviews={Platform.OS === "android"}
-              initialNumToRender={10}
-              maxToRenderPerBatch={10}
-              windowSize={5}
+              // @ts-ignore - estimatedItemSize is a required prop for FlashList
+              estimatedItemSize={150}
               keyboardShouldPersistTaps="handled"
               refreshControl={
                 <RefreshControl
@@ -612,7 +687,7 @@ export default function TempRHTaskList() {
                 <ActivityIndicator color="white" />
               ) : (
                 <Text className="text-white font-bold text-base uppercase tracking-widest">
-                  Complete & Sign
+                  {editId ? "Update & Sign" : "Complete & Sign"}
                 </Text>
               )}
             </TouchableOpacity>
@@ -631,7 +706,7 @@ export default function TempRHTaskList() {
           <View className="bg-white dark:bg-slate-900 rounded-t-3xl h-[60%] overflow-hidden">
             <View className="flex-row items-center justify-between px-6 py-4 border-b border-slate-100 dark:border-slate-800">
               <Text className="text-slate-900 dark:text-slate-50 font-bold text-lg">
-                Sign to Complete Bulk Entry
+                {editId ? "Sign to Update Log" : "Sign to Complete Bulk Entry"}
               </Text>
               <TouchableOpacity onPress={() => setSignatureModalVisible(false)}>
                 <Text className="text-purple-600 font-bold">Close</Text>

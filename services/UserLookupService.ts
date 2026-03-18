@@ -5,7 +5,7 @@
  * Caches results in memory to avoid repeated lookups.
  */
 
-import { authService } from "./AuthService";
+import { supabase } from "./supabase";
 import { fetchWithTimeout } from "../utils/apiHelper";
 import { API_BASE_URL } from "../constants/api";
 
@@ -25,7 +25,8 @@ const UserLookupService = {
     }
 
     try {
-      const token = await authService.getValidToken();
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token ?? null;
       if (!token) return employeeCode;
 
       const res = await fetchWithTimeout(

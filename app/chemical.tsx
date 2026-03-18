@@ -12,9 +12,10 @@ import {
   Modal,
   RefreshControl,
 } from "react-native";
+import { FlashList } from "@shopify/flash-list";
 import { useFocusEffect } from "@react-navigation/native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { router } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import {
   ChevronLeft,
   FlaskConical,
@@ -31,30 +32,40 @@ import SignaturePad from "@/components/SignaturePad";
 import Skeleton from "@/components/Skeleton";
 import SearchableSelect from "@/components/SearchableSelect";
 import AttendanceService, { Site } from "@/services/AttendanceService";
+import { LogImagePicker } from "@/components/sitelogs/LogImagePicker";
+import { SortIcon } from "@/components/SortIcon";
+import { sortBySequenceNumber, SortDirection } from "@/utils/sorting";
+import { logMasterCollection } from "@/database";
+import { Q } from "@nozbe/watermelondb";
 
 // Memoized Log Item Component
 const LogItem = memo(
   ({
     item,
     value,
-    onUpdateValue,
     onSelectDosing,
+    onUpdateValue,
   }: {
     item: TaskItem;
-    value: { dosing: string; remarks?: string };
-    onUpdateValue: (taskId: string, field: "remarks", value: string) => void;
+    value: { dosing: string; attachment?: string };
     onSelectDosing: (taskId: string) => void;
+    onUpdateValue: (taskId: string, field: "attachment", value: string) => void;
   }) => {
     return (
       <View
         className={`bg-white dark:bg-slate-900 rounded-xl p-4 mb-3 border ${item.isCompleted ? "border-green-200 dark:border-green-900" : "border-slate-100 dark:border-slate-800"}`}
       >
-        <View className="flex-row justify-between mb-3">
+        <View className="mb-3">
           <Text className="text-slate-900 dark:text-slate-50 font-bold text-base flex-1 mr-2">
             {item.name}
           </Text>
+          {item.meta?.remarks && (
+            <Text className="text-slate-400 text-[10px] italic mt-0.5">
+              "{item.meta.remarks}"
+            </Text>
+          )}
           {item.isCompleted && (
-            <View className="flex-row items-center">
+            <View className="absolute top-0 right-0">
               <CheckCircle2 size={16} color="#16a34a" />
             </View>
           )}
@@ -84,14 +95,12 @@ const LogItem = memo(
           <ChevronDown size={16} color="#94a3b8" />
         </TouchableOpacity>
 
-        <View className="flex-row items-center bg-slate-50 dark:bg-slate-800 rounded-lg px-3 border border-slate-200 dark:border-slate-700">
-          <TextInput
-            value={value.remarks}
-            onChangeText={(t) => onUpdateValue(item.id, "remarks", t)}
-            placeholder="Remarks (optional)"
-            className="flex-1 py-3 font-medium text-slate-900 dark:text-slate-50 text-xs"
-          />
-        </View>
+        <LogImagePicker
+          value={value.attachment}
+          onImageChange={(url) => onUpdateValue(item.id, "attachment", url || "")}
+          uploadPath={`chemical/${item.id}`}
+        />
+
       </View>
     );
   },
@@ -100,13 +109,18 @@ const LogItem = memo(
       prevProps.item.id === nextProps.item.id &&
       prevProps.item.isCompleted === nextProps.item.isCompleted &&
       prevProps.value.dosing === nextProps.value.dosing &&
-      prevProps.value.remarks === nextProps.value.remarks
+      prevProps.value.attachment === nextProps.value.attachment
     );
   },
 );
 
 export default function ChemicalTaskList() {
   const { user } = useAuth();
+  const { id, editId, siteCode: initialSiteCode } = useLocalSearchParams<{
+    id?: string;
+    editId?: string;
+    siteCode?: string;
+  }>();
   const [tasks, setTasks] = useState<TaskItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -114,18 +128,17 @@ export default function ChemicalTaskList() {
   const [sites, setSites] = useState<Site[]>([]);
   const [loadingSites, setLoadingSites] = useState(false);
 
-  // Pagination state
-  const [visibleCount, setVisibleCount] = useState(50);
-  const PAGE_SIZE = 50;
-
   // Bulk Entry State
   const [logValues, setLogValues] = useState<
-    Record<string, { dosing: string; remarks?: string }>
+    Record<string, { dosing: string; attachment?: string }>
   >({});
   const [signature, setSignature] = useState("");
   const [entryTime] = useState(new Date().getTime());
   const [saving, setSaving] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [showCompleted, setShowCompleted] = useState(false);
+  const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
+  const [sequenceMap, setSequenceMap] = useState<Map<string, number>>(new Map());
   const [signatureModalVisible, setSignatureModalVisible] = useState(false);
   const [showDosingPicker, setShowDosingPicker] = useState(false);
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
@@ -141,6 +154,12 @@ export default function ChemicalTaskList() {
       setLoadingSites(true);
       const userSites = await AttendanceService.getUserSites(user?.user_id || user?.id || "");
       setSites(userSites);
+      
+      // Select first site if none selected (random site requirement)
+      if (!siteCode && userSites.length > 0) {
+        setSiteCode(userSites[0].site_code);
+        setTimeout(() => loadTasks(false), 100);
+      }
     } catch (error) {
       console.error("Failed to load sites", error);
     } finally {
@@ -202,10 +221,27 @@ export default function ChemicalTaskList() {
   const loadTasks = async (showLoading = true) => {
     try {
       if (showLoading) setLoading(true);
-      const storageKey = `last_site_${user?.user_id || user?.id}`;
+
       let currentSiteCode = siteCode;
-      
+      let editRecord: any = null;
+      const actualEditId = editId || id;
+
+      // 1. If in edit mode, fetch the record FIRST to get the correct siteCode
+      if (actualEditId && actualEditId.length > 16) {
+        try {
+          editRecord = await SiteLogService.getSiteLogById(actualEditId);
+          if (editRecord && editRecord.siteCode) {
+            currentSiteCode = editRecord.siteCode;
+            setSiteCode(currentSiteCode);
+          }
+        } catch (e) {
+          console.error("Failed to fetch chemical edit record", e);
+        }
+      }
+
+      // 2. Fallback to storage
       if (!currentSiteCode) {
+        const storageKey = `last_site_${user?.user_id || user?.id}`;
         currentSiteCode = await AsyncStorage.getItem(storageKey);
       }
 
@@ -215,26 +251,66 @@ export default function ChemicalTaskList() {
           currentSiteCode,
           "Chemical Dosing",
         );
+
+        // Fetch sequence numbers for sorting
+        const logMasterEntries = await logMasterCollection
+          .query(Q.where("log_name", "Chemical Dosing"))
+          .fetch();
+        const sMap = new Map<string, number>();
+        logMasterEntries.forEach((entry) => {
+          sMap.set(entry.taskName, entry.sequenceNumber);
+        });
+        setSequenceMap(sMap);
+
         setTasks(areaTasks);
+
+        // AUTO-SYNC: If we have no areas at all for a valid site
+        if (areaTasks.length === 0 && currentSiteCode) {
+          SiteLogService.pullSiteLogs(currentSiteCode, {
+            logName: "Chemical Dosing",
+            status: "pending",
+          }).then(() => {
+            loadTasks(false);
+          });
+        }
 
         const initialValues: Record<
           string,
-          { dosing: string; remarks?: string }
+          { dosing: string; attachment?: string; remarks?: string }
         > = {};
+
         areaTasks.forEach((task) => {
           if (task.meta) {
             initialValues[task.id] = {
               dosing: task.meta.chemicalDosing || "",
-              remarks: task.meta.remarks || "",
+              attachment: task.meta.attachment || "",
             };
           }
         });
 
-        // Start with DB Inprogress data
+        if (editRecord) {
+          const tId = editRecord.taskId || editRecord.id || actualEditId;
+          initialValues[tId] = {
+            dosing: editRecord.chemicalDosing || "",
+            attachment: editRecord.attachment || "",
+          };
+        } else {
+          // Normal mode: Load draft
+          const draftKey = `draft_chem_${currentSiteCode}_${user?.user_id}`;
+          const savedDraft = await AsyncStorage.getItem(draftKey);
+          if (savedDraft) {
+            try {
+              const { values, signature: sig } = JSON.parse(savedDraft);
+              if (values) {
+                Object.keys(values).forEach((k) => {
+                  initialValues[k] = { ...initialValues[k], ...values[k] };
+                });
+              }
+              if (sig) setSignature(sig);
+            } catch (e) {}
+          }
+        }
         setLogValues(initialValues);
-
-        // Merge local draft on top
-        await loadDraft(currentSiteCode);
       }
     } catch (error) {
       console.error("Failed to load chemical tasks", error);
@@ -244,24 +320,18 @@ export default function ChemicalTaskList() {
     }
   };
 
-  useEffect(() => {
-    if (siteCode) {
-      loadTasks();
-    }
-  }, [siteCode]);
-
   const onRefresh = useCallback(() => {
     setRefreshing(true);
     loadTasks(false);
   }, [siteCode]);
 
   const updateValue = useCallback(
-    (taskId: string, field: "dosing" | "remarks", value: string) => {
+    (taskId: string, field: "dosing" | "attachment", value: string) => {
       setLogValues((prev) => ({
         ...prev,
         [taskId]: {
-          ...(prev[taskId] || { dosing: "", remarks: "" }),
-          [field === "dosing" ? "dosing" : "remarks"]: value,
+          ...(prev[taskId] || { dosing: "", attachment: "" }),
+          [field]: value,
         },
       }));
     },
@@ -290,17 +360,18 @@ export default function ChemicalTaskList() {
       const input = logValues[task.id];
       if (input && input.dosing) {
         entriesToSave.push({
+          id: task.id,
           siteCode: siteCode,
           executorId: user?.user_id || user?.id || "unknown",
           assignedTo: user?.name || user?.user_id || "unknown",
           logName: "Chemical Dosing",
           taskName: task.name,
           chemicalDosing: input.dosing,
-          remarks: input.remarks || "",
           signature: sig,
           entryTime: timestamps.entryTime,
           endTime: timestamps.endTime,
           status: "Completed",
+          attachment: input.attachment || null,
         });
       }
     }
@@ -327,50 +398,42 @@ export default function ChemicalTaskList() {
     }
   };
 
-  const filteredData = useMemo(
-    () =>
-      tasks.filter((task) => {
-        const matchesSearch = task.name
-          .toLowerCase()
-          .includes(searchQuery.toLowerCase());
-        const isNotCompleted = task.status !== "Completed";
+  const filteredData = useMemo(() => {
+    let filtered = tasks;
+
+    filtered = filtered.filter((task) => {
+      const matchesSearch = task.name
+        .toLowerCase()
+        .includes(searchQuery.toLowerCase());
+      
+      const isNotCompleted = task.status !== "Completed";
+      
+      // If showCompleted is false, we only show non-completed tasks
+      if (!showCompleted) {
         return matchesSearch && isNotCompleted;
-      }),
-    [tasks, searchQuery],
-  );
+      }
+      
+      return matchesSearch;
+    });
 
-  const paginatedData = useMemo(() => {
-    return filteredData.slice(0, visibleCount);
-  }, [filteredData, visibleCount]);
-
-  const loadMore = useCallback(() => {
-    if (visibleCount < filteredData.length) {
-      setVisibleCount((prev) => prev + PAGE_SIZE);
-    }
-  }, [visibleCount, filteredData.length]);
+    return sortBySequenceNumber(filtered, sequenceMap, sortDirection);
+  }, [tasks, searchQuery, sequenceMap, sortDirection]);
 
   const renderItem = useCallback(
     ({ item }: { item: TaskItem }) => {
-      const val = logValues[item.id] || { dosing: "", remarks: "" };
+      const val = logValues[item.id] || { dosing: "", attachment: "" };
       return (
         <LogItem
           item={item}
           value={val}
-          onUpdateValue={updateValue}
           onSelectDosing={handleSelectDosing}
+          onUpdateValue={updateValue}
         />
       );
     },
     [logValues, updateValue, handleSelectDosing],
   );
 
-  const renderFooter = () => (
-    <View className="pb-28">
-      {visibleCount < filteredData.length && (
-        <ActivityIndicator size="small" color="#9333ea" className="py-4" />
-      )}
-    </View>
-  );
 
   return (
     <View className="flex-1 bg-slate-50 dark:bg-slate-950">
@@ -388,23 +451,35 @@ export default function ChemicalTaskList() {
               >
                 <ChevronLeft size={20} color="#0f172a" />
               </TouchableOpacity>
-              <View className="flex-1 mx-3">
-                <SearchableSelect
-                  label=""
-                  placeholder="Select Site"
-                  value={siteCode || ""}
-                  options={sites.map(s => ({
-                    label: s.name,
-                    value: s.site_code,
-                    description: s.site_code
-                  }))}
-                  onChange={(val) => {
-                    setSiteCode(val);
-                    AsyncStorage.setItem(`last_site_${user?.user_id || user?.id}`, val);
-                  }}
-                  loading={loadingSites}
-                />
-              </View>
+              
+              {editId ? (
+                <View className="flex-1 items-center">
+                  <Text className="text-lg font-bold text-slate-900 dark:text-slate-50">
+                    Edit Chemical Log
+                  </Text>
+                  <Text className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">
+                    ID: {editId.slice(-8).toUpperCase()}
+                  </Text>
+                </View>
+              ) : (
+                <View className="flex-1 mx-3" style={{ minWidth: 150 }}>
+                  <SearchableSelect
+                    label=""
+                    placeholder="Select Site"
+                    value={siteCode || ""}
+                    options={sites.map(s => ({
+                      label: s.name,
+                      value: s.site_code,
+                      description: s.site_code
+                    }))}
+                    onChange={(val) => {
+                      setSiteCode(val);
+                      AsyncStorage.setItem(`last_site_${user?.user_id || user?.id}`, val);
+                    }}
+                    loading={loadingSites}
+                  />
+                </View>
+              )}
               <View className="items-center justify-center">
                  <Text className="text-slate-400 text-[10px] font-bold uppercase tracking-wider text-center">
                   {format(new Date(), "dd MMM")}
@@ -412,30 +487,53 @@ export default function ChemicalTaskList() {
               </View>
             </View>
 
-            {/* Search Bar */}
-            <View className="bg-slate-100 dark:bg-slate-800 rounded-xl px-4 py-2 flex-row items-center">
-              <TextInput
-                placeholder="Filter parameters..."
-                value={searchQuery}
-                onChangeText={(t) => {
-                  setSearchQuery(t);
-                  setVisibleCount(PAGE_SIZE); // Reset pagination on search
-                }}
-                className="flex-1 font-medium text-slate-900 dark:text-slate-50"
-                placeholderTextColor="#94a3b8"
-              />
-            </View>
+            {!editId && (
+              <View className="flex-row items-center gap-2">
+                <View className="flex-1 bg-slate-100 dark:bg-slate-800 rounded-xl px-4 py-2 flex-row items-center">
+                  <TextInput
+                    placeholder="Filter areas..."
+                    value={searchQuery}
+                    onChangeText={(t) => {
+                      setSearchQuery(t);
+                    }}
+                    className="flex-1 font-medium text-slate-900 dark:text-slate-50"
+                    placeholderTextColor="#94a3b8"
+                  />
+                </View>
+                <SortIcon
+                  direction={sortDirection}
+                  onPress={() => {
+                    setSortDirection((prev) =>
+                      prev === "asc" ? "desc" : prev === "desc" ? null : "asc",
+                    );
+                  }}
+                />
+                <TouchableOpacity
+                  onPress={() => setShowCompleted(!showCompleted)}
+                  className={`w-10 h-10 rounded-xl items-center justify-center border ${showCompleted ? "bg-green-50 border-green-200" : "bg-slate-50 border-slate-200 dark:bg-slate-800 dark:border-slate-700"}`}
+                >
+                  <CheckCircle2 size={18} color={showCompleted ? "#16a34a" : "#94a3b8"} />
+                </TouchableOpacity>
+              </View>
+            )}
           </View>
 
           {loading ? (
             <View className="px-5 pt-4">
-              {[1, 2, 3, 4, 5].map((i) => (
+              {editId ? (
                 <Skeleton
-                  key={i}
                   height={130}
                   style={{ marginBottom: 12, borderRadius: 12 }}
                 />
-              ))}
+              ) : (
+                [1, 2, 3, 4, 5].map((i) => (
+                  <Skeleton
+                    key={i}
+                    height={130}
+                    style={{ marginBottom: 12, borderRadius: 12 }}
+                  />
+                ))
+              )}
             </View>
           ) : tasks.length === 0 ? (
             <View className="flex-1 items-center justify-center p-10">
@@ -450,18 +548,13 @@ export default function ChemicalTaskList() {
               </Text>
             </View>
           ) : (
-            <FlatList
-              data={paginatedData}
+            <FlashList
+              data={filteredData}
               keyExtractor={(item) => item.id}
-              contentContainerStyle={{ padding: 20 }}
+              contentContainerStyle={{ padding: 20, paddingBottom: 150 }}
               renderItem={renderItem}
-              ListFooterComponent={renderFooter}
-              onEndReached={loadMore}
-              onEndReachedThreshold={0.5}
-              removeClippedSubviews={Platform.OS === "android"}
-              initialNumToRender={10}
-              maxToRenderPerBatch={10}
-              windowSize={5}
+              // @ts-ignore
+              estimatedItemSize={200}
               keyboardShouldPersistTaps="handled"
               refreshControl={
                 <RefreshControl
@@ -517,7 +610,7 @@ export default function ChemicalTaskList() {
           <View className="bg-white dark:bg-slate-900 rounded-t-3xl h-[60%] overflow-hidden">
             <View className="flex-row items-center justify-between px-6 py-4 border-b border-slate-100 dark:border-slate-800">
               <Text className="text-slate-900 dark:text-slate-50 font-bold text-lg">
-                Sign to Complete
+                Sign to Complete Bulk Entry
               </Text>
               <TouchableOpacity onPress={() => setSignatureModalVisible(false)}>
                 <Text className="text-purple-600 font-bold">Close</Text>

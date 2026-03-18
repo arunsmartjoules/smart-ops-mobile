@@ -5,7 +5,7 @@ import {
   TextInput,
   TouchableOpacity,
   Modal,
-  FlatList,
+  ScrollView,
   ActivityIndicator,
   Keyboard,
 } from "react-native";
@@ -191,17 +191,17 @@ export default function SearchableSelect({
                 <Text className="text-slate-400 text-sm">{emptyMessage}</Text>
               </View>
             ) : (
-              <FlatList
-                data={filteredOptions}
-                renderItem={renderOption}
-                keyExtractor={(item) => item.value}
+              <ScrollView
                 keyboardShouldPersistTaps="handled"
                 showsVerticalScrollIndicator={false}
-                initialNumToRender={20}
-                maxToRenderPerBatch={20}
-                windowSize={5}
                 contentContainerStyle={{ paddingBottom: 40 }}
-              />
+              >
+                {filteredOptions.map((item) => (
+                  <React.Fragment key={item.value}>
+                    {renderOption({ item })}
+                  </React.Fragment>
+                ))}
+              </ScrollView>
             )}
           </View>
         </View>

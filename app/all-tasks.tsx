@@ -10,8 +10,8 @@ import {
   Text,
   TouchableOpacity,
   ScrollView,
-  FlatList,
 } from "react-native";
+import { FlashList } from "@shopify/flash-list";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import {
@@ -427,7 +427,7 @@ export default function AllTasks() {
         )}
 
         {/* Task List */}
-        <FlatList
+        <FlashList
           data={filteredTasks}
           keyExtractor={keyExtractor}
           refreshing={refreshing}
@@ -436,6 +436,8 @@ export default function AllTasks() {
           contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 40 }}
           ItemSeparatorComponent={() => <View className="h-2" />}
           showsVerticalScrollIndicator={false}
+          // @ts-ignore
+          estimatedItemSize={80}
           ListEmptyComponent={
             <View className="items-center py-12">
               <Text className="text-slate-400 dark:text-slate-500 text-base">

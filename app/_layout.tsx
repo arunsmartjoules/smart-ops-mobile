@@ -10,28 +10,48 @@ import { syncManager } from "@/services/SyncManager";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import "@/services/SyncManager"; // Ensure background task is defined early
 import UpdateService from "@/services/UpdateService";
+import { supabase } from "@/services/supabase";
+import * as SplashScreen from "expo-splash-screen";
+
+// Keep the splash screen visible until we explicitly hide it
+SplashScreen.preventAutoHideAsync();
 
 function AuthGuard({ children }: { children: React.ReactNode }) {
-  const { user, isLoading } = useAuth();
+  const { token, isLoading } = useAuth();
   const segments = useSegments();
   const router = useRouter();
 
   useEffect(() => {
     if (isLoading) return;
 
+    // Auth state resolved — hide the splash screen
+    SplashScreen.hideAsync();
+
     const inAuthGroup =
       segments[0] === "sign-in" ||
       segments[0] === "sign-up" ||
-      segments[0] === "forgot-password";
+      segments[0] === "verify-email" ||
+      segments[0] === "forgot-password" ||
+      segments[0] === "reset-password";
 
-    if (!user && !inAuthGroup) {
-      // If NOT logged in and NOT in auth group, redirect to sign-in
+    if (!token && !inAuthGroup) {
       router.replace("/sign-in");
-    } else if (user && inAuthGroup) {
-      // If logged in and in auth group, redirect to dashboard
+    } else if (token && inAuthGroup) {
       router.replace("/(tabs)/dashboard");
     }
-  }, [user, isLoading, segments]);
+  }, [token, isLoading, segments]);
+
+  // Handle PASSWORD_RECOVERY deep link — navigate to reset-password screen
+  useEffect(() => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      (event) => {
+        if (event === "PASSWORD_RECOVERY") {
+          router.push("/reset-password");
+        }
+      },
+    );
+    return () => subscription.unsubscribe();
+  }, [router]);
 
   return <>{children}</>;
 }
@@ -63,8 +83,10 @@ export default function RootLayout() {
                 <Stack.Screen name="index" />
                 <Stack.Screen name="sign-in" />
                 <Stack.Screen name="sign-up" />
+                <Stack.Screen name="verify-email" />
                 <Stack.Screen name="(tabs)" />
                 <Stack.Screen name="forgot-password" />
+                <Stack.Screen name="reset-password" />
                 <Stack.Screen name="all-tasks" />
                 <Stack.Screen name="attendance" />
                 <Stack.Screen name="privacy-security" />

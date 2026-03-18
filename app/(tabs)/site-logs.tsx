@@ -5,6 +5,7 @@ import {
   TouchableOpacity,
   RefreshControl,
   ScrollView,
+  Modal,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { router } from "expo-router";
@@ -23,12 +24,13 @@ import {
   Snowflake,
   History,
   Plus,
+  Clock,
+  X,
 } from "lucide-react-native";
 import { useNetworkStatus } from "@/hooks/useNetworkStatus";
 import AttendanceService, { type Site } from "@/services/AttendanceService";
 import logger from "@/utils/logger";
 import Skeleton from "@/components/Skeleton";
-import { LinearGradient } from "expo-linear-gradient";
 
 export default function SiteLogs() {
   const { user } = useAuth();
@@ -39,12 +41,25 @@ export default function SiteLogs() {
   const [logProgress, setLogProgress] = useState<
     Record<string, { total: number; completed: number }>
   >({});
+  const [openCounts, setOpenCounts] = useState<Record<string, number>>({});
   const [availableSites, setAvailableSites] = useState<Site[]>([]);
   const [filterVisible, setFilterVisible] = useState(false);
   const [fromDate, setFromDate] = useState<Date | null>(null);
   const [toDate, setToDate] = useState<Date | null>(null);
-  const [lastSync, setLastSync] = useState<Record<string, number>>({});
+  const lastSyncRef = React.useRef<Record<string, number>>({});
+  const [shiftModalVisible, setShiftModalVisible] = useState(false);
   const { isConnected } = useNetworkStatus();
+
+  // Clear stale state when user changes to prevent showing previous user's data
+  useEffect(() => {
+    setLogProgress({});
+    setOpenCounts({});
+    setSiteCode(null);
+    setSiteName("Select Site");
+    setAvailableSites([]);
+    lastSyncRef.current = {};
+    setLoading(true);
+  }, [user?.user_id, user?.id]);
 
   // Safety timer to clear loading no matter what
   useEffect(() => {
@@ -57,77 +72,100 @@ export default function SiteLogs() {
     return () => clearTimeout(timer);
   }, []);
 
-  const fetchLogs = useCallback(async () => {
+  // Fetch sites once and set the active site code
+  const loadSites = useCallback(async () => {
+    const userId = user?.user_id || user?.id;
+    if (!userId) return;
     try {
-      if (!refreshing) setLoading(true); // Show skeleton on initial load or site switch
-      const storageKey = `last_site_${user?.user_id || user?.id}`;
-      const lastSiteCode = await AsyncStorage.getItem(storageKey);
+      const storageKey = `last_site_${userId}`;
+      const [sites, lastSiteCode] = await Promise.all([
+        AttendanceService.getUserSites(userId, "JouleCool"),
+        AsyncStorage.getItem(storageKey),
+      ]);
 
-      setSiteCode(lastSiteCode);
+      setAvailableSites(sites);
 
-      if (user?.user_id || user?.id) {
-        const sites = await AttendanceService.getUserSites(
-          user?.user_id || user?.id || "",
-          "JouleCool",
-        );
-        setAvailableSites(sites);
-        const currentSite = sites.find((s) => s.site_code === lastSiteCode);
-        if (currentSite) setSiteName(currentSite.site_code);
+      if (sites.length === 0) return;
 
-        if (!lastSiteCode && sites.length > 0) {
-          const firstSiteCode = sites[0].site_code;
-          if (firstSiteCode) {
-            setSiteCode(firstSiteCode);
-            setSiteName(sites[0].site_code);
-            await AsyncStorage.setItem(storageKey, firstSiteCode);
-            fetchLogs();
-            return;
-          }
+      // Determine which site to activate
+      const effectiveLast = lastSiteCode && lastSiteCode !== "all" ? lastSiteCode : null;
+      const siteToSelect =
+        effectiveLast && sites.find((s) => s.site_code === effectiveLast)
+          ? effectiveLast
+          : sites[0].site_code;
+
+      const activeSite = sites.find((s) => s.site_code === siteToSelect);
+      setSiteCode(siteToSelect);
+      setSiteName(activeSite?.name || siteToSelect);
+
+      if (siteToSelect !== lastSiteCode) {
+        await AsyncStorage.setItem(storageKey, siteToSelect);
+      }
+    } catch (e) {
+      logger.error("Error loading sites for logs", { module: "SITE_LOGS_SCREEN", error: e });
+    }
+  }, [user?.user_id, user?.id]);
+
+  // Fetch log progress for the currently active siteCode
+  const fetchLogs = useCallback(async (targetSite: string) => {
+    if (!targetSite) return;
+    try {
+      const now = Date.now();
+      const lastSyncTime = lastSyncRef.current[targetSite] || 0;
+      const shouldSync =
+        isConnected && (refreshing || lastSyncTime === 0 || now - lastSyncTime > 1000 * 60 * 10);
+
+      if (shouldSync) {
+        try {
+          const pullOptions = {
+            fromDate: fromDate?.getTime(),
+            toDate: toDate?.getTime(),
+          };
+          await Promise.all([
+            SiteLogService.pullSiteLogs(targetSite, pullOptions),
+            SiteLogService.pullChillerReadings(targetSite, pullOptions),
+            SiteLogService.pullLogMaster(),
+          ]);
+          lastSyncRef.current = { ...lastSyncRef.current, [targetSite]: now };
+        } catch (e) {
+          console.log("Sync warning", e);
         }
       }
 
-      if (lastSiteCode) {
-        const now = Date.now();
-        const lastSyncTime = lastSync[lastSiteCode] || 0;
-        const shouldSync =
-          isConnected && (refreshing || now - lastSyncTime > 1000 * 60 * 10); // 10 minutes cooldown
-
-        if (shouldSync) {
-          try {
-            const pullOptions = {
-              fromDate: fromDate?.getTime(),
-              toDate: toDate?.getTime(),
-            };
-            await Promise.all([
-              SiteLogService.pullSiteLogs(lastSiteCode, pullOptions),
-              SiteLogService.pullChillerReadings(lastSiteCode, pullOptions),
-            ]);
-            setLastSync((prev) => ({ ...prev, [lastSiteCode]: now }));
-          } catch (e) {
-            console.log("Sync warning", e);
-          }
-        }
-        // Get rich progress counts with date filters
-        const progress = await SiteLogService.getCategoryProgress(lastSiteCode, fromDate, toDate);
-        setLogProgress(progress);
-      }
+      // Fetch open/inprogress/pending counts from backend + local progress in parallel
+      const [counts, progress] = await Promise.all([
+        SiteLogService.getOpenCounts(targetSite),
+        SiteLogService.getCategoryProgress(targetSite, fromDate, toDate),
+      ]);
+      setOpenCounts(counts);
+      setLogProgress(progress);
     } catch (e) {
       console.error(e);
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [user?.user_id, refreshing, fromDate, toDate, isConnected]);
+  }, [refreshing, fromDate, toDate, isConnected]);
+
+  // Load sites once on mount / user change
+  useEffect(() => {
+    loadSites();
+  }, [loadSites]);
+
+  // Fetch logs whenever siteCode or date filters change
+  useEffect(() => {
+    if (siteCode) fetchLogs(siteCode);
+  }, [siteCode, fromDate, toDate]);
 
   useFocusEffect(
     useCallback(() => {
-      fetchLogs();
-    }, [fetchLogs]),
+      if (siteCode) fetchLogs(siteCode);
+    }, [siteCode, fetchLogs]),
   );
 
   const onRefresh = () => {
     setRefreshing(true);
-    fetchLogs();
+    if (siteCode) fetchLogs(siteCode);
   };
 
   const getLogName = (title: string) => {
@@ -243,10 +281,11 @@ export default function SiteLogs() {
                     total: 0,
                     completed: 0,
                   };
-                  const pending = Math.max(
-                    0,
-                    progress.total - progress.completed,
-                  );
+                  // For Temp/Water/Chemical: show open+inprogress+pending count from backend
+                  // For Chiller: show completed count from local progress
+                  const displayCount = cat.id === "chiller"
+                    ? progress.completed
+                    : (openCounts[getLogName(cat.title)] ?? Math.max(0, progress.total - progress.completed));
                   return (
                     <View
                       key={cat.id}
@@ -265,7 +304,7 @@ export default function SiteLogs() {
                         <cat.icon size={16} color={cat.accent} />
                       </View>
                       <Text className="text-xl font-bold text-slate-900 dark:text-slate-50">
-                        {cat.id === "chiller" ? progress.completed : pending}
+                        {displayCount}
                       </Text>
                       <Text
                         className="text-slate-400 dark:text-slate-500 text-[10px] font-bold uppercase tracking-tight"
@@ -312,10 +351,9 @@ export default function SiteLogs() {
                   total: 0,
                   completed: 0,
                 };
-                const pending = Math.max(
-                  0,
-                  progress.total - progress.completed,
-                );
+                const pending = item.id === "chiller"
+                  ? 0
+                  : (openCounts[getLogName(item.title)] ?? Math.max(0, progress.total - progress.completed));
 
                 return (
                   <View
@@ -359,7 +397,7 @@ export default function SiteLogs() {
                                 >
                                   {pending === 0
                                     ? "All Done"
-                                    : `${pending}/${progress.total} Pending`}
+                                    : `${pending} Pending`}
                                 </Text>
                               </View>
                             )
@@ -373,12 +411,16 @@ export default function SiteLogs() {
 
                     <View className="flex-row gap-3">
                       <TouchableOpacity
-                        onPress={() =>
-                          router.push({
-                            pathname: item.route,
-                            params: { siteCode, isNew: "true" },
-                          })
-                        }
+                        onPress={() => {
+                          if (item.id === "temp-rh") {
+                            setShiftModalVisible(true);
+                          } else {
+                            router.push({
+                              pathname: item.route,
+                              params: { siteCode, isNew: "true" },
+                            });
+                          }
+                        }}
                         activeOpacity={0.8}
                         className="flex-1"
                       >
@@ -438,21 +480,96 @@ export default function SiteLogs() {
         setToDate={setToDate}
         availableSites={availableSites}
         selectedSiteCode={siteCode}
-        onSiteSelect={async (id) => {
-          setSiteCode(id);
+      onSiteSelect={async (id) => {
           const s = availableSites.find((site) => site.site_code === id);
-          if (s) setSiteName(s.site_code);
+          setSiteCode(id);
+          setSiteName(s?.name || id);
+          setOpenCounts({});
+          setLogProgress({});
           await AsyncStorage.setItem(
             `last_site_${user?.id || user?.user_id}`,
             id,
           );
-          fetchLogs();
+          // Pass id directly — don't rely on siteCode state which hasn't updated yet
+          fetchLogs(id);
         }}
         onApply={() => {
-          fetchLogs();
           setFilterVisible(false);
         }}
       />
+
+      {/* Shift Selection Modal */}
+      <Modal
+        visible={shiftModalVisible}
+        transparent={true}
+        animationType="fade"
+        statusBarTranslucent={true}
+      >
+        <View className="flex-1 bg-black/60 justify-center items-center px-6">
+          <View className="bg-white dark:bg-slate-900 rounded-[32px] w-full p-6 shadow-2xl">
+            <View className="flex-row items-center justify-between mb-6">
+              <View>
+                <Text className="text-slate-900 dark:text-slate-100 text-xl font-bold">
+                  Select Shift
+                </Text>
+                <Text className="text-slate-400 text-sm mt-0.5">
+                  Choose current reading window
+                </Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setShiftModalVisible(false)}
+                className="w-10 h-10 bg-slate-100 dark:bg-slate-800 rounded-full items-center justify-center"
+              >
+                <X size={20} color="#94a3b8" />
+              </TouchableOpacity>
+            </View>
+
+            <View className="gap-3">
+              {[
+                { label: "Shift A (1/3)", value: "A", time: "Morning" },
+                { label: "Shift B (2/3)", value: "B", time: "Evening" },
+                { label: "Shift C (3/3)", value: "C", time: "Night" },
+              ].map((shift) => (
+                <TouchableOpacity
+                  key={shift.value}
+                  onPress={() => {
+                    setShiftModalVisible(false);
+                    router.push({
+                      pathname: "/temp-rh",
+                      params: { siteCode, isNew: "true", shift: shift.value },
+                    });
+                  }}
+                  className="flex-row items-center p-4 bg-slate-50 dark:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-700"
+                >
+                  <View className="w-12 h-12 bg-red-100 dark:bg-red-900/30 rounded-xl items-center justify-center mr-4">
+                    <Clock size={20} color="#ef4444" />
+                  </View>
+                  <View className="flex-1">
+                    <Text className="text-slate-900 dark:text-slate-100 font-bold text-base">
+                      {shift.label}
+                    </Text>
+                    <Text className="text-slate-400 text-xs">
+                      {shift.time} Observations
+                    </Text>
+                  </View>
+                  <View className="w-8 h-8 rounded-full bg-slate-200/50 dark:bg-slate-700 items-center justify-center">
+                    <Plus size={16} color="#94a3b8" />
+                  </View>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <TouchableOpacity
+              onPress={() => setShiftModalVisible(false)}
+              className="mt-8 py-4 bg-slate-900 dark:bg-slate-50 rounded-2xl items-center"
+            >
+              <Text className="text-white dark:text-slate-900 font-bold">
+                Cancel
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }

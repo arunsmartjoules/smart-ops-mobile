@@ -8,7 +8,7 @@ import {
 import PMInstance from "../database/models/PMInstance";
 import PMChecklistItem from "../database/models/PMChecklistItem";
 import PMResponse from "../database/models/PMResponse";
-import { authService } from "./AuthService";
+import { supabase } from "./supabase";
 import { fetchWithTimeout } from "../utils/apiHelper";
 import { syncManager } from "./SyncManager";
 import { StorageService } from "./StorageService";
@@ -21,7 +21,8 @@ const BACKEND_URL = API_BASE_URL;
 
 // Shared API fetch helper with auth
 const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
-  const token = await authService.getValidToken();
+  const { data: { session } } = await supabase.auth.getSession();
+  const token = session?.access_token ?? null;
   return fetchWithTimeout(`${BACKEND_URL}${endpoint}`, {
     ...options,
     headers: {

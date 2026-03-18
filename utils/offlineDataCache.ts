@@ -28,6 +28,7 @@ export interface CacheMetadata {
   sites: { [userId: string]: string }; // userId -> timestamp
   tickets: { [siteCode: string]: string }; // siteCode -> timestamp
   attendance: { [userId: string]: string }; // userId -> timestamp
+  stats: { [siteCode: string]: string }; // siteCode -> timestamp
 }
 
 // Get cache metadata
@@ -42,6 +43,7 @@ async function getCacheMetadata(): Promise<CacheMetadata> {
           sites: {},
           tickets: {},
           attendance: {},
+          stats: {},
         };
   } catch (error: any) {
     logger.error("Error getting cache metadata", {
@@ -54,6 +56,7 @@ async function getCacheMetadata(): Promise<CacheMetadata> {
       sites: {},
       tickets: {},
       attendance: {},
+      stats: {},
     };
   }
 }
@@ -285,6 +288,43 @@ export async function getAttendanceCacheAge(
   const metadata = await getCacheMetadata();
   if (!metadata.attendance[userId]) return null;
   return Date.now() - new Date(metadata.attendance[userId]).getTime();
+}
+
+// ===== STATS =====
+
+const CACHE_STATS_PREFIX = "@cache_stats_";
+
+export async function cacheStats(siteCode: string, stats: any): Promise<void> {
+  try {
+    await AsyncStorage.setItem(
+      `${CACHE_STATS_PREFIX}${siteCode}`,
+      JSON.stringify(stats),
+    );
+    const metadata = await getCacheMetadata();
+    await updateCacheMetadata({
+      stats: { ...(metadata.stats || {}), [siteCode]: new Date().toISOString() },
+    });
+  } catch (error: any) {
+    logger.error("Error caching stats", {
+      module: "OFFLINE_DATA_CACHE",
+      error: error.message,
+      siteCode,
+    });
+  }
+}
+
+export async function getCachedStats(siteCode: string): Promise<any | null> {
+  try {
+    const data = await AsyncStorage.getItem(`${CACHE_STATS_PREFIX}${siteCode}`);
+    return data ? JSON.parse(data) : null;
+  } catch (error: any) {
+    logger.error("Error getting cached stats", {
+      module: "OFFLINE_DATA_CACHE",
+      error: error.message,
+      siteCode,
+    });
+    return null;
+  }
 }
 
 // ===== CLEAR ALL CACHE =====

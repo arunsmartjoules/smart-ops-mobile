@@ -5,7 +5,7 @@ import {
   cacheAttendance,
   getCachedAttendance,
 } from "../utils/offlineDataCache";
-import { authService } from "../services/AuthService";
+import { supabase } from "./supabase";
 import { fetchWithTimeout } from "../utils/apiHelper";
 import { API_BASE_URL } from "../constants/api";
 
@@ -49,8 +49,9 @@ const isAttendanceForToday = (log: AttendanceLog | null | undefined) => {
 
 // Helper for API requests with auth and retry logic
 const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
-  // Get valid token (will refresh if needed)
-  let token = await authService.getValidToken();
+  // Get valid token from Supabase session (auto-refreshed by SDK)
+  const { data: { session } } = await supabase.auth.getSession();
+  let token = session?.access_token ?? null;
 
   const getHeaders = (t: string | null) => ({
     "Content-Type": "application/json",
@@ -63,23 +64,6 @@ const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
       ...options,
       headers: getHeaders(token),
     });
-
-    // If 401, try refresh once
-    if (response.status === 401) {
-      logger.debug(`401 on ${endpoint}, attempting refresh`, {
-        module: "ATTENDANCE_SERVICE",
-      });
-      const newToken = await authService.refreshToken();
-
-      if (newToken) {
-        token = newToken;
-        // Retry with new token
-        response = await fetchWithTimeout(`${BACKEND_URL}${endpoint}`, {
-          ...options,
-          headers: getHeaders(token),
-        });
-      }
-    }
 
     const result = await response.json();
 
@@ -237,6 +221,47 @@ export const AttendanceService = {
    * Get user's assigned sites with coordinates
    */
   async getUserSites(userId: string, projectType?: string): Promise<Site[]> {
+    const normalizeSites = (sites: any[]): Site[] => {
+      const uniqueSites = new Map<string, Site>();
+
+      for (const site of sites || []) {
+        const siteCode = site?.site_code;
+        if (!siteCode || uniqueSites.has(siteCode)) continue;
+
+        uniqueSites.set(siteCode, {
+          site_code: siteCode,
+          name: site?.site_name || site?.name || siteCode,
+          address: site?.address,
+          city: site?.city,
+          state: site?.state,
+          latitude: site?.latitude,
+          longitude: site?.longitude,
+          distance: site?.distance,
+          inRange: site?.inRange,
+          radius: site?.radius,
+        });
+      }
+
+      return Array.from(uniqueSites.values());
+    };
+
+    const mappedSitesResult = await apiFetch(`/api/site-users/user/${userId}`);
+    if (mappedSitesResult.success && Array.isArray(mappedSitesResult.data)) {
+      const rawSites = projectType
+        ? mappedSitesResult.data.filter((r: any) => r.project_type === projectType)
+        : mappedSitesResult.data;
+      const mappedSites = normalizeSites(rawSites);
+      if (mappedSites.length > 0) {
+        logger.debug("Loaded mapped sites from site-users", {
+          module: "ATTENDANCE_SERVICE",
+          userId,
+          count: mappedSites.length,
+          projectType,
+        });
+        return mappedSites;
+      }
+    }
+
     const params = new URLSearchParams();
     if (projectType) params.append("project_type", projectType);
 
@@ -244,9 +269,24 @@ export const AttendanceService = {
     const result = await apiFetch(
       `/api/attendance/user-sites/${userId}${queryStr ? `?${queryStr}` : ""}`,
     );
-    if (result.success) {
-      return result.data;
+    if (result.success && Array.isArray(result.data)) {
+      const attendanceSites = normalizeSites(result.data);
+      logger.debug("Loaded mapped sites from attendance", {
+        module: "ATTENDANCE_SERVICE",
+        userId,
+        count: attendanceSites.length,
+        projectType,
+      });
+      return attendanceSites;
     }
+
+    logger.warn("Failed to load mapped sites", {
+      module: "ATTENDANCE_SERVICE",
+      userId,
+      projectType,
+      siteUsersError: mappedSitesResult.error,
+      attendanceError: result.error,
+    });
     return [];
   },
 

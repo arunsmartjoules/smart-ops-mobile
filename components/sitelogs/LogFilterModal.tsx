@@ -50,17 +50,15 @@ const LogFilterModal = ({
     if (selectedDate) setToDate(selectedDate);
   };
 
-  const siteOptions = React.useMemo(
-    () =>
-      availableSites.map((site) => ({
-        value: site.site_code || site.id,
-        label: `${site.site_code} - ${site.name}`,
-        description: `${site.city || ""}, ${site.state || ""}`
-          .trim()
-          .replace(/^, |, $/g, ""),
-      })),
-    [availableSites],
-  );
+  const siteOptions = React.useMemo(() => {
+    return availableSites.map((site) => ({
+      value: site.site_code || site.id,
+      label: `${site.site_code} - ${site.name}`,
+      description: `${site.city || ""}, ${site.state || ""}`
+        .trim()
+        .replace(/^, |, $/g, ""),
+    }));
+  }, [availableSites]);
 
   if (!visible) return null;
 

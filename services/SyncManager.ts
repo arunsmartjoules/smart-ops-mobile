@@ -3,14 +3,17 @@ import { AppState, AppStateStatus } from "react-native";
 import {
   syncPendingTicketUpdates,
   pullRecentTickets,
+  updateTicketLastSynced,
 } from "@/utils/syncTicketStorage";
 import {
   syncPendingSiteLogs,
   pullRecentSiteLogs,
   pullRecentChillerReadings,
 } from "@/utils/syncSiteLogStorage";
-import { authService } from "./AuthService";
+import { supabase } from "./supabase";
+import { updatePMLastSynced } from "@/utils/syncPMStorage";
 import logger from "@/utils/logger";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 // We need to avoid hardcoded URLs if possible, but for sync we need API connection
 // Ideally this comes from a config or env
@@ -71,7 +74,18 @@ class SyncManager {
     this.setupNetworkListener();
     this.setupAppStateListener();
     this.registerBackgroundFetchAsync();
+    this.loadPersistedTimes();
     logger.info("SyncManager initialized", { module: "SYNC_MANAGER" });
+  }
+
+  /**
+   * Load persisted timestamps from storage
+   */
+  private async loadPersistedTimes(): Promise<void> {
+    try {
+      const globalTime = await AsyncStorage.getItem("@sync_last_time");
+      if (globalTime) this.lastSyncTime = parseInt(globalTime);
+    } catch (err) {}
   }
 
   /**
@@ -128,6 +142,8 @@ class SyncManager {
               module: "SYNC_MANAGER",
               reason: "network_reconnect",
             });
+            // Flush any queued activity logs first, then sync data
+            logger.flushActivityQueue().catch(() => {});
             this.triggerSync("network_reconnect");
           }, 2000);
         }
@@ -186,6 +202,7 @@ class SyncManager {
     try {
       await this.currentSyncPromise;
       this.lastSyncTime = now;
+      await AsyncStorage.setItem("@sync_last_time", String(now));
     } finally {
       this.isSyncing = false;
       this.currentSyncPromise = null;
@@ -196,7 +213,8 @@ class SyncManager {
    * Prefetch all essential data for current user
    */
   async prefetchAll(): Promise<void> {
-    if (!authService.getValidToken()) return;
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.access_token) return;
 
     logger.info("Starting background prefetch", { module: "SYNC_MANAGER" });
 
@@ -222,8 +240,9 @@ class SyncManager {
         module: "SYNC_MANAGER",
       });
 
-      // Get token (will refresh if needed)
-      const token = await authService.getValidToken();
+      // Get token from Supabase session (auto-refreshed by SDK)
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token ?? null;
       if (!token) {
         logger.warn("Sync aborted - no valid token", {
           module: "SYNC_MANAGER",
@@ -241,7 +260,9 @@ class SyncManager {
           reason === "manual"
         ) {
           // We need site codes from user context or similar.
-          const siteCode = await authService.getCurrentSiteCode();
+          const siteCode = await AsyncStorage.getItem(
+            session ? `last_site_${session.user.id}` : ""
+          ).catch(() => null);
           if (siteCode) {
             const pullTicketResult = await pullRecentTickets(
               siteCode,
@@ -254,12 +275,15 @@ class SyncManager {
             });
           }
         }
-
         logger.info("Ticket sync complete", {
           module: "SYNC_MANAGER",
           synced: ticketResult.synced,
           failed: ticketResult.failed,
         });
+
+        if (ticketResult.synced > 0 || reason === "manual") {
+          await updateTicketLastSynced();
+        }
       } catch (err: any) {
         logger.error("Ticket sync failed", {
           module: "SYNC_MANAGER",
@@ -281,10 +305,37 @@ class SyncManager {
             module: "SYNC_MANAGER",
             reason,
           });
-          const siteLogResult = await pullRecentSiteLogs(token, API_URL);
-          const chillerResult = await pullRecentChillerReadings(token, API_URL);
+          let currentSite = session
+            ? await AsyncStorage.getItem(`last_site_${session.user.id}`).catch(() => null)
+            : null;
+          if (!currentSite || currentSite === "all") {
+            const userId = session?.user.id ?? null;
+            if (userId) {
+              const AttendanceService = (await import("./AttendanceService")).default;
+              const sites = await AttendanceService.getUserSites(userId);
+              if (sites.length > 0) {
+                currentSite = sites[0].site_code;
+                await AsyncStorage.setItem(`last_site_${userId}`, currentSite);
+              }
+            }
+          }
+          
+          if (!currentSite || currentSite === "all") {
+            logger.warn("No specific site found for sync, skipping history pull", { module: "SYNC_MANAGER" });
+            return;
+          }
+          const siteLogResult = await pullRecentSiteLogs(
+            token,
+            API_URL,
+            currentSite,
+          );
+          const chillerResult = await pullRecentChillerReadings(
+            token,
+            API_URL,
+            currentSite,
+          );
           const ticketResult = await pullRecentTickets(
-            (await authService.getCurrentSiteCode()) || "",
+            currentSite,
             token,
             API_URL,
           );
@@ -317,11 +368,14 @@ class SyncManager {
         await PMService.pushPendingResponses();
         await PMService.pushPendingInstances();
 
-        const siteCode = await authService.getCurrentSiteCode();
+        const siteCode = session
+          ? await AsyncStorage.getItem(`last_site_${session.user.id}`).catch(() => null)
+          : null;
         if (siteCode) {
           await PMService.pullFromServer(siteCode);
         }
 
+        await updatePMLastSynced();
         logger.info("PM sync complete", { module: "SYNC_MANAGER" });
       } catch (err: any) {
         logger.error("PM sync failed", {

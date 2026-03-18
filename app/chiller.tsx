@@ -32,8 +32,8 @@ import { SiteLogService } from "@/services/SiteLogService";
 import AssetService from "@/services/AssetService";
 import AttendanceService from "@/services/AttendanceService";
 import { useAuth } from "@/contexts/AuthContext";
-import * as ImagePicker from "expo-image-picker";
 import { StorageService } from "@/services/StorageService";
+import { LogImagePicker } from "@/components/sitelogs/LogImagePicker";
 import SearchableSelect, { SelectOption } from "@/components/SearchableSelect";
 import SignaturePad from "@/components/SignaturePad";
 import { LinearGradient } from "expo-linear-gradient";
@@ -228,64 +228,6 @@ export default function ChillerEntry() {
     setFormData((prev) => ({ ...prev, [field]: value }));
   };
 
-  const processImageResult = async (result: ImagePicker.ImagePickerResult) => {
-    if (!result.canceled && result.assets && result.assets.length > 0) {
-      setUploading(true);
-      try {
-        const uri = result.assets[0].uri;
-        const filename = `chiller/${selectedSite}/${Date.now()}.jpg`;
-        const publicUrl = await StorageService.uploadFile(
-          "site-log-attachments",
-          filename,
-          uri,
-        );
-
-        if (publicUrl) {
-          updateField("attachment", publicUrl);
-        } else {
-          Alert.alert(
-            "Upload Failed",
-            "Could not upload image. Please try again.",
-          );
-        }
-      } catch (e: any) {
-        Alert.alert("Error", e.message);
-      } finally {
-        setUploading(false);
-      }
-    }
-  };
-
-  const handleAttachment = () => {
-    Alert.alert("Add Attachment", "Choose an option", [
-      {
-        text: "Take Photo",
-        onPress: async () => {
-          const perm = await ImagePicker.requestCameraPermissionsAsync();
-          if (perm.granted) {
-            const res = await ImagePicker.launchCameraAsync({
-              mediaTypes: ImagePicker.MediaTypeOptions.Images,
-              quality: 0.5,
-            });
-            processImageResult(res);
-          } else {
-            Alert.alert("Permission Required", "Camera permission is needed.");
-          }
-        },
-      },
-      {
-        text: "Choose from Gallery",
-        onPress: async () => {
-          const res = await ImagePicker.launchImageLibraryAsync({
-            mediaTypes: ImagePicker.MediaTypeOptions.Images,
-            quality: 0.5,
-          });
-          processImageResult(res);
-        },
-      },
-      { text: "Cancel", style: "cancel" },
-    ]);
-  };
 
   const handleSubmission = async (status: string, sig?: string) => {
     if (!formData.chillerId) {
@@ -619,38 +561,12 @@ export default function ChillerEntry() {
                     Evidence & Observation
                   </Text>
 
-                  {formData.attachment ? (
-                    <View className="relative mb-4">
-                      <Image
-                        source={{ uri: formData.attachment }}
-                        className="w-full h-48 rounded-2xl bg-slate-100"
-                        resizeMode="cover"
-                      />
-                      <TouchableOpacity
-                        onPress={() => updateField("attachment", "")}
-                        className="absolute top-2 right-2 bg-red-500 w-8 h-8 rounded-full items-center justify-center"
-                      >
-                        <Trash2 size={16} color="white" />
-                      </TouchableOpacity>
-                    </View>
-                  ) : (
-                    <TouchableOpacity
-                      onPress={handleAttachment}
-                      disabled={uploading}
-                      className="w-full h-32 border-2 border-dashed border-slate-200 dark:border-slate-800 rounded-2xl items-center justify-center bg-white dark:bg-slate-900 mb-4"
-                    >
-                      {uploading ? (
-                        <ActivityIndicator color="#0d9488" />
-                      ) : (
-                        <>
-                          <Camera size={24} color="#94a3b8" />
-                          <Text className="text-slate-400 font-bold text-xs mt-2 uppercase tracking-wider">
-                            Add Photo Evidence
-                          </Text>
-                        </>
-                      )}
-                    </TouchableOpacity>
-                  )}
+                  <LogImagePicker
+                    value={formData.attachment}
+                    onImageChange={(url) => updateField("attachment", url || "")}
+                    uploadPath={`chiller/${selectedSite}`}
+                    disabled={uploading}
+                  />
 
                   <Text className="text-slate-500 dark:text-slate-400 text-[10px] font-bold uppercase tracking-widest mb-1.5 ml-1">
                     Remarks

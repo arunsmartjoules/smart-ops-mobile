@@ -42,8 +42,15 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!isReady) return;
 
-    // Sync with NativeWind
-    setColorScheme(theme);
+    // Sync with NativeWind - use timeout to avoid sync update error in React 19/NativeWind 4
+    // This prevents "Can't perform a React state update on a component that hasn't mounted yet"
+    const timer = setTimeout(() => {
+      try {
+        setColorScheme(theme);
+      } catch (e) {
+        logger.warn("Failed to sync NativeWind color scheme", { error: e });
+      }
+    }, 0);
 
     const effectiveTheme =
       theme === "system"
@@ -60,6 +67,8 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
         document.documentElement.classList.remove("dark");
       }
     }
+
+    return () => clearTimeout(timer);
   }, [theme, systemColorScheme, isReady, setColorScheme]);
 
   const loadTheme = useCallback(async () => {

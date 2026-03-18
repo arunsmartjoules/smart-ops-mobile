@@ -21,15 +21,16 @@ const TicketStats = ({
   currentStatus,
   onStatusChange,
 }: TicketStatsProps) => {
-  if (loading && !stats) {
+  if (loading || !stats || Object.keys(stats).length === 0) {
     return (
       <View className="px-5 mb-3">
         <View className="flex-row gap-2">
           {[1, 2, 3, 4].map((i) => (
             <Skeleton
               key={i}
-              height={80}
-              style={{ flex: 1, borderRadius: 12 }}
+              height={70}
+              borderRadius={16}
+              style={{ flex: 1 }}
             />
           ))}
         </View>

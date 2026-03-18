@@ -113,7 +113,7 @@ export default function ChemicalEntry() {
           const perm = await ImagePicker.requestCameraPermissionsAsync();
           if (perm.granted) {
             const res = await ImagePicker.launchCameraAsync({
-              mediaTypes: ImagePicker.MediaTypeOptions.Images,
+              mediaTypes: "images",
               quality: 0.5,
             });
             processImageResult(res);
@@ -126,7 +126,7 @@ export default function ChemicalEntry() {
         text: "Choose from Gallery",
         onPress: async () => {
           const res = await ImagePicker.launchImageLibraryAsync({
-            mediaTypes: ImagePicker.MediaTypeOptions.Images,
+            mediaTypes: "images",
             quality: 0.5,
           });
           processImageResult(res);
@@ -138,7 +138,7 @@ export default function ChemicalEntry() {
 
   const handleCompletePress = () => {
     if (!formData.chemicalDosing) {
-      Alert.alert("Error", "Please select Yes or No for Chemical Dosing");
+      Alert.alert("Error", "Please select Dosed or Not Dosed for Chemical Dosing");
       return;
     }
 
@@ -224,94 +224,70 @@ export default function ChemicalEntry() {
 
         <ScrollView className="flex-1 p-5" showsVerticalScrollIndicator={false}>
           <View className="mt-4">
-            <View className="mb-6">
-              <Text className="text-slate-500 dark:text-slate-400 text-[10px] font-bold uppercase tracking-widest mb-2 ml-1">
-                Chemical Dosing Done?
-              </Text>
-              <TouchableOpacity
-                onPress={() => setShowDosingPicker(true)}
-                className="flex-row items-center justify-between bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-100 dark:border-slate-800"
-                style={{
-                  shadowColor: "#000",
-                  shadowOffset: { width: 0, height: 1 },
-                  shadowOpacity: 0.05,
-                  shadowRadius: 4,
-                  elevation: 2,
-                }}
-              >
-                <View className="flex-row items-center">
-                  <View className="w-8 h-8 rounded-lg bg-purple-50 dark:bg-purple-900/30 items-center justify-center mr-3">
-                    <FlaskConical size={18} color="#9333ea" />
-                  </View>
-                  <Text
-                    className={`font-bold text-lg ${formData.chemicalDosing ? "text-slate-900 dark:text-slate-50" : "text-slate-400"}`}
-                  >
-                    {formData.chemicalDosing || "Select Option"}
-                  </Text>
-                </View>
-                <ChevronDown size={20} color="#94a3b8" />
-              </TouchableOpacity>
-            </View>
-
-            <View className="mb-6 mt-2">
-              <Text className="text-slate-900 dark:text-slate-50 font-bold text-base mb-4">
-                Attachment
-              </Text>
-              {formData.attachment ? (
-                <View className="relative">
-                  <Image
-                    source={{ uri: formData.attachment }}
-                    className="w-full h-48 rounded-xl bg-slate-100"
-                    resizeMode="cover"
-                  />
-                  <TouchableOpacity
-                    onPress={() => updateField("attachment", "")}
-                    className="absolute top-2 right-2 bg-red-500 w-8 h-8 rounded-full items-center justify-center p-1"
-                  >
-                    <Trash2 size={16} color="white" />
-                  </TouchableOpacity>
-                </View>
-              ) : (
+            <View className="flex-row items-end space-x-3 gap-3 mb-6">
+              <View className="flex-1">
+                <Text className="text-slate-500 dark:text-slate-400 text-[10px] font-bold uppercase tracking-widest mb-2 ml-1">
+                  Chemical Dosing Done?
+                </Text>
                 <TouchableOpacity
-                  onPress={handleAttachment}
-                  disabled={uploading}
-                  className="w-full h-32 border-2 border-dashed border-slate-300 dark:border-slate-700 rounded-xl items-center justify-center bg-slate-50 dark:bg-slate-900"
+                  onPress={() => setShowDosingPicker(true)}
+                  className="flex-row items-center justify-between bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-100 dark:border-slate-800"
+                  style={{
+                    shadowColor: "#000",
+                    shadowOffset: { width: 0, height: 1 },
+                    shadowOpacity: 0.05,
+                    shadowRadius: 4,
+                    elevation: 2,
+                  }}
                 >
-                  {uploading ? (
-                    <ActivityIndicator color="#0d9488" />
-                  ) : (
-                    <>
-                      <Camera size={24} color="#94a3b8" />
-                      <Text className="text-slate-400 font-bold text-xs mt-2 uppercase tracking-wider">
-                        Add Photo / Upload
-                      </Text>
-                    </>
-                  )}
+                  <View className="flex-row items-center">
+                    <View className="w-8 h-8 rounded-lg bg-purple-50 dark:bg-purple-900/30 items-center justify-center mr-3">
+                      <FlaskConical size={18} color="#9333ea" />
+                    </View>
+                    <Text
+                      className={`font-bold text-lg ${formData.chemicalDosing ? "text-slate-900 dark:text-slate-50" : "text-slate-400"}`}
+                    >
+                      {formData.chemicalDosing === "Yes" ? "Dosed" : formData.chemicalDosing === "No" ? "Not Dosed" : "Select Option"}
+                    </Text>
+                  </View>
+                  <ChevronDown size={20} color="#94a3b8" />
                 </TouchableOpacity>
-              )}
+              </View>
+
+              <View className="w-24">
+                <Text className="text-slate-500 dark:text-slate-400 text-[10px] font-bold uppercase tracking-widest mb-2 ml-1">
+                  Photo
+                </Text>
+                {formData.attachment ? (
+                  <View className="relative">
+                    <TouchableOpacity onPress={() => updateField("attachment", "")}>
+                      <Image
+                        source={{ uri: formData.attachment }}
+                        className="w-full h-14 rounded-2xl bg-slate-100"
+                        resizeMode="cover"
+                      />
+                      <View className="absolute top-1 right-1 bg-red-500 w-5 h-5 rounded-full items-center justify-center">
+                        <Trash2 size={10} color="white" />
+                      </View>
+                    </TouchableOpacity>
+                  </View>
+                ) : (
+                  <TouchableOpacity
+                    onPress={handleAttachment}
+                    disabled={uploading}
+                    className="w-full h-14 border-2 border-dashed border-slate-300 dark:border-slate-700 rounded-2xl items-center justify-center bg-white dark:bg-slate-900"
+                  >
+                    {uploading ? (
+                      <ActivityIndicator size="small" color="#9333ea" />
+                    ) : (
+                      <Camera size={20} color="#94a3b8" />
+                    )}
+                  </TouchableOpacity>
+                )}
+              </View>
             </View>
 
-            <View className="mb-8">
-              <Text className="text-slate-500 dark:text-slate-400 text-[10px] font-bold uppercase tracking-widest mb-2 ml-1">
-                Remarks
-              </Text>
-              <TextInput
-                value={formData.remarks}
-                onChangeText={(val) => updateField("remarks", val)}
-                placeholder="Any observations..."
-                multiline
-                numberOfLines={3}
-                textAlignVertical="top"
-                className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-100 dark:border-slate-800 font-medium text-slate-900 dark:text-slate-50 min-h-[100px]"
-                style={{
-                  shadowColor: "#000",
-                  shadowOffset: { width: 0, height: 1 },
-                  shadowOpacity: 0.05,
-                  shadowRadius: 4,
-                  elevation: 2,
-                }}
-              />
-            </View>
+            {/* Removed manual remarks and old attachment section */}
 
             {/* Spacer for fixed bottom button */}
             <View className="h-24" />
@@ -392,21 +368,24 @@ export default function ChemicalEntry() {
                 Chemical Dosing Done?
               </Text>
             </View>
-            {["Yes", "No"].map((option) => (
+            {[
+              { label: "Dosed", value: "Yes" },
+              { label: "Not Dosed", value: "No" },
+            ].map((option) => (
               <TouchableOpacity
-                key={option}
+                key={option.value}
                 onPress={() => {
-                  updateField("chemicalDosing", option);
+                  updateField("chemicalDosing", option.value);
                   setShowDosingPicker(false);
                 }}
                 className="flex-row items-center justify-between p-5 border-b border-slate-50 dark:border-slate-800/50 last:border-b-0"
               >
                 <Text
-                  className={`text-lg font-bold ${formData.chemicalDosing === option ? "text-purple-600" : "text-slate-600 dark:text-slate-400"}`}
+                  className={`text-lg font-bold ${formData.chemicalDosing === option.value ? "text-purple-600" : "text-slate-600 dark:text-slate-400"}`}
                 >
-                  {option}
+                  {option.label}
                 </Text>
-                {formData.chemicalDosing === option && (
+                {formData.chemicalDosing === option.value && (
                   <Check size={20} color="#9333ea" />
                 )}
               </TouchableOpacity>

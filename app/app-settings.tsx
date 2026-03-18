@@ -41,6 +41,12 @@ import {
   clearAllOfflineTicketData,
   TicketSyncStatus,
 } from "@/utils/syncTicketStorage";
+import {
+  getPMSyncStatus,
+  getPendingPMCount,
+  setPMAutoSyncEnabled,
+  PMSyncStatus,
+} from "@/utils/syncPMStorage";
 import { syncManager } from "@/services/SyncManager";
 import {
   clearAllCache,
@@ -75,6 +81,13 @@ export default function AppSettings() {
     },
   );
 
+  // PM sync status
+  const [pmSyncStatus, setPmSyncStatus] = useState<PMSyncStatus>({
+    lastSynced: null,
+    pendingCount: 0,
+    autoSyncEnabled: true,
+  });
+
   // Cache info
   const [cacheSize, setCacheSize] = useState({ items: 0, bytes: 0 });
 
@@ -100,9 +113,14 @@ export default function AppSettings() {
       const siteLogStatus = await getSiteLogSyncStatus();
       const siteLogPending = await getPendingSiteLogsCount();
       setSiteLogSyncStatus((prev) => ({
-        ...siteLogStatus,
+        lastSynced: siteLogStatus.lastSynced,
         pendingCount: siteLogPending,
+        autoSyncEnabled: siteLogStatus.autoSyncEnabled,
       }));
+
+      // Load PM status
+      const pmStatus = await getPMSyncStatus();
+      setPmSyncStatus(pmStatus);
 
       // Load cache size
       const cache = await getCacheSize();
@@ -193,6 +211,12 @@ export default function AppSettings() {
             ...prev,
             autoSyncEnabled: enabled,
           }));
+        } else if (module === "pm" as any) {
+          await setPMAutoSyncEnabled(enabled);
+          setPmSyncStatus((prev) => ({
+            ...prev,
+            autoSyncEnabled: enabled,
+          }));
         }
       } catch (error: any) {
         logger.error("Toggle auto-sync failed", {
@@ -221,8 +245,15 @@ export default function AppSettings() {
   }, []);
 
   const totalPending = useMemo(
-    () => ticketSyncStatus.pendingCount + siteLogSyncStatus.pendingCount,
-    [ticketSyncStatus.pendingCount, siteLogSyncStatus.pendingCount],
+    () =>
+      ticketSyncStatus.pendingCount +
+      siteLogSyncStatus.pendingCount +
+      pmSyncStatus.pendingCount,
+    [
+      ticketSyncStatus.pendingCount,
+      siteLogSyncStatus.pendingCount,
+      pmSyncStatus.pendingCount,
+    ],
   );
 
   return (
@@ -496,8 +527,10 @@ export default function AppSettings() {
                   </Text>
                 </View>
                 <View className="items-end">
-                  <Text className="text-green-600 dark:text-green-400 font-bold">
-                    0
+                  <Text
+                    className={`font-bold ${pmSyncStatus.pendingCount > 0 ? "text-red-600 dark:text-red-400" : "text-green-600 dark:text-green-400"}`}
+                  >
+                    {pmSyncStatus.pendingCount}
                   </Text>
                   <Text className="text-slate-400 text-xs">pending</Text>
                 </View>
@@ -511,7 +544,7 @@ export default function AppSettings() {
                   </Text>
                 </View>
                 <Text className="text-slate-700 dark:text-slate-300 font-medium text-sm">
-                  Never
+                  {formatLastSynced(pmSyncStatus.lastSynced)}
                 </Text>
               </View>
 
@@ -521,10 +554,10 @@ export default function AppSettings() {
                   <Text className="text-slate-500 text-sm ml-2">Auto-sync</Text>
                 </View>
                 <Switch
-                  value={true}
-                  disabled={true}
+                  value={pmSyncStatus.autoSyncEnabled}
+                  onValueChange={(v) => handleToggleAutoSync("pm" as any, v)}
                   trackColor={{ false: "#e2e8f0", true: "#bbf7d0" }}
-                  thumbColor={"#22c55e"}
+                  thumbColor={pmSyncStatus.autoSyncEnabled ? "#22c55e" : "#94a3b8"}
                 />
               </View>
             </View>

@@ -100,14 +100,14 @@ const HistoryItem = React.memo(
 
         {/* Check-in / Check-out in a single row */}
         {log.check_in_time && (
-          <View className="flex-row items-center bg-slate-50 rounded-xl px-3 py-2.5">
+          <View className="flex-row items-center bg-slate-50 dark:bg-slate-800 rounded-xl px-3 py-2.5">
             {/* Check In */}
             <View className="flex-1 flex-row items-center">
-              <View className="w-7 h-7 rounded-md bg-green-100 items-center justify-center mr-2">
-                <LogIn size={14} color="#22c55e" />
+              <View className={`w-7 h-7 rounded-md ${log.check_in_time ? "bg-green-100 dark:bg-green-900" : "bg-slate-200 dark:bg-slate-700"} items-center justify-center mr-2`}>
+                <LogIn size={14} color={log.check_in_time ? "#22c55e" : "#94a3b8"} />
               </View>
               <View>
-                <Text className="text-slate-500 text-[10px] font-medium uppercase">
+                <Text className="text-slate-500 dark:text-slate-400 text-[10px] font-medium uppercase">
                   In
                 </Text>
                 <Text className="text-slate-800 dark:text-slate-200 text-sm font-semibold">
@@ -124,7 +124,7 @@ const HistoryItem = React.memo(
             {/* Check Out */}
             <View className="flex-1 flex-row items-center">
               <View
-                className={`w-7 h-7 rounded-md items-center justify-center mr-2 ${log.check_out_time ? "bg-orange-100" : "bg-slate-200"}`}
+                className={`w-7 h-7 rounded-md items-center justify-center mr-2 ${log.check_out_time ? "bg-orange-100 dark:bg-orange-900" : "bg-slate-200 dark:bg-slate-700"}`}
               >
                 <LogOut
                   size={14}
@@ -132,11 +132,11 @@ const HistoryItem = React.memo(
                 />
               </View>
               <View>
-                <Text className="text-slate-500 text-[10px] font-medium uppercase">
+                <Text className="text-slate-500 dark:text-slate-400 text-[10px] font-medium uppercase">
                   Out
                 </Text>
                 <Text
-                  className={`text-sm font-semibold ${log.check_out_time ? "text-slate-800 dark:text-slate-200" : "text-slate-400"}`}
+                  className={`text-sm font-semibold ${log.check_out_time ? "text-slate-800 dark:text-slate-200" : "text-slate-400 dark:text-slate-500"}`}
                 >
                   {log.check_out_time
                     ? format(new Date(log.check_out_time), "h:mm a")
@@ -769,9 +769,9 @@ export default function AttendancePage() {
               )}
             </View>
 
-            <View className="flex-row gap-4">
-              {todayAttendance && (
-                <View className="flex-1 bg-black/10 rounded-xl p-3">
+             <View className="flex-row gap-4">
+               {todayAttendance && (
+                 <View className="flex-1 bg-white/10 dark:bg-black/10 rounded-xl p-3">
                   <View className="flex-row items-center mb-1">
                     <LogIn size={14} color="white" style={{ marginRight: 8 }} />
                     <Text className="text-white/80 text-xs">Checked In</Text>
@@ -781,8 +781,8 @@ export default function AttendancePage() {
                   </Text>
                 </View>
               )}
-              {todayAttendance?.check_out_time && (
-                <View className="flex-1 bg-black/10 rounded-xl p-3">
+               {todayAttendance?.check_out_time && (
+                 <View className="flex-1 bg-white/10 dark:bg-black/10 rounded-xl p-3">
                   <View className="flex-row items-center mb-1">
                     <LogOut
                       size={14}
@@ -803,7 +803,7 @@ export default function AttendancePage() {
               <TouchableOpacity
                 onPress={handleCheckInPress}
                 disabled={validatingLocation}
-                className="mt-6 bg-white rounded-xl py-3 items-center flex-row justify-center"
+                className="mt-6 bg-white/10 dark:bg-black/10 rounded-xl py-3 items-center flex-row justify-center"
               >
                 {validatingLocation ? (
                   <ActivityIndicator color="#dc2626" size="small" />

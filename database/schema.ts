@@ -1,7 +1,7 @@
 import { appSchema, tableSchema } from "@nozbe/watermelondb";
 
 export const schema = appSchema({
-  version: 14,
+  version: 15,
   tables: [
     // Tickets for offline access and updates
     tableSchema({
@@ -240,6 +240,22 @@ export const schema = appSchema({
         { name: "remarks", type: "string", isOptional: true },
         { name: "image_url", type: "string", isOptional: true },
         { name: "is_synced", type: "boolean" },
+        { name: "created_at", type: "number" },
+        { name: "updated_at", type: "number" },
+      ],
+    }),
+    tableSchema({
+      name: "log_master",
+      columns: [
+        { name: "server_id", type: "string", isOptional: true, isIndexed: true },
+        { name: "task_name", type: "string", isIndexed: true },
+        { name: "log_name", type: "string", isIndexed: true },
+        { name: "sequence_number", type: "number" },
+        { name: "log_id", type: "string", isOptional: true },
+        { name: "dlr", type: "string", isOptional: true },
+        { name: "dbr", type: "string", isOptional: true },
+        { name: "nlt", type: "string", isOptional: true },
+        { name: "nmt", type: "string", isOptional: true },
         { name: "created_at", type: "number" },
         { name: "updated_at", type: "number" },
       ],

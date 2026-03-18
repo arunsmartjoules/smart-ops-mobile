@@ -1,5 +1,5 @@
 import { authEvents } from "../utils/authEvents";
-import { authService } from "./AuthService";
+import { supabase } from "./supabase";
 import { API_BASE_URL } from "../constants/api";
 import { fetchWithTimeout } from "../utils/apiHelper";
 import logger from "../utils/logger";
@@ -8,7 +8,8 @@ import { Ticket } from "./TicketsService";
 const BACKEND_URL = API_BASE_URL;
 
 const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
-  let token = await authService.getValidToken();
+  const { data: { session } } = await supabase.auth.getSession();
+  let token = session?.access_token ?? null;
 
   const getHeaders = (t: string | null) => ({
     "Content-Type": "application/json",
@@ -23,20 +24,9 @@ const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
     });
 
     if (response.status === 401) {
-      const newToken = await authService.refreshToken();
-      if (newToken) {
-        token = newToken;
-        response = await fetchWithTimeout(`${BACKEND_URL}${endpoint}`, {
-          ...options,
-          headers: getHeaders(token),
-        });
-      }
-
-      if (response.status === 401) {
-        // Silent sign-out: avoid intrusive alerts for token issues
-        authEvents.emitUnauthorized();
-        return { ok: false, error: "No token provided" };
-      }
+      // Silent sign-out: avoid intrusive alerts for token issues
+      authEvents.emitUnauthorized();
+      return { ok: false, error: "No token provided" };
     }
 
     const result = await response.json();

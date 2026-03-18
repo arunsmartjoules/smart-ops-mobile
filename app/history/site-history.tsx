@@ -2,7 +2,6 @@ import React, { useState, useEffect, useCallback, useMemo, memo } from "react";
 import {
   View,
   Text,
-  FlatList,
   ActivityIndicator,
   TouchableOpacity,
   TextInput,
@@ -10,10 +9,12 @@ import {
   RefreshControl,
   ScrollView,
   Platform,
+  Image,
+  Modal,
 } from "react-native";
+import { FlashList } from "@shopify/flash-list";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useLocalSearchParams, router } from "expo-router";
-import { useFocusEffect } from "@react-navigation/native";
+import { useLocalSearchParams, router, useFocusEffect } from "expo-router";
 import {
   ChevronLeft,
   Search,
@@ -29,6 +30,7 @@ import {
   Droplets,
   FlaskRound,
   Snowflake,
+  Maximize2,
 } from "lucide-react-native";
 import SiteLogService from "@/services/SiteLogService";
 import { format } from "date-fns";
@@ -47,12 +49,14 @@ const HistoryItem = memo(
     resolvedName,
     onPress,
     onLongPress,
+    onPreviewImage,
   }: {
     item: any;
     logName: string;
     resolvedName?: string;
     onPress: () => void;
     onLongPress: () => void;
+    onPreviewImage: (url: string) => void;
   }) => {
     const getLogIcon = () => {
       if (logName === "Temp RH") return Thermometer;
@@ -70,24 +74,24 @@ const HistoryItem = memo(
         onPress={onPress}
         onLongPress={onLongPress}
         activeOpacity={0.7}
-        className="bg-white dark:bg-slate-900 rounded-2xl mb-4 p-4"
+        className="bg-white dark:bg-slate-900 rounded-xl mb-2.5 p-3"
         style={{
           shadowColor: "#000",
-          shadowOffset: { width: 0, height: 4 },
+          shadowOffset: { width: 0, height: 2 },
           shadowOpacity: 0.04,
-          shadowRadius: 10,
-          elevation: 3,
+          shadowRadius: 6,
+          elevation: 2,
         }}
       >
-        <View className="flex-row justify-between items-start mb-3">
+        <View className="flex-row justify-between items-start mb-2">
           <View className="flex-row items-center flex-1 mr-3">
-            <View className="w-8 h-8 rounded-lg bg-slate-50 dark:bg-slate-800 items-center justify-center mr-3">
-              <IconComp size={16} color="#64748b" />
+            <View className="w-7 h-7 rounded-lg bg-slate-50 dark:bg-slate-800 items-center justify-center mr-2.5">
+              <IconComp size={14} color="#64748b" />
             </View>
             <View className="flex-1">
               <Text
                 className="text-slate-900 dark:text-slate-50 font-bold text-sm"
-                numberOfLines={2}
+                numberOfLines={1}
               >
                 {logName === "Chiller Logs"
                   ? item.assetName || item.chillerId || "Unknown Asset"
@@ -97,13 +101,13 @@ const HistoryItem = memo(
                       "dd MMM yyyy",
                     )}
               </Text>
-              <Text className="text-slate-400 text-[10px] font-bold uppercase tracking-wider">
+              <Text className="text-slate-400 text-xs font-bold uppercase tracking-wider">
                 {logName === "Chiller Logs"
                   ? format(
                       new Date(
                         item.reading_time || item.created_at || item.createdAt,
                       ),
-                      "dd MMM yyyy, HH:mm",
+                      "dd MMM, HH:mm",
                     )
                   : format(
                       new Date(item.created_at || item.createdAt),
@@ -115,40 +119,40 @@ const HistoryItem = memo(
           </View>
           <View className="items-end">
             <View
-              className={`px-2 py-1 rounded-md ${item.isSynced ? "bg-green-50" : "bg-amber-50"}`}
+              className={`px-1.5 py-0.5 rounded ${item.isSynced ? "bg-green-50" : "bg-amber-50"}`}
             >
               <Text
-                className={`text-[9px] font-bold uppercase tracking-wider ${item.isSynced ? "text-green-600" : "text-amber-600"}`}
+                className={`text-[10px] font-bold uppercase tracking-wider ${item.isSynced ? "text-green-600" : "text-amber-600"}`}
               >
-                {item.isSynced ? "Synced" : "Pending Sync"}
+                {item.isSynced ? "Synced" : "Pending"}
               </Text>
             </View>
           </View>
         </View>
 
-        <View className="bg-slate-50 dark:bg-slate-800/50 rounded-xl p-3 mb-3">
+        <View className="bg-slate-50 dark:bg-slate-800/50 rounded-lg p-2 mb-2">
           {item.logName === "Temp RH" && (
             <View className="flex-row justify-between">
               <View>
-                <Text className="text-slate-400 text-[10px] uppercase font-bold tracking-widest mb-1">
-                  Temperature
+                <Text className="text-slate-400 text-[10px] uppercase font-bold tracking-widest mb-0.5">
+                  Temp
                 </Text>
                 <Text className="text-slate-900 dark:text-slate-50 font-bold text-sm">
                   {item.temperature}°C
                 </Text>
               </View>
               <View className="items-end">
-                <Text className="text-slate-400 text-[10px] uppercase font-bold tracking-widest mb-1">
-                  Humidity
+                <Text className="text-slate-400 text-[10px] uppercase font-bold tracking-widest mb-0.5">
+                  RH
                 </Text>
                 <Text className="text-slate-900 dark:text-slate-50 font-bold text-sm">
-                  {item.rh}% RH
+                  {item.rh}%
                 </Text>
               </View>
             </View>
           )}
           {item.logName === "Water" && (
-            <View className="flex-row flex-wrap gap-y-2">
+            <View className="flex-row flex-wrap gap-y-1">
               <View className="w-1/3">
                 <Text className="text-slate-400 text-[10px] uppercase font-bold tracking-widest mb-0.5">
                   TDS
@@ -167,7 +171,7 @@ const HistoryItem = memo(
               </View>
               <View className="w-1/3 items-end">
                 <Text className="text-slate-400 text-[10px] uppercase font-bold tracking-widest mb-0.5">
-                  Hardness
+                  Hard
                 </Text>
                 <Text className="text-slate-900 dark:text-slate-50 font-bold text-xs">
                   {item.hardness}
@@ -177,10 +181,10 @@ const HistoryItem = memo(
           )}
           {item.logName === "Chemical Dosing" && (
             <View>
-              <Text className="text-slate-400 text-[10px] uppercase font-bold tracking-widest mb-1">
-                Chemical Dosing
+              <Text className="text-slate-400 text-[10px] uppercase font-bold tracking-widest mb-0.5">
+                Dosing
               </Text>
-              <Text className="text-slate-900 dark:text-slate-50 font-bold text-sm">
+              <Text className="text-slate-900 dark:text-slate-50 font-bold text-xs">
                 {item.chemicalDosing}
               </Text>
             </View>
@@ -188,38 +192,53 @@ const HistoryItem = memo(
           {(logName === "Chiller Logs" || item.chillerId) && (
             <View className="flex-row items-center justify-between">
               <View className="flex-row items-center">
-                <Activity size={12} color="#0d9488" />
-                <Text className="text-[11px] font-bold text-teal-600 ml-1.5">
+                <Activity size={10} color="#0d9488" />
+                <Text className="text-xs font-bold text-teal-600 ml-1">
                   {item.compressorLoadPercentage}% LOAD
                 </Text>
               </View>
               <Text className="text-slate-400 text-[10px] font-bold">
-                ID: {item.chillerId}
+                ID: {item.chillerId?.slice(-6) || "N/A"}
               </Text>
+            </View>
+          )}
+
+          {/* New: Image Thumbnail - Made more compact */}
+          {(item.attachment || item.attachments) && (
+            <View className="mt-2 pt-2 border-t border-slate-100 dark:border-slate-700">
+              <TouchableOpacity 
+                onPress={() => onPreviewImage(item.attachment || item.attachments)}
+                className="flex-row items-center"
+              >
+                <View className="w-10 h-10 rounded-lg overflow-hidden bg-slate-100 mr-2.5">
+                  <Image 
+                    source={{ uri: item.attachment || item.attachments }}
+                    className="w-full h-full"
+                    resizeMode="cover"
+                  />
+                  <View className="absolute inset-0 bg-black/10 items-center justify-center">
+                    <Maximize2 size={10} color="white" />
+                  </View>
+                </View>
+                <View className="flex-1">
+                  <Text className="text-slate-600 dark:text-slate-400 text-xs" numberOfLines={1}>
+                    Tap to preview attachment
+                  </Text>
+                </View>
+              </TouchableOpacity>
             </View>
           )}
         </View>
 
-        <View className="flex-row items-center justify-between mt-3 pt-3 border-t border-slate-50 dark:border-slate-800">
+        <View className="flex-row items-center justify-between mt-1 pt-2 border-t border-slate-100 dark:border-slate-800">
           <View className="flex-row items-center">
-            <MapPin size={12} color="#94a3b8" />
-            <Text className="text-slate-400 text-[10px] ml-1">
+            <MapPin size={10} color="#94a3b8" />
+            <Text className="text-slate-400 text-xs ml-1">
               {item.siteCode}
             </Text>
-            {item.assignedTo && (
-              <>
-                <Text className="text-slate-300 dark:text-slate-600 mx-2">
-                  |
-                </Text>
-                <User size={12} color="#94a3b8" />
-                <Text className="text-slate-400 text-[10px] ml-1">
-                  {item.assignedTo}
-                </Text>
-              </>
-            )}
           </View>
           <View
-            className={`px-2 py-0.5 rounded-full ${logStatus === "Open" || logStatus === "Inprogress" ? "bg-amber-100 dark:bg-amber-900/30" : "bg-green-100 dark:bg-green-900/30"}`}
+            className={`px-1.5 py-0.5 rounded-full ${logStatus === "Open" || logStatus === "Inprogress" ? "bg-amber-50 dark:bg-amber-900/20" : "bg-green-50 dark:bg-green-900/20"}`}
           >
             <Text
               className={`text-[10px] font-bold ${logStatus === "Open" || logStatus === "Inprogress" ? "text-amber-600" : "text-green-600"}`}
@@ -229,9 +248,9 @@ const HistoryItem = memo(
           </View>
         </View>
         {item.remarks && (
-          <View className="flex-row items-center mt-2">
+          <View className="flex-row items-center mt-1.5">
             <Text
-              className="text-slate-400 text-[10px] italic"
+              className="text-slate-400 text-xs italic"
               numberOfLines={1}
             >
               "{item.remarks}"
@@ -265,10 +284,6 @@ export default function SiteHistory() {
   const [searchQuery, setSearchQuery] = useState("");
   const [filterVisible, setFilterVisible] = useState(false);
   const [availableSites, setAvailableSites] = useState<Site[]>([]);
-
-  // Pagination state
-  const [visibleCount, setVisibleCount] = useState(50);
-  const PAGE_SIZE = 50;
 
   // Filtering states
   const [siteCode, setSiteCode] = useState<string>(params.siteCode || "");
@@ -321,14 +336,21 @@ export default function SiteHistory() {
     resolveCodes();
   }, [logs]);
 
+  const [previewImage, setPreviewImage] = useState<string | null>(null);
+
   const loadSites = async () => {
     if (!user) return;
     try {
       const sites = await AttendanceService.getUserSites(
         user.user_id || user.id,
-        "JouleCool",
       );
       setAvailableSites(sites);
+
+      // If no site is selected, or if we just came in and it's empty
+      // pick the first one as default (random site requirement)
+      if (!siteCode && sites.length > 0) {
+        setSiteCode(sites[0].site_code);
+      }
     } catch (error) {
       console.error("Error loading sites", error);
     }
@@ -338,12 +360,17 @@ export default function SiteHistory() {
     try {
       setRefreshing(true);
       await syncManager.triggerSync("manual");
-      await SiteLogService.pullChillerReadings(siteCode, {
+      const requestedSite =
+        siteCode === "all" && availableSites.length > 0
+          ? availableSites.map((s) => s.site_code).join(",")
+          : siteCode;
+
+      await SiteLogService.pullChillerReadings(requestedSite, {
         fromDate: fromDate?.getTime(),
         toDate: toDate?.getTime(),
       });
       if (params.logName !== "Chiller Logs") {
-        await SiteLogService.pullSiteLogs(siteCode, {
+        await SiteLogService.pullSiteLogs(requestedSite, {
           logName: params.logName,
           fromDate: fromDate?.getTime(),
           toDate: toDate?.getTime(),
@@ -393,16 +420,6 @@ export default function SiteHistory() {
     return filtered;
   }, [logs, selectedStatus, searchQuery]);
 
-  const paginatedLogs = useMemo(() => {
-    return filteredLogs.slice(0, visibleCount);
-  }, [filteredLogs, visibleCount]);
-
-  const loadMore = useCallback(() => {
-    if (visibleCount < filteredLogs.length) {
-      setVisibleCount((prev) => prev + PAGE_SIZE);
-    }
-  }, [visibleCount, filteredLogs.length]);
-
   const handleDelete = useCallback(
     async (item: any) => {
       Alert.alert(
@@ -439,23 +456,25 @@ export default function SiteHistory() {
   }, [siteCode, fromDate, toDate]);
 
   const getRoute = useCallback(() => {
-    if (params.logName === "Temp RH") return "/temp-rh-entry";
-    if (params.logName === "Water") return "/water-entry";
-    if (params.logName === "Chemical Dosing") return "/chemical-entry";
-    if (params.logName === "Chiller Logs") return "/chiller";
+    const name = params.logName?.toLowerCase() || "";
+    if (name.includes("temp")) return "/temp-rh"; // Note: changed from temp-rh-entry to match file name if needed
+    if (name.includes("water")) return "/water";
+    if (name.includes("chemical")) return "/chemical";
+    if (name.includes("chiller")) return "/chiller";
     return null;
   }, [params.logName]);
 
   const renderHistoryItem = useCallback(
     ({ item }: { item: any }) => {
       const route = getRoute();
-      const resolvedName = resolvedNames.get(item.executorId);
+      const resolvedName = resolvedNames.get(item.executorId) || item.executorId;
 
       return (
         <HistoryItem
           item={item}
-          logName={params.logName}
+          logName={params.logName || "Log"}
           resolvedName={resolvedName}
+          onPreviewImage={(url) => setPreviewImage(url)}
           onPress={() => {
             if (route) {
               router.push({
@@ -474,16 +493,14 @@ export default function SiteHistory() {
         />
       );
     },
-    [getRoute, params.logName, resolvedNames, siteCode, handleDelete],
+    [getRoute, params.logName, resolvedNames, siteCode, handleDelete, setPreviewImage],
   );
 
-  const renderFooter = () => (
-    <View className="pb-10">
-      {visibleCount < filteredLogs.length && (
-        <ActivityIndicator size="small" color="#dc2626" className="py-4" />
-      )}
-    </View>
-  );
+
+  const handleApplyFilter = useCallback(() => {
+    setFilterVisible(false);
+    fetchLocalLogs();
+  }, [fetchLocalLogs]);
 
   return (
     <View className="flex-1 bg-slate-50 dark:bg-slate-950">
@@ -501,7 +518,7 @@ export default function SiteHistory() {
               <Text className="text-lg font-bold text-slate-900 dark:text-slate-50 text-center">
                 {params.logName} History
               </Text>
-              <Text className="text-[10px] text-slate-400 dark:text-slate-500 font-bold uppercase tracking-widest">
+              <Text className="text-xs text-slate-400 dark:text-slate-500 font-bold uppercase tracking-widest">
                 {siteCode} Logs
               </Text>
             </View>
@@ -543,7 +560,6 @@ export default function SiteHistory() {
               value={searchQuery}
               onChangeText={(t) => {
                 setSearchQuery(t);
-                setVisibleCount(PAGE_SIZE);
               }}
               className="flex-1 ml-3 h-10 text-sm font-medium text-slate-900 dark:text-slate-50"
               placeholderTextColor="#94a3b8"
@@ -554,6 +570,48 @@ export default function SiteHistory() {
               </TouchableOpacity>
             )}
           </View>
+
+          {/* Shift Quick Filters */}
+          {params.logName?.toLowerCase()?.includes("temp") && (
+            <View className="mt-4">
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={{ paddingRight: 20 }}
+              >
+                {[
+                  { label: "All Shifts", value: "" },
+                  { label: "A", value: "Shift A" },
+                  { label: "B", value: "Shift B" },
+                  { label: "C", value: "Shift C" },
+                  { label: "G", value: "Shift G" },
+                ].map((shift) => {
+                  const isActive = searchQuery === shift.value;
+                  return (
+                    <TouchableOpacity
+                      key={shift.value}
+                      onPress={() => {
+                        setSearchQuery(isActive ? "" : shift.value);
+                      }}
+                      className={`mr-2 px-4 py-2 rounded-full border ${
+                        isActive
+                          ? "bg-red-600 border-red-600"
+                          : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800"
+                      }`}
+                    >
+                      <Text
+                        className={`text-sm font-bold ${
+                          isActive ? "text-white" : "text-slate-500"
+                        }`}
+                      >
+                        {shift.label}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            </View>
+          )}
 
           {/* Quick Status Filters */}
           <View className="mt-4">
@@ -572,7 +630,6 @@ export default function SiteHistory() {
                   key={status.value}
                   onPress={() => {
                     setSelectedStatus(status.value);
-                    setVisibleCount(PAGE_SIZE);
                   }}
                   className={`mr-2 px-4 py-2 rounded-full border ${
                     selectedStatus === status.value
@@ -581,7 +638,7 @@ export default function SiteHistory() {
                   }`}
                 >
                   <Text
-                    className={`text-xs font-bold ${
+                    className={`text-sm font-bold ${
                       selectedStatus === status.value
                         ? "text-white"
                         : "text-slate-500"
@@ -611,18 +668,13 @@ export default function SiteHistory() {
             ))}
           </View>
         ) : (
-          <FlatList
-            data={paginatedLogs}
+          <FlashList
+            data={filteredLogs}
             keyExtractor={(item) => item.id}
             renderItem={renderHistoryItem}
-            contentContainerStyle={{ padding: 20, paddingBottom: 40 }}
-            onEndReached={loadMore}
-            onEndReachedThreshold={0.5}
-            removeClippedSubviews={Platform.OS === "android"}
-            initialNumToRender={10}
-            maxToRenderPerBatch={10}
-            windowSize={5}
-            ListFooterComponent={renderFooter}
+            contentContainerStyle={{ padding: 20, paddingBottom: 150 }}
+            // @ts-ignore
+            estimatedItemSize={120}
             refreshControl={
               <RefreshControl
                 refreshing={refreshing}
@@ -672,7 +724,7 @@ export default function SiteHistory() {
         availableSites={availableSites}
         selectedSiteCode={siteCode}
         onSiteSelect={(id) => setSiteCode(id)}
-        onApply={() => setFilterVisible(false)}
+        onApply={handleApplyFilter}
       />
     </View>
   );

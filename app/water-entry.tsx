@@ -116,7 +116,7 @@ export default function WaterEntry() {
           const perm = await ImagePicker.requestCameraPermissionsAsync();
           if (perm.granted) {
             const res = await ImagePicker.launchCameraAsync({
-              mediaTypes: ImagePicker.MediaTypeOptions.Images,
+              mediaTypes: "images",
               quality: 0.5,
             });
             processImageResult(res);
@@ -129,7 +129,7 @@ export default function WaterEntry() {
         text: "Choose from Gallery",
         onPress: async () => {
           const res = await ImagePicker.launchImageLibraryAsync({
-            mediaTypes: ImagePicker.MediaTypeOptions.Images,
+            mediaTypes: "images",
             quality: 0.5,
           });
           processImageResult(res);
@@ -333,27 +333,7 @@ export default function WaterEntry() {
               )}
             </View>
 
-            <View className="mb-8">
-              <Text className="text-slate-500 dark:text-slate-400 text-[10px] font-bold uppercase tracking-widest mb-2 ml-1">
-                Remarks
-              </Text>
-              <TextInput
-                value={formData.remarks}
-                onChangeText={(val) => updateField("remarks", val)}
-                placeholder="Any observations..."
-                multiline
-                numberOfLines={3}
-                textAlignVertical="top"
-                className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-100 dark:border-slate-800 font-medium text-slate-900 dark:text-slate-50 min-h-[100px]"
-                style={{
-                  shadowColor: "#000",
-                  shadowOffset: { width: 0, height: 1 },
-                  shadowOpacity: 0.05,
-                  shadowRadius: 4,
-                  elevation: 2,
-                }}
-              />
-            </View>
+            {/* Removed manual remarks */}
 
             {/* Spacer for fixed bottom button */}
             <View className="h-24" />

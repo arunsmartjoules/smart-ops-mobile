@@ -106,35 +106,15 @@ export const logger = {
         }
       }
 
-      // Send to backend if it's an error
+      // Send errors to backend immediately
       if (level === "error") {
-        try {
-          const token = await AsyncStorage.getItem("auth_token");
-          if (token) {
-            fetch(`${BACKEND_URL}/api/logs`, {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                Authorization: `Bearer ${token}`,
-              },
-              body: JSON.stringify({
-                action: "APP_ERROR",
-                module: safeMetadata?.module || metadata?.module || "MOBILE_APP",
-                description: message,
-                device_info: context.device,
-                metadata: {
-                  ...(typeof safeMetadata === "object" && safeMetadata ? safeMetadata : { value: safeMetadata }),
-                  timestamp,
-                  platform: Platform.OS,
-                },
-              }),
-            }).catch((err) =>
-              console.log("Failed to send log to backend", err?.message || String(err))
-            );
-          }
-        } catch {
-          // Silently fail to avoid infinite loops if logging itself fails
-        }
+        void this._sendToBackend(
+          "APP_ERROR",
+          safeMetadata?.module || metadata?.module || "MOBILE_APP",
+          message,
+          context.device,
+          { ...(typeof safeMetadata === "object" && safeMetadata ? safeMetadata : { value: safeMetadata }), timestamp, platform: Platform.OS },
+        );
       }
     } catch {
       // Logger must never throw.
@@ -158,6 +138,125 @@ export const logger = {
    */
   debug(message: string, metadata?: any) {
     void this.log("debug", message, metadata);
+  },
+
+  /**
+   * Send a structured activity log to the backend activity_logs table.
+   * Fire-and-forget — never throws, never blocks the caller.
+   * Works both online (immediate POST) and offline (queued in AsyncStorage).
+   */
+  activity(
+    action: string,
+    module: string,
+    description: string,
+    metadata?: Record<string, any>,
+  ) {
+    void (async () => {
+      try {
+        const token = await AsyncStorage.getItem("auth_token");
+        if (!token) return;
+
+        const context = await this.getContext();
+        const payload = {
+          action,
+          module,
+          description,
+          device_info: context.device,
+          metadata: {
+            ...(metadata ? makeSerializable(metadata) : {}),
+            platform: Platform.OS,
+            timestamp: new Date().toISOString(),
+          },
+        };
+
+        // Try to send immediately
+        fetch(`${BACKEND_URL}/api/logs`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify(payload),
+        }).catch(async () => {
+          // If network fails, queue for later
+          try {
+            const queueRaw = await AsyncStorage.getItem("@activity_log_queue");
+            const queue: any[] = queueRaw ? JSON.parse(queueRaw) : [];
+            queue.push({ ...payload, queued_at: new Date().toISOString() });
+            // Keep queue bounded to 200 entries
+            const trimmed = queue.slice(-200);
+            await AsyncStorage.setItem("@activity_log_queue", JSON.stringify(trimmed));
+          } catch {
+            // ignore
+          }
+        });
+      } catch {
+        // Logger must never throw
+      }
+    })();
+  },
+
+  /**
+   * Flush queued activity logs to backend (call on network reconnect).
+   */
+  async flushActivityQueue(): Promise<void> {
+    try {
+      const token = await AsyncStorage.getItem("auth_token");
+      if (!token) return;
+
+      const queueRaw = await AsyncStorage.getItem("@activity_log_queue");
+      if (!queueRaw) return;
+
+      const queue: any[] = JSON.parse(queueRaw);
+      if (queue.length === 0) return;
+
+      const failed: any[] = [];
+      for (const entry of queue) {
+        try {
+          const res = await fetch(`${BACKEND_URL}/api/logs`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify(entry),
+          });
+          if (!res.ok) failed.push(entry);
+        } catch {
+          failed.push(entry);
+        }
+      }
+
+      await AsyncStorage.setItem("@activity_log_queue", JSON.stringify(failed));
+    } catch {
+      // ignore
+    }
+  },
+
+  // Internal helper — shared by log() and activity()
+  async _sendToBackend(
+    action: string,
+    module: string,
+    description: string,
+    deviceInfo: any,
+    metadata: any,
+  ): Promise<void> {
+    try {
+      const token = await AsyncStorage.getItem("auth_token");
+      if (!token) return;
+      fetch(`${BACKEND_URL}/api/logs`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ action, module, description, device_info: deviceInfo, metadata }),
+      }).catch((err) =>
+        console.log("Failed to send log to backend", err?.message || String(err))
+      );
+    } catch {
+      // Silently fail
+    }
   },
 };
 

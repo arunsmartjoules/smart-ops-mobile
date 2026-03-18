@@ -1,4 +1,4 @@
-import { authService } from "./AuthService";
+import { supabase } from "./supabase";
 import { fetchWithTimeout } from "../utils/apiHelper";
 import { API_BASE_URL } from "../constants/api";
 import logger from "../utils/logger";
@@ -7,7 +7,8 @@ const BACKEND_URL = API_BASE_URL;
 
 // Helper for API requests with auth
 const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
-  const token = await authService.getValidToken();
+  const { data: { session } } = await supabase.auth.getSession();
+  const token = session?.access_token ?? null;
 
   const headers = {
     "Content-Type": "application/json",

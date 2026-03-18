@@ -195,6 +195,13 @@ export async function updateTicketSyncStatus(
 }
 
 /**
+ * Update ticket last synced timestamp to now
+ */
+export async function updateTicketLastSynced(): Promise<void> {
+  await updateTicketSyncStatus({ lastSynced: new Date().toISOString() });
+}
+
+/**
  * Get count of pending ticket updates
  */
 export async function getPendingTicketUpdates() {

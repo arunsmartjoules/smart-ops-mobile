@@ -4,13 +4,14 @@ import {
   database,
   siteLogCollection,
   chillerReadingCollection,
+  logMasterCollection,
 } from "../database";
 import SiteLog from "../database/models/SiteLog";
 import ChillerReading from "../database/models/ChillerReading";
 import logger from "../utils/logger";
 import { addToDeletionQueue } from "../utils/syncSiteLogStorage";
 import { authEvents } from "../utils/authEvents";
-import { authService } from "./AuthService";
+import { supabase } from "./supabase";
 import { fetchWithTimeout } from "../utils/apiHelper";
 import { syncManager } from "./SyncManager";
 import { SiteConfigService } from "./SiteConfigService";
@@ -36,8 +37,9 @@ const normalizeLogName = (serverLogName: string): string => {
 
 // Helper for API requests with auth and retry logic
 const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
-  // Get valid token (will refresh if needed)
-  let token = await authService.getValidToken();
+  // Get valid token from Supabase session (auto-refreshed by SDK)
+  const { data: { session } } = await supabase.auth.getSession();
+  let token = session?.access_token ?? null;
 
   const getHeaders = (t: string | null) => ({
     "Content-Type": "application/json",
@@ -50,23 +52,6 @@ const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
       ...options,
       headers: getHeaders(token),
     });
-
-    // If 401, try refresh once
-    if (response.status === 401) {
-      logger.debug(`401 on ${endpoint}, attempting refresh`, {
-        module: "SITE_LOG_SERVICE",
-      });
-      const newToken = await authService.refreshToken();
-
-      if (newToken) {
-        token = newToken;
-        // Retry with new token
-        response = await fetchWithTimeout(`${BACKEND_URL}${endpoint}`, {
-          ...options,
-          headers: getHeaders(token),
-        });
-      }
-    }
 
     if (!response.ok) {
       if (response.status === 401) {
@@ -108,7 +93,13 @@ interface ISiteLogService {
   updateSiteLog(id: string, data: Partial<any>): Promise<SiteLog>;
   pullSiteLogs(
     siteCode: string,
-    options?: { fromDate?: number; toDate?: number; logName?: string },
+    options?: {
+      fromDate?: number;
+      toDate?: number;
+      logName?: string;
+      status?: string;
+      siteCodes?: string[];
+    },
   ): Promise<void>;
   pullChillerReadings(
     siteCode: string,
@@ -120,7 +111,10 @@ interface ISiteLogService {
     fromDate?: Date | null,
     toDate?: Date | null,
   ): Promise<Record<string, { total: number; completed: number }>>;
+  getOpenCounts(siteCode: string): Promise<Record<string, number>>;
   getUnsyncedCounts(): Promise<number>;
+  pullLogMaster(): Promise<void>;
+  getLogMaster(logName: string): Promise<any[]>;
 }
 
 /**
@@ -185,29 +179,64 @@ export const SiteLogService: ISiteLogService = {
    */
   async saveBulkSiteLogs(logs: any[]) {
     await database.write(async () => {
-      const batch = logs.map((data) =>
-        siteLogCollection.prepareCreate((record) => {
-          record.siteCode = data.siteCode;
-          record.executorId = data.executorId;
-          record.assignedTo = data.assignedTo || null;
-          record.logName = data.logName;
-          record.taskName = data.taskName || null;
-          record.temperature = data.temperature || null;
-          record.rh = data.rh || null;
-          record.tds = data.tds || null;
-          record.ph = data.ph || null;
-          record.hardness = data.hardness || null;
-          record.chemicalDosing = data.chemicalDosing || null;
-          record.remarks = data.remarks || null;
-          record.entryTime = data.entryTime || null;
-          record.endTime = data.endTime || null;
-          record.signature = data.signature || null;
-          record.attachment = data.attachment || null;
-          record.status = data.status || null;
-          record.isSynced = false;
-          record.createdAt = new Date();
-        }),
-      );
+      const batch: any[] = [];
+      
+      for (const data of logs) {
+        let existing: any = null;
+        
+        // Check if data.id is a potential local record ID
+        if (data.id && data.id.length > 10) { 
+          try {
+            existing = await siteLogCollection.find(data.id);
+          } catch (e) {
+            // Not found or invalid ID, will treat as create
+          }
+        }
+
+        if (existing) {
+          batch.push(
+            existing.prepareUpdate((record: any) => {
+              record.temperature = data.temperature || record.temperature;
+              record.rh = data.rh || record.rh;
+              record.tds = data.tds || record.tds;
+              record.ph = data.ph || record.ph;
+              record.hardness = data.hardness || record.hardness;
+              record.chemicalDosing = data.chemicalDosing || record.chemicalDosing;
+              record.remarks = data.remarks || record.remarks;
+              record.signature = data.signature || record.signature;
+              record.attachment = data.attachment || record.attachment;
+              record.status = data.status || record.status;
+              record.entryTime = data.entryTime || record.entryTime;
+              record.endTime = data.endTime || record.endTime;
+              record.isSynced = false;
+            })
+          );
+        } else {
+          batch.push(
+            siteLogCollection.prepareCreate((record: any) => {
+              record.siteCode = data.siteCode;
+              record.executorId = data.executorId;
+              record.assignedTo = data.assignedTo || null;
+              record.logName = data.logName;
+              record.taskName = data.taskName || null;
+              record.temperature = data.temperature || null;
+              record.rh = data.rh || null;
+              record.tds = data.tds || null;
+              record.ph = data.ph || null;
+              record.hardness = data.hardness || null;
+              record.chemicalDosing = data.chemicalDosing || null;
+              record.remarks = data.remarks || null;
+              record.entryTime = data.entryTime || null;
+              record.endTime = data.endTime || null;
+              record.signature = data.signature || null;
+              record.attachment = data.attachment || null;
+              record.status = data.status || null;
+              record.isSynced = false;
+              record.createdAt = new Date();
+            })
+          );
+        }
+      }
       await database.batch(batch);
     });
     // Trigger background sync
@@ -473,38 +502,87 @@ export const SiteLogService: ISiteLogService = {
    */
   async pullSiteLogs(siteCode: string, options: any = {}) {
     try {
-      let url = `/api/site-logs/site/${siteCode}?limit=500`;
-      if (options.logName) url += `&logName=${encodeURIComponent(options.logName)}`;
+      let finalSiteCode = siteCode;
+      
+      // If "all" is requested but we have specific site codes, 
+      // check if we can just pull a specific one
+      if (finalSiteCode === "all" && options.siteCodes && options.siteCodes.length === 1) {
+        finalSiteCode = options.siteCodes[0];
+      }
+
+      let url = `/api/site-logs/site/${finalSiteCode}?limit=500`;
+      if (options.logName)
+        url += `&logName=${encodeURIComponent(options.logName)}`;
       if (options.fromDate) url += `&fromDate=${options.fromDate}`;
       if (options.toDate) url += `&toDate=${options.toDate}`;
+      if (options.status) url += `&status=${options.status}`;
+      if (options.siteCodes && Array.isArray(options.siteCodes)) {
+        url += `&site_codes=${options.siteCodes.join(",")}`;
+      }
 
       const response = await apiFetch(url);
       if (response.ok) {
         const result = await response.json();
         const serverLogs = result.data || [];
+        const serverIds = serverLogs.map((l: any) => l.id);
+
+        // 1. STALE LOG CLEANUP: If we're pulling pending logs, any local log that has a serverId 
+        // and matches the site(s)/logName but is NOT in the server response should be marked Completed.
+        if (options.status === "pending") {
+          const siteCodeQuery =
+            options.siteCodes && options.siteCodes.length > 0
+              ? Q.where("site_code", Q.oneOf(options.siteCodes))
+              : Q.where("site_code", siteCode);
+
+          const allLocalPending = await siteLogCollection
+            .query(
+              siteCodeQuery,
+              Q.where("log_name", normalizeLogName(options.logName)),
+              Q.where("status", Q.notEq("Completed")),
+              Q.where("server_id", Q.notEq(null)),
+            )
+            .fetch();
+
+          const serverIdSet = new Set(serverIds);
+          const staleLogs = allLocalPending.filter(
+            (l) => !serverIdSet.has(l.serverId),
+          );
+
+          if (staleLogs.length > 0) {
+            await database.write(async () => {
+              for (const stale of staleLogs) {
+                await stale.update((record) => {
+                  record.status = "Completed";
+                  record.isSynced = true;
+                });
+              }
+            });
+            logger.info(`Marked ${staleLogs.length} stale logs as Completed`);
+          }
+        }
 
         if (serverLogs.length === 0) return;
 
-        // 1. Fetch all local records matching server IDs in this batch (Single Query)
-        const serverIds = serverLogs.map((l: any) => l.id);
+        // 2. Fetch all local records matching server IDs in this batch (Single Query)
         const existingLocalRecords = await siteLogCollection
           .query(Q.where("server_id", Q.oneOf(serverIds)))
           .fetch();
 
         const localMap = new Map(
-          existingLocalRecords.map((r) => [r.serverId, r]),
+          existingLocalRecords.map((r: any) => [r.serverId, r]),
         );
 
         await database.write(async () => {
           for (const serverLog of serverLogs) {
             const localRecord = localMap.get(serverLog.id);
+            const normalizedLogName = normalizeLogName(serverLog.log_name);
 
             if (localRecord) {
-              await localRecord.update((record) => {
+              await localRecord.update((record: any) => {
                 record.siteCode = serverLog.site_code;
                 record.executorId = serverLog.executor_id;
                 record.assignedTo = serverLog.assigned_to || null;
-                record.logName = normalizeLogName(serverLog.log_name);
+                record.logName = normalizedLogName;
                 record.taskName = serverLog.task_name || null;
                 record.temperature = parseFloat(serverLog.temperature);
                 record.rh = parseFloat(serverLog.rh);
@@ -513,7 +591,6 @@ export const SiteLogService: ISiteLogService = {
                 record.hardness = parseFloat(serverLog.hardness);
                 record.chemicalDosing = serverLog.chemical_dosing;
                 record.remarks = serverLog.remarks;
-                // Only update signature if provided by server (avoids clearing local sig with truncated list response)
                 if (serverLog.signature) {
                   record.signature = serverLog.signature;
                 }
@@ -524,12 +601,12 @@ export const SiteLogService: ISiteLogService = {
                 }
               });
             } else {
-              await siteLogCollection.create((record) => {
+              await siteLogCollection.create((record: any) => {
                 record.serverId = serverLog.id;
                 record.siteCode = serverLog.site_code;
                 record.executorId = serverLog.executor_id;
                 record.assignedTo = serverLog.assigned_to || null;
-                record.logName = normalizeLogName(serverLog.log_name);
+                record.logName = normalizedLogName;
                 record.taskName = serverLog.task_name || null;
                 record.temperature = parseFloat(serverLog.temperature);
                 record.rh = parseFloat(serverLog.rh);
@@ -783,7 +860,7 @@ export const SiteLogService: ISiteLogService = {
         if (type === "Chiller Logs") {
           tasks = await SiteConfigService.getChillerTasks(siteCode, fromDate, toDate);
         } else {
-          tasks = await SiteConfigService.getLogTasks(siteCode, type, fromDate, toDate);
+          tasks = await SiteConfigService.getLogTasks(siteCode, type, fromDate, toDate, undefined, true);
         }
 
         const completed = tasks.filter((t) => t.isCompleted).length;
@@ -798,6 +875,54 @@ export const SiteLogService: ISiteLogService = {
       });
       throw error;
     }
+  },
+
+  /**
+   * Get non-Completed counts per log type directly from the backend.
+   * Uses a dedicated fetch that won't trigger global sign-out on failure.
+   * Returns { "Temp RH": n, "Water": n, "Chemical Dosing": n }
+   */
+  async getOpenCounts(siteCode: string): Promise<Record<string, number>> {
+    const logTypes = ["Temp RH", "Water", "Chemical Dosing"];
+    const counts: Record<string, number> = {
+      "Temp RH": 0,
+      "Water": 0,
+      "Chemical Dosing": 0,
+    };
+
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token ?? null;
+      if (!token) return counts;
+
+      await Promise.all(
+        logTypes.map(async (logName) => {
+          try {
+            // status=Pending → backend returns all rows where status != 'Completed'
+            const url = `${BACKEND_URL}/api/site-logs/site/${siteCode}?log_name=${encodeURIComponent(logName)}&status=Pending&limit=1`;
+            const response = await fetchWithTimeout(url, {
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${token}`,
+              },
+            });
+            if (response.ok) {
+              const result = await response.json();
+              counts[logName] = result.pagination?.total ?? result.data?.length ?? 0;
+            }
+          } catch {
+            // ignore per-type errors, fall back to 0
+          }
+        }),
+      );
+    } catch (error: any) {
+      logger.error("Error getting open counts", {
+        module: "SITE_LOG_SERVICE",
+        error: error.message,
+      });
+    }
+
+    return counts;
   },
 
   /**
@@ -818,6 +943,82 @@ export const SiteLogService: ISiteLogService = {
         error: error.message,
       });
       return 0;
+    }
+  },
+
+  /**
+   * Pull Log Master from server
+   */
+  async pullLogMaster(): Promise<void> {
+    try {
+      const response = await apiFetch("/api/log-master");
+      const result = await response.json();
+
+      if (!result.success) {
+        throw new Error(result.error || "Failed to pull log master");
+      }
+
+      const serverLogs = result.data || [];
+
+      await database.write(async () => {
+        for (const serverLog of serverLogs) {
+          const localRecords = await logMasterCollection
+            .query(Q.where("server_id", serverLog.id))
+            .fetch();
+
+          if (localRecords.length > 0) {
+            await localRecords[0].update((record) => {
+              record.taskName = serverLog.task_name;
+              record.logName = serverLog.log_name;
+              record.sequenceNumber = serverLog.sequence_number || 0;
+              record.logId = serverLog.log_id;
+              record.dlr = serverLog.dlr;
+              record.dbr = serverLog.dbr;
+              record.nlt = serverLog.nlt;
+              record.nmt = serverLog.nmt;
+            });
+          } else {
+            await logMasterCollection.create((record) => {
+              record.serverId = serverLog.id;
+              record.taskName = serverLog.task_name;
+              record.logName = serverLog.log_name;
+              record.sequenceNumber = serverLog.sequence_number || 0;
+              record.logId = serverLog.log_id;
+              record.dlr = serverLog.dlr;
+              record.dbr = serverLog.dbr;
+              record.nlt = serverLog.nlt;
+              record.nmt = serverLog.nmt;
+            });
+          }
+        }
+      });
+
+      logger.info("Log Master synchronized", {
+        module: "SITE_LOG_SERVICE",
+        count: serverLogs.length,
+      });
+    } catch (error: any) {
+      logger.error("Error pulling log master", {
+        module: "SITE_LOG_SERVICE",
+        error: error.message,
+      });
+    }
+  },
+
+  /**
+   * Get sorted log master entries for a category
+   */
+  async getLogMaster(logName: string) {
+    try {
+      const normalized = normalizeLogName(logName);
+      return await logMasterCollection
+        .query(
+          Q.where("log_name", normalized),
+          Q.sortBy("sequence_number", Q.asc)
+        )
+        .fetch();
+    } catch (error) {
+      return [];
     }
   },
 };

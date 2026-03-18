@@ -3,7 +3,7 @@ import { database, pmInstanceCollection } from "../database";
 import PMInstance from "../database/models/PMInstance";
 import logger from "../utils/logger";
 import { authEvents } from "../utils/authEvents";
-import { authService } from "./AuthService";
+import { supabase } from "./supabase";
 import { fetchWithTimeout } from "../utils/apiHelper";
 import { API_BASE_URL } from "../constants/api";
 
@@ -11,7 +11,8 @@ const BACKEND_URL = API_BASE_URL;
 
 // Helper for API requests with auth and retry logic
 const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
-  let token = await authService.getValidToken();
+  const { data: { session } } = await supabase.auth.getSession();
+  let token = session?.access_token ?? null;
 
   const getHeaders = (t: string | null) => ({
     "Content-Type": "application/json",
@@ -26,24 +27,14 @@ const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
     });
 
     if (response.status === 401) {
-      const newToken = await authService.refreshToken();
-      if (newToken) {
-        response = await fetchWithTimeout(`${BACKEND_URL}${endpoint}`, {
-          ...options,
-          headers: getHeaders(newToken),
-        });
-      }
-
-      if (response.status === 401) {
-        // Silent sign-out: avoid intrusive alerts for token issues
-        authEvents.emitUnauthorized();
-        // Return a dummy response to prevent further processing
-        return {
-          ok: false,
-          status: 401,
-          json: async () => ({ success: false, error: "No token provided" }),
-        } as Response;
-      }
+      // Silent sign-out: avoid intrusive alerts for token issues
+      authEvents.emitUnauthorized();
+      // Return a dummy response to prevent further processing
+      return {
+        ok: false,
+        status: 401,
+        json: async () => ({ success: false, error: "No token provided" }),
+      } as Response;
     }
 
     return response;

@@ -1,5 +1,5 @@
 import React, { useRef, useState } from "react";
-import { View, Modal, Text, TouchableOpacity, StyleSheet } from "react-native";
+import { View, Modal, Text, TouchableOpacity, StyleSheet, useColorScheme } from "react-native";
 import SignatureScreen from "react-native-signature-canvas";
 import { X, Check } from "lucide-react-native";
 
@@ -23,6 +23,7 @@ export default function SignaturePad({
   const ref = useRef<any>(null);
   const [visible, setVisible] = useState(false);
   const [signature, setSignature] = useState<string | null>(null);
+  const isDark = useColorScheme() === "dark";
 
   const handleOK = (signature: string) => {
     onOK(signature);
@@ -66,7 +67,7 @@ export default function SignaturePad({
       )}
 
       {/* Canvas */}
-      <View className="flex-1 bg-white">
+      <View className={`flex-1 ${isDark ? "bg-slate-900" : "bg-white"}`}>
         <SignatureScreen
           ref={ref}
           onOK={handleOK}
@@ -74,8 +75,8 @@ export default function SignaturePad({
           onClear={handleClear}
           autoClear={false}
           descriptionText={description}
-          backgroundColor={"#ffffff"}
-          penColor={"black"}
+          backgroundColor={isDark ? "#1e293b" : "#ffffff"}
+          penColor={isDark ? "#ffffff" : "black"}
           webStyle={`
               .m-signature-pad--footer {display: none; margin: 0px;}
               .m-signature-pad {box-shadow: none; border: none; margin-left: 0px; margin-top: 0px;}
