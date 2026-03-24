@@ -5,6 +5,8 @@ import {
   getCachedAreas,
   cacheCategories,
   getCachedCategories,
+  cacheStats,
+  getCachedStats,
 } from "../utils/offlineDataCache";
 import { supabase } from "./supabase";
 import { fetchWithTimeout } from "../utils/apiHelper";
@@ -306,7 +308,19 @@ export const TicketsService = {
    * Get complaint statistics for a site
    */
   async getStats(siteCode: string) {
-    return await apiFetch(`/api/complaints/site/${siteCode}/stats`);
+    const result = await apiFetch(`/api/complaints/site/${siteCode}/stats`);
+    if (result.success) {
+      // Cache stats for offline use
+      cacheStats(siteCode, result.data).catch(() => {});
+      return result;
+    }
+    if (result.isNetworkError) {
+      const cached = await getCachedStats(siteCode);
+      if (cached) {
+        return { success: true, data: cached, isFromCache: true };
+      }
+    }
+    return result;
   },
 
   /**

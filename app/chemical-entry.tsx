@@ -88,7 +88,7 @@ export default function ChemicalEntry() {
         const uri = result.assets[0].uri;
         const filename = `chemical/${params.siteCode}/${Date.now()}.jpg`;
         const publicUrl = await StorageService.uploadFile(
-          "site-log-attachments",
+          "jouleops-attachments",
           filename,
           uri,
         );

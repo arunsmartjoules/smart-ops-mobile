@@ -1,6 +1,12 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Q } from "@nozbe/watermelondb";
-import { pmInstanceCollection, pmResponseCollection } from "../database";
+import {
+  database,
+  pmChecklistMasterCollection,
+  pmChecklistItemCollection,
+  pmInstanceCollection,
+  pmResponseCollection,
+} from "../database";
 import logger from "./logger";
 
 const PM_SYNC_STATUS_KEY = "@pm_sync_status";
@@ -93,4 +99,22 @@ export async function getPendingPMCount(): Promise<number> {
  */
 export async function setPMAutoSyncEnabled(enabled: boolean): Promise<void> {
   await updatePMSyncStatus({ autoSyncEnabled: enabled });
+}
+
+/**
+ * Clear all offline PM data
+ */
+export async function clearAllOfflinePMData(): Promise<void> {
+  await database.write(async () => {
+    const allInstances = await pmInstanceCollection.query().fetch();
+    const allResponses = await pmResponseCollection.query().fetch();
+    const allChecklists = await pmChecklistMasterCollection.query().fetch();
+    const allChecklistItems = await pmChecklistItemCollection.query().fetch();
+
+    for (const record of allInstances) await record.destroyPermanently();
+    for (const record of allResponses) await record.destroyPermanently();
+    for (const record of allChecklists) await record.destroyPermanently();
+    for (const record of allChecklistItems) await record.destroyPermanently();
+  });
+  await AsyncStorage.removeItem(PM_SYNC_STATUS_KEY);
 }

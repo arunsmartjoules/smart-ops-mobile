@@ -71,7 +71,6 @@ const TicketItem = React.memo(
           shadowRadius: isCompact ? 8 : 16,
           elevation: isCompact ? 1 : 2,
           borderWidth: 1,
-          borderColor: "rgba(226, 232, 240, 0.8)", // slate-200 faint
         }}
       >
         <View className={isCompact ? "p-3.5" : "p-4 sm:p-5"}>

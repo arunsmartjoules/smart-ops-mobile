@@ -1,8 +1,8 @@
 {
   "expo": {
-    "name": "smart-ops",
+    "name": "Jouleops",
     "slug": "smart-ops",
-    "version": "1.0.0 (Beta)",
+    "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/jouleops-icon.png",
     "scheme": "jouleops",
@@ -25,7 +25,21 @@
       "package": "com.arundev2025.jouleops",
       "permissions": [
         "android.permission.ACCESS_COARSE_LOCATION",
-        "android.permission.ACCESS_FINE_LOCATION"
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.CAMERA",
+        "android.permission.READ_MEDIA_IMAGES",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.INTERNET",
+        "android.permission.ACCESS_NETWORK_STATE",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.CAMERA",
+        "android.permission.READ_MEDIA_IMAGES",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.INTERNET",
+        "android.permission.ACCESS_NETWORK_STATE"
       ]
     },
     "web": {
@@ -37,11 +51,15 @@
       [
         "expo-splash-screen",
         {
-          "image": "./assets/images/Jouleops-splash-screen.png",
-          "resizeMode": "cover",
+          "image": "./assets/images/jouleops-icon.png",
+          "imageWidth": 150,
+          "resizeMode": "contain",
+          "backgroundColor": "#b91c1c",
           "dark": {
-            "image": "./assets/images/Jouleops-splash-screen.png",
-            "resizeMode": "cover"
+            "image": "./assets/images/jouleops-icon.png",
+            "imageWidth": 150,
+            "resizeMode": "contain",
+            "backgroundColor": "#b91c1c"
           }
         }
       ],
@@ -53,7 +71,7 @@
       [
         "expo-location",
         {
-          "locationWhenInUsePermission": "SmartOps needs your location to log attendance at your work site."
+          "locationWhenInUsePermission": "Jouleops needs your location to log attendance at your work site."
         }
       ],
       "expo-task-manager",
@@ -67,6 +85,15 @@
       "eas": {
         "projectId": "d1868472-0103-49d5-978e-ece327af4c3e"
       }
+    },
+    "owner": "smartjoules-ops",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/d1868472-0103-49d5-978e-ece327af4c3e",
+      "checkOnLaunch": "ALWAYS",
+      "fallbackToCacheTimeout": 10000
     }
   }
 }

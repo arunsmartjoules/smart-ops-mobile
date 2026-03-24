@@ -162,10 +162,15 @@ export default function TempRHTaskList() {
   const [signatureModalVisible, setSignatureModalVisible] = useState(false);
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
+  const autoSyncedRef = React.useRef(false);
 
   useEffect(() => {
     if (user) {
       loadSites();
+      // In edit mode, loadSites won't call loadTasks — trigger it directly
+      if (editId) {
+        loadTasks(true);
+      }
     }
   }, [user]);
 
@@ -174,11 +179,12 @@ export default function TempRHTaskList() {
     try {
       const userSites = await AttendanceService.getUserSites(
         user?.user_id || user?.id || "",
+        "JouleCool",
       );
       setSites(userSites);
-      
-      // Select first site if none selected (random site requirement)
-      if (!siteCode && userSites.length > 0) {
+
+      // In edit mode, don't auto-select a site — the edit record provides the siteCode
+      if (!editId && !siteCode && userSites.length > 0) {
         setSiteCode(userSites[0].site_code);
         loadTasks(true);
       }
@@ -212,10 +218,12 @@ export default function TempRHTaskList() {
 
   useFocusEffect(
     useCallback(() => {
-      if (user) {
+      // In edit mode, loadTasks is called once on mount via loadSites/useEffect.
+      // Don't re-run on focus — it would race with the edit record fetch.
+      if (user && !editId) {
         loadTasks(true);
       }
-    }, [user, shift]), // Add shift to dependency to reload when shift changes
+    }, [user, shift, editId]),
   );
 
   const loadTasks = async (showLoading = true) => {
@@ -229,7 +237,7 @@ export default function TempRHTaskList() {
       const actualEditId = editId || id;
 
       // 1. If in edit mode, fetch the record FIRST to get the correct siteCode
-      if (actualEditId && actualEditId.length > 16) {
+      if (actualEditId) {
         try {
           editRecord = await SiteLogService.getSiteLogById(actualEditId);
           if (editRecord && editRecord.siteCode) {
@@ -241,7 +249,37 @@ export default function TempRHTaskList() {
         }
       }
 
-      // 2. Fallback to storage if no siteCode is known yet
+      // 2. In edit mode, build a single synthetic task from the record — skip getLogTasks
+      //    (getLogTasks only returns today's logs, so older records won't appear)
+      if (editRecord) {
+        const taskId = editRecord.id;
+        const taskName = editRecord.taskName || "Log Entry";
+        setEditingTaskId(taskId);
+        setTasks([{
+          id: taskId,
+          name: taskName,
+          type: "area",
+          isCompleted: false,
+          status: (editRecord.status as any) || "Open",
+          lastLogId: editRecord.id,
+          meta: {
+            temperature: editRecord.temperature,
+            rh: editRecord.rh,
+            remarks: editRecord.remarks,
+            attachment: editRecord.attachment,
+          },
+        }]);
+        setLogValues({
+          [taskId]: {
+            temp: editRecord.temperature?.toString() || "",
+            rh: editRecord.rh?.toString() || "",
+            attachment: editRecord.attachment || "",
+          },
+        });
+        return;
+      }
+
+      // 3. Fallback to storage if no siteCode is known yet
       if (!currentSiteCode) {
         const storageKey = `last_site_${user?.user_id || user?.id}`;
         currentSiteCode = await AsyncStorage.getItem(storageKey);
@@ -259,19 +297,15 @@ export default function TempRHTaskList() {
 
         setTasks(areaTasks);
 
-        // AUTO-SYNC: If we have no areas at all for a valid site, trigger a pull.
-        if (areaTasks.length === 0 && currentSiteCode) {
-          logger.info(
-            `No local areas found for ${currentSiteCode}. Triggering auto-sync...`,
-          );
-          SiteLogService.pullLogMaster().then(() => {
-            SiteLogService.pullSiteLogs(currentSiteCode!, {
-              logName: "Temp RH",
-              status: "pending",
-            }).then(() => {
-              loadTasks(false);
-            });
-          });
+        // AUTO-SYNC: fire once per mount if local DB is empty for this site.
+        // The ref prevents re-triggering after the pull completes (avoids infinite loop).
+        if (areaTasks.length === 0 && currentSiteCode && !autoSyncedRef.current) {
+          autoSyncedRef.current = true;
+          logger.info(`No local areas found for ${currentSiteCode}. Triggering one-shot auto-sync...`);
+          SiteLogService.pullLogMaster()
+            .then(() => SiteLogService.pullSiteLogs(currentSiteCode!, { logName: "Temp RH", status: "pending" }))
+            .then(() => loadTasks(false))
+            .catch(() => {});
         }
 
         const initialValues: Record<
@@ -289,29 +323,19 @@ export default function TempRHTaskList() {
           }
         });
 
-        if (editRecord) {
-          const tId = editRecord.taskId || editRecord.id || actualEditId;
-          setEditingTaskId(tId);
-          initialValues[tId] = {
-            temp: editRecord.temperature?.toString() || "",
-            rh: editRecord.rh?.toString() || "",
-            attachment: editRecord.attachment || "",
-          };
-        } else {
-          // Normal mode: Load draft after merging with DB values
-          const draftKey = `draft_temprh_${currentSiteCode}_${user?.user_id}`;
-          const savedDraft = await AsyncStorage.getItem(draftKey);
-          if (savedDraft) {
-            try {
-              const { values, signature: sig } = JSON.parse(savedDraft);
-              if (values) {
-                Object.keys(values).forEach((k) => {
-                  initialValues[k] = { ...initialValues[k], ...values[k] };
-                });
-              }
-              if (sig) setSignature(sig);
-            } catch (e) {}
-          }
+        // Normal mode: Load draft after merging with DB values
+        const draftKey = `draft_temprh_${currentSiteCode}_${user?.user_id}`;
+        const savedDraft = await AsyncStorage.getItem(draftKey);
+        if (savedDraft) {
+          try {
+            const { values, signature: sig } = JSON.parse(savedDraft);
+            if (values) {
+              Object.keys(values).forEach((k) => {
+                initialValues[k] = { ...initialValues[k], ...values[k] };
+              });
+            }
+            if (sig) setSignature(sig);
+          } catch (e) {}
         }
         setLogValues(initialValues);
       }
@@ -445,41 +469,28 @@ export default function TempRHTaskList() {
   };
 
   const filteredData = useMemo(() => {
-    let filtered = tasks;
-
+    // In edit mode, tasks is already pre-filtered to the single record
     if (editId) {
-      if (!editingTaskId) return [];
-      // Strict match by ID or exact Name (SiteConfigService uses taskName as ID sometimes)
-      return filtered.filter(
-        (t) => t.id === editingTaskId || t.name === editingTaskId,
-      );
+      return tasks;
     }
 
-    filtered = filtered.filter((task) => {
-      // If task.name is empty, we don't want to show it in the bulk list
+    let filtered = tasks.filter((task) => {
       if (!task.name || task.name.trim() === "") return false;
-
       const matchesSearch = task.name
         .toLowerCase()
         .includes(searchQuery.toLowerCase());
-
       const isNotCompleted = task.status?.toLowerCase() !== "completed";
-
-      // If showCompleted is false, we only show non-completed tasks
-      // If showCompleted is true, we show everything that matches the search
       if (!showCompleted) {
         return matchesSearch && isNotCompleted;
       }
-
       return matchesSearch;
     });
 
-    // Simplified sorting: just by name and direction
     return [...filtered].sort((a, b) => {
       const comparison = a.name.localeCompare(b.name);
       return sortDirection === "desc" ? -comparison : comparison;
     });
-  }, [tasks, searchQuery, sortDirection, editId, editingTaskId, showCompleted]);
+  }, [tasks, searchQuery, sortDirection, editId, showCompleted]);
 
   const renderItem = useCallback(
     ({ item }: { item: TaskItem }) => {
@@ -667,7 +678,7 @@ export default function TempRHTaskList() {
         {filteredData.length > 0 && (
           <View className="absolute bottom-0 left-0 right-0 bg-white dark:bg-slate-900 border-t border-slate-100 dark:border-slate-800 px-5 pb-8 pt-4">
             <TouchableOpacity
-              onPress={() => setSignatureModalVisible(true)}
+              onPress={() => editId ? handleSaveWithSignature(signature) : setSignatureModalVisible(true)}
               disabled={saving}
               activeOpacity={0.8}
               className={`py-4 rounded-xl flex-row items-center justify-center ${saving ? "bg-slate-200" : "bg-red-600 shadow-md shadow-red-600/20"}`}
@@ -687,7 +698,7 @@ export default function TempRHTaskList() {
                 <ActivityIndicator color="white" />
               ) : (
                 <Text className="text-white font-bold text-base uppercase tracking-widest">
-                  {editId ? "Update & Sign" : "Complete & Sign"}
+                  {editId ? "Update" : "Complete & Sign"}
                 </Text>
               )}
             </TouchableOpacity>

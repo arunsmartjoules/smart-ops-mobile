@@ -17,9 +17,9 @@ import {
   Platform,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import NetInfo from "@react-native-community/netinfo";
 import * as Location from "expo-location";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { LinearGradient } from "expo-linear-gradient";
 import {
   UserCheck,
   Ticket as TicketIcon,
@@ -56,12 +56,14 @@ import { WifiOff } from "lucide-react-native";
 import { syncManager } from "@/services/SyncManager";
 import Skeleton from "@/components/Skeleton";
 import TicketsService, { type Ticket } from "@/services/TicketsService";
+import { API_BASE_URL } from "@/constants/api";
 import TicketItem from "@/components/TicketItem";
 import TicketDetailModal from "@/components/TicketDetailModal";
 import { type SelectOption } from "@/components/SearchableSelect";
 import SiteLogService from "@/services/SiteLogService";
 import logger from "@/utils/logger";
 import { saveOfflineTicketUpdate } from "@/utils/offlineTicketStorage";
+import { getCachedSites } from "@/utils/offlineDataCache";
 import { WhatsAppService } from "@/services/WhatsAppService";
 
 interface PendingItem {
@@ -488,96 +490,191 @@ export default function Dashboard() {
         setLoadingAttendance(true);
       }
 
-      // 1. Fetch Today's Attendance and Sites in parallel
-      const [attData, sites] = await Promise.all([
-        AttendanceService.getTodayAttendance(userId).catch((e) => {
-          console.error("[Dashboard] Attendance fetch failed:", e);
-          return null;
-        }),
-        AttendanceService.getUserSites(userId, "JouleCool").catch((e) => {
-          console.error("[Dashboard] Sites fetch failed:", e);
-          return [] as Site[];
-        }),
+      // 1. Load cached data FIRST for instant UI
+      const [cachedSitesList, lastSiteCode] = await Promise.all([
+        getCachedSites(userId).catch(() => [] as Site[]),
+        AsyncStorage.getItem(`last_site_${userId}`).catch(() => null),
       ]);
 
-      console.log("[Dashboard] Fetched sites:", sites.length);
-      if (attData) setTodayAttendance(attData);
-      setSites(sites);
-
-      if (sites.length === 0) {
-        console.warn("[Dashboard] No sites found, skipping further fetches");
-        setLoadingAttendance(false);
-        setLoadingPending(false);
-        return;
+      if (cachedSitesList.length > 0) {
+        setSites(cachedSitesList);
       }
 
-      // 2. Fetch Tickets - prioritizing offline cache if needed
-      const fetchSiteCode = sites[0].site_code;
-      const ticketResult = await TicketsService.getTickets(fetchSiteCode, {
-        status: "Open",
-        limit: 10,
-      }).catch((e) => {
-        console.error("[Dashboard] Tickets fetch failed:", e);
-        return { success: false, data: [] };
+      // Show cached attendance immediately
+      const cachedAtt = await AttendanceService.getTodayAttendance(
+        userId,
+      ).catch(() => null);
+      if (cachedAtt) setTodayAttendance(cachedAtt);
+      setLoadingAttendance(false);
+
+      // 2. Fetch network state directly instead of relying on state (which is null on cold-boot)
+      const netState = await NetInfo.fetch();
+      const isActuallyOnline = netState.isConnected === true;
+
+      // 3. If online, fetch fresh data from API
+      logger.info("[Dashboard] Fetching fresh data", {
+        isActuallyOnline,
+        userId,
       });
+      if (isActuallyOnline) {
+        const [attData, freshSites] = await Promise.all([
+          AttendanceService.getTodayAttendance(userId, true).catch((e) => {
+            console.error("[Dashboard] Attendance fetch failed:", e);
+            return null;
+          }),
+          AttendanceService.getUserSites(userId, "JouleCool").catch((e) => {
+            console.error("[Dashboard] Sites fetch failed:", e);
+            return [] as Site[];
+          }),
+        ]);
 
-      const allTickets: PendingItem[] = [];
-      if (ticketResult?.success && ticketResult.data) {
-        ticketResult.data.slice(0, 5).forEach((t: Ticket) => {
-          allTickets.push({
-            id: t.id,
-            title: t.title,
-            subtitle: t.ticket_no,
-            category: "Ticket",
-            status: t.status,
-            priority: t.priority,
-            route: "/(tabs)/tickets",
-            timestamp: t.created_at,
+        if (attData) setTodayAttendance(attData);
+        if (freshSites.length > 0) setSites(freshSites);
+
+        const effectiveSites =
+          freshSites.length > 0 ? freshSites : cachedSitesList;
+
+        if (effectiveSites.length === 0) {
+          console.warn("[Dashboard] No sites found, skipping further fetches");
+          setLoadingPending(false);
+          return;
+        }
+
+        // 3. Fetch Tickets
+        const fetchSiteCode = effectiveSites[0].site_code;
+        const ticketResult = await TicketsService.getTickets(fetchSiteCode, {
+          status: "Open",
+          limit: 10,
+        }).catch((e) => {
+          console.error("[Dashboard] Tickets fetch failed:", e);
+          return { success: false, data: [] };
+        });
+
+        const allTickets: PendingItem[] = [];
+        if (ticketResult?.success && ticketResult.data) {
+          ticketResult.data.slice(0, 5).forEach((t: Ticket) => {
+            allTickets.push({
+              id: t.id,
+              title: t.title,
+              subtitle: t.ticket_no,
+              category: "Ticket",
+              status: t.status,
+              priority: t.priority,
+              route: "/(tabs)/tickets",
+              timestamp: t.created_at,
+            });
           });
-        });
 
-        const priorityOrder: Record<string, number> = {
-          "Very High": 1,
-          High: 2,
-          Medium: 3,
-          Low: 4,
-        };
+          const priorityOrder: Record<string, number> = {
+            "Very High": 1,
+            High: 2,
+            Medium: 3,
+            Low: 4,
+          };
 
-        allTickets.sort((a, b) => {
-          const pa = priorityOrder[a.priority || ""] || 5;
-          const pb = priorityOrder[b.priority || ""] || 5;
-          if (pa !== pb) return pa - pb;
-          return (
-            new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+          allTickets.sort((a, b) => {
+            const pa = priorityOrder[a.priority || ""] || 5;
+            const pb = priorityOrder[b.priority || ""] || 5;
+            if (pa !== pb) return pa - pb;
+            return (
+              new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+            );
+          });
+        }
+        setPendingTickets(allTickets);
+
+        // 4. Fetch Open/Inprogress/Pending counts
+        const primarySiteCode = effectiveSites[0].site_code;
+        const counts = await SiteLogService.getOpenCounts(
+          primarySiteCode,
+        ).catch(
+          (): Record<string, number> => ({
+            "Temp RH": 0,
+            Water: 0,
+            "Chemical Dosing": 0,
+          }),
+        );
+
+        const toItems = (
+          logName: string,
+          route: string,
+          category: "Temp RH" | "Water" | "Chemical",
+        ): PendingItem[] =>
+          Array.from(
+            { length: (counts as Record<string, number>)[logName] ?? 0 },
+            (_, i) => ({
+              id: `${primarySiteCode}-${logName}-${i}`,
+              title: logName,
+              subtitle: effectiveSites[0].name || primarySiteCode,
+              category,
+              status: "Open",
+              route,
+              timestamp: new Date().toISOString(),
+            }),
           );
-        });
-      }
-      setPendingTickets(allTickets);
-
-      // 3. Fetch Open/Inprogress/Pending counts from backend for the primary site
-      if (sites.length > 0) {
-        const primarySiteCode = sites[0].site_code;
-        const counts = await SiteLogService.getOpenCounts(primarySiteCode).catch((): Record<string, number> => ({
-          "Temp RH": 0, "Water": 0, "Chemical Dosing": 0,
-        }));
-
-        console.log("[Dashboard] Open counts for", primarySiteCode, JSON.stringify(counts));
-
-        // Convert counts to PendingItem arrays (just need .length for the cards)
-        const toItems = (logName: string, route: string, category: "Temp RH" | "Water" | "Chemical"): PendingItem[] =>
-          Array.from({ length: (counts as Record<string, number>)[logName] ?? 0 }, (_, i) => ({
-            id: `${primarySiteCode}-${logName}-${i}`,
-            title: logName,
-            subtitle: sites[0].name || primarySiteCode,
-            category,
-            status: "Open",
-            route,
-            timestamp: new Date().toISOString(),
-          }));
 
         setPendingTempRH(toItems("Temp RH", "/temp-rh", "Temp RH"));
         setPendingWater(toItems("Water", "/water", "Water"));
         setPendingChemical(toItems("Chemical Dosing", "/chemical", "Chemical"));
+      } else {
+        // OFFLINE: use cached sites for tickets from local DB
+        const effectiveSites = cachedSitesList;
+        if (effectiveSites.length > 0) {
+          const siteCode = effectiveSites[0].site_code;
+          // Load tickets from local WatermelonDB
+          const ticketResult = await TicketsService.getTickets(siteCode, {
+            status: "Open",
+            limit: 10,
+          }).catch(() => ({ success: false, data: [] }));
+
+          const allTickets: PendingItem[] = [];
+          if (ticketResult?.success && ticketResult.data) {
+            ticketResult.data.slice(0, 5).forEach((t: Ticket) => {
+              allTickets.push({
+                id: t.id,
+                title: t.title,
+                subtitle: t.ticket_no,
+                category: "Ticket",
+                status: t.status,
+                priority: t.priority,
+                route: "/(tabs)/tickets",
+                timestamp: t.created_at,
+              });
+            });
+          }
+          setPendingTickets(allTickets);
+
+          // Local open counts
+          const counts = await SiteLogService.getOpenCounts(siteCode).catch(
+            (): Record<string, number> => ({
+              "Temp RH": 0,
+              Water: 0,
+              "Chemical Dosing": 0,
+            }),
+          );
+          const toItems = (
+            logName: string,
+            route: string,
+            category: "Temp RH" | "Water" | "Chemical",
+          ): PendingItem[] =>
+            Array.from(
+              { length: (counts as Record<string, number>)[logName] ?? 0 },
+              (_, i) => ({
+                id: `${siteCode}-${logName}-${i}`,
+                title: logName,
+                subtitle: effectiveSites[0].name || siteCode,
+                category,
+                status: "Open",
+                route,
+                timestamp: new Date().toISOString(),
+              }),
+            );
+          setPendingTempRH(toItems("Temp RH", "/temp-rh", "Temp RH"));
+          setPendingWater(toItems("Water", "/water", "Water"));
+          setPendingChemical(
+            toItems("Chemical Dosing", "/chemical", "Chemical"),
+          );
+        }
       }
     } catch (error) {
       console.error("Dashboard fetchData critical error:", error);
@@ -585,7 +682,7 @@ export default function Dashboard() {
       setLoadingAttendance(false);
       setLoadingPending(false);
     }
-  }, [user]);
+  }, [user, isConnected]);
 
   const loadAreasAndCategories = useCallback(async () => {
     if (sites.length === 0) return;
@@ -599,7 +696,8 @@ export default function Dashboard() {
         const areas = assetsResult.data.map((asset: any) => ({
           value: asset.asset_name || asset.asset_id,
           label: asset.asset_name,
-          description: `${asset.asset_type || ""} ${asset.location ? `- ${asset.location}` : ""}`.trim(),
+          description:
+            `${asset.asset_type || ""} ${asset.location ? `- ${asset.location}` : ""}`.trim(),
         }));
         setAreaOptions(areas);
       }
@@ -627,33 +725,40 @@ export default function Dashboard() {
     }
   }, [sites, loadAreasAndCategories]);
 
-  const handleTicketPress = useCallback((item: any) => {
-    // Only handle actual tickets
-    if (item.category !== "Ticket") return;
+  const handleTicketPress = useCallback(
+    (item: any) => {
+      // Only handle actual tickets
+      if (item.category !== "Ticket") return;
 
-    // We need the full ticket object for the modal
-    // Since pendingTickets only has PendingItem, we might need to fetch full details or map it
-    // But getTickets already gave us basic info. Let's try to pass what we have first
-    // If we need full details, we should fetch them here.
-    
-    // For now, let's assume we can use the item data or fetch if needed
-    TicketsService.getTickets(sites[0].site_code, { ticket_no: item.subtitle }).then(res => {
-      if (res.success && res.data && res.data.length > 0) {
-        const ticket = res.data[0];
-        setSelectedTicket(ticket);
-        setUpdateStatus(ticket.status);
-        setUpdateRemarks(ticket.internal_remarks || "");
-        setUpdateArea(ticket.area_asset || "");
-        setUpdateCategory(ticket.category || "");
-        setIsDetailVisible(true);
-      }
-    });
-  }, [sites]);
+      // We need the full ticket object for the modal
+      // Since pendingTickets only has PendingItem, we might need to fetch full details or map it
+      // But getTickets already gave us basic info. Let's try to pass what we have first
+      // If we need full details, we should fetch them here.
+
+      // For now, let's assume we can use the item data or fetch if needed
+      TicketsService.getTickets(sites[0].site_code, {
+        ticket_no: item.subtitle,
+      }).then((res) => {
+        if (res.success && res.data && res.data.length > 0) {
+          const ticket = res.data[0];
+          setSelectedTicket(ticket);
+          setUpdateStatus(ticket.status);
+          setUpdateRemarks(ticket.internal_remarks || "");
+          setUpdateArea(ticket.area_asset || "");
+          setUpdateCategory(ticket.category || "");
+          setIsDetailVisible(true);
+        }
+      });
+    },
+    [sites],
+  );
 
   const handleUpdateStatus = async () => {
     if (!selectedTicket || !user?.id) return;
 
-    const needsRemarks = ["Hold", "Cancelled", "Waiting", "Resolved"].includes(updateStatus);
+    const needsRemarks = ["Hold", "Cancelled", "Waiting", "Resolved"].includes(
+      updateStatus,
+    );
     if (needsRemarks && !updateRemarks.trim()) {
       Alert.alert("Required", "Please provide remarks for this status update.");
       return;
@@ -682,7 +787,9 @@ export default function Dashboard() {
           updatedTicketForWA,
           updateStatus,
           updateRemarks,
-        ).catch(e => logger.warn("Failed WhatsApp notification", { error: e }));
+        ).catch((e) =>
+          logger.warn("Failed WhatsApp notification", { error: e }),
+        );
 
         Alert.alert("Success", "Ticket updated successfully");
         setIsDetailVisible(false);
@@ -1035,84 +1142,88 @@ export default function Dashboard() {
             </View>
 
             <View className="px-6 mb-6 flex-row gap-2">
-              {loadingPending ? (
-                // Skeletons while loading
-                [1, 2, 3].map((i) => (
-                  <View
-                    key={i}
-                    className="flex-1 bg-white dark:bg-slate-900 rounded-2xl p-3 border border-slate-100 dark:border-slate-800"
-                  >
-                    <Skeleton
-                      width={32}
-                      height={32}
-                      borderRadius={8}
-                      style={{ marginBottom: 16 }}
-                    />
-                    <Skeleton width={40} height={20} borderRadius={4} style={{ marginBottom: 6 }} />
-                    <Skeleton width={60} height={10} borderRadius={2} />
-                  </View>
-                ))
-              ) : (
-                // Actual data once loaded
-                (() => {
-                  const navSiteCode = sites.length > 0 ? sites[0].site_code : "";
-                  return (
-                    <>
-                      <LogCountCard
-                        icon={ThermometerSun}
-                        count={pendingTempRH.length}
-                        label="Temp & RH"
-                        color="#f59e0b"
-                        bgColor="rgba(245, 158, 11, 0.1)"
-                        onPress={() =>
-                          router.push({
-                            pathname: "/history/site-history",
-                            params: {
-                              logName: "Temp RH",
-                              siteCode: navSiteCode,
-                              status: "Open",
-                            },
-                          } as any)
-                        }
+              {loadingPending
+                ? // Skeletons while loading
+                  [1, 2, 3].map((i) => (
+                    <View
+                      key={i}
+                      className="flex-1 bg-white dark:bg-slate-900 rounded-2xl p-3 border border-slate-100 dark:border-slate-800"
+                    >
+                      <Skeleton
+                        width={32}
+                        height={32}
+                        borderRadius={8}
+                        style={{ marginBottom: 16 }}
                       />
-                      <LogCountCard
-                        icon={Droplets}
-                        count={pendingWater.length}
-                        label="Water"
-                        color="#3b82f6"
-                        bgColor="rgba(59, 130, 246, 0.1)"
-                        onPress={() =>
-                          router.push({
-                            pathname: "/history/site-history",
-                            params: {
-                              logName: "Water",
-                              siteCode: navSiteCode,
-                              status: "Open",
-                            },
-                          } as any)
-                        }
+                      <Skeleton
+                        width={40}
+                        height={20}
+                        borderRadius={4}
+                        style={{ marginBottom: 6 }}
                       />
-                      <LogCountCard
-                        icon={Beaker}
-                        count={pendingChemical.length}
-                        label="Chemical"
-                        color="#ec4899"
-                        bgColor="rgba(236, 72, 153, 0.1)"
-                        onPress={() =>
-                          router.push({
-                            pathname: "/history/site-history",
-                            params: {
-                              logName: "Chemical Dosing",
-                              siteCode: navSiteCode,
-                              status: "Open",
-                            },
-                          } as any)
-                        }
-                      />
-                    </>
-                  );
-                })()
-              )}
+                      <Skeleton width={60} height={10} borderRadius={2} />
+                    </View>
+                  ))
+                : // Actual data once loaded
+                  (() => {
+                    const navSiteCode =
+                      sites.length > 0 ? sites[0].site_code : "";
+                    return (
+                      <>
+                        <LogCountCard
+                          icon={ThermometerSun}
+                          count={pendingTempRH.length}
+                          label="Temp & RH"
+                          color="#f59e0b"
+                          bgColor="rgba(245, 158, 11, 0.1)"
+                          onPress={() =>
+                            router.push({
+                              pathname: "/history/site-history",
+                              params: {
+                                logName: "Temp RH",
+                                siteCode: navSiteCode,
+                                status: "Open",
+                              },
+                            } as any)
+                          }
+                        />
+                        <LogCountCard
+                          icon={Droplets}
+                          count={pendingWater.length}
+                          label="Water"
+                          color="#3b82f6"
+                          bgColor="rgba(59, 130, 246, 0.1)"
+                          onPress={() =>
+                            router.push({
+                              pathname: "/history/site-history",
+                              params: {
+                                logName: "Water",
+                                siteCode: navSiteCode,
+                                status: "Open",
+                              },
+                            } as any)
+                          }
+                        />
+                        <LogCountCard
+                          icon={Beaker}
+                          count={pendingChemical.length}
+                          label="Chemical"
+                          color="#ec4899"
+                          bgColor="rgba(236, 72, 153, 0.1)"
+                          onPress={() =>
+                            router.push({
+                              pathname: "/history/site-history",
+                              params: {
+                                logName: "Chemical Dosing",
+                                siteCode: navSiteCode,
+                                status: "Open",
+                              },
+                            } as any)
+                          }
+                        />
+                      </>
+                    );
+                  })()}
             </View>
           </>
         )}
@@ -1128,8 +1239,6 @@ export default function Dashboard() {
             />
           }
         >
-          {/* Main Area Counts Section - Logic handled by handleQuickCheckIn/Out and Stat Cards above */}
-
           {/* Pending Tickets Section */}
           <View className="px-6 mb-3">
             <View className="flex-row items-center justify-between">
@@ -1155,7 +1264,12 @@ export default function Dashboard() {
                   >
                     <Skeleton width={32} height={32} borderRadius={8} />
                     <View className="ml-3 flex-1">
-                      <Skeleton width="60%" height={12} borderRadius={4} style={{ marginBottom: 6 }} />
+                      <Skeleton
+                        width="60%"
+                        height={12}
+                        borderRadius={4}
+                        style={{ marginBottom: 6 }}
+                      />
                       <Skeleton width="40%" height={8} borderRadius={2} />
                     </View>
                   </View>

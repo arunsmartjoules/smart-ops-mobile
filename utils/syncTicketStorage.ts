@@ -26,13 +26,13 @@ export async function pullRecentTickets(
 ): Promise<{ pulled: number }> {
   let pulled = 0;
   try {
-    const ninetyDaysAgo = new Date();
-    ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
-    const fromDate = encodeURIComponent(ninetyDaysAgo.toISOString());
+    const oneHundredEightyDaysAgo = new Date();
+    oneHundredEightyDaysAgo.setDate(oneHundredEightyDaysAgo.getDate() - 180);
+    const fromDate = encodeURIComponent(oneHundredEightyDaysAgo.toISOString());
 
     const response = await syncWithRetry(() =>
       fetchWithTimeout(
-        `${apiUrl}/api/complaints/site/${siteCode}?fromDate=${fromDate}&limit=1000`,
+        `${apiUrl}/api/complaints/site/${siteCode}?fromDate=${fromDate}&limit=1000&status=Open,Closed,Resolved,Cancelled,Hold,Waiting,Inprogress`,
         {
           headers: { Authorization: `Bearer ${token}` },
         },

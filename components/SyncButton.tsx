@@ -54,7 +54,8 @@ const SyncButton = memo(({ onSync, pendingCount = 0 }: SyncButtonProps) => {
   }, []);
 
   const handleSync = useCallback(async () => {
-    if (!isConnected || isSyncing) return;
+    // isConnected === null means unknown (initial state) — treat as online and allow sync attempt
+    if (isConnected === false || isSyncing) return;
 
     setIsSyncing(true);
     setSyncStatus("idle");
@@ -100,7 +101,7 @@ const SyncButton = memo(({ onSync, pendingCount = 0 }: SyncButtonProps) => {
   const buttonColor = useMemo(() => {
     if (syncStatus === "success") return "bg-green-600";
     if (syncStatus === "error") return "bg-red-600";
-    if (!isConnected) return "bg-gray-400";
+    if (isConnected === false) return "bg-gray-400"; // only grey when definitively offline
     return "bg-red-600";
   }, [syncStatus, isConnected]);
 
@@ -108,10 +109,10 @@ const SyncButton = memo(({ onSync, pendingCount = 0 }: SyncButtonProps) => {
     <View>
       <TouchableOpacity
         onPress={handleSync}
-        disabled={!isConnected || isSyncing}
+        disabled={isConnected === false || isSyncing}
         className={`${buttonColor} px-3 py-2 rounded-lg flex-row items-center active:opacity-80`}
         style={{
-          opacity: !isConnected ? 0.5 : 1,
+          opacity: isConnected === false ? 0.5 : 1,
         }}
       >
         {syncIcon}

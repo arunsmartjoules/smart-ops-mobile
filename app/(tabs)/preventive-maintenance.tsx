@@ -39,10 +39,19 @@ import {
 import { router, useFocusEffect } from "expo-router";
 import { useAuth } from "@/contexts/AuthContext";
 import { useNetworkStatus } from "@/hooks/useNetworkStatus";
+import NetInfo from "@react-native-community/netinfo";
 import PMService from "@/services/PMService";
 import { AttendanceService, type Site } from "@/services/AttendanceService";
+import { getCachedSites } from "@/utils/offlineDataCache";
 import PMInstance from "@/database/models/PMInstance";
-import { format, addDays, startOfDay, endOfDay, parseISO, isValid } from "date-fns";
+import {
+  format,
+  addDays,
+  startOfDay,
+  endOfDay,
+  parseISO,
+  isValid,
+} from "date-fns";
 import AdvancedFilterModal from "@/components/AdvancedFilterModal";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import logger from "@/utils/logger";
@@ -76,38 +85,49 @@ const STATUS_COLORS: Record<string, { bg: string; text: string; dot: string }> =
 const STATUS_OPTIONS = ["Pending", "In-progress", "Completed"];
 
 // ─── PMSkeleton ──────────────────────────────────────────────────────────────
-const PMSkeleton = () => (
-  <View style={styles.listContent}>
-    {[1, 2, 3, 4].map((i) => (
-      <View key={i} style={styles.card}>
-        <View style={styles.cardTopRow}>
-          <Skeleton width={80} height={18} borderRadius={8} />
-          <Skeleton width={70} height={18} borderRadius={8} />
-        </View>
-        <View style={styles.cardBody}>
-          <Skeleton
-            width={48}
-            height={48}
-            borderRadius={16}
-            style={{ marginRight: 12 }}
-          />
-          <View style={{ flex: 1 }}>
-            <Skeleton width="60%" height={16} style={{ marginBottom: 6 }} />
-            <Skeleton width="40%" height={14} style={{ marginBottom: 10 }} />
-            <View style={{ flexDirection: "row", gap: 8 }}>
-              <Skeleton width={60} height={14} />
-              <Skeleton width={40} height={14} />
+const PMSkeleton = () => {
+  const isDark = useColorScheme() === "dark";
+  const cardBg = isDark ? "#0f172a" : "#fff";
+  const cardBorder = isDark ? "#1e293b" : "#f1f5f9";
+  return (
+    <View style={styles.listContent}>
+      {[1, 2, 3, 4].map((i) => (
+        <View
+          key={i}
+          style={[
+            styles.card,
+            { backgroundColor: cardBg, borderColor: cardBorder },
+          ]}
+        >
+          <View style={styles.cardTopRow}>
+            <Skeleton width={80} height={18} borderRadius={8} />
+            <Skeleton width={70} height={18} borderRadius={8} />
+          </View>
+          <View style={styles.cardBody}>
+            <Skeleton
+              width={48}
+              height={48}
+              borderRadius={16}
+              style={{ marginRight: 12 }}
+            />
+            <View style={{ flex: 1 }}>
+              <Skeleton width="60%" height={16} style={{ marginBottom: 6 }} />
+              <Skeleton width="40%" height={14} style={{ marginBottom: 10 }} />
+              <View style={{ flexDirection: "row", gap: 8 }}>
+                <Skeleton width={60} height={14} />
+                <Skeleton width={40} height={14} />
+              </View>
             </View>
           </View>
+          <View style={styles.cardFooter}>
+            <Skeleton width={100} height={14} />
+            <Skeleton width={80} height={14} />
+          </View>
         </View>
-        <View style={styles.cardFooter}>
-          <Skeleton width={100} height={14} />
-          <Skeleton width={80} height={14} />
-        </View>
-      </View>
-    ))}
-  </View>
-);
+      ))}
+    </View>
+  );
+};
 
 // ─── Memoized PM Card ──────────────────────────────────────────────────────────
 const PMCard = React.memo(
@@ -130,13 +150,9 @@ const PMCard = React.memo(
         }}
       >
         <View style={styles.cardTopRow}>
-          <View
-            className="bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 flex-row items-center px-2 py-1 rounded-lg gap-1.5"
-          >
+          <View className="bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 flex-row items-center px-2 py-1 rounded-lg gap-1.5">
             <Clock size={12} color={isDark ? "#94a3b8" : "#64748b"} />
-            <Text
-              className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase"
-            >
+            <Text className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase">
               {instance.frequency || "ONCE"}
             </Text>
           </View>
@@ -196,12 +212,8 @@ const PMCard = React.memo(
                 </Text>
               </View>
               {instance.maintenanceId ? (
-                <View
-                  className="bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded-md"
-                >
-                  <Text
-                    className="text-slate-500 dark:text-slate-400 text-[10px] font-bold"
-                  >
+                <View className="bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded-md">
+                  <Text className="text-slate-500 dark:text-slate-400 text-[10px] font-bold">
                     ID: {instance.maintenanceId}
                   </Text>
                 </View>
@@ -230,12 +242,17 @@ const PMCard = React.memo(
                   {instance.assignedToName.charAt(0)}
                 </Text>
               </View>
-              <Text className="text-slate-600 dark:text-slate-300 text-xs font-bold" numberOfLines={1}>
+              <Text
+                className="text-slate-600 dark:text-slate-300 text-xs font-bold"
+                numberOfLines={1}
+              >
                 {instance.assignedToName}
               </Text>
             </View>
           ) : (
-            <Text className="text-slate-400 dark:text-slate-500 text-xs italic">Unassigned</Text>
+            <Text className="text-slate-400 dark:text-slate-500 text-xs italic">
+              Unassigned
+            </Text>
           )}
         </View>
       </TouchableOpacity>
@@ -314,7 +331,9 @@ export default function PreventiveMaintenance() {
   const [showFiltersModal, setShowFiltersModal] = useState(false);
 
   // Date handling (using strings for consistency and to avoid stale closures)
-  const [currentDate, setCurrentDate] = useState(format(new Date(), "yyyy-MM-dd"));
+  const [currentDate, setCurrentDate] = useState(
+    format(new Date(), "yyyy-MM-dd"),
+  );
   const [toDate, setToDate] = useState(format(new Date(), "yyyy-MM-dd"));
 
   const [tempSearch, setTempSearch] = useState("");
@@ -348,9 +367,25 @@ export default function PreventiveMaintenance() {
     try {
       const rawLastSiteCode = await AsyncStorage.getItem(`last_site_${userId}`);
       const lastSiteCode = rawLastSiteCode === "all" ? null : rawLastSiteCode;
-      const userSites = await AttendanceService.getUserSites(userId);
 
-      const finalSites: Site[] = userSites;
+      // Load cached sites immediately
+      const cachedSites = await getCachedSites(userId).catch(
+        () => [] as Site[],
+      );
+
+      // Only call API when online
+      let userSites: Site[] = [];
+      const netState = await NetInfo.fetch();
+      const isActuallyOnline = netState.isConnected === true;
+
+      if (isActuallyOnline) {
+        userSites = await AttendanceService.getUserSites(
+          userId,
+          "JouleCool",
+        ).catch(() => [] as Site[]);
+      }
+
+      const finalSites: Site[] = userSites.length > 0 ? userSites : cachedSites;
 
       setSites(finalSites);
 
@@ -359,7 +394,6 @@ export default function PreventiveMaintenance() {
         if (!finalSites.find((s) => s.site_code === siteToSelect)) {
           siteToSelect = finalSites[0].site_code;
         }
-        // Persist the corrected site code
         await AsyncStorage.setItem(`last_site_${userId}`, siteToSelect);
         setSiteCode(siteToSelect);
         const currentSite = finalSites.find(
@@ -471,7 +505,6 @@ export default function PreventiveMaintenance() {
     return list;
   }, [allInstances, statusFilter, searchQuery]);
 
-
   // ── Statistics ──────────────────────────────────────────────────────────────
   const stats = useMemo(() => {
     return {
@@ -532,7 +565,6 @@ export default function PreventiveMaintenance() {
     [],
   );
 
-
   return (
     <View className="flex-1 bg-slate-50 dark:bg-slate-950">
       <SafeAreaView style={styles.flex} edges={["top"]}>
@@ -567,7 +599,9 @@ export default function PreventiveMaintenance() {
                   <CalendarIcon size={12} color="#64748b" />
                   <Text className="text-[10px] font-bold text-slate-500 ml-1">
                     {safeFormat(currentDate, "d MMM")}
-                    {currentDate !== toDate ? ` - ${safeFormat(toDate, "d MMM")}` : ""}
+                    {currentDate !== toDate
+                      ? ` - ${safeFormat(toDate, "d MMM")}`
+                      : ""}
                   </Text>
                 </View>
                 <View
@@ -585,7 +619,10 @@ export default function PreventiveMaintenance() {
                     color={
                       tempFromDate !== format(new Date(), "yyyy-MM-dd") ||
                       tempToDate !== format(new Date(), "yyyy-MM-dd")
-                        ? "#dc2626" : "#64748b"
+                        ? "#dc2626"
+                        : isDark
+                          ? "#dc2626"
+                          : "#64748b"
                     }
                   />
                 </View>
@@ -643,7 +680,9 @@ export default function PreventiveMaintenance() {
         <View style={styles.listHeader}>
           <View style={styles.sectionRow}>
             <Text style={styles.sectionTitle}>Maintenance Tasks</Text>
-            <Text style={styles.sectionCount}>{filteredInstances.length} Tasks</Text>
+            <Text style={styles.sectionCount}>
+              {filteredInstances.length} Tasks
+            </Text>
           </View>
         </View>
 

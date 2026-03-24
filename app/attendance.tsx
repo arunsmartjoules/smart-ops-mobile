@@ -14,6 +14,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
+import NetInfo from "@react-native-community/netinfo";
 import {
   ArrowLeft,
   Clock,
@@ -35,6 +36,7 @@ import AttendanceService, {
   type LocationValidationResult,
   getISTDateString,
 } from "@/services/AttendanceService";
+import { getCachedSites } from "@/utils/offlineDataCache";
 import { syncManager } from "@/services/SyncManager";
 import logger from "@/utils/logger";
 import { format, differenceInMinutes, parseISO } from "date-fns";
@@ -298,14 +300,19 @@ export default function AttendancePage() {
         setLoading(false);
       }
 
-      // 2. Fetch fresh data from API
-      const [today, history] = await Promise.all([
-        AttendanceService.getTodayAttendance(user.id),
-        AttendanceService.getAttendanceHistory(user.id),
-      ]);
+      // 2. Fetch fresh data from API (only if online)
+      const netState = await NetInfo.fetch();
+      const isActuallyOnline = netState.isConnected === true;
 
-      setTodayAttendance(today);
-      setAttendanceHistory(history.data);
+      if (isActuallyOnline) {
+        const [today, history] = await Promise.all([
+          AttendanceService.getTodayAttendance(user.id, true),
+          AttendanceService.getAttendanceHistory(user.id),
+        ]);
+
+        setTodayAttendance(today);
+        setAttendanceHistory(history.data);
+      }
     } catch (error: any) {
       logger.error("Fetch attendance data error", {
         module: "ATTENDANCE_SCREEN",
@@ -315,7 +322,7 @@ export default function AttendancePage() {
     } finally {
       setLoading(false);
     }
-  }, [user?.id]);
+  }, [user?.id, isConnected]);
 
   // Track when location was last fetched
   const locationTimestampRef = React.useRef<number>(0);
@@ -469,9 +476,80 @@ export default function AttendancePage() {
     setRefreshing(false);
   }, [fetchData]);
 
+  const performCheckIn = useCallback(
+    async (siteCode: string) => {
+      // Offline allowed
+      // if (!isConnected) { ... }
+      if (!user?.id) {
+        Alert.alert(
+          "Error",
+          "User session not available. Please sign in again.",
+        );
+        return;
+      }
+      try {
+        // Optimistic UI update
+        const optimisticLog: AttendanceLog = {
+          id: `opt-${Date.now()}`,
+          user_id: user!.id,
+          site_code: siteCode,
+          date: getISTDateString(),
+          check_in_time: new Date().toISOString(),
+          status: "Present",
+        };
+        setTodayAttendance(optimisticLog);
+
+        const res = await AttendanceService.checkIn(
+          user!.id,
+          siteCode,
+          location?.coords.latitude,
+          location?.coords.longitude,
+        );
+        if (res.success) {
+          if (res.isOffline) {
+            Alert.alert(
+              "Checked In Offline",
+              "Your check-in has been saved and will sync when you're back online.",
+            );
+          } else {
+            Alert.alert("Success", "Checked in successfully!");
+          }
+          setIsSiteModalVisible(false);
+          fetchData();
+        } else {
+          // Revert optimistic update on failure
+          setTodayAttendance(null);
+          Alert.alert("Failed", res.error || "Check-in failed");
+        }
+      } catch (error: any) {
+        setTodayAttendance(null);
+        Alert.alert("Error", error.message);
+      }
+    },
+    [user?.id, location, fetchData, isConnected],
+  );
+
   const handleCheckInPress = useCallback(async () => {
     if (!user?.id) {
       Alert.alert("Error", "User session not available. Please sign in again.");
+      return;
+    }
+
+    // Offline path — skip location validation, read directly from cache
+    if (!isConnected) {
+      const cached = await getCachedSites(user.id);
+      if (cached.length === 1) {
+        performCheckIn(cached[0].site_code);
+      } else if (cached.length > 1) {
+        setAvailableSites(cached);
+        setIsSiteModalVisible(true);
+      } else {
+        // Cache empty — extremely unlikely after first login, but handle gracefully
+        Alert.alert(
+          "No Sites Available",
+          "Site data hasn't loaded yet. Please connect to the internet once to sync your sites.",
+        );
+      }
       return;
     }
 
@@ -529,64 +607,24 @@ export default function AttendancePage() {
     } finally {
       setValidatingLocation(false);
     }
-  }, [user, ensureLocation]);
-
-  const performCheckIn = useCallback(
-    async (siteCode: string) => {
-      // Offline allowed
-      // if (!isConnected) { ... }
-      if (!user?.id) {
-        Alert.alert(
-          "Error",
-          "User session not available. Please sign in again.",
-        );
-        return;
-      }
-      try {
-        // Optimistic UI update
-        const optimisticLog: AttendanceLog = {
-          id: `opt-${Date.now()}`,
-          user_id: user!.id,
-          site_code: siteCode,
-          date: getISTDateString(),
-          check_in_time: new Date().toISOString(),
-          status: "Present",
-        };
-        setTodayAttendance(optimisticLog);
-
-        const res = await AttendanceService.checkIn(
-          user!.id,
-          siteCode,
-          location?.coords.latitude,
-          location?.coords.longitude,
-        );
-        if (res.success) {
-          Alert.alert("Success", "Checked in successfully!");
-          setIsSiteModalVisible(false);
-          fetchData();
-        } else {
-          // Revert optimistic update on failure
-          setTodayAttendance(null);
-          Alert.alert("Failed", res.error || "Check-in failed");
-        }
-      } catch (error: any) {
-        setTodayAttendance(null);
-        Alert.alert("Error", error.message);
-      }
-    },
-    [user?.id, location, fetchData, isConnected],
-  );
+  }, [user, isConnected, ensureLocation, performCheckIn]);
 
   const handleCheckOutPress = useCallback(async () => {
     if (!todayAttendance) return;
 
     setValidatingLocation(true);
     try {
-      // Reuse cached location — no need to re-fetch for checkout
-      const currentLoc = await ensureLocation();
-      if (!currentLoc) {
-        setValidatingLocation(false);
-        return;
+      // Skip location fetch when offline
+      let currentLoc: Location.LocationObject | null = null;
+      const netState = await NetInfo.fetch();
+      const isActuallyOnline = netState.isConnected === true;
+
+      if (isActuallyOnline) {
+        currentLoc = await ensureLocation();
+        if (!currentLoc) {
+          setValidatingLocation(false);
+          return;
+        }
       }
 
       // Optimistic UI: show checkout immediately
@@ -597,16 +635,23 @@ export default function AttendancePage() {
       });
       setValidatingLocation(false);
 
-      // Fire API call in background
+      // Fire API call (or queue offline)
       const res = await AttendanceService.checkOut(
         todayAttendance.id,
-        currentLoc.coords.latitude,
-        currentLoc.coords.longitude,
+        currentLoc?.coords.latitude,
+        currentLoc?.coords.longitude,
       );
 
       if (res.success) {
-        Alert.alert("Success", "Checked out successfully!");
-        fetchData(); // Refresh with server data
+        if (res.isOffline) {
+          Alert.alert(
+            "Checked Out Offline",
+            "Your check-out has been saved and will sync when you're back online.",
+          );
+        } else {
+          Alert.alert("Success", "Checked out successfully!");
+        }
+        fetchData();
       } else if (res.isEarlyCheckout) {
         // Revert optimistic update — need reason
         setTodayAttendance(previousAttendance);
@@ -702,7 +747,7 @@ export default function AttendancePage() {
           <View className="bg-amber-500 py-1.5 px-4 flex-row items-center justify-center">
             <WifiOff size={14} color="white" />
             <Text className="text-white text-xs font-bold ml-2">
-              Viewing Offline — Internet required for Check-in/out
+              Offline — Check-in/out will sync when connected
             </Text>
           </View>
         )}
@@ -730,7 +775,11 @@ export default function AttendancePage() {
         <View
           className="mx-5 mb-4 rounded-2xl overflow-hidden"
           style={{
-            shadowColor: "#dc2626",
+            shadowColor: todayAttendance?.check_out_time
+              ? "#16a34a"
+              : todayAttendance
+                ? "#dc2626"
+                : "#1e40af",
             shadowOffset: { width: 0, height: 4 },
             shadowOpacity: 0.2,
             shadowRadius: 12,
@@ -743,7 +792,7 @@ export default function AttendancePage() {
                 ? ["#16a34a", "#15803d"] // Green for completed
                 : todayAttendance
                   ? ["#dc2626", "#991b1b"] // Red for checked in
-                  : ["#64748b", "#475569"] // Gray for not started
+                  : ["#1e40af", "#1e3a8a"] // Blue for not started
             }
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 1 }}
@@ -806,15 +855,15 @@ export default function AttendancePage() {
                 className="mt-6 bg-white/10 dark:bg-black/10 rounded-xl py-3 items-center flex-row justify-center"
               >
                 {validatingLocation ? (
-                  <ActivityIndicator color="#dc2626" size="small" />
+                  <ActivityIndicator color="white" size="small" />
                 ) : (
                   <>
                     <MapPin
                       size={18}
-                      color="#dc2626"
+                      color="white"
                       style={{ marginRight: 8 }}
                     />
-                    <Text className="text-red-600 font-bold">CHECK IN NOW</Text>
+                    <Text className="text-white font-bold">CHECK IN NOW</Text>
                   </>
                 )}
               </TouchableOpacity>

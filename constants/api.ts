@@ -5,11 +5,14 @@
 import { Platform } from "react-native";
 
 // Base URLs
+const productionUrl = "https://3.110.174.185.sslip.io";
+
+// For Android: 10.0.2.2 is the emulator's bridge to localhost. 
+// For physical devices, use your computer's local IP (e.g. 192.168.x.x).
+const devUrl = Platform.OS === "android" ? "http://192.168.31.134:3420" : "http://localhost:3420";
+
 export const API_BASE_URL =
-  process.env.EXPO_PUBLIC_BACKEND_URL ||
-  (Platform.OS === "android"
-    ? "http://10.0.2.2:3420"
-    : "http://localhost:3420");
+  process.env.EXPO_PUBLIC_BACKEND_URL || (__DEV__ ? devUrl : productionUrl);
 export const API_URL = `${API_BASE_URL}/api`;
 
 // Timeouts (in milliseconds)

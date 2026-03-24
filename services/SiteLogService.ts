@@ -1,4 +1,5 @@
 import { Q } from "@nozbe/watermelondb";
+import NetInfo from "@react-native-community/netinfo";
 import { startOfDay, endOfDay } from "date-fns";
 import {
   database,
@@ -450,6 +451,7 @@ export const SiteLogService: ISiteLogService = {
    */
   async getSiteLogById(id: string): Promise<SiteLog | null> {
     try {
+      // Local WatermelonDB lookup — history screen only shows locally cached records
       const record = await siteLogCollection.find(id);
       return record;
     } catch (error: any) {
@@ -878,8 +880,8 @@ export const SiteLogService: ISiteLogService = {
   },
 
   /**
-   * Get non-Completed counts per log type directly from the backend.
-   * Uses a dedicated fetch that won't trigger global sign-out on failure.
+   * Get non-Completed counts per log type from backend (source of truth).
+   * Falls back to local WatermelonDB if offline.
    * Returns { "Temp RH": n, "Water": n, "Chemical Dosing": n }
    */
   async getOpenCounts(siteCode: string): Promise<Record<string, number>> {
@@ -891,27 +893,34 @@ export const SiteLogService: ISiteLogService = {
     };
 
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      const token = session?.access_token ?? null;
-      if (!token) return counts;
+      // PROACTIVE OFFLINE CHECK: skip API entirely if no connection
+      const netState = await NetInfo.fetch();
+      if (netState.isConnected === false) {
+        throw new Error("Offline"); // Jump to catch block for local counts
+      }
 
+      // Fetch from backend in parallel — status=pending means != Completed on the server
       await Promise.all(
         logTypes.map(async (logName) => {
           try {
-            // status=Pending → backend returns all rows where status != 'Completed'
-            const url = `${BACKEND_URL}/api/site-logs/site/${siteCode}?log_name=${encodeURIComponent(logName)}&status=Pending&limit=1`;
-            const response = await fetchWithTimeout(url, {
-              headers: {
-                "Content-Type": "application/json",
-                Authorization: `Bearer ${token}`,
-              },
-            });
+            const url = `/api/site-logs/site/${siteCode}?log_name=${encodeURIComponent(logName)}&status=pending&limit=1`;
+            const response = await apiFetch(url);
             if (response.ok) {
               const result = await response.json();
-              counts[logName] = result.pagination?.total ?? result.data?.length ?? 0;
+              counts[logName] = result.pagination?.total ?? 0;
+            } else {
+              throw new Error("non-ok response");
             }
           } catch {
-            // ignore per-type errors, fall back to 0
+            // Offline fallback: count local non-completed records
+            const count = await siteLogCollection
+              .query(
+                Q.where("site_code", siteCode),
+                Q.where("log_name", logName),
+                Q.where("status", Q.notEq("Completed")),
+              )
+              .fetchCount();
+            counts[logName] = count;
           }
         }),
       );

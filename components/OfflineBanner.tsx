@@ -6,7 +6,8 @@ import { useNetworkStatus } from "@/hooks/useNetworkStatus";
 const OfflineBanner = React.memo(() => {
   const { isConnected } = useNetworkStatus();
 
-  if (isConnected) {
+  // Only show when definitively offline — null means unknown (initial state), don't flash banner
+  if (isConnected !== false) {
     return null;
   }
 

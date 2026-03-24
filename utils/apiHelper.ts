@@ -6,7 +6,7 @@ import logger from "./logger";
 export const fetchWithTimeout = async (
   url: string,
   options: RequestInit = {},
-  timeout = 30000,
+  timeout = 10000,
 ): Promise<Response> => {
   const controller = new AbortController();
   const id = setTimeout(() => {

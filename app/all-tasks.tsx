@@ -10,6 +10,7 @@ import {
   Text,
   TouchableOpacity,
   ScrollView,
+  useColorScheme,
 } from "react-native";
 import { FlashList } from "@shopify/flash-list";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -144,6 +145,7 @@ interface Task {
 }
 
 export default function AllTasks() {
+  const isDark = useColorScheme() === "dark";
   const [selectedType, setSelectedType] = useState("all");
   const [selectedDate, setSelectedDate] = useState("all");
   const [showFilters, setShowFilters] = useState(false);
@@ -297,6 +299,8 @@ export default function AllTasks() {
               colors={
                 activeFiltersCount > 0
                   ? ["#dc2626", "#b91c1c"]
+                  : isDark
+                  ? ["#1e293b", "#1e293b"]
                   : ["#ffffff", "#ffffff"]
               }
               style={{
@@ -309,7 +313,7 @@ export default function AllTasks() {
             >
               <Filter
                 size={18}
-                color={activeFiltersCount > 0 ? "#ffffff" : "#64748b"}
+                color={activeFiltersCount > 0 ? "#ffffff" : isDark ? "#dc2626" : "#64748b"}
               />
             </LinearGradient>
           </TouchableOpacity>

@@ -10,45 +10,16 @@ import {
   ActivityIndicator,
 } from "react-native";
 import { Mail, Lock, Zap, Eye, EyeOff } from "lucide-react-native";
-import * as Google from "expo-auth-session/providers/google";
 import { router } from "expo-router";
 import { useAuth } from "@/contexts/AuthContext";
 import { showAlert } from "@/utils/alert";
-import { useEffect } from "react";
 
 export default function SignIn() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
-  const { signIn, signInWithGoogle } = useAuth();
-
-  const [request, response, promptAsync] = Google.useAuthRequest({
-    androidClientId: process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID,
-    iosClientId: process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID,
-    webClientId: process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID,
-  });
-
-  useEffect(() => {
-    if (response?.type === "success") {
-      const { id_token } = response.params;
-      if (id_token) {
-        handleGoogleSignIn(id_token);
-      }
-    }
-  }, [response]);
-
-  const handleGoogleSignIn = async (idToken: string) => {
-    setLoading(true);
-    const { error } = await signInWithGoogle(idToken);
-    setLoading(false);
-
-    if (error) {
-      showAlert("❌ Google Sign In Failed", error);
-    } else {
-      router.replace("/(tabs)/dashboard");
-    }
-  };
+  const { signIn } = useAuth();
 
   const handleSignIn = async () => {
     if (!email || !password) {
@@ -61,9 +32,7 @@ export default function SignIn() {
     setLoading(false);
 
     if (error) {
-      // Check for specific error types
       const errorMsg = typeof error === "string" ? error : error.message || "";
-
       if (
         errorMsg.includes("Invalid login credentials") ||
         errorMsg.includes("invalid_grant") ||
@@ -72,11 +41,6 @@ export default function SignIn() {
         showAlert(
           "❌ Sign In Failed",
           "Wrong email or password. Please check your credentials and try again.",
-        );
-      } else if (errorMsg.includes("Email not confirmed")) {
-        showAlert(
-          "⚠️ Email Not Confirmed",
-          "Please check your email and click the confirmation link before signing in.",
         );
       } else {
         showAlert("Sign In Failed", errorMsg || "An error occurred");
@@ -96,7 +60,6 @@ export default function SignIn() {
         keyboardShouldPersistTaps="handled"
       >
         <View className="flex-1 items-center justify-center">
-          {/* Card */}
           <View className="w-full h-full bg-white dark:bg-slate-900 rounded-2xl shadow-2xl overflow-hidden">
             {/* Header */}
             <View className="bg-red-700 dark:bg-red-900 p-10 items-center justify-center rounded-t-2xl h-56">
@@ -179,17 +142,6 @@ export default function SignIn() {
                     Secure Sign In
                   </Text>
                 )}
-              </TouchableOpacity>
-
-              {/* Google Sign In */}
-              <TouchableOpacity
-                onPress={() => promptAsync()}
-                disabled={loading || !request}
-                className="mt-4 flex-row items-center justify-center bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 py-3 rounded-lg shadow-sm active:scale-95"
-              >
-                <Text className="text-gray-700 dark:text-slate-50 font-semibold ml-2">
-                  Sign in with Google
-                </Text>
               </TouchableOpacity>
 
               {/* Sign Up */}

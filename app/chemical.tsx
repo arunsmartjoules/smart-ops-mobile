@@ -142,21 +142,27 @@ export default function ChemicalTaskList() {
   const [signatureModalVisible, setSignatureModalVisible] = useState(false);
   const [showDosingPicker, setShowDosingPicker] = useState(false);
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
+  const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
+  const autoSyncedRef = React.useRef(false);
 
   useEffect(() => {
     if (user) {
       loadSites();
+      // In edit mode, loadSites won't auto-trigger loadTasks — do it directly
+      if (editId) {
+        loadTasks(true);
+      }
     }
   }, [user]);
 
   const loadSites = async () => {
     try {
       setLoadingSites(true);
-      const userSites = await AttendanceService.getUserSites(user?.user_id || user?.id || "");
+      const userSites = await AttendanceService.getUserSites(user?.user_id || user?.id || "", "JouleCool");
       setSites(userSites);
       
-      // Select first site if none selected (random site requirement)
-      if (!siteCode && userSites.length > 0) {
+      // In edit mode, don't auto-select a site — the edit record provides the siteCode
+      if (!editId && !siteCode && userSites.length > 0) {
         setSiteCode(userSites[0].site_code);
         setTimeout(() => loadTasks(false), 100);
       }
@@ -169,8 +175,12 @@ export default function ChemicalTaskList() {
 
   useFocusEffect(
     useCallback(() => {
-      loadTasks();
-    }, []),
+      // In edit mode, loadTasks is called once on mount via useEffect.
+      // Don't re-run on focus — it would race with the edit record fetch.
+      if (user && !editId) {
+        loadTasks();
+      }
+    }, [user, editId]),
   );
 
   useEffect(() => {
@@ -226,8 +236,8 @@ export default function ChemicalTaskList() {
       let editRecord: any = null;
       const actualEditId = editId || id;
 
-      // 1. If in edit mode, fetch the record FIRST to get the correct siteCode
-      if (actualEditId && actualEditId.length > 16) {
+      // 1. If in edit mode, fetch the record FIRST
+      if (actualEditId) {
         try {
           editRecord = await SiteLogService.getSiteLogById(actualEditId);
           if (editRecord && editRecord.siteCode) {
@@ -239,7 +249,33 @@ export default function ChemicalTaskList() {
         }
       }
 
-      // 2. Fallback to storage
+      // 2. In edit mode, build a single synthetic task — skip getLogTasks entirely
+      if (editRecord) {
+        const taskId = editRecord.id;
+        const taskName = editRecord.taskName || "Chemical Log";
+        setEditingTaskId(taskId);
+        setTasks([{
+          id: taskId,
+          name: taskName,
+          type: "area",
+          isCompleted: false,
+          status: (editRecord.status as any) || "Open",
+          lastLogId: editRecord.id,
+          meta: {
+            chemicalDosing: editRecord.chemicalDosing,
+            attachment: editRecord.attachment,
+          },
+        }]);
+        setLogValues({
+          [taskId]: {
+            dosing: editRecord.chemicalDosing || "",
+            attachment: editRecord.attachment || "",
+          },
+        });
+        return;
+      }
+
+      // 3. Fallback to storage
       if (!currentSiteCode) {
         const storageKey = `last_site_${user?.user_id || user?.id}`;
         currentSiteCode = await AsyncStorage.getItem(storageKey);
@@ -247,10 +283,7 @@ export default function ChemicalTaskList() {
 
       if (currentSiteCode) {
         setSiteCode(currentSiteCode);
-        const areaTasks = await SiteConfigService.getLogTasks(
-          currentSiteCode,
-          "Chemical Dosing",
-        );
+        const areaTasks = await SiteConfigService.getLogTasks(currentSiteCode, "Chemical Dosing");
 
         // Fetch sequence numbers for sorting
         const logMasterEntries = await logMasterCollection
@@ -261,24 +294,17 @@ export default function ChemicalTaskList() {
           sMap.set(entry.taskName, entry.sequenceNumber);
         });
         setSequenceMap(sMap);
-
         setTasks(areaTasks);
 
-        // AUTO-SYNC: If we have no areas at all for a valid site
-        if (areaTasks.length === 0 && currentSiteCode) {
-          SiteLogService.pullSiteLogs(currentSiteCode, {
-            logName: "Chemical Dosing",
-            status: "pending",
-          }).then(() => {
-            loadTasks(false);
-          });
+        // AUTO-SYNC: fire once per mount if local DB is empty for this site.
+        if (areaTasks.length === 0 && currentSiteCode && !autoSyncedRef.current) {
+          autoSyncedRef.current = true;
+          SiteLogService.pullSiteLogs(currentSiteCode, { logName: "Chemical Dosing", status: "pending" })
+            .then(() => loadTasks(false))
+            .catch(() => {});
         }
 
-        const initialValues: Record<
-          string,
-          { dosing: string; attachment?: string; remarks?: string }
-        > = {};
-
+        const initialValues: Record<string, { dosing: string; attachment?: string }> = {};
         areaTasks.forEach((task) => {
           if (task.meta) {
             initialValues[task.id] = {
@@ -288,27 +314,19 @@ export default function ChemicalTaskList() {
           }
         });
 
-        if (editRecord) {
-          const tId = editRecord.taskId || editRecord.id || actualEditId;
-          initialValues[tId] = {
-            dosing: editRecord.chemicalDosing || "",
-            attachment: editRecord.attachment || "",
-          };
-        } else {
-          // Normal mode: Load draft
-          const draftKey = `draft_chem_${currentSiteCode}_${user?.user_id}`;
-          const savedDraft = await AsyncStorage.getItem(draftKey);
-          if (savedDraft) {
-            try {
-              const { values, signature: sig } = JSON.parse(savedDraft);
-              if (values) {
-                Object.keys(values).forEach((k) => {
-                  initialValues[k] = { ...initialValues[k], ...values[k] };
-                });
-              }
-              if (sig) setSignature(sig);
-            } catch (e) {}
-          }
+        // Normal mode: Load draft
+        const draftKey = `draft_chem_${currentSiteCode}_${user?.user_id}`;
+        const savedDraft = await AsyncStorage.getItem(draftKey);
+        if (savedDraft) {
+          try {
+            const { values, signature: sig } = JSON.parse(savedDraft);
+            if (values) {
+              Object.keys(values).forEach((k) => {
+                initialValues[k] = { ...initialValues[k], ...values[k] };
+              });
+            }
+            if (sig) setSignature(sig);
+          } catch (e) {}
         }
         setLogValues(initialValues);
       }
@@ -383,12 +401,16 @@ export default function ChemicalTaskList() {
 
     try {
       setSaving(true);
-      await SiteLogService.saveBulkSiteLogs(entriesToSave);
+      if (editId) {
+        await SiteLogService.updateSiteLog(editId, entriesToSave[0]);
+      } else {
+        await SiteLogService.saveBulkSiteLogs(entriesToSave);
+      }
       await clearDraft();
 
       Alert.alert(
         "Success",
-        `Saved ${entriesToSave.length} entries successfully.`,
+        editId ? "Log updated successfully." : `Saved ${entriesToSave.length} entries successfully.`,
         [{ text: "OK", onPress: () => router.back() }],
       );
     } catch (error: any) {
@@ -399,25 +421,19 @@ export default function ChemicalTaskList() {
   };
 
   const filteredData = useMemo(() => {
-    let filtered = tasks;
+    // In edit mode, tasks is already pre-filtered to the single record
+    if (editId) {
+      return tasks;
+    }
 
-    filtered = filtered.filter((task) => {
-      const matchesSearch = task.name
-        .toLowerCase()
-        .includes(searchQuery.toLowerCase());
-      
+    const filtered = tasks.filter((task) => {
+      const matchesSearch = task.name.toLowerCase().includes(searchQuery.toLowerCase());
       const isNotCompleted = task.status !== "Completed";
-      
-      // If showCompleted is false, we only show non-completed tasks
-      if (!showCompleted) {
-        return matchesSearch && isNotCompleted;
-      }
-      
-      return matchesSearch;
+      return showCompleted ? matchesSearch : matchesSearch && isNotCompleted;
     });
 
     return sortBySequenceNumber(filtered, sequenceMap, sortDirection);
-  }, [tasks, searchQuery, sequenceMap, sortDirection]);
+  }, [tasks, searchQuery, sequenceMap, sortDirection, editId, showCompleted]);
 
   const renderItem = useCallback(
     ({ item }: { item: TaskItem }) => {
@@ -571,7 +587,7 @@ export default function ChemicalTaskList() {
         {filteredData.length > 0 && (
           <View className="absolute bottom-0 left-0 right-0 bg-white dark:bg-slate-900 border-t border-slate-100 dark:border-slate-800 px-5 pb-8 pt-4">
             <TouchableOpacity
-              onPress={() => setSignatureModalVisible(true)}
+              onPress={() => editId ? handleSaveWithSignature(signature) : setSignatureModalVisible(true)}
               disabled={saving}
               activeOpacity={0.8}
               className={`py-4 rounded-xl flex-row items-center justify-center ${saving ? "bg-slate-200" : "bg-purple-600 shadow-md shadow-purple-600/20"}`}
@@ -591,7 +607,7 @@ export default function ChemicalTaskList() {
                 <ActivityIndicator color="white" />
               ) : (
                 <Text className="text-white font-bold text-base uppercase tracking-widest">
-                  Complete & Sign
+                  {editId ? "Update" : "Complete & Sign"}
                 </Text>
               )}
             </TouchableOpacity>

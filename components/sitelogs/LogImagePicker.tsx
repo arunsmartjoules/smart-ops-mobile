@@ -73,7 +73,7 @@ export const LogImagePicker: React.FC<LogImagePickerProps> = ({
     try {
       const filename = `${uploadPath}/${Date.now()}.jpg`;
       const publicUrl = await StorageService.uploadFile(
-        "site-log-attachments",
+        "jouleops-attachments",
         filename,
         uri
       );

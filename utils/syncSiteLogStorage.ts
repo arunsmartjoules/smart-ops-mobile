@@ -330,10 +330,10 @@ export async function pullRecentSiteLogs(
 ): Promise<{ pulled: number }> {
   let pulled = 0;
   try {
-    // Calculate date for 90 days ago (3 months)
-    const ninetyDaysAgo = new Date();
-    ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
-    const startDate = ninetyDaysAgo.toISOString();
+    // Calculate date for 180 days ago (6 months)
+    const oneHundredEightyDaysAgo = new Date();
+    oneHundredEightyDaysAgo.setDate(oneHundredEightyDaysAgo.getDate() - 180);
+    const startDate = oneHundredEightyDaysAgo.toISOString();
 
     const url = siteCode 
       ? `${apiUrl}/api/site-logs/site/${siteCode}?limit=1000&fromDate=${startDate}`
@@ -460,9 +460,9 @@ export async function pullRecentChillerReadings(
 ): Promise<{ pulled: number }> {
   let pulled = 0;
   try {
-    const ninetyDaysAgo = new Date();
-    ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
-    const startDate = ninetyDaysAgo.toISOString();
+    const oneHundredEightyDaysAgo = new Date();
+    oneHundredEightyDaysAgo.setDate(oneHundredEightyDaysAgo.getDate() - 180);
+    const startDate = oneHundredEightyDaysAgo.toISOString();
 
     const response = await fetchWithTimeout(
       `${apiUrl}/api/chiller-readings/site/${siteCode}?limit=1000&fromDate=${startDate}`,

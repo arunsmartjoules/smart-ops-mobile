@@ -1,10 +1,17 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import NetInfo from "@react-native-community/netinfo";
 import logger from "../utils/logger";
 import { authEvents } from "../utils/authEvents";
 import {
   cacheAttendance,
   getCachedAttendance,
+  cacheSites,
+  getCachedSites,
 } from "../utils/offlineDataCache";
+import {
+  queueOfflineCheckIn,
+  queueOfflineCheckOut,
+} from "../utils/syncAttendanceStorage";
 import { supabase } from "./supabase";
 import { fetchWithTimeout } from "../utils/apiHelper";
 import { API_BASE_URL } from "../constants/api";
@@ -59,8 +66,10 @@ const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
     ...options.headers,
   });
 
+  const fullUrl = `${BACKEND_URL}${endpoint}`;
   try {
-    let response = await fetchWithTimeout(`${BACKEND_URL}${endpoint}`, {
+    logger.debug(`API Request: ${fullUrl}`, { module: "ATTENDANCE_SERVICE" });
+    let response = await fetchWithTimeout(fullUrl, {
       ...options,
       headers: getHeaders(token),
     });
@@ -152,9 +161,10 @@ export interface LocationValidationResult {
 // Service functions
 export const AttendanceService = {
   /**
-   * Get today's attendance for a user
+   * Get today's attendance for a user.
+   * If force is true, it will wait for the API and ignore the cache return path.
    */
-  async getTodayAttendance(userId: string): Promise<AttendanceLog | null> {
+  async getTodayAttendance(userId: string, force = false): Promise<AttendanceLog | null> {
     // 1. Try to get from cache first for immediate return
     const cached = await getCachedAttendance(userId);
     const cachedToday = normalizeAttendanceLog(cached?.today);
@@ -163,8 +173,14 @@ export const AttendanceService = {
     const hasValidCache = cachedToday && isAttendanceForToday(cachedToday);
 
     // 2. Fire off the API check in the background
-    const apiPromise = apiFetch(`/api/attendance/user/${userId}/today`).then(
-      (result) => {
+    const apiPromise = (async () => {
+      try {
+        const netState = await NetInfo.fetch();
+        if (netState.isConnected === false) {
+          return null;
+        }
+
+        const result = await apiFetch(`/api/attendance/user/${userId}/today`);
         if (result.success) {
           const normalized = normalizeAttendanceLog(result.data);
           const todayFromApi =
@@ -178,16 +194,17 @@ export const AttendanceService = {
           return todayFromApi;
         }
         return null;
-      },
-    );
+      } catch (e) {
+        return null;
+      }
+    })();
 
-    // If we have cache, return it and let the caller update again if they want
-    // (Actual pattern will be implemented in the screen hook/component)
-    if (hasValidCache) {
+    // If we have cache and we're NOT forcing a refresh, return it immediately to unblock UI
+    if (hasValidCache && !force) {
       return cachedToday;
     }
 
-    // If no valid cache, wait for API
+    // If no valid cache, wait for API (or immediate null if offline via the promise above)
     return apiPromise;
   },
 
@@ -218,9 +235,10 @@ export const AttendanceService = {
   },
 
   /**
-   * Get user's assigned sites with coordinates
+   * Get user's assigned sites with coordinates.
+   * Defaults to 'JouleCool' project type — only mapped sites are returned.
    */
-  async getUserSites(userId: string, projectType?: string): Promise<Site[]> {
+  async getUserSites(userId: string, projectType: string = "JouleCool"): Promise<Site[]> {
     const normalizeSites = (sites: any[]): Site[] => {
       const uniqueSites = new Map<string, Site>();
 
@@ -245,6 +263,26 @@ export const AttendanceService = {
       return Array.from(uniqueSites.values());
     };
 
+    // OFFLINE FAST PATH: skip all API calls when offline, return cached immediately
+    try {
+      const netState = await NetInfo.fetch();
+      if (netState.isConnected === false) {
+        const cached = await getCachedSites(userId);
+        if (cached.length > 0) {
+          logger.debug("Offline — returning cached sites immediately", {
+            module: "ATTENDANCE_SERVICE",
+            userId,
+            count: cached.length,
+          });
+          return cached;
+        }
+        // No cache available offline — return empty
+        return [];
+      }
+    } catch (_) {
+      // NetInfo check failed — proceed with API attempt
+    }
+
     const mappedSitesResult = await apiFetch(`/api/site-users/user/${userId}`);
     if (mappedSitesResult.success && Array.isArray(mappedSitesResult.data)) {
       const rawSites = projectType
@@ -258,6 +296,8 @@ export const AttendanceService = {
           count: mappedSites.length,
           projectType,
         });
+        // Keep cache warm so offline fallback has fresh data
+        cacheSites(userId, mappedSites).catch(() => {});
         return mappedSites;
       }
     }
@@ -277,8 +317,23 @@ export const AttendanceService = {
         count: attendanceSites.length,
         projectType,
       });
+      // Keep cache warm so offline fallback has fresh data
+      cacheSites(userId, attendanceSites).catch(() => {});
       return attendanceSites;
     }
+
+    // Offline fallback: return previously cached sites if both network calls failed
+    try {
+      const cached = await getCachedSites(userId);
+      if (cached.length > 0) {
+        logger.debug("Returning cached sites (offline fallback)", {
+          module: "ATTENDANCE_SERVICE",
+          userId,
+          count: cached.length,
+        });
+        return cached;
+      }
+    } catch (_) {}
 
     logger.warn("Failed to load mapped sites", {
       module: "ATTENDANCE_SERVICE",
@@ -302,7 +357,8 @@ export const AttendanceService = {
   },
 
   /**
-   * Check in to a site
+   * Check in to a site.
+   * When offline, queues the record locally and returns an optimistic log.
    */
   async checkIn(
     userId: string,
@@ -314,6 +370,7 @@ export const AttendanceService = {
     success: boolean;
     data?: AttendanceLog;
     error?: string;
+    isOffline?: boolean;
   }> {
     const result = await apiFetch("/api/attendance/check-in", {
       method: "POST",
@@ -327,17 +384,26 @@ export const AttendanceService = {
     });
 
     if (!result.success && result.isNetworkError) {
-      return {
-        success: false,
-        error: "Cannot check in offline. Internet connection required.",
+      // Queue locally and return optimistic log
+      const timestamp = new Date().toISOString();
+      const localId = await queueOfflineCheckIn(userId, siteCode, timestamp);
+      const optimisticLog: AttendanceLog = {
+        id: localId,
+        user_id: userId,
+        site_code: siteCode,
+        date: getISTDateString(),
+        check_in_time: timestamp,
+        status: "Present",
       };
+      return { success: true, data: optimisticLog, isOffline: true };
     }
 
     return result;
   },
 
   /**
-   * Check out from attendance
+   * Check out from attendance.
+   * When offline, queues the record locally and returns success.
    */
   async checkOut(
     attendanceId: string,
@@ -351,6 +417,7 @@ export const AttendanceService = {
     error?: string;
     isEarlyCheckout?: boolean;
     hoursWorked?: string;
+    isOffline?: boolean;
   }> {
     const result = await apiFetch(`/api/attendance/${attendanceId}/check-out`, {
       method: "POST",
@@ -363,10 +430,9 @@ export const AttendanceService = {
     });
 
     if (!result.success && result.isNetworkError) {
-      return {
-        success: false,
-        error: "Cannot check out offline. Internet connection required.",
-      };
+      const timestamp = new Date().toISOString();
+      await queueOfflineCheckOut(attendanceId, attendanceId, timestamp, remarks);
+      return { success: true, isOffline: true };
     }
 
     return result;
@@ -380,6 +446,18 @@ export const AttendanceService = {
     page: number = 1,
     limit: number = 100,
   ): Promise<{ data: AttendanceLog[]; pagination: any }> {
+    // OFFLINE FAST PATH: return cached history immediately when offline
+    try {
+      const netState = await NetInfo.fetch();
+      if (netState.isConnected === false) {
+        if (page === 1) {
+          const cached = await getCachedAttendance(userId);
+          return { data: cached ? cached.history : [], pagination: {} };
+        }
+        return { data: [], pagination: {} };
+      }
+    } catch (_) {}
+
     const result = await apiFetch(
       `/api/attendance/user/${userId}?page=${page}&limit=${limit}`,
     );

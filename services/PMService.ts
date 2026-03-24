@@ -3,6 +3,7 @@ import {
   database,
   pmInstanceCollection,
   pmChecklistItemCollection,
+  pmChecklistMasterCollection,
   pmResponseCollection,
 } from "../database";
 import PMInstance from "../database/models/PMInstance";
@@ -176,9 +177,9 @@ const PMService = {
         const today = new Date();
         toDateStr = format(today, "yyyy-MM-dd");
 
-        const ninetyDaysAgo = new Date();
-        ninetyDaysAgo.setDate(today.getDate() - 90);
-        fromDateStr = format(ninetyDaysAgo, "yyyy-MM-dd");
+        const oneHundredEightyDaysAgo = new Date();
+        oneHundredEightyDaysAgo.setDate(today.getDate() - 180);
+        fromDateStr = format(oneHundredEightyDaysAgo, "yyyy-MM-dd");
       }
 
       // Fetch instances for the specific date range
@@ -334,30 +335,149 @@ const PMService = {
   },
 
   /**
-   * Save multiple PM responses locally in a single batch.
+   * Pull ALL PM checklist masters and their items from the server and cache locally.
+   * This is a bulk cache so checklist data is unconditionally available offline.
+   * Safe to call repeatedly — updates changed records and handles huge datasets in chunks.
    */
-  async saveResponsesBatch(
+  async pullAllChecklistItems(): Promise<void> {
+    try {
+      // Fetch all checklist masters
+      const masterResponse = await apiFetch(`/api/pm-checklist?status=All&limit=5000`);
+      if (!masterResponse.ok) return;
+
+      const masterJson = await masterResponse.json();
+      const rawItems: any[] = masterJson.data || masterJson || [];
+
+      if (rawItems.length === 0) return;
+
+      const masterIds = [
+        ...new Set(rawItems.map((i: any) => i.checklist_id || i.checklist_master_id).filter(Boolean)),
+      ] as string[];
+
+      // Upsert into WatermelonDB using small chunks to avoid memory/SQLite limits
+      const CHUNK_SIZE = 1000;
+
+      for (let i = 0; i < rawItems.length; i += CHUNK_SIZE) {
+        const chunk = rawItems.slice(i, i + CHUNK_SIZE);
+
+        await database.write(async () => {
+          const batch: any[] = [];
+          const existingItems = await pmChecklistItemCollection.query().fetch();
+          const existingItemMap = new Map(existingItems.map((e) => [e.serverId || "", e]));
+
+          for (const item of chunk) {
+            const ex = existingItemMap.get(item.id);
+            const masterId = item.checklist_id || item.checklist_master_id || "";
+            
+            // Defensively cast sequenceNo to a pure number or null to prevent WatermelonDB crashes
+            let sequenceNo = parseInt(item.sequence_no, 10);
+            if (isNaN(sequenceNo)) sequenceNo = null as any;
+
+            if (ex) {
+              batch.push(
+                ex.prepareUpdate((r: any) => {
+                  r.checklistMasterId = masterId;
+                  r.taskName = item.task_name;
+                  r.fieldType = item.field_type || null;
+                  r.sequenceNo = sequenceNo;
+                  r.imageMandatory = item.image_mandatory === true || item.image_mandatory === "true";
+                  r.remarksMandatory = item.remarks_mandatory === true || item.remarks_mandatory === "true";
+                  r.cachedAt = Date.now();
+                }),
+              );
+            } else {
+              batch.push(
+                pmChecklistItemCollection.prepareCreate((r: any) => {
+                  r.serverId = item.id;
+                  r.checklistMasterId = masterId;
+                  r.taskName = item.task_name;
+                  r.fieldType = item.field_type || null;
+                  r.sequenceNo = sequenceNo;
+                  r.imageMandatory = item.image_mandatory === true || item.image_mandatory === "true";
+                  r.remarksMandatory = item.remarks_mandatory === true || item.remarks_mandatory === "true";
+                  r.cachedAt = Date.now();
+                }),
+              );
+            }
+          }
+
+          if (batch.length > 0) await database.batch(batch);
+        });
+      }
+
+      // Upsert checklist masters (only those that don't exist yet)
+      await database.write(async () => {
+        const existingMasters = await pmChecklistMasterCollection.query().fetch();
+        const existingMasterMap = new Map(existingMasters.map((e) => [e.serverId || "", e]));
+        const masterBatch: any[] = [];
+
+        for (const masterId of masterIds) {
+          if (!existingMasterMap.has(masterId)) {
+            masterBatch.push(
+              pmChecklistMasterCollection.prepareCreate((r: any) => {
+                r.serverId = masterId;
+                r.title = masterId;
+                r.cachedAt = Date.now();
+              }),
+            );
+          }
+        }
+        if (masterBatch.length > 0) await database.batch(masterBatch);
+      });
+
+      logger.info(`Cached ${rawItems.length} PM checklist items from bulk pull`, {
+        module: "PM_SERVICE",
+      });
+    } catch (error: any) {
+      logger.error("Failed to bulk pull PM checklist items", {
+        module: "PM_SERVICE",
+        error: error.message,
+      });
+    }
+  },
+
+  /**
+   * Save PM execution progress natively in a single transaction (Responses + Instance Status + Images)
+   */
+  async saveExecutionProgress(
     instanceServerId: string,
     responses: PMResponseData[],
+    options?: {
+      status?: string;
+      beforeImage?: string | null;
+      afterImage?: string | null;
+      clientSign?: string | null;
+    }
   ): Promise<void> {
     await database.write(async () => {
       const recordsToBatch = [];
+      const local = await this.getInstanceByServerId(instanceServerId);
+
+      if (!local) {
+        logger.warn("Cannot save progress - Instance not found locally", { instanceServerId });
+        return;
+      }
+
+      // Handle responses
+      const existingResponses = await pmResponseCollection
+        .query(Q.where("instance_id", instanceServerId))
+        .fetch();
+      
+      const existingMap = new Map(existingResponses.map(r => [r.checklistItemId, r]));
 
       for (const data of responses) {
-        const existing = await pmResponseCollection
-          .query(
-            Q.where("instance_id", instanceServerId),
-            Q.where("checklist_item_id", data.checklist_item_id),
-          )
-          .fetch();
+        // Skip explicitly undefined responses to avoid corrupting previous ones
+        if (data.response_value === undefined) continue;
 
-        if (existing.length > 0) {
+        const existingItem = existingMap.get(data.checklist_item_id);
+
+        if (existingItem) {
           recordsToBatch.push(
-            existing[0].prepareUpdate((record: any) => {
+            existingItem.prepareUpdate((record: any) => {
               record.responseValue = data.response_value;
-              record.readings = data.readings;
-              record.remarks = data.remarks;
-              record.imageUrl = data.image_url;
+              record.readings = data.readings || null;
+              record.remarks = data.remarks || null;
+              record.imageUrl = data.image_url || null;
               record.isSynced = false;
             }),
           );
@@ -368,42 +488,55 @@ const PMService = {
               record.instanceId = instanceServerId;
               record.checklistItemId = data.checklist_item_id;
               record.responseValue = data.response_value;
-              record.readings = data.readings;
-              record.remarks = data.remarks;
-              record.imageUrl = data.image_url;
+              record.readings = data.readings || null;
+              record.remarks = data.remarks || null;
+              record.imageUrl = data.image_url || null;
               record.isSynced = false;
             }),
           );
         }
       }
 
-      // Prepare instance progress update
-      const local = await this.getInstanceByServerId(instanceServerId);
-      if (local) {
-        const checklistItems = await this.getChecklistItems(
-          local.maintenanceId!,
-        );
-        const answered = responses.filter((r) => r.response_value).length;
-        // Note: we might need to count existing ones not in this batch,
-        // but typically responses passed here are the full current state.
-        // For reliability, let's fetch all responses after batch (but we are in a transaction).
-        // Actually, we can just calculate it here if 'responses' is the full set.
-        // In pm-execution, 'responses' IS the full set.
-        const total = checklistItems.length;
-        const progressStr = `${answered}/${total}`;
+      // Determine progress string
+      const checklistItems = await this.getChecklistItems(local.maintenanceId!);
+      // Calculate answered by combining newly passed responses AND existing responses that weren't modified
+      const newlyPassedIds = new Set(responses.map(r => r.checklist_item_id));
+      
+      let answeredCount = 0;
+      
+      // Count newly passed that have proper response
+      answeredCount += responses.filter(r => r.response_value).length;
+      
+      // Count existing that HAVE NOT been passed but already had a response
+      existingMap.forEach((val, id) => {
+        if (!newlyPassedIds.has(id as string) && val.responseValue) {
+          answeredCount++;
+        }
+      });
 
-        recordsToBatch.push(
-          local.prepareUpdate((r: any) => {
-            r.progress = progressStr;
-            r.isSynced = false;
-          }),
-        );
-      }
+      const total = checklistItems.length;
+      const progressStr = `${answeredCount}/${total}`;
+
+      // Update Instance record
+      recordsToBatch.push(
+        local.prepareUpdate((r: any) => {
+          r.progress = progressStr;
+          r.isSynced = false;
+          
+          if (options?.status) r.status = options.status;
+          if (options?.beforeImage !== undefined) r.beforeImage = options.beforeImage;
+          if (options?.afterImage !== undefined) r.afterImage = options.afterImage;
+          if (options?.clientSign !== undefined) r.clientSign = options.clientSign;
+        })
+      );
 
       await database.batch(...recordsToBatch);
     });
 
-    syncManager.triggerSync("manual").catch(() => {});
+    // Throttle the background sync call so it doesn't fight the user returning to list
+    setTimeout(() => {
+      syncManager.triggerSync("manual").catch(() => {});
+    }, 1500);
   },
 
   /**

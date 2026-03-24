@@ -91,7 +91,7 @@ export default function WaterEntry() {
         const uri = result.assets[0].uri;
         const filename = `water/${params.siteCode}/${Date.now()}.jpg`;
         const publicUrl = await StorageService.uploadFile(
-          "site-log-attachments",
+          "jouleops-attachments",
           filename,
           uri,
         );

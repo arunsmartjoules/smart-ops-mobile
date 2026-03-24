@@ -35,6 +35,7 @@ import logger from "@/utils/logger";
 import Skeleton from "@/components/Skeleton";
 import { StorageService } from "@/services/StorageService";
 import { database } from "@/database";
+import NetInfo from "@react-native-community/netinfo";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 interface ResponseMap {
@@ -85,22 +86,46 @@ const TaskRow = React.memo(
           <View
             style={[
               styles.seqBadge,
-              { backgroundColor: isDone ? (isDark ? "#064e3b" : "#dcfce7") : (isDark ? "#334155" : "#f1f5f9") },
+              {
+                backgroundColor: isDone
+                  ? isDark
+                    ? "#064e3b"
+                    : "#dcfce7"
+                  : isDark
+                    ? "#334155"
+                    : "#f1f5f9",
+              },
             ]}
           >
             <Text
               style={[
                 styles.seqText,
-                { color: isDone ? (isDark ? "#4ade80" : "#16a34a") : (isDark ? "#94a3b8" : "#94a3b8") },
+                {
+                  color: isDone
+                    ? isDark
+                      ? "#4ade80"
+                      : "#16a34a"
+                    : isDark
+                      ? "#94a3b8"
+                      : "#94a3b8",
+                },
               ]}
             >
               {index + 1}
             </Text>
           </View>
-          <Text style={[styles.taskName, { color: isDark ? "#f8fafc" : "#0f172a" }]}>{item.taskName}</Text>
+          <Text
+            style={[styles.taskName, { color: isDark ? "#f8fafc" : "#0f172a" }]}
+          >
+            {item.taskName}
+          </Text>
           {item.imageMandatory && (
-            <View style={[styles.imgTag, isDark && { backgroundColor: "#431407" }]}>
-              <Text style={[styles.imgTagText, isDark && { color: "#fb923c" }]}>📷</Text>
+            <View
+              style={[styles.imgTag, isDark && { backgroundColor: "#431407" }]}
+            >
+              <Text style={[styles.imgTagText, isDark && { color: "#fb923c" }]}>
+                📷
+              </Text>
             </View>
           )}
         </View>
@@ -120,8 +145,16 @@ const TaskRow = React.memo(
                   style={[
                     styles.choiceBtn,
                     {
-                      backgroundColor: selected ? selColor : (isDark ? "#1e293b" : "#f8fafc"),
-                      borderColor: selected ? "transparent" : (isDark ? "#334155" : "#e2e8f0"),
+                      backgroundColor: selected
+                        ? selColor
+                        : isDark
+                          ? "#1e293b"
+                          : "#f8fafc",
+                      borderColor: selected
+                        ? "transparent"
+                        : isDark
+                          ? "#334155"
+                          : "#e2e8f0",
                     },
                   ]}
                   activeOpacity={0.7}
@@ -129,7 +162,13 @@ const TaskRow = React.memo(
                   <Text
                     style={[
                       styles.choiceText,
-                      { color: selected ? "#fff" : (isDark ? "#94a3b8" : "#64748b") },
+                      {
+                        color: selected
+                          ? "#fff"
+                          : isDark
+                            ? "#94a3b8"
+                            : "#64748b",
+                      },
                     ]}
                   >
                     {opt}
@@ -147,13 +186,27 @@ const TaskRow = React.memo(
             placeholder={`Enter ${fieldType.toLowerCase()}...`}
             placeholderTextColor={isDark ? "#64748b" : "#94a3b8"}
             keyboardType={fieldType === "Number" ? "decimal-pad" : "default"}
-            style={[styles.textInput, isDark && { backgroundColor: "#0f172a", borderColor: "#334155", color: "#f8fafc" }]}
+            style={[
+              styles.textInput,
+              isDark && {
+                backgroundColor: "#0f172a",
+                borderColor: "#334155",
+                color: "#f8fafc",
+              },
+            ]}
           />
         )}
 
         {/* Readings Input */}
         <View style={{ marginTop: 12 }}>
-          <Text style={[styles.inputLabel, { color: isDark ? "#94a3b8" : "#64748b" }]}>Readings</Text>
+          <Text
+            style={[
+              styles.inputLabel,
+              { color: isDark ? "#94a3b8" : "#64748b" },
+            ]}
+          >
+            Readings
+          </Text>
           <TextInput
             value={response?.readings || ""}
             onChangeText={(val) =>
@@ -162,7 +215,14 @@ const TaskRow = React.memo(
             placeholder="Enter readings if applicable..."
             placeholderTextColor={isDark ? "#64748b" : "#94a3b8"}
             keyboardType="decimal-pad"
-            style={[styles.textInput, isDark && { backgroundColor: "#0f172a", borderColor: "#334155", color: "#f8fafc" }]}
+            style={[
+              styles.textInput,
+              isDark && {
+                backgroundColor: "#0f172a",
+                borderColor: "#334155",
+                color: "#f8fafc",
+              },
+            ]}
           />
         </View>
 
@@ -170,7 +230,10 @@ const TaskRow = React.memo(
         <View style={styles.actionRow}>
           <TouchableOpacity
             onPress={() => onImageChange(item.serverId!, "PICK")}
-            style={[styles.imageBtn, isDark && { backgroundColor: "#1e293b", borderColor: "#334155" }]}
+            style={[
+              styles.imageBtn,
+              isDark && { backgroundColor: "#1e293b", borderColor: "#334155" },
+            ]}
             disabled={isUploading}
           >
             {isUploading ? (
@@ -192,7 +255,14 @@ const TaskRow = React.memo(
                 }
                 placeholder="Add remarks..."
                 placeholderTextColor={isDark ? "#64748b" : "#94a3b8"}
-                style={[styles.remarksInput, isDark && { backgroundColor: "#0f172a", borderColor: "#334155", color: "#f8fafc" }]}
+                style={[
+                  styles.remarksInput,
+                  isDark && {
+                    backgroundColor: "#0f172a",
+                    borderColor: "#334155",
+                    color: "#f8fafc",
+                  },
+                ]}
                 multiline
               />
             </View>
@@ -203,7 +273,10 @@ const TaskRow = React.memo(
         {response?.image_url && (
           <View style={styles.imagePreviewRow}>
             <TouchableOpacity
-              style={[styles.previewContainer, isDark && { borderColor: "#334155" }]}
+              style={[
+                styles.previewContainer,
+                isDark && { borderColor: "#334155" },
+              ]}
               onPress={() => {
                 if (isCompleted) {
                   onPreview(response.image_url!);
@@ -251,11 +324,25 @@ const TaskRow = React.memo(
 );
 
 // ─── Checklist Skeleton ─────────────────────────────────────────────────────
-const ChecklistSkeleton = ({ cardBg, borderColor, isDark }: { cardBg: string; borderColor: string; isDark: boolean }) => {
+const ChecklistSkeleton = ({
+  cardBg,
+  borderColor,
+  isDark,
+}: {
+  cardBg: string;
+  borderColor: string;
+  isDark: boolean;
+}) => {
   return (
     <View style={styles.listContent}>
       {[1, 2, 3, 4, 5].map((i) => (
-        <View key={i} style={[styles.taskCard, { backgroundColor: cardBg, borderColor: borderColor }]}>
+        <View
+          key={i}
+          style={[
+            styles.taskCard,
+            { backgroundColor: cardBg, borderColor: borderColor },
+          ]}
+        >
           <View style={styles.taskHeader}>
             <Skeleton
               width={24}
@@ -316,17 +403,19 @@ export default function PMExecutionScreen() {
         setInstance(inst);
 
         if (inst?.maintenanceId) {
-          // 1. Try local cache
+          // Load from local cache — checklist items are bulk-cached by SyncManager
           let items = await PMService.getChecklistItems(inst.maintenanceId);
 
-          // 2. If online, always attempt a background pull to ensure fresh data
-          if (isConnected) {
+          // If online and cache is empty for this checklist, do a targeted pull as fallback
+          if (items.length === 0 && isConnected) {
             setFetchingChecklist(true);
             try {
               await PMService.pullChecklistItems(inst.maintenanceId);
               items = await PMService.getChecklistItems(inst.maintenanceId);
             } catch (err) {
-              logger.error("Failed to fetch fresh checklist", { error: err });
+              logger.error("Failed to fetch checklist as fallback", {
+                error: err,
+              });
             } finally {
               setFetchingChecklist(false);
             }
@@ -364,7 +453,7 @@ export default function PMExecutionScreen() {
     async (itemId: string, uri: string | null) => {
       if (uri === "PICK") {
         const result = await ImagePicker.launchCameraAsync({
-        mediaTypes: ["images"],
+          mediaTypes: ["images"],
           allowsEditing: true,
           quality: 0.7,
         });
@@ -456,7 +545,10 @@ export default function PMExecutionScreen() {
 
         // Try to upload immediately if online, else keep local URI
         let finalUri = pickedUri;
-        if (isConnected) {
+        const netState = await NetInfo.fetch();
+        const isActuallyOnline = netState.isConnected === true;
+
+        if (isActuallyOnline) {
           try {
             const fileName = `pm-completion/${instanceId}_${type}_${Date.now()}.jpg`;
             const publicUrl = await StorageService.uploadFile(
@@ -513,51 +605,37 @@ export default function PMExecutionScreen() {
   const progressPercent = total > 0 ? (answered / total) * 100 : 0;
 
   const handleSave = useCallback(
-    async (quiet = false) => {
+    async (quiet = false, executionOptions?: { status?: string; clientSign?: string }) => {
       setSaving(true);
       try {
         const responseData = Object.entries(responses)
-          .filter(([_, resp]) => resp.response_value !== undefined)
           .map(([itemId, resp]) => ({
             checklist_item_id: itemId,
+            // Keep undefined so saveExecutionProgress ignores untouched rows
             response_value: resp.response_value,
             readings: resp.readings || null,
             remarks: resp.remarks || null,
             image_url: resp.image_url || null,
           }));
 
-        if (responseData.length > 0 || instance?.beforeImage || instance?.afterImage) {
-          await PMService.saveResponsesBatch(
-            instanceId as string,
-            responseData,
-          );
+        let nextStatus = instance?.status;
+        if (instance?.status === "Pending") nextStatus = "In-progress";
+        if (executionOptions?.status) nextStatus = executionOptions.status;
 
-          // Also save instance images locally if they changed
-          const local = await PMService.getInstanceByServerId(instanceId as string);
-          if (local) {
-            await database.write(async () => {
-              await local.update((r: any) => {
-                r.beforeImage = instance.beforeImage || null;
-                r.afterImage = instance.afterImage || null;
-                r.isSynced = false;
-              });
-            });
+        await PMService.saveExecutionProgress(
+          instanceId as string,
+          responseData,
+          {
+            status: nextStatus,
+            beforeImage: instance?.beforeImage || null,
+            afterImage: instance?.afterImage || null,
+            clientSign: executionOptions?.clientSign,
           }
+        );
 
-          // If current status is Pending, automatically move it to In Progress
-          if (instance?.status === "Pending") {
-            try {
-              await PMService.startInstance(instanceId as string);
-              const updated = await PMService.getInstanceByServerId(
-                instanceId as string,
-              );
-              if (updated) setInstance(updated);
-            } catch (statusErr) {
-              logger.error("Failed to auto-update status to In Progress", {
-                error: statusErr,
-              });
-            }
-          }
+        if (nextStatus !== instance?.status) {
+          const updated = await PMService.getInstanceByServerId(instanceId as string);
+          if (updated) setInstance(updated);
         }
 
         if (!quiet) {
@@ -574,7 +652,13 @@ export default function PMExecutionScreen() {
         setSaving(false);
       }
     },
-    [responses, instanceId, instance?.beforeImage, instance?.afterImage, instance?.status],
+    [
+      responses,
+      instanceId,
+      instance?.beforeImage,
+      instance?.afterImage,
+      instance?.status,
+    ],
   );
 
   const handleComplete = useCallback(
@@ -586,16 +670,9 @@ export default function PMExecutionScreen() {
 
       setSaving(true);
       try {
-        const saved = await handleSave(true);
-        if (!saved)
-          throw new Error("Failed to save responses before completion");
+        const saved = await handleSave(true, { status: "Completed", clientSign: signature });
+        if (!saved) throw new Error("Failed to complete instance.");
 
-        await PMService.completeInstance(
-          instanceId as string,
-          signature,
-          instance.beforeImage,
-          instance.afterImage,
-        );
         setShowCompletionModal(false);
         Alert.alert("Completed", "PM task marked as complete!", [
           { text: "OK", onPress: () => router.back() },
@@ -607,7 +684,7 @@ export default function PMExecutionScreen() {
         setSaving(false);
       }
     },
-    [handleSave, instanceId, instance?.beforeImage, instance?.afterImage],
+    [handleSave],
   );
 
   // ── FlatList setup ────────────────────────────────────────────────────────
@@ -625,7 +702,15 @@ export default function PMExecutionScreen() {
         style={{ backgroundColor: cardBg, borderColor: borderColor }}
       />
     ),
-    [responses, handleResponseChange, handleImageChange, uploadingItems, instance?.status, cardBg, borderColor],
+    [
+      responses,
+      handleResponseChange,
+      handleImageChange,
+      uploadingItems,
+      instance?.status,
+      cardBg,
+      borderColor,
+    ],
   );
 
   const keyExtractor = useCallback((item: PMChecklistItem) => item.id, []);
@@ -633,15 +718,20 @@ export default function PMExecutionScreen() {
   const ListEmpty = (
     <View style={[styles.flex, { backgroundColor: bgColor }]}>
       {fetchingChecklist ? (
-        <ChecklistSkeleton cardBg={cardBg} borderColor={borderColor} isDark={isDark} />
+        <ChecklistSkeleton
+          cardBg={cardBg}
+          borderColor={borderColor}
+          isDark={isDark}
+        />
       ) : (
         <View style={styles.emptyChecklist}>
-          <Text style={[styles.emptyText, isDark && { color: "#64748b" }]}>No checklist items found.</Text>
-          {!instance?.maintenanceId && (
-            <Text style={[styles.emptySubText, isDark && { color: "#334155" }]}>
-              No checklist linked to this PM instance.
-            </Text>
-          )}
+          <Text style={[styles.emptyText, isDark && { color: "#64748b" }]}>
+            {!instance?.maintenanceId
+              ? "No checklist linked to this PM instance."
+              : !isConnected
+                ? "Checklist not available offline.\nPlease open this PM task once while connected to cache the checklist."
+                : "No checklist items found."}
+          </Text>
         </View>
       )}
     </View>
@@ -655,25 +745,48 @@ export default function PMExecutionScreen() {
 
   if (loading && !instance) {
     return (
-      <View style={{ flex: 1, backgroundColor: isDark ? "#020617" : "#f8fafc" }}>
-        <ChecklistSkeleton cardBg={cardBg} borderColor={borderColor} isDark={isDark} />
+      <View
+        style={{ flex: 1, backgroundColor: isDark ? "#020617" : "#f8fafc" }}
+      >
+        <ChecklistSkeleton
+          cardBg={cardBg}
+          borderColor={borderColor}
+          isDark={isDark}
+        />
       </View>
     );
   }
 
   return (
     <View style={[styles.flex, { backgroundColor: bgColor }]}>
-      <SafeAreaView style={[styles.flex, { backgroundColor: bgColor }]} edges={["top"]}>
+      <SafeAreaView
+        style={[styles.flex, { backgroundColor: bgColor }]}
+        edges={["top"]}
+      >
         {/* Header */}
-        <View style={[styles.header, { backgroundColor: isDark ? "#0f172a" : "#fff", borderBottomColor: borderColor }]}>
+        <View
+          style={[
+            styles.header,
+            {
+              backgroundColor: isDark ? "#0f172a" : "#fff",
+              borderBottomColor: borderColor,
+            },
+          ]}
+        >
           <TouchableOpacity
             onPress={() => router.back()}
-            style={[styles.backBtn, { backgroundColor: isDark ? "#1e293b" : "#f1f5f9" }]}
+            style={[
+              styles.backBtn,
+              { backgroundColor: isDark ? "#1e293b" : "#f1f5f9" },
+            ]}
           >
             <ArrowLeft size={18} color={isDark ? "#94a3b8" : "#64748b"} />
           </TouchableOpacity>
           <View style={styles.headerText}>
-            <Text style={[styles.headerTitle, { color: headerTextCol }]} numberOfLines={1}>
+            <Text
+              style={[styles.headerTitle, { color: headerTextCol }]}
+              numberOfLines={1}
+            >
               {instance?.assetId || instance?.title || "PM Task"}
             </Text>
             <Text style={[styles.headerSub, { color: subTextColor }]}>
@@ -683,7 +796,13 @@ export default function PMExecutionScreen() {
           {isConnected && (
             <TouchableOpacity
               onPress={() => loadData(true)}
-              style={[styles.refreshBtn, { backgroundColor: isDark ? "#1e293b" : "#f8fafc", borderColor: borderColor }]}
+              style={[
+                styles.refreshBtn,
+                {
+                  backgroundColor: isDark ? "#1e293b" : "#f8fafc",
+                  borderColor: borderColor,
+                },
+              ]}
               disabled={fetchingChecklist}
             >
               {fetchingChecklist ? (
@@ -696,10 +815,23 @@ export default function PMExecutionScreen() {
         </View>
 
         {/* Stats Row: Progress + Evidence */}
-        <View style={[styles.statsRow, { backgroundColor: isDark ? "#0f172a" : "#fff", borderBottomColor: borderColor }]}>
+        <View
+          style={[
+            styles.statsRow,
+            {
+              backgroundColor: isDark ? "#0f172a" : "#fff",
+              borderBottomColor: borderColor,
+            },
+          ]}
+        >
           {/* Progress Col */}
           <View style={styles.progressCol}>
-            <View style={[styles.progressTrack, { backgroundColor: isDark ? "#1e293b" : "#e2e8f0" }]}>
+            <View
+              style={[
+                styles.progressTrack,
+                { backgroundColor: isDark ? "#1e293b" : "#e2e8f0" },
+              ]}
+            >
               <View
                 style={[
                   styles.progressFill,
@@ -720,17 +852,23 @@ export default function PMExecutionScreen() {
                   if (instance.status === "Completed") {
                     setPreviewImageUrl(instance.beforeImage);
                   } else {
-                    Alert.alert("Evidence Photo", "What would you like to do?", [
-                      {
-                        text: "Show Preview",
-                        onPress: () => setPreviewImageUrl(instance.beforeImage),
-                      },
-                      {
-                        text: "Retake Photo",
-                        onPress: () => handleInstanceImageChange("beforeImage"),
-                      },
-                      { text: "Cancel", style: "cancel" },
-                    ]);
+                    Alert.alert(
+                      "Evidence Photo",
+                      "What would you like to do?",
+                      [
+                        {
+                          text: "Show Preview",
+                          onPress: () =>
+                            setPreviewImageUrl(instance.beforeImage),
+                        },
+                        {
+                          text: "Retake Photo",
+                          onPress: () =>
+                            handleInstanceImageChange("beforeImage"),
+                        },
+                        { text: "Cancel", style: "cancel" },
+                      ],
+                    );
                   }
                 } else {
                   handleInstanceImageChange("beforeImage");
@@ -738,8 +876,15 @@ export default function PMExecutionScreen() {
               }}
               style={[
                 styles.compactEvidenceBtn,
-                { backgroundColor: isDark ? "#1e293b" : "#f8fafc", borderColor: isDark ? "#334155" : "#e2e8f0" },
-                instance?.beforeImage ? (isDark ? { borderColor: "#3b82f6", backgroundColor: "#172554" } : styles.compactEvidenceBtnActive) : {},
+                {
+                  backgroundColor: isDark ? "#1e293b" : "#f8fafc",
+                  borderColor: isDark ? "#334155" : "#e2e8f0",
+                },
+                instance?.beforeImage
+                  ? isDark
+                    ? { borderColor: "#3b82f6", backgroundColor: "#172554" }
+                    : styles.compactEvidenceBtnActive
+                  : {},
               ]}
             >
               {instance?.beforeImage ? (
@@ -770,17 +915,23 @@ export default function PMExecutionScreen() {
                   if (instance.status === "Completed") {
                     setPreviewImageUrl(instance.afterImage);
                   } else {
-                    Alert.alert("Evidence Photo", "What would you like to do?", [
-                      {
-                        text: "Show Preview",
-                        onPress: () => setPreviewImageUrl(instance.afterImage),
-                      },
-                      {
-                        text: "Retake Photo",
-                        onPress: () => handleInstanceImageChange("afterImage"),
-                      },
-                      { text: "Cancel", style: "cancel" },
-                    ]);
+                    Alert.alert(
+                      "Evidence Photo",
+                      "What would you like to do?",
+                      [
+                        {
+                          text: "Show Preview",
+                          onPress: () =>
+                            setPreviewImageUrl(instance.afterImage),
+                        },
+                        {
+                          text: "Retake Photo",
+                          onPress: () =>
+                            handleInstanceImageChange("afterImage"),
+                        },
+                        { text: "Cancel", style: "cancel" },
+                      ],
+                    );
                   }
                 } else {
                   handleInstanceImageChange("afterImage");
@@ -788,8 +939,15 @@ export default function PMExecutionScreen() {
               }}
               style={[
                 styles.compactEvidenceBtn,
-                { backgroundColor: isDark ? "#1e293b" : "#f8fafc", borderColor: isDark ? "#334155" : "#e2e8f0" },
-                instance?.afterImage ? (isDark ? { borderColor: "#3b82f6", backgroundColor: "#172554" } : styles.compactEvidenceBtnActive) : {},
+                {
+                  backgroundColor: isDark ? "#1e293b" : "#f8fafc",
+                  borderColor: isDark ? "#334155" : "#e2e8f0",
+                },
+                instance?.afterImage
+                  ? isDark
+                    ? { borderColor: "#3b82f6", backgroundColor: "#172554" }
+                    : styles.compactEvidenceBtnActive
+                  : {},
               ]}
             >
               {instance?.afterImage ? (
@@ -798,7 +956,10 @@ export default function PMExecutionScreen() {
                   style={styles.compactEvidencePreview}
                 />
               ) : (
-                <CheckCircle2 size={16} color={isDark ? "#64748b" : "#94a3b8"} />
+                <CheckCircle2
+                  size={16}
+                  color={isDark ? "#64748b" : "#94a3b8"}
+                />
               )}
               <Text
                 style={[
@@ -818,7 +979,11 @@ export default function PMExecutionScreen() {
 
         {/* Checklist via FlatList */}
         {(loading || fetchingChecklist) && checklistItems.length === 0 ? (
-          <ChecklistSkeleton cardBg={cardBg} borderColor={borderColor} isDark={isDark} />
+          <ChecklistSkeleton
+            cardBg={cardBg}
+            borderColor={borderColor}
+            isDark={isDark}
+          />
         ) : (
           <FlashList
             data={checklistItems}
@@ -828,7 +993,10 @@ export default function PMExecutionScreen() {
             ListEmptyComponent={ListEmpty}
             // @ts-ignore
             estimatedItemSize={280}
-            contentContainerStyle={[styles.listContent, { backgroundColor: bgColor }]}
+            contentContainerStyle={[
+              styles.listContent,
+              { backgroundColor: bgColor },
+            ]}
             showsVerticalScrollIndicator={false}
             keyboardShouldPersistTaps="handled"
           />
@@ -836,12 +1004,23 @@ export default function PMExecutionScreen() {
 
         {/* Footer Actions */}
         {!isCompleted && (
-          <View style={[styles.footer, { backgroundColor: isDark ? "#0f172a" : "#fff", borderTopColor: borderColor }]}>
+          <View
+            style={[
+              styles.footer,
+              {
+                backgroundColor: isDark ? "#0f172a" : "#fff",
+                borderTopColor: borderColor,
+              },
+            ]}
+          >
             <View style={styles.footerBtns}>
               <TouchableOpacity
                 onPress={() => handleSave()}
                 disabled={saving}
-                style={[styles.footerBtn, { backgroundColor: isDark ? "#1e1b4b" : "#dbeafe" }]}
+                style={[
+                  styles.footerBtn,
+                  { backgroundColor: isDark ? "#1e1b4b" : "#dbeafe" },
+                ]}
               >
                 {saving ? (
                   <ActivityIndicator size="small" color="#3b82f6" />
@@ -856,7 +1035,13 @@ export default function PMExecutionScreen() {
                 disabled={!canComplete}
                 style={[
                   styles.footerBtn,
-                  { backgroundColor: canComplete ? "#22c55e" : (isDark ? "#1e293b" : "#e2e8f0") },
+                  {
+                    backgroundColor: canComplete
+                      ? "#22c55e"
+                      : isDark
+                        ? "#1e293b"
+                        : "#e2e8f0",
+                  },
                 ]}
               >
                 <Text
@@ -873,8 +1058,23 @@ export default function PMExecutionScreen() {
         )}
 
         {isCompleted && (
-          <View style={[styles.completedBanner, { backgroundColor: isDark ? "#064e3b" : "#f0fdf4", borderTopColor: isDark ? "#065f46" : "#bbf7d0" }]}>
-            <Text style={[styles.completedText, { color: isDark ? "#4ade80" : "#15803d" }]}>✓ PM Completed</Text>
+          <View
+            style={[
+              styles.completedBanner,
+              {
+                backgroundColor: isDark ? "#064e3b" : "#f0fdf4",
+                borderTopColor: isDark ? "#065f46" : "#bbf7d0",
+              },
+            ]}
+          >
+            <Text
+              style={[
+                styles.completedText,
+                { color: isDark ? "#4ade80" : "#15803d" },
+              ]}
+            >
+              ✓ PM Completed
+            </Text>
           </View>
         )}
       </SafeAreaView>
@@ -890,20 +1090,27 @@ export default function PMExecutionScreen() {
           <View style={[styles.modalSheet, { backgroundColor: cardBg }]}>
             <View style={styles.modalHeader}>
               <View>
-                <Text style={[styles.modalTitle, { color: textColor }]}>Complete PM Task</Text>
+                <Text style={[styles.modalTitle, { color: textColor }]}>
+                  Complete PM Task
+                </Text>
                 <Text style={[styles.modalSub, { color: subTextColor }]}>
                   Please provide the client's signature below.
                 </Text>
               </View>
               <TouchableOpacity
                 onPress={() => setShowCompletionModal(false)}
-                style={[styles.closeBtn, { backgroundColor: isDark ? "#1e293b" : "#f1f5f9" }]}
+                style={[
+                  styles.closeBtn,
+                  { backgroundColor: isDark ? "#1e293b" : "#f1f5f9" },
+                ]}
               >
                 <X size={20} color={isDark ? "#94a3b8" : "#94a3b8"} />
               </TouchableOpacity>
             </View>
 
-            <View style={[styles.signatureContainer, { borderColor: borderColor }]}>
+            <View
+              style={[styles.signatureContainer, { borderColor: borderColor }]}
+            >
               <SignaturePad
                 standalone
                 onOK={handleComplete}
@@ -913,9 +1120,18 @@ export default function PMExecutionScreen() {
             </View>
 
             {saving && (
-              <View style={[styles.savingOverlay, isDark && { backgroundColor: "rgba(2,6,23,0.8)" }]}>
+              <View
+                style={[
+                  styles.savingOverlay,
+                  isDark && { backgroundColor: "rgba(2,6,23,0.8)" },
+                ]}
+              >
                 <ActivityIndicator size="large" color="#3b82f6" />
-                <Text style={[styles.savingText, isDark && { color: "#f8fafc" }]}>Processing completion...</Text>
+                <Text
+                  style={[styles.savingText, isDark && { color: "#f8fafc" }]}
+                >
+                  Processing completion...
+                </Text>
               </View>
             )}
           </View>
@@ -965,7 +1181,12 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   loadingText: { color: "#94a3b8", fontSize: 13, marginTop: 12 },
-  listContent: { paddingHorizontal: 20, paddingBottom: 40, paddingTop: 10, flexGrow: 1 },
+  listContent: {
+    paddingHorizontal: 20,
+    paddingBottom: 40,
+    paddingTop: 10,
+    flexGrow: 1,
+  },
 
   // Header
   header: {
@@ -1022,7 +1243,12 @@ const styles = StyleSheet.create({
     borderRadius: 99,
     backgroundColor: "#3b82f6",
   },
-  progressSub: { fontSize: 10, color: "#94a3b8", marginTop: 4, fontWeight: "600" },
+  progressSub: {
+    fontSize: 10,
+    color: "#94a3b8",
+    marginTop: 4,
+    fontWeight: "600",
+  },
   compactEvidenceBtn: {
     width: 60,
     height: 44,

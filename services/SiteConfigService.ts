@@ -74,9 +74,8 @@ export const SiteConfigService = {
           siteAreaNames.forEach(name => {
             taskMap.set(name, { id: `area_${name}`, name, type: "area", isCompleted: false, status: "Open" });
           });
-        } else if (!countOnly) {
-          // Fallback to LogMaster only when NOT counting for dashboard
-          // (LogMaster is global — using it for counts causes cross-site inflation)
+        } else {
+          // Fallback to LogMaster when areas aren't in local DB yet
           logMasterEntries.forEach(entry => {
             const name = entry.taskName?.trim();
             if (name && name !== "Unnamed Area") {
@@ -102,8 +101,9 @@ export const SiteConfigService = {
       }
 
 
-      // 3. PROGRESS: Fetch logs to overlay completion status.
-      // We fetch ALL non-completed logs (Open/Inprogress) plus today's logs.
+      // 3. PROGRESS: Fetch all non-completed logs + today's completed logs.
+      // Non-completed (Open/Inprogress/Pending) are shown regardless of date.
+      // Completed logs are scoped to the date window to show today's progress.
       const recentLogs = await siteLogCollection
         .query(
           Q.where("site_code", siteCode),

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   View,
   Text,
@@ -6,10 +6,12 @@ import {
   RefreshControl,
   ScrollView,
   Modal,
+  useColorScheme,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { router } from "expo-router";
 import { useAuth } from "@/contexts/AuthContext";
+import NetInfo from "@react-native-community/netinfo";
 import SiteLogService from "@/services/SiteLogService";
 import LogFilterModal from "@/components/sitelogs/LogFilterModal";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -29,11 +31,13 @@ import {
 } from "lucide-react-native";
 import { useNetworkStatus } from "@/hooks/useNetworkStatus";
 import AttendanceService, { type Site } from "@/services/AttendanceService";
+import { getCachedSites } from "@/utils/offlineDataCache";
 import logger from "@/utils/logger";
 import Skeleton from "@/components/Skeleton";
 
 export default function SiteLogs() {
   const { user } = useAuth();
+  const isDark = useColorScheme() === "dark";
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [siteCode, setSiteCode] = useState<string | null>(null);
@@ -47,6 +51,8 @@ export default function SiteLogs() {
   const [fromDate, setFromDate] = useState<Date | null>(null);
   const [toDate, setToDate] = useState<Date | null>(null);
   const lastSyncRef = React.useRef<Record<string, number>>({});
+  const refreshingRef = useRef(false);
+  const fetchLogsRef = useRef<((targetSite: string) => Promise<void>) | null>(null);
   const [shiftModalVisible, setShiftModalVisible] = useState(false);
   const { isConnected } = useNetworkStatus();
 
@@ -78,23 +84,35 @@ export default function SiteLogs() {
     if (!userId) return;
     try {
       const storageKey = `last_site_${userId}`;
-      const [sites, lastSiteCode] = await Promise.all([
-        AttendanceService.getUserSites(userId, "JouleCool"),
+      const [cachedSites, lastSiteCode] = await Promise.all([
+        getCachedSites(userId).catch(() => [] as Site[]),
         AsyncStorage.getItem(storageKey),
       ]);
 
-      setAvailableSites(sites);
+      // If offline, use cached sites only (skip API call)
+      let effectiveSites: Site[];
+      const netState = await NetInfo.fetch();
+      const isActuallyOnline = netState.isConnected === true;
 
-      if (sites.length === 0) return;
+      if (isActuallyOnline) {
+        const sites = await AttendanceService.getUserSites(userId, "JouleCool").catch(() => [] as Site[]);
+        effectiveSites = sites.length > 0 ? sites : cachedSites;
+      } else {
+        effectiveSites = cachedSites;
+      }
+
+      setAvailableSites(effectiveSites);
+
+      if (effectiveSites.length === 0) return;
 
       // Determine which site to activate
       const effectiveLast = lastSiteCode && lastSiteCode !== "all" ? lastSiteCode : null;
       const siteToSelect =
-        effectiveLast && sites.find((s) => s.site_code === effectiveLast)
+        effectiveLast && effectiveSites.find((s) => s.site_code === effectiveLast)
           ? effectiveLast
-          : sites[0].site_code;
+          : effectiveSites[0].site_code;
 
-      const activeSite = sites.find((s) => s.site_code === siteToSelect);
+      const activeSite = effectiveSites.find((s) => s.site_code === siteToSelect);
       setSiteCode(siteToSelect);
       setSiteName(activeSite?.name || siteToSelect);
 
@@ -104,7 +122,7 @@ export default function SiteLogs() {
     } catch (e) {
       logger.error("Error loading sites for logs", { module: "SITE_LOGS_SCREEN", error: e });
     }
-  }, [user?.user_id, user?.id]);
+  }, [user?.user_id, user?.id, isConnected]);
 
   // Fetch log progress for the currently active siteCode
   const fetchLogs = useCallback(async (targetSite: string) => {
@@ -113,7 +131,7 @@ export default function SiteLogs() {
       const now = Date.now();
       const lastSyncTime = lastSyncRef.current[targetSite] || 0;
       const shouldSync =
-        isConnected && (refreshing || lastSyncTime === 0 || now - lastSyncTime > 1000 * 60 * 10);
+        isConnected && (refreshingRef.current || lastSyncTime === 0 || now - lastSyncTime > 1000 * 60 * 10);
 
       if (shouldSync) {
         try {
@@ -143,9 +161,15 @@ export default function SiteLogs() {
       console.error(e);
     } finally {
       setLoading(false);
+      refreshingRef.current = false;
       setRefreshing(false);
     }
-  }, [refreshing, fromDate, toDate, isConnected]);
+  }, [fromDate, toDate, isConnected]);
+
+  // Keep a stable ref to the latest fetchLogs so useFocusEffect doesn't re-register
+  useEffect(() => {
+    fetchLogsRef.current = fetchLogs;
+  }, [fetchLogs]);
 
   // Load sites once on mount / user change
   useEffect(() => {
@@ -155,15 +179,26 @@ export default function SiteLogs() {
   // Fetch logs whenever siteCode or date filters change
   useEffect(() => {
     if (siteCode) fetchLogs(siteCode);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [siteCode, fromDate, toDate]);
 
   useFocusEffect(
     useCallback(() => {
-      if (siteCode) fetchLogs(siteCode);
-    }, [siteCode, fetchLogs]),
+      // Don't re-fetch on focus if we synced within the last 30 seconds
+      // This prevents count flickering when returning from a log entry screen
+      if (siteCode) {
+        const lastSync = lastSyncRef.current[siteCode] || 0;
+        const age = Date.now() - lastSync;
+        if (age > 30_000) {
+          fetchLogsRef.current?.(siteCode);
+        }
+        // Within 30s: keep existing counts — no refresh to avoid flicker from auto-syncs
+      }
+    }, [siteCode]),
   );
 
   const onRefresh = () => {
+    refreshingRef.current = true;
     setRefreshing(true);
     if (siteCode) fetchLogs(siteCode);
   };
@@ -262,7 +297,7 @@ export default function SiteLogs() {
                 elevation: 3,
               }}
             >
-              <Filter size={20} color={fromDate ? "#dc2626" : "#64748b"} />
+              <Filter size={20} color={fromDate ? "#dc2626" : isDark ? "#dc2626" : "#64748b"} />
             </TouchableOpacity>
           </View>
 

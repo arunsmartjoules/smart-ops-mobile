@@ -193,7 +193,7 @@ export default function ChillerEntry() {
     if (!userId) return;
     try {
       setLoadingSites(true);
-      const data = await AttendanceService.getUserSites(userId);
+      const data = await AttendanceService.getUserSites(userId, "JouleCool");
       const options = data.map((s) => ({
         value: s.site_code,
         label: `${s.site_code} - ${s.name}`,

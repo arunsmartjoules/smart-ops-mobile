@@ -1,5 +1,5 @@
 import React, { useRef, useState } from "react";
-import { View, Modal, Text, TouchableOpacity, StyleSheet, useColorScheme } from "react-native";
+import { View, Modal, Text, TouchableOpacity, StyleSheet, useColorScheme, Alert } from "react-native";
 import SignatureScreen from "react-native-signature-canvas";
 import { X, Check } from "lucide-react-native";
 
@@ -41,7 +41,9 @@ export default function SignaturePad({
     setSignature(null);
   };
 
-  const handleEmpty = () => {};
+  const handleEmpty = () => {
+    Alert.alert("Signature Required", "Please provide a signature before saving.");
+  };
 
   const handleEnd = () => {
     ref.current.readSignature();
@@ -77,6 +79,7 @@ export default function SignaturePad({
           descriptionText={description}
           backgroundColor={isDark ? "#1e293b" : "#ffffff"}
           penColor={isDark ? "#ffffff" : "black"}
+          androidHardwareAccelerationDisabled={true}
           webStyle={`
               .m-signature-pad--footer {display: none; margin: 0px;}
               .m-signature-pad {box-shadow: none; border: none; margin-left: 0px; margin-top: 0px;}

@@ -234,9 +234,7 @@ const TicketDetailStatusUpdate = ({
           </View>
           <TextInput
             style={{
-              backgroundColor: "#f8fafc",
               borderWidth: 1,
-              borderColor: "#e2e8f0",
               borderRadius: 14,
               padding: 14,
               height: 100,

@@ -1,21 +1,90 @@
+import * as Updates from 'expo-updates';
 import logger from '@/utils/logger';
-import * as Notifications from 'expo-notifications';
 
-// expo-updates removed — OTA updates disabled for internal distribution
+export type UpdateState = 
+  | { status: 'idle' }
+  | { status: 'checking' }
+  | { status: 'downloading' }
+  | { status: 'ready'; restart: () => void }
+  | { status: 'error'; message: string }
+  | { status: 'up-to-date' };
+
+type UpdateListener = (state: UpdateState) => void;
+
 class UpdateService {
   private isChecking = false;
+  private listeners: Set<UpdateListener> = new Set();
+
+  subscribe(listener: UpdateListener) {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
+  private emit(state: UpdateState) {
+    this.listeners.forEach(fn => fn(state));
+  }
 
   async checkForUpdate(automatic = true) {
-    logger.debug('OTA updates disabled for internal build', { module: 'UPDATE_SERVICE' });
-    return { available: false, reason: 'OTA updates disabled' };
+    if (this.isChecking) return { available: false, reason: 'Already checking' };
+    this.isChecking = true;
+    try {
+      if (!Updates.isEnabled) {
+        logger.debug('expo-updates not enabled (dev build)', { module: 'UPDATE_SERVICE' });
+        return { available: false, reason: 'Updates not enabled' };
+      }
+
+      this.emit({ status: 'checking' });
+      const result = await Updates.checkForUpdateAsync();
+      logger.info('Update check result', { module: 'UPDATE_SERVICE', available: result.isAvailable });
+
+      if (result.isAvailable) {
+        if (automatic) {
+          this.emit({ status: 'downloading' });
+          logger.info('Downloading update...', { module: 'UPDATE_SERVICE' });
+          await Updates.fetchUpdateAsync();
+          logger.info('Update downloaded. Ready to restart.', { module: 'UPDATE_SERVICE' });
+          this.emit({ status: 'ready', restart: () => this.reloadApp() });
+        }
+        return { available: true };
+      } else {
+        this.emit({ status: 'up-to-date' });
+        // Auto-hide after 2s
+        setTimeout(() => this.emit({ status: 'idle' }), 2000);
+        return { available: false };
+      }
+    } catch (e: any) {
+      logger.warn('Update check failed', { module: 'UPDATE_SERVICE', error: e.message });
+      this.emit({ status: 'error', message: e.message });
+      setTimeout(() => this.emit({ status: 'idle' }), 3000);
+      return { available: false, reason: e.message };
+    } finally {
+      this.isChecking = false;
+    }
   }
 
   async fetchUpdate() {
-    return { success: false, error: 'OTA updates disabled' };
+    try {
+      if (!Updates.isEnabled) return { success: false, error: 'Updates not enabled' };
+      this.emit({ status: 'downloading' });
+      await Updates.fetchUpdateAsync();
+      this.emit({ status: 'ready', restart: () => this.reloadApp() });
+      return { success: true };
+    } catch (e: any) {
+      this.emit({ status: 'error', message: e.message });
+      return { success: false, error: e.message };
+    }
   }
 
   async reloadApp() {
-    logger.warn('reloadApp called but OTA updates are disabled', { module: 'UPDATE_SERVICE' });
+    try {
+      await Updates.reloadAsync();
+    } catch (e: any) {
+      logger.warn('reloadApp failed', { module: 'UPDATE_SERVICE', error: e.message });
+    }
+  }
+
+  dismiss() {
+    this.emit({ status: 'idle' });
   }
 }
 

@@ -10,6 +10,7 @@ import {
   pullRecentSiteLogs,
   pullRecentChillerReadings,
 } from "@/utils/syncSiteLogStorage";
+import { syncPendingAttendance } from "@/utils/syncAttendanceStorage";
 import { supabase } from "./supabase";
 import { updatePMLastSynced } from "@/utils/syncPMStorage";
 import logger from "@/utils/logger";
@@ -20,6 +21,10 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as BackgroundFetch from "expo-background-fetch";
 import * as TaskManager from "expo-task-manager";
 import { API_BASE_URL } from "../constants/api";
+import { fetchWithTimeout } from "../utils/apiHelper";
+import { cacheSites, cacheAreas, cacheCategories } from "../utils/offlineDataCache";
+import { database } from "../database";
+import UserSite from "../database/models/UserSite";
 
 const API_URL = API_BASE_URL;
 const BACKGROUND_SYNC_TASK = "BACKGROUND_SYNC_TASK";
@@ -169,20 +174,20 @@ class SyncManager {
   }
 
   /**
-   * Trigger sync with cooldown protection
+   * Trigger sync with cooldown protection.
+   * network_reconnect and manual triggers bypass the 30s cooldown.
    */
   async triggerSync(reason: string = "manual"): Promise<void> {
     const now = Date.now();
 
-    // Cooldown check (except for manual sync and background)
-    const isBackground = reason === "background";
     const isManual = reason === "manual";
+    const isBackground = reason === "background";
+    const isReconnect = reason === "network_reconnect";
 
-    if (
-      !isManual &&
-      !isBackground &&
-      now - this.lastSyncTime < this.syncCooldown
-    ) {
+    // Bypass cooldown for manual, background, and network_reconnect triggers
+    const bypassCooldown = isManual || isBackground || isReconnect;
+
+    if (!bypassCooldown && now - this.lastSyncTime < this.syncCooldown) {
       logger.debug("Sync skipped - cooldown active", {
         module: "SYNC_MANAGER",
       });
@@ -210,187 +215,322 @@ class SyncManager {
   }
 
   /**
-   * Prefetch all essential data for current user
+   * Prefetch all essential data for current user.
+   * Runs a full manual sync (bypasses all thresholds) with a 24h staleness guard
+   * to avoid redundant prefetch runs on repeated logins within the same day.
    */
   async prefetchAll(): Promise<void> {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session?.access_token) return;
 
-    logger.info("Starting background prefetch", { module: "SYNC_MANAGER" });
+    // 24h staleness guard — skip if already prefetched recently
+    try {
+      const lastPrefetch = await AsyncStorage.getItem("@prefetch_last_time");
+      if (lastPrefetch) {
+        const elapsed = Date.now() - parseInt(lastPrefetch, 10);
+        if (elapsed < 24 * 60 * 60 * 1000) {
+          logger.debug("Prefetch skipped — already fresh", { module: "SYNC_MANAGER" });
+          return;
+        }
+      }
+    } catch (_) {}
 
-    // We run these in parallel without blocking
-    Promise.all([
-      this.triggerSync("prefetch"),
-      // Add other specific prefetch calls here if needed as they are implemented
-    ]).catch((err) => {
-      logger.error("Prefetch failed", {
-        module: "SYNC_MANAGER",
-        error: err.message,
-      });
-    });
+    logger.info("Starting prefetch (full manual sync)", { module: "SYNC_MANAGER" });
+
+    try {
+      // triggerSync("manual") bypasses all thresholds and runs the full push + pull
+      // phase including areas, categories, and sites caching (Fixes 3, 4, 5)
+      await this.triggerSync("manual");
+      await AsyncStorage.setItem("@prefetch_last_time", String(Date.now()));
+      logger.info("Prefetch complete", { module: "SYNC_MANAGER" });
+    } catch (err: any) {
+      logger.error("Prefetch failed", { module: "SYNC_MANAGER", error: err.message });
+    }
   }
 
   /**
-   * Internal sync logic
+   * Resolve all site codes assigned to the user.
+   * Falls back to the cached last_site_{userId} key if AttendanceService fails.
+   */
+  private async resolveSiteCodes(userId: string): Promise<string[]> {
+    try {
+      const AttendanceService = (await import("./AttendanceService")).default;
+      const sites = await AttendanceService.getUserSites(userId, "JouleCool");
+      const codes = sites.map((s: any) => s.site_code).filter(Boolean);
+      if (codes.length > 0) {
+        // Persist the first site as the "last active" for fallback use
+        await AsyncStorage.setItem(`last_site_${userId}`, codes[0]);
+
+        // Persist full sites list to AsyncStorage cache for offline fallback
+        await cacheSites(userId, sites);
+
+        // Upsert sites into WatermelonDB user_sites table for offline queries
+        try {
+          const userSiteCollection = database.get<UserSite>("user_sites");
+          await database.write(async () => {
+            const existing = await userSiteCollection
+              .query()
+              .fetch();
+            const existingBySiteCode = new Map(
+              existing.map((r) => [r.siteCode, r]),
+            );
+            const now = Date.now();
+            const batched = sites.map((site: any) => {
+              const record = existingBySiteCode.get(site.site_code);
+              if (record) {
+                return record.prepareUpdate((r: UserSite) => {
+                  r.siteName = site.name || site.site_code;
+                  r.cachedAt = now;
+                });
+              }
+              return userSiteCollection.prepareCreate((r: UserSite) => {
+                r.serverId = site.id || site.site_code;
+                r.userId = userId;
+                r.siteCode = site.site_code;
+                r.siteName = site.name || site.site_code;
+                r.cachedAt = now;
+              });
+            });
+            await database.batch(...batched);
+          });
+        } catch (dbErr: any) {
+          logger.warn("Failed to upsert user_sites in WatermelonDB", {
+            module: "SYNC_MANAGER",
+            error: dbErr.message,
+          });
+          // Non-fatal — AsyncStorage cache is the primary offline fallback
+        }
+
+        return codes;
+      }
+    } catch (err: any) {
+      logger.error("Failed to resolve site codes from AttendanceService", {
+        module: "SYNC_MANAGER",
+        error: err.message,
+      });
+    }
+
+    // Fallback: use cached site code
+    const cached = await AsyncStorage.getItem(`last_site_${userId}`).catch(() => null);
+    if (cached && cached !== "all") return [cached];
+    return [];
+  }
+
+  /**
+   * Internal sync logic — corrected architecture:
+   *  1. Each push module is wrapped in its own try-catch (independent failures)
+   *  2. Pull phase always runs after push, never gated on push results
+   *  3. network_reconnect and manual triggers bypass the 12h history pull threshold
+   *  4. All assigned site codes are iterated in the pull phase
    */
   private async performSync(reason: string): Promise<void> {
     const now = Date.now();
+    logger.info(`Starting sync (reason: ${reason})`, { module: "SYNC_MANAGER" });
+
+    // 1. Get auth token
+    const { data: { session } } = await supabase.auth.getSession();
+    const token = session?.access_token ?? null;
+    if (!token || !session) {
+      logger.warn("Sync aborted - no valid token", { module: "SYNC_MANAGER" });
+      return;
+    }
+
+    // 2. Resolve all assigned site codes
+    const userId = session.user.id;
+    const siteCodes = await this.resolveSiteCodes(userId);
+
+    // ─── PUSH PHASE ──────────────────────────────────────────────────────────
+    // Each module is independent — an error in one does NOT abort the others.
+
+    // Module 1: Tickets push
     try {
-      logger.info(`Starting sync (reason: ${reason})`, {
+      const ticketResult = await syncPendingTicketUpdates(token, API_URL);
+      if (ticketResult.synced > 0) await updateTicketLastSynced();
+      logger.info("Ticket push complete", {
         module: "SYNC_MANAGER",
+        synced: ticketResult.synced,
+        failed: ticketResult.failed,
       });
+    } catch (err: any) {
+      logger.error("Ticket push failed", { module: "SYNC_MANAGER", error: err.message });
+      // continue — do NOT return
+    }
 
-      // Get token from Supabase session (auto-refreshed by SDK)
-      const { data: { session } } = await supabase.auth.getSession();
-      const token = session?.access_token ?? null;
-      if (!token) {
-        logger.warn("Sync aborted - no valid token", {
+    // Module 2: Site logs push (deletions first, then upserts)
+    try {
+      const siteLogResult = await syncPendingSiteLogs(token, API_URL);
+      logger.info("Site log push complete", {
+        module: "SYNC_MANAGER",
+        synced: siteLogResult.synced,
+        failed: siteLogResult.failed,
+      });
+    } catch (err: any) {
+      logger.error("Site log push failed", { module: "SYNC_MANAGER", error: err.message });
+      // continue — do NOT return
+    }
+
+    // Module 3: PM push
+    try {
+      const PMService = (await import("./PMService")).default;
+      await PMService.pushPendingResponses();
+      await PMService.pushPendingInstances();
+      logger.info("PM push complete", { module: "SYNC_MANAGER" });
+    } catch (err: any) {
+      logger.error("PM push failed", { module: "SYNC_MANAGER", error: err.message });
+      // continue — do NOT return
+    }
+
+    // Module 4: Attendance push
+    try {
+      const attendanceResult = await syncPendingAttendance(token, API_URL);
+      if (attendanceResult.synced > 0 || attendanceResult.failed > 0) {
+        logger.info("Attendance push complete", {
           module: "SYNC_MANAGER",
-        });
-        return;
-      }
-
-      // Sync ticket updates
-      try {
-        const ticketResult = await syncPendingTicketUpdates(token, API_URL);
-
-        // Also pull recent tickets for history (with threshold)
-        if (
-          now - this.lastHistoryPullTime > this.historyPullThreshold ||
-          reason === "manual"
-        ) {
-          // We need site codes from user context or similar.
-          const siteCode = await AsyncStorage.getItem(
-            session ? `last_site_${session.user.id}` : ""
-          ).catch(() => null);
-          if (siteCode) {
-            const pullTicketResult = await pullRecentTickets(
-              siteCode,
-              token,
-              API_URL,
-            );
-            logger.info("Ticket history pull complete", {
-              module: "SYNC_MANAGER",
-              pulled: pullTicketResult.pulled,
-            });
-          }
-        }
-        logger.info("Ticket sync complete", {
-          module: "SYNC_MANAGER",
-          synced: ticketResult.synced,
-          failed: ticketResult.failed,
-        });
-
-        if (ticketResult.synced > 0 || reason === "manual") {
-          await updateTicketLastSynced();
-        }
-      } catch (err: any) {
-        logger.error("Ticket sync failed", {
-          module: "SYNC_MANAGER",
-          error: err.message,
+          synced: attendanceResult.synced,
+          failed: attendanceResult.failed,
         });
       }
+    } catch (err: any) {
+      logger.error("Attendance push failed", { module: "SYNC_MANAGER", error: err.message });
+      // continue — do NOT return
+    }
 
-      // Sync site logs and chiller readings
-      try {
-        const siteLogResult = await syncPendingSiteLogs(token, API_URL);
-
-        // Also pull recent logs to populate history/tasks
-        if (
-          siteLogResult.synced > 0 ||
-          now - this.lastHistoryPullTime > this.historyPullThreshold ||
-          reason === "manual"
-        ) {
-          logger.debug("Pulling recent history (Smart Pull)", {
-            module: "SYNC_MANAGER",
-            reason,
-          });
-          let currentSite = session
-            ? await AsyncStorage.getItem(`last_site_${session.user.id}`).catch(() => null)
-            : null;
-          if (!currentSite || currentSite === "all") {
-            const userId = session?.user.id ?? null;
-            if (userId) {
-              const AttendanceService = (await import("./AttendanceService")).default;
-              const sites = await AttendanceService.getUserSites(userId);
-              if (sites.length > 0) {
-                currentSite = sites[0].site_code;
-                await AsyncStorage.setItem(`last_site_${userId}`, currentSite);
-              }
-            }
-          }
-          
-          if (!currentSite || currentSite === "all") {
-            logger.warn("No specific site found for sync, skipping history pull", { module: "SYNC_MANAGER" });
-            return;
-          }
-          const siteLogResult = await pullRecentSiteLogs(
-            token,
-            API_URL,
-            currentSite,
-          );
-          const chillerResult = await pullRecentChillerReadings(
-            token,
-            API_URL,
-            currentSite,
-          );
-          const ticketResult = await pullRecentTickets(
-            currentSite,
-            token,
-            API_URL,
-          );
-
-          logger.info("Background pull complete", {
-            module: "SYNC_MANAGER",
-            siteLogs: siteLogResult.pulled,
-            chillerReadings: chillerResult.pulled,
-            tickets: ticketResult.pulled,
-          });
-
-          this.lastHistoryPullTime = now;
-        }
-
-        logger.info("Site logs sync complete", {
-          module: "SYNC_MANAGER",
-          synced: siteLogResult.synced,
-          failed: siteLogResult.failed,
-        });
-      } catch (err: any) {
-        logger.error("Error syncing site logs/history", {
-          module: "SYNC_MANAGER",
-          error: err.message,
-        });
-      }
-
-      // Sync PM responses and pull PM instances
+    // ─── FREQUENT PULL PHASE (Always Runs) ──────────────────────────────────
+    // Ensure daily/recent PM tasks and checklists are ALWAYS available
+    if (siteCodes.length > 0) {
       try {
         const PMService = (await import("./PMService")).default;
-        await PMService.pushPendingResponses();
-        await PMService.pushPendingInstances();
+        
+        // Lightweight window: -7 to +15 days
+        const lightFrom = new Date();
+        lightFrom.setDate(lightFrom.getDate() - 7);
+        const lightTo = new Date();
+        lightTo.setDate(lightTo.getDate() + 15);
 
-        const siteCode = session
-          ? await AsyncStorage.getItem(`last_site_${session.user.id}`).catch(() => null)
-          : null;
-        if (siteCode) {
-          await PMService.pullFromServer(siteCode);
+        for (const siteCode of siteCodes) {
+          await PMService.pullFromServer(siteCode, lightFrom, lightTo);
+        }
+        logger.info("PM frequent pull complete", { module: "SYNC_MANAGER" });
+
+        // Unconditionally ensure all checklists are cached as requested
+        await PMService.pullAllChecklistItems();
+        logger.info("PM required checklist sync complete", { module: "SYNC_MANAGER" });
+      } catch (err: any) {
+        logger.error("PM frequent/checklist pull failed", { module: "SYNC_MANAGER", error: err.message });
+      }
+    }
+
+    // ─── HEAVY PULL PHASE (Threshold based) ──────────────────────────────────
+    // Runs after push. Bypassed by network_reconnect or manual.
+    const bypassThreshold = reason === "network_reconnect" || reason === "manual" || reason === "app_foreground";
+    const thresholdExceeded = (now - this.lastHistoryPullTime) > this.historyPullThreshold;
+    const shouldPull = bypassThreshold || thresholdExceeded;
+
+    if (shouldPull) {
+      if (siteCodes.length === 0) {
+        logger.warn("No site codes resolved — skipping pull phase", { module: "SYNC_MANAGER" });
+      } else {
+        logger.info("Starting heavy pull phase", { module: "SYNC_MANAGER", reason, siteCodes });
+
+        // 180-day history window for PM (already fetched last 7 days above)
+        const historyFrom = new Date();
+        historyFrom.setDate(historyFrom.getDate() - 180);
+        const historyTo = new Date();
+        historyTo.setDate(historyTo.getDate() - 7);
+
+        for (const siteCode of siteCodes) {
+          // Tickets pull
+          try {
+            const r = await pullRecentTickets(siteCode, token, API_URL);
+            logger.info("Ticket pull complete", { module: "SYNC_MANAGER", siteCode, pulled: r.pulled });
+          } catch (err: any) {
+            logger.error("Ticket pull failed", { module: "SYNC_MANAGER", siteCode, error: err.message });
+          }
+
+          // Site logs pull
+          try {
+            const r = await pullRecentSiteLogs(token, API_URL, siteCode);
+            logger.info("Site log pull complete", { module: "SYNC_MANAGER", siteCode, pulled: r.pulled });
+          } catch (err: any) {
+            logger.error("Site log pull failed", { module: "SYNC_MANAGER", siteCode, error: err.message });
+          }
+
+          // Chiller readings pull
+          try {
+            const r = await pullRecentChillerReadings(token, API_URL, siteCode);
+            logger.info("Chiller pull complete", { module: "SYNC_MANAGER", siteCode, pulled: r.pulled });
+          } catch (err: any) {
+            logger.error("Chiller pull failed", { module: "SYNC_MANAGER", siteCode, error: err.message });
+          }
+
+          // PM instances HEAVY pull (last 180 days up to 7 days ago)
+          try {
+            const PMService = (await import("./PMService")).default;
+            await PMService.pullFromServer(siteCode, historyFrom, historyTo);
+            logger.info("PM history pull complete", { module: "SYNC_MANAGER", siteCode });
+          } catch (err: any) {
+            logger.error("PM history pull failed", { module: "SYNC_MANAGER", siteCode, error: err.message });
+          }
+
+          // Areas pull — cache per-site for offline ticket creation dropdowns
+          try {
+            const areasResp = await fetchWithTimeout(
+              `${API_URL}/api/assets?site_code=${siteCode}`,
+              { headers: { Authorization: `Bearer ${token}` } },
+            );
+            if (areasResp.ok) {
+              const areasResult = await areasResp.json();
+              if (areasResult.success && Array.isArray(areasResult.data)) {
+                await cacheAreas(siteCode, areasResult.data);
+                logger.info("Areas pull complete", { module: "SYNC_MANAGER", siteCode, count: areasResult.data.length });
+              }
+            }
+          } catch (err: any) {
+            logger.warn("Areas pull failed", { module: "SYNC_MANAGER", siteCode, error: err.message });
+          }
         }
 
+        // Categories pull — global, fetched once per cycle
+        try {
+          const catResp = await fetchWithTimeout(
+            `${API_URL}/api/complaint-categories`,
+            { headers: { Authorization: `Bearer ${token}` } },
+          );
+          if (catResp.ok) {
+            const catResult = await catResp.json();
+            if (catResult.success && Array.isArray(catResult.data)) {
+              await cacheCategories(catResult.data);
+              logger.info("Categories pull complete", { module: "SYNC_MANAGER", count: catResult.data.length });
+            }
+          }
+        } catch (err: any) {
+          logger.warn("Categories pull failed", { module: "SYNC_MANAGER", error: err.message });
+        }
+
+        // Attendance history pull — once per sync cycle, keyed to user
+        try {
+          const AttendanceService = (await import("./AttendanceService")).default;
+          await AttendanceService.getAttendanceHistory(userId, 1, 100);
+          logger.info("Attendance history pull complete", { module: "SYNC_MANAGER" });
+        } catch (err: any) {
+          logger.error("Attendance history pull failed", { module: "SYNC_MANAGER", error: err.message });
+        }
+
+        this.lastHistoryPullTime = now;
         await updatePMLastSynced();
-        logger.info("PM sync complete", { module: "SYNC_MANAGER" });
-      } catch (err: any) {
-        logger.error("PM sync failed", {
-          module: "SYNC_MANAGER",
-          error: err.message,
-        });
       }
-    } catch (error: any) {
-      logger.error("Sync failed", {
+    } else {
+      const nextPullIn = Math.round(
+        (this.historyPullThreshold - (now - this.lastHistoryPullTime)) / 60000
+      );
+      logger.debug("Pull phase skipped - threshold not exceeded", {
         module: "SYNC_MANAGER",
-        error: error.message,
+        reason,
+        nextPullIn: `${nextPullIn}m`,
       });
-    } finally {
-      this.isSyncing = false;
     }
+
+    logger.info(`Sync complete (reason: ${reason})`, { module: "SYNC_MANAGER" });
   }
 
   /**

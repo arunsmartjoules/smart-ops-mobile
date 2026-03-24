@@ -7,6 +7,7 @@ import {
   RefreshControl,
   Dimensions,
   Alert,
+  useColorScheme,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import * as Haptics from "expo-haptics";
@@ -19,6 +20,7 @@ import {
 import { useLocalSearchParams } from "expo-router";
 import { useAuth } from "@/contexts/AuthContext";
 import { useNetworkStatus } from "@/hooks/useNetworkStatus";
+import NetInfo from "@react-native-community/netinfo";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import SearchableSelect, {
   type SelectOption,
@@ -51,6 +53,7 @@ const { width } = Dimensions.get("window");
 
 export default function Tickets() {
   const { user, isLoading } = useAuth();
+  const isDark = useColorScheme() === "dark";
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [sites, setSites] = useState<Site[]>([]);
   const [selectedSiteCode, setSelectedSiteCode] = useState<string>("");
@@ -220,7 +223,10 @@ export default function Tickets() {
       }
 
       // If online, fetch fresh data from backend
-      if (isConnected) {
+      const netState = await NetInfo.fetch();
+      const isActuallyOnline = netState.isConnected === true;
+
+      if (isActuallyOnline) {
         // Fetch assets for area dropdown (using asset_name)
         const assetsResult = await TicketsService.getAssets(selectedSiteCode);
         if (assetsResult?.data && assetsResult.data.length > 0) {
@@ -293,9 +299,15 @@ export default function Tickets() {
         }
       }
 
-      // 2. Fetch fresh sites from API
+      // 2. If offline and we have cached sites, skip API fetch entirely
+      if (!isConnected && validCachedSites.length > 0) {
+        // Loading will be cleared by fetchTickets triggered via selectedSiteCode change
+        return;
+      }
+
+      // 3. Fetch fresh sites from API (only when online)
       const isAdmin = user?.role?.toLowerCase() === "admin";
-      let userSites: Site[] = await AttendanceService.getUserSites(userId).catch((e) => {
+      let userSites: Site[] = await AttendanceService.getUserSites(userId, "JouleCool").catch((e) => {
         logger.warn("User sites fetch failed", {
           module: "TICKETS",
           error: e,
@@ -605,7 +617,10 @@ export default function Tickets() {
 
     setIsUpdating(true);
     try {
-      if (isConnected) {
+      const netState = await NetInfo.fetch();
+      const isActuallyOnline = netState.isConnected === true;
+
+      if (isActuallyOnline) {
         // Online: Update directly
         const res = await TicketsService.updateTicket(
           selectedTicket.id || selectedTicket.ticket_no,
@@ -715,7 +730,7 @@ export default function Tickets() {
                 elevation: 3,
               }}
             >
-              <Filter size={20} color={fromDate ? "#dc2626" : "#64748b"} />
+              <Filter size={20} color={fromDate ? "#dc2626" : isDark ? "#dc2626" : "#64748b"} />
             </TouchableOpacity>
           </View>
         </View>

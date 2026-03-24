@@ -39,7 +39,6 @@ interface AuthContextType {
   token: string | null;
   isLoading: boolean;
   signIn: (email: string, password: string) => Promise<{ error: any }>;
-  signInWithGoogle: (idToken: string) => Promise<{ error: any }>;
   signUp: (
     email: string,
     password: string,
@@ -55,7 +54,6 @@ const AuthContext = createContext<AuthContextType>({
   token: null,
   isLoading: true,
   signIn: async () => ({ error: null }),
-  signInWithGoogle: async () => ({ error: null }),
   signUp: async () => ({ error: null }),
   signOut: async () => {},
   resetPassword: async () => ({ error: null }),
@@ -113,12 +111,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
           return mapped;
         }
       } catch (e: any) {
-        logger.warn("Profile fetch failed, using session metadata", {
+        logger.warn("Profile fetch failed, falling back to cached or session metadata", {
           module: "AUTH_CONTEXT",
           error: e.message,
         });
       }
-      // Fallback: use whatever is in session metadata
+      
+      // Fallback: Use fully cached profile if available, otherwise construct from session
+      const cached = await AsyncStorage.getItem("auth_user");
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        setUser(parsed);
+        return parsed;
+      }
+
       const mapped = mapSupabaseUser(supabaseUser);
       setUser(mapped);
       return mapped;
@@ -127,18 +133,48 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   );
 
   useEffect(() => {
-    // Bootstrap: get current session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session) {
-        setToken(session.access_token);
-        // Try cached profile first for instant render
-        AsyncStorage.getItem("auth_user").then((cached) => {
-          if (cached) setUser(JSON.parse(cached));
+    const initSession = async () => {
+      try {
+        // Bootstrap: get current session with timeout for offline resilience
+        const sessionPromise = supabase.auth.getSession();
+        const timeoutPromise = new Promise<null>((resolve) =>
+          setTimeout(() => resolve(null), 5000),
+        );
+
+        const result = await Promise.race([sessionPromise, timeoutPromise]);
+
+        if (result && "data" in result) {
+          const session = result.data.session;
+          if (session) {
+            setToken(session.access_token);
+            // Try cached profile first for instant render
+            const cached = await AsyncStorage.getItem("auth_user");
+            if (cached) setUser(JSON.parse(cached));
+            fetchAndSetProfile(session.user, session.access_token);
+          }
+        } else {
+          // Trigger the catch block for timeout handling
+          throw new Error("Session fetch timed out");
+        }
+      } catch (error: any) {
+        // Timeout or offline network error: fall back to cached user profile
+        logger.warn("getSession failed (offline/error) — using cached profile", {
+          module: "AUTH_CONTEXT",
+          error: error.message,
         });
-        fetchAndSetProfile(session.user, session.access_token);
+        const cached = await AsyncStorage.getItem("auth_user");
+        if (cached) {
+          setUser(JSON.parse(cached));
+          // Try to get token from cached session without network
+          const storedToken = await AsyncStorage.getItem("sb-token");
+          if (storedToken) setToken(storedToken);
+        }
+      } finally {
+        setIsLoading(false);
       }
-      setIsLoading(false);
-    });
+    };
+
+    initSession();
 
     // Subscribe to auth state changes (sign-in, sign-out, token refresh, password recovery)
     const {
@@ -177,33 +213,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     if (error) {
       logger.warn("Sign in failed", { module: "AUTH_CONTEXT", error: error.message });
       return { error: error.message };
-    }
-    return { error: null };
-  }, []);
-
-  const signInWithGoogle = useCallback(async (idToken: string) => {
-    const { data, error } = await supabase.auth.signInWithIdToken({
-      provider: "google",
-      token: idToken,
-    });
-    if (error) {
-      logger.warn("Google sign in failed", {
-        module: "AUTH_CONTEXT",
-        error: error.message,
-      });
-      return { error: error.message };
-    }
-    // Register push notifications after Google sign-in
-    if (data.session) {
-      registerForPushNotifications(
-        data.session.user.id,
-        data.session.access_token,
-      ).catch((e) =>
-        logger.warn("Push registration failure after Google login", {
-          module: "AUTH_CONTEXT",
-          error: e.message,
-        }),
-      );
     }
     return { error: null };
   }, []);
@@ -304,7 +313,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       token,
       isLoading,
       signIn,
-      signInWithGoogle,
       signUp,
       signOut,
       resetPassword,
@@ -315,7 +323,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       token,
       isLoading,
       signIn,
-      signInWithGoogle,
       signUp,
       signOut,
       resetPassword,

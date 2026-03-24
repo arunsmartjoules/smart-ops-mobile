@@ -283,6 +283,7 @@ export default function SiteHistory() {
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [filterVisible, setFilterVisible] = useState(false);
+  const [selectedShift, setSelectedShift] = useState("");
   const [availableSites, setAvailableSites] = useState<Site[]>([]);
 
   // Filtering states
@@ -343,6 +344,7 @@ export default function SiteHistory() {
     try {
       const sites = await AttendanceService.getUserSites(
         user.user_id || user.id,
+        "JouleCool",
       );
       setAvailableSites(sites);
 
@@ -395,6 +397,12 @@ export default function SiteHistory() {
       });
     }
 
+    if (selectedShift) {
+      filtered = filtered.filter((log) =>
+        (log.remarks || "").includes(selectedShift),
+      );
+    }
+
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
       filtered = filtered.filter((log) => {
@@ -418,7 +426,7 @@ export default function SiteHistory() {
     }
 
     return filtered;
-  }, [logs, selectedStatus, searchQuery]);
+  }, [logs, selectedStatus, searchQuery, selectedShift]);
 
   const handleDelete = useCallback(
     async (item: any) => {
@@ -480,7 +488,7 @@ export default function SiteHistory() {
               router.push({
                 pathname: route,
                 params: {
-                  id: item.id,
+                  editId: item.id,
                   siteCode: item.siteCode || siteCode,
                   areaName: item.taskName || "",
                   chillerId: item.chillerId || item.equipmentId,
@@ -580,18 +588,16 @@ export default function SiteHistory() {
                 contentContainerStyle={{ paddingRight: 20 }}
               >
                 {[
-                  { label: "All Shifts", value: "" },
-                  { label: "A", value: "Shift A" },
-                  { label: "B", value: "Shift B" },
-                  { label: "C", value: "Shift C" },
-                  { label: "G", value: "Shift G" },
+                  { label: "Shift A", value: "1/3" },
+                  { label: "Shift B", value: "2/3" },
+                  { label: "Shift C", value: "3/3" },
                 ].map((shift) => {
-                  const isActive = searchQuery === shift.value;
+                  const isActive = selectedShift === shift.value;
                   return (
                     <TouchableOpacity
                       key={shift.value}
                       onPress={() => {
-                        setSearchQuery(isActive ? "" : shift.value);
+                        setSelectedShift(isActive ? "" : shift.value);
                       }}
                       className={`mr-2 px-4 py-2 rounded-full border ${
                         isActive
@@ -698,6 +704,7 @@ export default function SiteHistory() {
                 <TouchableOpacity
                   onPress={() => {
                     setSearchQuery("");
+                    setSelectedShift("");
                     setFromDate(null);
                     setToDate(null);
                     setSiteCode(params.siteCode || "");

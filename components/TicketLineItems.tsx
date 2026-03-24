@@ -152,11 +152,9 @@ const TicketLineItems = ({ ticketId }: TicketLineItemsProps) => {
             flex: 1,
             marginLeft: 8,
             marginBottom: 16,
-            backgroundColor: "#f8fafc",
             borderRadius: 12,
             padding: 12,
             borderWidth: 1,
-            borderColor: "#f1f5f9",
           }}
           className="bg-slate-50 dark:bg-slate-800 border-slate-100 dark:border-slate-700"
         >
@@ -296,12 +294,11 @@ const TicketLineItems = ({ ticketId }: TicketLineItemsProps) => {
             style={{
               alignItems: "center",
               paddingVertical: 28,
-              backgroundColor: "#f8fafc",
               borderRadius: 14,
               borderWidth: 1,
-              borderColor: "#f1f5f9",
               borderStyle: "dashed",
             }}
+            className="bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700"
           >
             <MessageCircle size={28} color="#cbd5e1" />
             <Text
@@ -358,10 +355,8 @@ const TicketLineItems = ({ ticketId }: TicketLineItemsProps) => {
         <View
           style={{
             flex: 1,
-            backgroundColor: "#f8fafc",
             borderRadius: 14,
             borderWidth: 1,
-            borderColor: "#e2e8f0",
             flexDirection: "row",
             alignItems: "center",
             paddingHorizontal: 14,

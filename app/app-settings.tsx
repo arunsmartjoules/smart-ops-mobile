@@ -45,6 +45,7 @@ import {
   getPMSyncStatus,
   getPendingPMCount,
   setPMAutoSyncEnabled,
+  clearAllOfflinePMData,
   PMSyncStatus,
 } from "@/utils/syncPMStorage";
 import { syncManager } from "@/services/SyncManager";
@@ -180,6 +181,7 @@ export default function AppSettings() {
             try {
               await clearAllOfflineTicketData();
               await clearAllOfflineSiteLogData();
+              await clearAllOfflinePMData();
               await clearAllCache();
               await loadAllStatus();
               Alert.alert("Success", "All local data cleared");
@@ -279,17 +281,17 @@ export default function AppSettings() {
           </Text>
           {/* Network Status */}
           <View
-            className={`flex-row items-center px-3 py-1.5 rounded-full ${isConnected ? "bg-green-100 dark:bg-green-900/30" : "bg-amber-100 dark:bg-amber-900/30"}`}
+            className={`flex-row items-center px-3 py-1.5 rounded-full ${isConnected !== false ? "bg-green-100 dark:bg-green-900/30" : "bg-amber-100 dark:bg-amber-900/30"}`}
           >
-            {isConnected ? (
+            {isConnected !== false ? (
               <Wifi size={14} color="#22c55e" />
             ) : (
               <WifiOff size={14} color="#f59e0b" />
             )}
             <Text
-              className={`text-xs font-medium ml-1.5 ${isConnected ? "text-green-700 dark:text-green-400" : "text-amber-700 dark:text-amber-400"}`}
+              className={`text-xs font-medium ml-1.5 ${isConnected !== false ? "text-green-700 dark:text-green-400" : "text-amber-700 dark:text-amber-400"}`}
             >
-              {isConnected ? "Online" : "Offline"}
+              {isConnected !== false ? "Online" : "Offline"}
             </Text>
           </View>
         </View>
@@ -348,9 +350,9 @@ export default function AppSettings() {
               {/* Sync All Button */}
               <TouchableOpacity
                 onPress={handleSyncAll}
-                disabled={isSyncing || totalPending === 0 || !isConnected}
+                disabled={isSyncing || isConnected === false}
                 className={`flex-row items-center justify-center py-3 rounded-xl ${
-                  totalPending === 0 || !isConnected
+                  isConnected === false
                     ? "bg-slate-100 dark:bg-slate-800"
                     : "bg-red-50 dark:bg-red-900/20"
                 }`}
@@ -362,14 +364,14 @@ export default function AppSettings() {
                     <RefreshCw
                       size={18}
                       color={
-                        totalPending === 0 || !isConnected
+                        isConnected === false
                           ? "#94a3b8"
                           : "#dc2626"
                       }
                     />
                     <Text
                       className={`font-semibold ml-2 ${
-                        totalPending === 0 || !isConnected
+                        isConnected === false
                           ? "text-slate-400"
                           : "text-red-600"
                       }`}

@@ -132,7 +132,7 @@ export default function PrivacySecurity() {
         <View className="px-5 pt-2 pb-3 flex-row items-center">
           <TouchableOpacity
             onPress={() => router.back()}
-            className="w-10 h-10 rounded-full bg-white items-center justify-center mr-4"
+            className="w-10 h-10 rounded-full bg-white dark:bg-slate-800 items-center justify-center mr-4"
             style={{
               shadowColor: "#000",
               shadowOffset: { width: 0, height: 2 },
@@ -202,13 +202,13 @@ export default function PrivacySecurity() {
 
               {/* Current Password */}
               <View className="mb-4">
-                <Text className="text-slate-500 text-sm mb-2">
+                <Text className="text-slate-500 dark:text-slate-400 text-sm mb-2">
                   Current Password
                 </Text>
-                <View className="flex-row items-center bg-slate-50 rounded-xl px-4 border border-slate-200">
+                <View className="flex-row items-center bg-slate-50 dark:bg-slate-800 rounded-xl px-4 border border-slate-200 dark:border-slate-700">
                   <Lock size={18} color="#64748b" />
                   <TextInput
-                    className="flex-1 py-3.5 px-3 text-slate-900 dark:text-slate-50 dark:bg-slate-800"
+                    className="flex-1 py-3.5 px-3 text-slate-900 dark:text-slate-50"
                     placeholder="Enter current password"
                     placeholderTextColor="#94a3b8"
                     secureTextEntry={!showCurrentPassword}
@@ -227,13 +227,13 @@ export default function PrivacySecurity() {
 
               {/* New Password */}
               <View className="mb-4">
-                <Text className="text-slate-500 text-sm mb-2">
+                <Text className="text-slate-500 dark:text-slate-400 text-sm mb-2">
                   New Password
                 </Text>
-                <View className="flex-row items-center bg-slate-50 rounded-xl px-4 border border-slate-200">
+                <View className="flex-row items-center bg-slate-50 dark:bg-slate-800 rounded-xl px-4 border border-slate-200 dark:border-slate-700">
                   <Lock size={18} color="#64748b" />
                   <TextInput
-                    className="flex-1 py-3.5 px-3 text-slate-900 dark:text-slate-50 dark:bg-slate-800"
+                    className="flex-1 py-3.5 px-3 text-slate-900 dark:text-slate-50"
                     placeholder="Enter new password (min 6 chars)"
                     placeholderTextColor="#94a3b8"
                     secureTextEntry={!showNewPassword}
@@ -252,13 +252,13 @@ export default function PrivacySecurity() {
 
               {/* Confirm Password */}
               <View className="mb-6">
-                <Text className="text-slate-500 text-sm mb-2">
+                <Text className="text-slate-500 dark:text-slate-400 text-sm mb-2">
                   Confirm New Password
                 </Text>
-                <View className="flex-row items-center bg-slate-50 rounded-xl px-4 border border-slate-200">
+                <View className="flex-row items-center bg-slate-50 dark:bg-slate-800 rounded-xl px-4 border border-slate-200 dark:border-slate-700">
                   <Lock size={18} color="#64748b" />
                   <TextInput
-                    className="flex-1 py-3.5 px-3 text-slate-900 dark:text-slate-50 dark:bg-slate-800"
+                    className="flex-1 py-3.5 px-3 text-slate-900 dark:text-slate-50"
                     placeholder="Confirm new password"
                     placeholderTextColor="#94a3b8"
                     secureTextEntry={!showConfirmPassword}
