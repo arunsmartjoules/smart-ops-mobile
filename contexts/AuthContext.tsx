@@ -150,7 +150,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
             // Try cached profile first for instant render
             const cached = await AsyncStorage.getItem("auth_user");
             if (cached) setUser(JSON.parse(cached));
-            fetchAndSetProfile(session.user, session.access_token);
+            const userProfile = await fetchAndSetProfile(session.user, session.access_token);
+            
+            // Register for push notifications on app startup if user is logged in
+            if (userProfile?.user_id) {
+              registerForPushNotifications(userProfile.user_id, session.access_token)
+                .then((result) => {
+                  if (result.success) {
+                    logger.info("Push notifications registered on startup", {
+                      module: "AUTH_CONTEXT",
+                    });
+                  }
+                })
+                .catch((error) => {
+                  logger.warn("Push notification registration failed on startup", {
+                    module: "AUTH_CONTEXT",
+                    error: error.message,
+                  });
+                });
+            }
           }
         } else {
           // Trigger the catch block for timeout handling
@@ -179,12 +197,35 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     // Subscribe to auth state changes (sign-in, sign-out, token refresh, password recovery)
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((event, session) => {
+    } = supabase.auth.onAuthStateChange(async (event, session) => {
       logger.debug(`Auth state change: ${event}`, { module: "AUTH_CONTEXT" });
 
       if (session) {
         setToken(session.access_token);
-        fetchAndSetProfile(session.user, session.access_token);
+        const userProfile = await fetchAndSetProfile(session.user, session.access_token);
+        
+        // Register for push notifications after successful sign-in
+        if (userProfile?.user_id) {
+          registerForPushNotifications(userProfile.user_id, session.access_token)
+            .then((result) => {
+              if (result.success) {
+                logger.info("Push notifications registered successfully", {
+                  module: "AUTH_CONTEXT",
+                });
+              } else {
+                logger.warn("Push notification registration failed", {
+                  module: "AUTH_CONTEXT",
+                  error: result.error,
+                });
+              }
+            })
+            .catch((error) => {
+              logger.error("Push notification registration error", {
+                module: "AUTH_CONTEXT",
+                error: error.message,
+              });
+            });
+        }
       } else {
         setToken(null);
         setUser(null);

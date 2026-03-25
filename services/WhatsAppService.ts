@@ -43,10 +43,19 @@ export const WhatsAppService = {
    */
   async sendStatusUpdate(ticket: Ticket, newStatus: string, remarks?: string) {
     try {
+      logger.debug(`[WhatsApp] Starting sendStatusUpdate for ticket ${ticket.ticket_no}, status: ${newStatus}`);
+      
       // 1. Fetch Template for newStatus
       const templateRes = await apiFetch(
         `/api/whatsapp/templates/status/${newStatus}`,
       );
+      
+      logger.debug(`[WhatsApp] Template fetch result:`, { 
+        ok: templateRes.ok, 
+        hasData: !!templateRes.data,
+        error: templateRes.error 
+      });
+      
       if (!templateRes.ok || !templateRes.data) {
         logger.debug(`No WhatsApp template found for status: ${newStatus}`);
         return;
@@ -105,6 +114,8 @@ export const WhatsAppService = {
         ticket.created_user || "N/A",
       );
 
+      logger.debug(`[WhatsApp] Sending message for site: ${ticket.site_code}`);
+
       // 3. Send Message
       const sendRes = await apiFetch(`/api/whatsapp/send`, {
         method: "POST",
@@ -116,20 +127,68 @@ export const WhatsAppService = {
         }),
       });
 
+      logger.debug(`[WhatsApp] Send result:`, { 
+        ok: sendRes.ok, 
+        error: sendRes.error,
+        data: sendRes.data 
+      });
+
       if (sendRes.ok) {
         logger.debug(
           `Successfully sent WhatsApp notification for ticket ${ticket.ticket_no}`,
         );
       } else {
-        logger.warn(`Failed to send WhatsApp notification`, {
+        logger.error(`Failed to send WhatsApp notification`, {
+          ticket_no: ticket.ticket_no,
+          site_code: ticket.site_code,
           error: sendRes.error,
+          response: sendRes
         });
       }
-    } catch (error) {
+    } catch (error: any) {
       logger.error(
         `Failed to process WhatsApp notification for ${ticket.ticket_no}`,
-        { error },
+        { 
+          error: error.message || error,
+          stack: error.stack,
+          ticket_no: ticket.ticket_no,
+          site_code: ticket.site_code
+        },
       );
+    }
+  },
+
+  /**
+   * Sends a WhatsApp message with an image for ticket activity.
+   */
+  async sendActivityImage(
+    site_code: string,
+    ticket_no: string,
+    image_url: string,
+  ) {
+    try {
+      const res = await apiFetch(`/api/whatsapp/send-image`, {
+        method: "POST",
+        body: JSON.stringify({
+          site_code,
+          ticket_no,
+          image_url,
+          caption: `*Ticket ${ticket_no} Activity (Image)*`,
+          template_key: "activity_update",
+        }),
+      });
+
+      if (res.ok) {
+        logger.debug(
+          `Successfully sent WhatsApp image for ticket ${ticket_no}`,
+        );
+      } else {
+        logger.warn(`Failed to send WhatsApp image`, { error: res.error });
+      }
+    } catch (error) {
+      logger.error(`Failed to send WhatsApp image for ${ticket_no}`, {
+        error,
+      });
     }
   },
 };

@@ -116,17 +116,38 @@ export async function syncPendingTicketUpdates(
     .query(Q.where("is_synced", false))
     .fetch();
 
+  logger.info("Starting ticket update sync", {
+    module: "TICKET_SYNC",
+    pendingCount: updates.length,
+  });
+
   for (const update of updates) {
     try {
       const ticket = await ticketCollection.find(update.ticketId);
       if (!ticket || !ticket.serverId) {
         logger.warn("Cannot sync update for missing/local-only ticket", {
-          id: update.id,
+          module: "TICKET_SYNC",
+          updateId: update.id,
+          ticketId: update.ticketId,
         });
+        // Mark as synced to prevent it from blocking future syncs
+        await database.write(async () => {
+          await update.update((r) => {
+            r.isSynced = true;
+          });
+        });
+        synced++;
         continue;
       }
 
       const updateData = JSON.parse(update.updateData);
+
+      logger.debug("Syncing ticket update", {
+        module: "TICKET_SYNC",
+        updateId: update.id,
+        ticketServerId: ticket.serverId,
+        updateType: update.updateType,
+      });
 
       const response = await syncWithRetry(() =>
         fetchWithTimeout(`${apiUrl}/api/complaints/${ticket.serverId}`, {
@@ -141,22 +162,47 @@ export async function syncPendingTicketUpdates(
 
       if (response.ok) {
         await database.write(async () => {
+          // Mark the update as synced
           await update.update((r) => {
             r.isSynced = true;
           });
+          
+          // Mark the ticket itself as synced in WatermelonDB
+          await ticket.update((t) => {
+            t.isSynced = true;
+          });
         });
         synced++;
+        logger.info("Ticket update synced successfully", {
+          module: "TICKET_SYNC",
+          updateId: update.id,
+          ticketId: ticket.serverId,
+        });
       } else {
+        const errorText = await response.text().catch(() => "Unknown error");
+        logger.error("Ticket update sync failed - server error", {
+          module: "TICKET_SYNC",
+          updateId: update.id,
+          status: response.status,
+          error: errorText,
+        });
         failed++;
       }
     } catch (err: any) {
       logger.error("Failed to sync ticket update", {
+        module: "TICKET_SYNC",
         id: update.id,
         error: err.message,
       });
       failed++;
     }
   }
+
+  logger.info("Ticket update sync complete", {
+    module: "TICKET_SYNC",
+    synced,
+    failed,
+  });
 
   return { synced, failed };
 }
@@ -208,6 +254,37 @@ export async function getPendingTicketUpdates() {
   return await ticketUpdateCollection
     .query(Q.where("is_synced", false))
     .fetch();
+}
+
+/**
+ * Get detailed info about pending ticket updates for debugging
+ */
+export async function getPendingTicketUpdatesDebug(): Promise<any[]> {
+  const updates = await getPendingTicketUpdates();
+  const details = [];
+  
+  for (const update of updates) {
+    try {
+      const ticket = await ticketCollection.find(update.ticketId).catch(() => null);
+      details.push({
+        updateId: update.id,
+        ticketId: update.ticketId,
+        ticketExists: !!ticket,
+        ticketServerId: ticket?.serverId || null,
+        updateType: update.updateType,
+        updateData: update.updateData,
+        createdAt: update.createdAt,
+      });
+    } catch (err) {
+      details.push({
+        updateId: update.id,
+        ticketId: update.ticketId,
+        error: "Failed to load ticket",
+      });
+    }
+  }
+  
+  return details;
 }
 
 /**

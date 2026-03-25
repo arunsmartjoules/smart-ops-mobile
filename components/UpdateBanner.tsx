@@ -24,7 +24,7 @@ export default function UpdateBanner() {
     };
   }, []);
 
-  if (state.status === "idle") return null;
+  if (state.status === "idle" || state.status === "checking" || state.status === "up-to-date") return null;
 
   const config = getConfig(state);
 
@@ -36,7 +36,7 @@ export default function UpdateBanner() {
         { backgroundColor: config.bg },
       ]}
     >
-      {(state.status === "downloading" || state.status === "checking") && (
+      {state.status === "downloading" && (
         <Animated.View
           style={[
             styles.progressBar,
@@ -54,7 +54,7 @@ export default function UpdateBanner() {
             <Text style={styles.buttonText}>Restart Now</Text>
           </TouchableOpacity>
         )}
-        {(state.status === "error" || state.status === "up-to-date") && (
+        {state.status === "error" && (
           <TouchableOpacity
             onPress={() => UpdateService.dismiss()}
             style={styles.dismissButton}

@@ -21,7 +21,7 @@ import { API_BASE_URL } from "../constants/api";
 const BACKEND_URL = API_BASE_URL;
 
 // Shared API fetch helper with auth
-const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
+const apiFetch = async (endpoint: string, options: RequestInit = {}, customTimeout?: number) => {
   const { data: { session } } = await supabase.auth.getSession();
   const token = session?.access_token ?? null;
   return fetchWithTimeout(`${BACKEND_URL}${endpoint}`, {
@@ -31,7 +31,7 @@ const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...options.headers,
     },
-  });
+  }, customTimeout);
 };
 
 export interface PMChecklistItemData {
@@ -276,9 +276,26 @@ const PMService = {
 
   /**
    * Pull checklist items for a given maintenance_id from backend.
+   * Now checks if items are already cached before making API call.
    */
   async pullChecklistItems(maintenanceId: string): Promise<void> {
     try {
+      // Check if we already have cached items for this checklist
+      const existing = await pmChecklistItemCollection
+        .query(Q.where("checklist_master_id", maintenanceId))
+        .fetch();
+
+      // If we have cached items, skip the API call
+      if (existing.length > 0) {
+        logger.debug("Using cached PM checklist items", {
+          module: "PM_SERVICE",
+          maintenanceId,
+          count: existing.length,
+        });
+        return;
+      }
+
+      // Only fetch from API if we don't have cached data
       const response = await apiFetch(
         `/api/pm-checklist?checklist_id=${encodeURIComponent(maintenanceId)}&status=All`,
       );
@@ -288,42 +305,29 @@ const PMService = {
       const items: any[] = json.data || json || [];
 
       await database.write(async () => {
-        const existing = await pmChecklistItemCollection
-          .query(Q.where("checklist_master_id", maintenanceId))
-          .fetch();
-
-        const existingMap = new Map(existing.map((e) => [e.serverId || "", e]));
-
         const batch = [];
         for (const item of items) {
-          const ex = existingMap.get(item.id);
-          if (ex) {
-            batch.push(
-              ex.prepareUpdate((record: any) => {
-                record.taskName = item.task_name;
-                record.fieldType = item.field_type;
-                record.sequenceNo = item.sequence_no ?? null;
-                record.imageMandatory = item.image_mandatory ?? false;
-                record.remarksMandatory = item.remarks_mandatory ?? false;
-                record.cachedAt = Date.now();
-              }),
-            );
-          } else {
-            batch.push(
-              pmChecklistItemCollection.prepareCreate((record: any) => {
-                record.serverId = item.id;
-                record.checklistMasterId = maintenanceId;
-                record.taskName = item.task_name;
-                record.fieldType = item.field_type;
-                record.sequenceNo = item.sequence_no ?? null;
-                record.imageMandatory = item.image_mandatory ?? false;
-                record.remarksMandatory = item.remarks_mandatory ?? false;
-                record.cachedAt = Date.now();
-              }),
-            );
-          }
+          batch.push(
+            pmChecklistItemCollection.prepareCreate((record: any) => {
+              record.serverId = item.id;
+              record.checklistMasterId = maintenanceId;
+              record.taskName = item.task_name;
+              record.fieldType = item.field_type;
+              record.sequenceNo = item.sequence_no ?? null;
+              record.imageMandatory = item.image_mandatory ?? false;
+              record.remarksMandatory = item.remarks_mandatory ?? false;
+              record.cachedAt = Date.now();
+            }),
+          );
         }
-        await database.batch(batch);
+        if (batch.length > 0) {
+          await database.batch(batch);
+          logger.info("Cached PM checklist items from API", {
+            module: "PM_SERVICE",
+            maintenanceId,
+            count: batch.length,
+          });
+        }
       });
     } catch (error: any) {
       logger.error("Failed to pull PM checklist items", {
@@ -341,21 +345,43 @@ const PMService = {
    */
   async pullAllChecklistItems(): Promise<void> {
     try {
-      // Fetch all checklist masters
-      const masterResponse = await apiFetch(`/api/pm-checklist?status=All&limit=5000`);
-      if (!masterResponse.ok) return;
+      logger.info("Starting bulk pull of all PM checklist items", { module: "PM_SERVICE" });
+      
+      // Fetch all checklist masters. Timeout extended to 60 seconds (60000ms) for bulk transfers
+      const masterResponse = await apiFetch(`/api/pm-checklist?status=All&limit=5000`, {}, 60000);
+      
+      if (!masterResponse.ok) {
+        logger.error("Failed to fetch PM checklists - API response not OK", {
+          module: "PM_SERVICE",
+          status: masterResponse.status,
+        });
+        return;
+      }
 
       const masterJson = await masterResponse.json();
       const rawItems: any[] = masterJson.data || masterJson || [];
 
-      if (rawItems.length === 0) return;
+      logger.info(`Received ${rawItems.length} PM checklist items from API`, {
+        module: "PM_SERVICE",
+      });
+
+      if (rawItems.length === 0) {
+        logger.warn("No PM checklist items returned from API", { module: "PM_SERVICE" });
+        return;
+      }
 
       const masterIds = [
         ...new Set(rawItems.map((i: any) => i.checklist_id || i.checklist_master_id).filter(Boolean)),
       ] as string[];
 
+      logger.info(`Found ${masterIds.length} unique checklist masters`, {
+        module: "PM_SERVICE",
+        masterIds: masterIds.slice(0, 5), // Log first 5 for debugging
+      });
+
       // Upsert into WatermelonDB using small chunks to avoid memory/SQLite limits
       const CHUNK_SIZE = 1000;
+      let totalCached = 0;
 
       for (let i = 0; i < rawItems.length; i += CHUNK_SIZE) {
         const chunk = rawItems.slice(i, i + CHUNK_SIZE);
@@ -401,7 +427,14 @@ const PMService = {
             }
           }
 
-          if (batch.length > 0) await database.batch(batch);
+          if (batch.length > 0) {
+            await database.batch(batch);
+            totalCached += batch.length;
+            logger.debug(`Cached chunk of ${batch.length} checklist items`, {
+              module: "PM_SERVICE",
+              progress: `${totalCached}/${rawItems.length}`,
+            });
+          }
         });
       }
 
@@ -422,16 +455,27 @@ const PMService = {
             );
           }
         }
-        if (masterBatch.length > 0) await database.batch(masterBatch);
+        if (masterBatch.length > 0) {
+          await database.batch(masterBatch);
+          logger.info(`Cached ${masterBatch.length} new checklist masters`, {
+            module: "PM_SERVICE",
+          });
+        }
       });
 
-      logger.info(`Cached ${rawItems.length} PM checklist items from bulk pull`, {
+      // Verify cache
+      const cachedCount = await pmChecklistItemCollection.query().fetchCount();
+      logger.info(`✅ Successfully cached ${totalCached} PM checklist items (Total in DB: ${cachedCount})`, {
         module: "PM_SERVICE",
+        totalItems: rawItems.length,
+        totalMasters: masterIds.length,
+        cachedInDB: cachedCount,
       });
     } catch (error: any) {
       logger.error("Failed to bulk pull PM checklist items", {
         module: "PM_SERVICE",
         error: error.message,
+        stack: error.stack,
       });
     }
   },

@@ -13,7 +13,6 @@ import {
   Settings,
   Bell,
   Shield,
-  HelpCircle,
   Moon,
   Sun,
   Monitor,
@@ -21,7 +20,7 @@ import {
   Info,
 } from "lucide-react-native";
 import { router } from "expo-router";
-import React, { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { format } from "date-fns";
 
 export default function Profile() {
@@ -105,15 +104,13 @@ export default function Profile() {
       color: "#8b5cf6", 
       value: theme.charAt(0).toUpperCase() + theme.slice(1) 
     },
-    { icon: Info, label: "App Version", color: "#8b5cf6", value: "1.0.0 (Beta)" },
-    { 
+    { icon: Info, label: "App Version", color: "#8b5cf6", value: "1.0.1 (Beta)" },    { 
       icon: ArrowUpCircle, 
       label: "Check for Updates", 
       color: "#3b82f6", 
       loading: isCheckingUpdates,
       hasBadge: updateAvailable 
     },
-    { icon: HelpCircle, label: "Help & Support", color: "#f59e0b" },
   ];
 
   return (
@@ -291,7 +288,7 @@ export default function Profile() {
         </View>
 
         {/* Sign Out */}
-        <View className="px-5 mb-8">
+        <View className="px-5 mb-4">
           <TouchableOpacity
             onPress={handleLogout}
             className="bg-red-50 rounded-2xl p-3.5 flex-row items-center justify-center"
@@ -308,13 +305,6 @@ export default function Profile() {
               Sign Out
             </Text>
           </TouchableOpacity>
-        </View>
-
-        <View className="items-center pb-8">
-           <Text className="text-slate-300 dark:text-slate-600 text-xs text-center">
-             SmartOps v1.0.0-beta.1{"\n"}
-             Properly Optimized for Offline Use
-           </Text>
         </View>
       </SafeAreaView>
     </View>

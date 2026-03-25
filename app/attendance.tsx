@@ -519,14 +519,36 @@ export default function AttendancePage() {
         } else {
           // Revert optimistic update on failure
           setTodayAttendance(null);
-          Alert.alert("Failed", res.error || "Check-in failed");
+          
+          // Handle requiresCheckout case
+          if ((res as any).requiresCheckout) {
+            Alert.alert(
+              "Checkout Required",
+              res.error || "Please check out from your current session before checking in again.",
+              [
+                { text: "Cancel", style: "cancel" },
+                {
+                  text: "Checkout Now",
+                  onPress: () => {
+                    // Set the existing attendance and trigger checkout
+                    if ((res as any).data) {
+                      setTodayAttendance((res as any).data);
+                      setTimeout(() => handleCheckOutPress(), 500);
+                    }
+                  },
+                },
+              ]
+            );
+          } else {
+            Alert.alert("Failed", res.error || "Check-in failed");
+          }
         }
       } catch (error: any) {
         setTodayAttendance(null);
         Alert.alert("Error", error.message);
       }
     },
-    [user?.id, location, fetchData, isConnected],
+    [user?.id, location, fetchData, isConnected, handleCheckOutPress],
   );
 
   const handleCheckInPress = useCallback(async () => {
@@ -804,7 +826,7 @@ export default function AttendancePage() {
             <View className="flex-row items-center justify-between mb-4">
               <Text className="text-white text-2xl font-bold">
                 {todayAttendance?.check_out_time
-                  ? "Shift Completed"
+                  ? "Checked Out"
                   : todayAttendance
                     ? "Checked In"
                     : "Not Checked In"}
@@ -875,7 +897,26 @@ export default function AttendancePage() {
                 <LogOut size={18} color="white" style={{ marginRight: 8 }} />
                 <Text className="text-white font-bold">CHECK OUT</Text>
               </TouchableOpacity>
-            ) : null}
+            ) : (
+              <TouchableOpacity
+                onPress={handleCheckInPress}
+                disabled={validatingLocation}
+                className="mt-6 bg-white/10 dark:bg-black/10 rounded-xl py-3 items-center flex-row justify-center"
+              >
+                {validatingLocation ? (
+                  <ActivityIndicator color="white" size="small" />
+                ) : (
+                  <>
+                    <MapPin
+                      size={18}
+                      color="white"
+                      style={{ marginRight: 8 }}
+                    />
+                    <Text className="text-white font-bold">CHECK IN AGAIN</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            )}
           </LinearGradient>
         </View>
 

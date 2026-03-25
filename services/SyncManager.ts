@@ -238,8 +238,14 @@ class SyncManager {
     logger.info("Starting prefetch (full manual sync)", { module: "SYNC_MANAGER" });
 
     try {
+      // CRITICAL: Cache all PM checklists FIRST before anything else
+      // This ensures checklists are available offline immediately
+      const PMService = (await import("./PMService")).default;
+      await PMService.pullAllChecklistItems();
+      logger.info("✅ PM checklists cached during prefetch", { module: "SYNC_MANAGER" });
+
       // triggerSync("manual") bypasses all thresholds and runs the full push + pull
-      // phase including areas, categories, and sites caching (Fixes 3, 4, 5)
+      // phase including areas, categories, and sites caching
       await this.triggerSync("manual");
       await AsyncStorage.setItem("@prefetch_last_time", String(Date.now()));
       logger.info("Prefetch complete", { module: "SYNC_MANAGER" });
@@ -418,6 +424,39 @@ class SyncManager {
       } catch (err: any) {
         logger.error("PM frequent/checklist pull failed", { module: "SYNC_MANAGER", error: err.message });
       }
+
+      // Cache areas and categories for all sites during frequent pull
+      // This ensures dropdowns work offline
+      try {
+        for (const siteCode of siteCodes) {
+          const areasResp = await fetchWithTimeout(
+            `${API_URL}/api/assets/site/${siteCode}`,
+            { headers: { Authorization: `Bearer ${token}` } },
+          );
+          if (areasResp.ok) {
+            const areasResult = await areasResp.json();
+            if (areasResult.success && Array.isArray(areasResult.data)) {
+              await cacheAreas(siteCode, areasResult.data);
+              logger.debug("Areas cached during frequent pull", { module: "SYNC_MANAGER", siteCode, count: areasResult.data.length });
+            }
+          }
+        }
+
+        // Cache categories (global)
+        const catResp = await fetchWithTimeout(
+          `${API_URL}/api/complaint-categories`,
+          { headers: { Authorization: `Bearer ${token}` } },
+        );
+        if (catResp.ok) {
+          const catResult = await catResp.json();
+          if (catResult.success && Array.isArray(catResult.data)) {
+            await cacheCategories(catResult.data);
+            logger.debug("Categories cached during frequent pull", { module: "SYNC_MANAGER", count: catResult.data.length });
+          }
+        }
+      } catch (err: any) {
+        logger.warn("Areas/categories cache during frequent pull failed", { module: "SYNC_MANAGER", error: err.message });
+      }
     }
 
     // ─── HEAVY PULL PHASE (Threshold based) ──────────────────────────────────
@@ -475,7 +514,7 @@ class SyncManager {
           // Areas pull — cache per-site for offline ticket creation dropdowns
           try {
             const areasResp = await fetchWithTimeout(
-              `${API_URL}/api/assets?site_code=${siteCode}`,
+              `${API_URL}/api/assets/site/${siteCode}`,
               { headers: { Authorization: `Bearer ${token}` } },
             );
             if (areasResp.ok) {

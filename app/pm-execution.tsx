@@ -728,10 +728,32 @@ export default function PMExecutionScreen() {
           <Text style={[styles.emptyText, isDark && { color: "#64748b" }]}>
             {!instance?.maintenanceId
               ? "No checklist linked to this PM instance."
-              : !isConnected
-                ? "Checklist not available offline.\nPlease open this PM task once while connected to cache the checklist."
+              : checklistItems.length === 0 && !isConnected
+                ? "Checklist not cached yet.\nPlease connect to internet and sync to cache all checklists."
                 : "No checklist items found."}
           </Text>
+          {checklistItems.length === 0 && !isConnected && instance?.maintenanceId && (
+            <TouchableOpacity
+              onPress={() => {
+                Alert.alert(
+                  "Offline Mode",
+                  "To use PM checklists offline:\n\n1. Connect to internet\n2. Open the app and wait for sync to complete\n3. All checklists will be cached automatically\n\nAfter that, you can work offline.",
+                  [{ text: "OK" }]
+                );
+              }}
+              style={{
+                marginTop: 16,
+                paddingHorizontal: 20,
+                paddingVertical: 10,
+                backgroundColor: isDark ? "#1e293b" : "#f1f5f9",
+                borderRadius: 8,
+              }}
+            >
+              <Text style={{ color: isDark ? "#94a3b8" : "#64748b", fontSize: 14, fontWeight: "600" }}>
+                Learn More
+              </Text>
+            </TouchableOpacity>
+          )}
         </View>
       )}
     </View>

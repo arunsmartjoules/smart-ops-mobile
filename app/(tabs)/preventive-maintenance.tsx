@@ -518,7 +518,9 @@ export default function PreventiveMaintenance() {
   // ── Handlers ────────────────────────────────────────────────────────────────
   const handlePMCardPress = useCallback(
     (instance: PMInstance) => {
-      if (instance.maintenanceId && isConnected) {
+      // Always try to pull checklist items if we have a maintenance ID
+      // The PMService will check cache first and only fetch if needed
+      if (instance.maintenanceId) {
         PMService.pullChecklistItems(instance.maintenanceId).catch(() => {});
       }
       router.push({
@@ -526,7 +528,7 @@ export default function PreventiveMaintenance() {
         params: { instanceId: instance.serverId || instance.id },
       });
     },
-    [isConnected],
+    [],
   );
 
   const applyAdvancedFilters = useCallback(() => {

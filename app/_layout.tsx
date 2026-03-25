@@ -15,6 +15,7 @@ import UpdateBanner from "@/components/UpdateBanner";
 import { supabase } from "@/services/supabase";
 import * as SplashScreen from "expo-splash-screen";
 import * as Location from "expo-location";
+import { setupNotificationHandlers } from "@/services/NotificationService";
 
 // Keep the native splash visible until JS is ready
 SplashScreen.preventAutoHideAsync().catch(() => {});
@@ -95,8 +96,25 @@ export default function RootLayout() {
     };
     init();
 
+    // Setup notification handlers
+    const cleanupNotifications = setupNotificationHandlers(
+      (notification) => {
+        console.log("Notification received:", notification);
+      },
+      (response) => {
+        console.log("Notification tapped:", response);
+        // Handle navigation based on notification data
+        const data = response.notification.request.content.data;
+        if (data?.screen) {
+          // You can add navigation logic here based on data.screen
+          console.log("Navigate to:", data.screen);
+        }
+      }
+    );
+
     return () => {
       syncManager.cleanup();
+      cleanupNotifications();
     };
   }, []);
 

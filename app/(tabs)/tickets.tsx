@@ -38,6 +38,8 @@ import {
   cacheStats,
   getCachedStats,
 } from "@/utils/offlineDataCache";
+import { database, ticketCollection } from "@/database";
+import { Q } from "@nozbe/watermelondb";
 import logger from "@/utils/logger";
 import TicketDetailModal from "@/components/TicketDetailModal";
 import AdvancedFilterModal from "@/components/AdvancedFilterModal";
@@ -204,13 +206,19 @@ export default function Tickets() {
   ]);
 
   // Load areas (from assets table) and categories for the dropdown
+  // Uses cache-first strategy with 24-hour expiration
   const loadAreasAndCategories = useCallback(async () => {
     if (!selectedSiteCode) return;
 
     setAreasLoading(true);
     try {
-      // Try to get cached areas first
-      const cachedAreas = await getCachedAreas(selectedSiteCode);
+      // Always load from cache first for instant UI
+      const [cachedAreas, cachedCategories] = await Promise.all([
+        getCachedAreas(selectedSiteCode),
+        TicketsService.getComplaintCategories(),
+      ]);
+
+      // Set cached areas immediately
       if (cachedAreas.length > 0) {
         setAreaOptions(
           cachedAreas.map((a: any) => ({
@@ -222,35 +230,42 @@ export default function Tickets() {
         );
       }
 
-      // If online, fetch fresh data from backend
+      // Set cached categories immediately
+      if (cachedCategories?.data && cachedCategories.data.length > 0) {
+        const categories = cachedCategories.data.map((cat: any) => ({
+          value: cat.category,
+          label: cat.category,
+          description: cat.description || "",
+        }));
+        setCategoryOptions(categories);
+      }
+
+      // Check if we need to refresh from API (only if online)
       const netState = await NetInfo.fetch();
       const isActuallyOnline = netState.isConnected === true;
 
       if (isActuallyOnline) {
-        // Fetch assets for area dropdown (using asset_name)
-        const assetsResult = await TicketsService.getAssets(selectedSiteCode);
-        if (assetsResult?.data && assetsResult.data.length > 0) {
-          const areas = assetsResult.data.map((asset: any) => ({
-            value: asset.asset_name || asset.asset_id,
-            label: asset.asset_name,
-            description:
-              `${asset.asset_type || ""} ${asset.location ? `- ${asset.location}` : ""}`.trim(),
-          }));
-          setAreaOptions(areas);
-          // Cache for offline use
-          await cacheAreas(selectedSiteCode, assetsResult.data);
-        }
+        // Fetch fresh assets in background (will update cache automatically via TicketsService)
+        TicketsService.getAssets(selectedSiteCode)
+          .then((assetsResult) => {
+            if (assetsResult?.data && assetsResult.data.length > 0) {
+              const areas = assetsResult.data.map((asset: any) => ({
+                value: asset.asset_name || asset.asset_id,
+                label: asset.asset_name,
+                description:
+                  `${asset.asset_type || ""} ${asset.location ? `- ${asset.location}` : ""}`.trim(),
+              }));
+              setAreaOptions(areas);
+            }
+          })
+          .catch((error) => {
+            logger.warn("Background assets refresh failed", {
+              module: "TICKETS",
+              error,
+            });
+          });
 
-        // Fetch complaint categories from backend
-        const categoriesResult = await TicketsService.getComplaintCategories();
-        if (categoriesResult?.data && categoriesResult.data.length > 0) {
-          const categories = categoriesResult.data.map((cat: any) => ({
-            value: cat.category,
-            label: cat.category,
-            description: cat.description || "",
-          }));
-          setCategoryOptions(categories);
-        }
+        // Categories are already fetched above and cached automatically
       }
     } catch (error) {
       logger.warn("Error loading areas/categories", {
@@ -260,7 +275,7 @@ export default function Tickets() {
     } finally {
       setAreasLoading(false);
     }
-  }, [selectedSiteCode, isConnected]);
+  }, [selectedSiteCode]);
 
   const loadSites = async (userId: string) => {
     if (!userId) {
@@ -386,16 +401,49 @@ export default function Tickets() {
       }
 
       if (reset) {
-        // Always show skeleton on reset unless we're doing a pull-to-refresh
-        if (!refreshing) {
-          setLoading(true);
+        // Load from WatermelonDB first for instant content (includes offline updates)
+        let hasLocalData = false;
+        try {
+          const localTickets = await ticketCollection
+            .query(
+              Q.where("site_code", selectedSiteCode),
+              Q.sortBy("created_at", Q.desc),
+            )
+            .fetch();
+
+          if (localTickets.length > 0) {
+            hasLocalData = true;
+            const formattedTickets = localTickets
+              .filter((t) => t.serverId) // Only include tickets with server IDs
+              .map((t) => ({
+                id: t.serverId!,
+                ticket_no: t.ticketNumber,
+                title: t.title,
+                description: t.description || "",
+                status: t.status,
+                priority: t.priority,
+                category: t.category || "",
+                location: t.area || "",
+                area_asset: t.area || "",
+                internal_remarks: t.description || "",
+                assigned_to: t.assignedTo || "",
+                created_user: t.createdBy,
+                site_code: t.siteCode,
+                created_at: t.createdAt.toISOString(),
+              }));
+            setTickets(formattedTickets);
+            setLoading(false); // Show cached data immediately, no skeleton needed
+          }
+        } catch (err) {
+          logger.warn("Error loading tickets from WatermelonDB", {
+            module: "TICKETS",
+            error: err,
+          });
         }
 
-        // Load from cache first for instant content while fetching fresh data
-        const cachedTickets = await getCachedTickets(selectedSiteCode);
-        if (cachedTickets.length > 0) {
-          setTickets(cachedTickets);
-          setLoading(false); // Show cached data immediately, no skeleton needed
+        // Show skeleton only if we don't have local data and not refreshing
+        if (!hasLocalData && !refreshing) {
+          setLoading(true);
         }
       } else {
         setIsFetchingMore(true);
@@ -446,6 +494,7 @@ export default function Tickets() {
       searchQuery,
       fromDate,
       toDate,
+      refreshing,
     ],
   );
 
@@ -657,13 +706,19 @@ export default function Tickets() {
           Alert.alert("Error", res.error || "Failed to update ticket");
         }
       } else {
-        // Offline: Save to queue
-        await saveOfflineTicketUpdate(
-          selectedTicket.id,
-          selectedTicket.ticket_no,
-          "update_details",
+        // Offline: Update via service (which updates WatermelonDB)
+        const res = await TicketsService.updateTicket(
+          selectedTicket.id || selectedTicket.ticket_no,
           payload,
         );
+        
+        logger.activity("TICKET_UPDATE", "TICKETS", "Ticket updated offline", {
+          ticketId: selectedTicket.id,
+          ticketNo: selectedTicket.ticket_no,
+          ...payload,
+          offline: true,
+        });
+        
         Alert.alert(
           "Saved Offline",
           "Your update has been saved and will sync when you're back online.",
@@ -671,12 +726,8 @@ export default function Tickets() {
         );
         setIsDetailVisible(false);
 
-        // Update local ticket in list to reflect change
-        setTickets((prev) =>
-          prev.map((t) =>
-            t.id === selectedTicket.id ? { ...t, ...payload } : t,
-          ),
-        );
+        // Reload tickets from WatermelonDB to reflect the persisted change
+        resetAndFetch();
       }
     } catch (error: any) {
       Alert.alert("Error", error.message);

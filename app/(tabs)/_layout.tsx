@@ -1,6 +1,6 @@
 // @ts-nocheck
-import React from "react";
-import { Platform } from "react-native";
+import React, { useState, useEffect } from "react";
+import { Platform, View } from "react-native";
 import { Tabs } from "expo-router";
 import {
   LayoutDashboard,
@@ -11,9 +11,18 @@ import {
 } from "lucide-react-native";
 import { useTheme } from "@/contexts/ThemeContext";
 import { AnimatedTabBarButton } from "@/components/AnimatedTabBarButton";
+import UpdateService from "@/services/UpdateService";
 
 export default function TabLayout() {
   const { isDark } = useTheme();
+  const [hasUpdate, setHasUpdate] = useState(false);
+
+  useEffect(() => {
+    const unsubscribe = UpdateService.subscribe(() => {
+      setHasUpdate(UpdateService.isUpdateAvailable);
+    });
+    return () => { unsubscribe(); };
+  }, []);
 
   return (
     <Tabs
@@ -148,14 +157,23 @@ export default function TabLayout() {
             />
           ),
           tabBarIcon: ({ color, focused }) => (
-            <User
-              size={22}
-              color={focused ? "#ef4444" : color}
-              strokeWidth={focused ? 2.5 : 2}
-            />
+            <View>
+              <User
+                size={22}
+                color={focused ? "#ef4444" : color}
+                strokeWidth={focused ? 2.5 : 2}
+              />
+              {hasUpdate && (
+                <View 
+                  className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 bg-red-500 rounded-full border-2 border-white dark:border-slate-900"
+                  style={{ position: 'absolute' }}
+                />
+              )}
+            </View>
           ),
         }}
       />
     </Tabs>
   );
 }
+

@@ -507,16 +507,96 @@ export default function Dashboard() {
       if (cachedAtt) setTodayAttendance(cachedAtt);
       setLoadingAttendance(false);
 
+      // Load cached tickets and logs immediately for instant UI
+      if (cachedSitesList.length > 0) {
+        const siteCode = cachedSitesList[0].site_code;
+        
+        // Load cached tickets
+        const cachedTicketResult = await TicketsService.getTickets(siteCode, {
+          status: "Open",
+          limit: 10,
+        }).catch(() => ({ success: false, data: [] }));
+
+        if (cachedTicketResult?.success && cachedTicketResult.data) {
+          const allTickets: PendingItem[] = [];
+          cachedTicketResult.data.slice(0, 5).forEach((t: Ticket) => {
+            allTickets.push({
+              id: t.id,
+              title: t.title,
+              subtitle: t.ticket_no,
+              category: "Ticket",
+              status: t.status,
+              priority: t.priority,
+              route: "/(tabs)/tickets",
+              timestamp: t.created_at,
+            });
+          });
+
+          const priorityOrder: Record<string, number> = {
+            "Very High": 1,
+            High: 2,
+            Medium: 3,
+            Low: 4,
+          };
+
+          allTickets.sort((a, b) => {
+            const pa = priorityOrder[a.priority || ""] || 5;
+            const pb = priorityOrder[b.priority || ""] || 5;
+            if (pa !== pb) return pa - pb;
+            return (
+              new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+            );
+          });
+          
+          setPendingTickets(allTickets);
+        }
+
+        // Load cached log counts
+        const cachedCounts = await SiteLogService.getOpenCounts(siteCode).catch(
+          (): Record<string, number> => ({
+            "Temp RH": 0,
+            Water: 0,
+            "Chemical Dosing": 0,
+          }),
+        );
+
+        const toItems = (
+          logName: string,
+          route: string,
+          category: "Temp RH" | "Water" | "Chemical",
+        ): PendingItem[] =>
+          Array.from(
+            { length: (cachedCounts as Record<string, number>)[logName] ?? 0 },
+            (_, i) => ({
+              id: `${siteCode}-${logName}-${i}`,
+              title: logName,
+              subtitle: cachedSitesList[0].name || siteCode,
+              category,
+              status: "Open",
+              route,
+              timestamp: new Date().toISOString(),
+            }),
+          );
+
+        setPendingTempRH(toItems("Temp RH", "/temp-rh", "Temp RH"));
+        setPendingWater(toItems("Water", "/water", "Water"));
+        setPendingChemical(toItems("Chemical Dosing", "/chemical", "Chemical"));
+        
+        // Show cached data immediately
+        setLoadingPending(false);
+      }
+
       // 2. Fetch network state directly instead of relying on state (which is null on cold-boot)
       const netState = await NetInfo.fetch();
       const isActuallyOnline = netState.isConnected === true;
 
-      // 3. If online, fetch fresh data from API
-      logger.info("[Dashboard] Fetching fresh data", {
-        isActuallyOnline,
-        userId,
-      });
+      // 3. If online, fetch fresh data from API in background
       if (isActuallyOnline) {
+        logger.info("[Dashboard] Fetching fresh data in background", {
+          isActuallyOnline,
+          userId,
+        });
+        
         const [attData, freshSites] = await Promise.all([
           AttendanceService.getTodayAttendance(userId, true).catch((e) => {
             console.error("[Dashboard] Attendance fetch failed:", e);
@@ -536,11 +616,10 @@ export default function Dashboard() {
 
         if (effectiveSites.length === 0) {
           console.warn("[Dashboard] No sites found, skipping further fetches");
-          setLoadingPending(false);
           return;
         }
 
-        // 3. Fetch Tickets
+        // Fetch fresh tickets
         const fetchSiteCode = effectiveSites[0].site_code;
         const ticketResult = await TicketsService.getTickets(fetchSiteCode, {
           status: "Open",
@@ -583,7 +662,7 @@ export default function Dashboard() {
         }
         setPendingTickets(allTickets);
 
-        // 4. Fetch Open/Inprogress/Pending counts
+        // Fetch fresh log counts
         const primarySiteCode = effectiveSites[0].site_code;
         const counts = await SiteLogService.getOpenCounts(
           primarySiteCode,
@@ -616,65 +695,6 @@ export default function Dashboard() {
         setPendingTempRH(toItems("Temp RH", "/temp-rh", "Temp RH"));
         setPendingWater(toItems("Water", "/water", "Water"));
         setPendingChemical(toItems("Chemical Dosing", "/chemical", "Chemical"));
-      } else {
-        // OFFLINE: use cached sites for tickets from local DB
-        const effectiveSites = cachedSitesList;
-        if (effectiveSites.length > 0) {
-          const siteCode = effectiveSites[0].site_code;
-          // Load tickets from local WatermelonDB
-          const ticketResult = await TicketsService.getTickets(siteCode, {
-            status: "Open",
-            limit: 10,
-          }).catch(() => ({ success: false, data: [] }));
-
-          const allTickets: PendingItem[] = [];
-          if (ticketResult?.success && ticketResult.data) {
-            ticketResult.data.slice(0, 5).forEach((t: Ticket) => {
-              allTickets.push({
-                id: t.id,
-                title: t.title,
-                subtitle: t.ticket_no,
-                category: "Ticket",
-                status: t.status,
-                priority: t.priority,
-                route: "/(tabs)/tickets",
-                timestamp: t.created_at,
-              });
-            });
-          }
-          setPendingTickets(allTickets);
-
-          // Local open counts
-          const counts = await SiteLogService.getOpenCounts(siteCode).catch(
-            (): Record<string, number> => ({
-              "Temp RH": 0,
-              Water: 0,
-              "Chemical Dosing": 0,
-            }),
-          );
-          const toItems = (
-            logName: string,
-            route: string,
-            category: "Temp RH" | "Water" | "Chemical",
-          ): PendingItem[] =>
-            Array.from(
-              { length: (counts as Record<string, number>)[logName] ?? 0 },
-              (_, i) => ({
-                id: `${siteCode}-${logName}-${i}`,
-                title: logName,
-                subtitle: effectiveSites[0].name || siteCode,
-                category,
-                status: "Open",
-                route,
-                timestamp: new Date().toISOString(),
-              }),
-            );
-          setPendingTempRH(toItems("Temp RH", "/temp-rh", "Temp RH"));
-          setPendingWater(toItems("Water", "/water", "Water"));
-          setPendingChemical(
-            toItems("Chemical Dosing", "/chemical", "Chemical"),
-          );
-        }
       }
     } catch (error) {
       console.error("Dashboard fetchData critical error:", error);
@@ -682,7 +702,7 @@ export default function Dashboard() {
       setLoadingAttendance(false);
       setLoadingPending(false);
     }
-  }, [user, isConnected]);
+  }, [user, todayAttendance]);
 
   const loadAreasAndCategories = useCallback(async () => {
     if (sites.length === 0) return;
@@ -690,10 +710,15 @@ export default function Dashboard() {
 
     setAreasLoading(true);
     try {
-      // Fetch assets for area dropdown (using asset_name)
-      const assetsResult = await TicketsService.getAssets(selectedSiteCode);
-      if (assetsResult?.data && assetsResult.data.length > 0) {
-        const areas = assetsResult.data.map((asset: any) => ({
+      // CACHE-FIRST: Load from cache immediately
+      const [cachedAreas, cachedCategories] = await Promise.all([
+        TicketsService.getAssets(selectedSiteCode),
+        TicketsService.getComplaintCategories(),
+      ]);
+
+      // Set cached data immediately for instant UI
+      if (cachedAreas?.data && cachedAreas.data.length > 0) {
+        const areas = cachedAreas.data.map((asset: any) => ({
           value: asset.asset_name || asset.asset_id,
           label: asset.asset_name,
           description:
@@ -702,10 +727,8 @@ export default function Dashboard() {
         setAreaOptions(areas);
       }
 
-      // Fetch complaint categories from backend
-      const categoriesResult = await TicketsService.getComplaintCategories();
-      if (categoriesResult?.data && categoriesResult.data.length > 0) {
-        const categories = categoriesResult.data.map((cat: any) => ({
+      if (cachedCategories?.data && cachedCategories.data.length > 0) {
+        const categories = cachedCategories.data.map((cat: any) => ({
           value: cat.category,
           label: cat.category,
           description: cat.description || "",

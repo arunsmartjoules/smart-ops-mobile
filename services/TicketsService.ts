@@ -18,6 +18,7 @@ import {
 import { Q } from "@nozbe/watermelondb";
 import { pullRecentTickets } from "../utils/syncTicketStorage";
 import { StorageService } from "./StorageService";
+import TicketModel from "../database/models/Ticket";
 
 import { API_BASE_URL } from "../constants/api";
 
@@ -232,14 +233,58 @@ export const TicketsService = {
 
   /**
    * Update ticket status and remarks
+   * Updates both the offline queue AND the local ticket in WatermelonDB
    */
   async updateStatus(id: string, status: string, remarks?: string) {
     try {
-      // 1. Create offline update record first
+      let localTicket: TicketModel | null = null;
+      let serverId = id;
+
+      // 1. Update the local ticket in WatermelonDB immediately for offline persistence
       await database.write(async () => {
+        // Try to find ticket by server_id first, then by local id
+        let tickets = await ticketCollection
+          .query(Q.where("server_id", id))
+          .fetch();
+
+        if (tickets.length === 0) {
+          // Maybe id is the local WatermelonDB id, try finding by id directly
+          try {
+            const ticket = await ticketCollection.find(id);
+            if (ticket) {
+              tickets = [ticket];
+            }
+          } catch (e) {
+            // Ticket not found
+          }
+        }
+
+        if (tickets.length > 0) {
+          localTicket = tickets[0];
+          serverId = localTicket.serverId || id;
+          
+          await localTicket.update((t) => {
+            t.status = status;
+            if (remarks !== undefined) t.description = remarks;
+            // Mark as not synced since we're updating offline
+            t.isSynced = false;
+          });
+          logger.info("Updated local ticket status in WatermelonDB", {
+            module: "TICKETS_SERVICE",
+            localId: localTicket.id,
+            serverId: serverId,
+            status,
+          });
+        } else {
+          logger.warn("Ticket not found in local database for status update", {
+            module: "TICKETS_SERVICE",
+            ticketId: id,
+          });
+        }
+
+        // 2. Create offline update record for sync (use local ticket id for reference)
         await ticketUpdateCollection.create((record) => {
-          record.ticketId = id; // This should be local ID or server ID depending on model.
-          // Usually we want to find the model by serverId and use its local id.
+          record.ticketId = localTicket ? localTicket.id : id;
           record.updateType = "status";
           record.updateData = JSON.stringify({
             status,
@@ -249,8 +294,8 @@ export const TicketsService = {
         });
       });
 
-      // 2. Attempt API update
-      const result = await apiFetch(`/api/complaints/status?id=${id}`, {
+      // 3. Attempt API update if online (use server ID)
+      const result = await apiFetch(`/api/complaints/status?id=${serverId}`, {
         method: "PATCH",
         body: JSON.stringify({ status, remarks }),
       });
@@ -262,22 +307,72 @@ export const TicketsService = {
   },
 
   /**
-   * Update ticket details (Area/Asset, Category)
+   * Update ticket details (Area/Asset, Category, Status)
+   * Updates both the offline queue AND the local ticket in WatermelonDB
    */
   async updateTicket(id: string, data: any) {
     try {
-      // 1. Queue offline update
+      let localTicket: TicketModel | null = null;
+      let serverId = id;
+
+      // 1. Update the local ticket in WatermelonDB immediately for offline persistence
       await database.write(async () => {
+        // Try to find ticket by server_id first, then by local id
+        let tickets = await ticketCollection
+          .query(Q.where("server_id", id))
+          .fetch();
+
+        if (tickets.length === 0) {
+          // Maybe id is the local WatermelonDB id, try finding by id directly
+          try {
+            const ticket = await ticketCollection.find(id);
+            if (ticket) {
+              tickets = [ticket];
+            }
+          } catch (e) {
+            // Ticket not found
+          }
+        }
+
+        if (tickets.length > 0) {
+          localTicket = tickets[0];
+          serverId = localTicket.serverId || id;
+          
+          await localTicket.update((t) => {
+            // Update all fields that might be in the payload
+            if (data.status !== undefined) t.status = data.status;
+            if (data.internal_remarks !== undefined) t.description = data.internal_remarks;
+            if (data.area_asset !== undefined) t.area = data.area_asset;
+            if (data.category !== undefined) t.category = data.category;
+            if (data.priority !== undefined) t.priority = data.priority;
+            if (data.assigned_to !== undefined) t.assignedTo = data.assigned_to;
+            // Mark as not synced since we're updating offline
+            t.isSynced = false;
+          });
+          logger.info("Updated local ticket in WatermelonDB", {
+            module: "TICKETS_SERVICE",
+            localId: localTicket.id,
+            serverId: serverId,
+            updates: Object.keys(data),
+          });
+        } else {
+          logger.warn("Ticket not found in local database for offline update", {
+            module: "TICKETS_SERVICE",
+            ticketId: id,
+          });
+        }
+
+        // 2. Queue offline update for sync (use local ticket id for reference)
         await ticketUpdateCollection.create((record) => {
-          record.ticketId = id;
+          record.ticketId = localTicket ? localTicket.id : id;
           record.updateType = "details";
           record.updateData = JSON.stringify(data);
           record.isSynced = false;
         });
       });
 
-      // 2. Attempt API update
-      return await apiFetch(`/api/complaints?id=${id}`, {
+      // 3. Attempt API update if online (use server ID)
+      return await apiFetch(`/api/complaints?id=${serverId}`, {
         method: "PUT",
         body: JSON.stringify(data),
       });

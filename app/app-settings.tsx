@@ -40,6 +40,7 @@ import {
   setTicketAutoSyncEnabled,
   clearAllOfflineTicketData,
   TicketSyncStatus,
+  getPendingTicketUpdatesDebug,
 } from "@/utils/syncTicketStorage";
 import {
   getPMSyncStatus,
@@ -142,7 +143,7 @@ export default function AppSettings() {
       return;
     }
 
-    if (!isConnected) {
+    if (isConnected === false) {
       Alert.alert("Offline", "You need to be online to sync data");
       return;
     }
@@ -152,11 +153,29 @@ export default function AppSettings() {
       // Use unified sync manager for smart pull and push
       await syncManager.triggerSync("manual");
 
+      // Wait a bit for database writes to complete
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      // Reload status to reflect changes
       await loadAllStatus();
-      Alert.alert(
-        "Success",
-        "Synchronization complete. Your local data is up to date.",
-      );
+      
+      // Check if there are still pending items
+      const ticketPending = await getPendingTicketUpdates();
+      const siteLogPending = await getPendingSiteLogsCount();
+      const pmPending = await getPendingPMCount();
+      const totalStillPending = ticketPending.length + siteLogPending + pmPending;
+      
+      if (totalStillPending > 0) {
+        Alert.alert(
+          "Sync Complete",
+          `Synchronized successfully, but ${totalStillPending} item(s) still pending. This may be due to network issues or validation errors.`,
+        );
+      } else {
+        Alert.alert(
+          "Success",
+          "Synchronization complete. All data is up to date.",
+        );
+      }
     } catch (error: any) {
       logger.error("Manual sync all failed", {
         module: "APP_SETTINGS",
@@ -352,7 +371,7 @@ export default function AppSettings() {
                 onPress={handleSyncAll}
                 disabled={isSyncing || isConnected === false}
                 className={`flex-row items-center justify-center py-3 rounded-xl ${
-                  isConnected === false
+                  isConnected === false || isSyncing
                     ? "bg-slate-100 dark:bg-slate-800"
                     : "bg-red-50 dark:bg-red-900/20"
                 }`}
@@ -376,7 +395,7 @@ export default function AppSettings() {
                           : "text-red-600"
                       }`}
                     >
-                      Sync All Now
+                      {isSyncing ? "Syncing..." : "Sync All Now"}
                     </Text>
                   </>
                 )}
@@ -442,6 +461,42 @@ export default function AppSettings() {
                   }
                 />
               </View>
+
+              {/* Debug button for pending tickets */}
+              {ticketSyncStatus.pendingCount > 0 && (
+                <TouchableOpacity
+                  onPress={async () => {
+                    const debug = await getPendingTicketUpdatesDebug();
+                    Alert.alert(
+                      "Pending Ticket Updates",
+                      `Found ${debug.length} pending update(s):\n\n` +
+                        debug
+                          .map(
+                            (d, i) =>
+                              `${i + 1}. Update ID: ${d.updateId}\n` +
+                              `   Ticket exists: ${d.ticketExists ? "Yes" : "No"}\n` +
+                              `   Server ID: ${d.ticketServerId || "None"}\n` +
+                              `   Type: ${d.updateType || "Unknown"}`,
+                          )
+                          .join("\n\n"),
+                      [{ text: "OK" }],
+                    );
+                  }}
+                  className="flex-row items-center py-3 border-t border-slate-100"
+                >
+                  <View className="w-9 h-9 rounded-xl bg-amber-50 items-center justify-center">
+                    <Text className="text-amber-600 font-bold text-xs">?</Text>
+                  </View>
+                  <View className="ml-3 flex-1">
+                    <Text className="text-amber-600 dark:text-amber-400 font-medium text-sm">
+                      Debug Pending Items
+                    </Text>
+                    <Text className="text-slate-400 dark:text-slate-500 text-xs">
+                      View details about pending updates
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+              )}
             </View>
 
             {/* Site Logs Section */}
