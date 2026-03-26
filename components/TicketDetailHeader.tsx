@@ -104,8 +104,8 @@ const TicketDetailHeader = ({ ticket, onClose }: TicketDetailHeaderProps) => {
           gap: 6,
         }}
       >
-        <User size={12} color="#94a3b8" />
-        <Text style={{ color: "#94a3b8", fontSize: 12, fontWeight: "600" }}>
+        <User size={12} className="text-slate-400 dark:text-slate-500" color="#94a3b8" />
+        <Text className="text-slate-400 dark:text-slate-500" style={{ fontSize: 12, fontWeight: "600" }}>
           {ticket.assigned_to || "Unassigned"}
         </Text>
       </View>

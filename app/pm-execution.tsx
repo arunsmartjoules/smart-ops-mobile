@@ -406,18 +406,35 @@ export default function PMExecutionScreen() {
           // Load from local cache — checklist items are bulk-cached by SyncManager
           let items = await PMService.getChecklistItems(inst.maintenanceId);
 
-          // If online and cache is empty for this checklist, do a targeted pull as fallback
-          if (items.length === 0 && isConnected) {
-            setFetchingChecklist(true);
-            try {
-              await PMService.pullChecklistItems(inst.maintenanceId);
-              items = await PMService.getChecklistItems(inst.maintenanceId);
-            } catch (err) {
-              logger.error("Failed to fetch checklist as fallback", {
-                error: err,
+          // If cache is empty for this checklist, try to pull it
+          if (items.length === 0) {
+            if (isConnected) {
+              setFetchingChecklist(true);
+              try {
+                logger.info("Checklist not cached, pulling from API", {
+                  module: "PM_EXECUTION",
+                  maintenanceId: inst.maintenanceId,
+                });
+                await PMService.pullChecklistItems(inst.maintenanceId);
+                items = await PMService.getChecklistItems(inst.maintenanceId);
+                logger.info("Checklist pulled successfully", {
+                  module: "PM_EXECUTION",
+                  maintenanceId: inst.maintenanceId,
+                  itemCount: items.length,
+                });
+              } catch (err) {
+                logger.error("Failed to fetch checklist as fallback", {
+                  module: "PM_EXECUTION",
+                  error: err,
+                });
+              } finally {
+                setFetchingChecklist(false);
+              }
+            } else {
+              logger.warn("Checklist not cached and offline", {
+                module: "PM_EXECUTION",
+                maintenanceId: inst.maintenanceId,
               });
-            } finally {
-              setFetchingChecklist(false);
             }
           }
 

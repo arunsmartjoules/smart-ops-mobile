@@ -400,39 +400,65 @@ export default function Tickets() {
         return;
       }
 
+      let hasLocalData = false;
+
       if (reset) {
-        // Load from WatermelonDB first for instant content (includes offline updates)
-        let hasLocalData = false;
+        // ALWAYS load from WatermelonDB first for instant content
         try {
+          const conditions: any[] = [];
+          
+          // Apply the same filters as the API call
+          if (statusFilter) conditions.push(Q.where("status", statusFilter));
+          if (priorityFilter && priorityFilter !== "All") {
+            conditions.push(Q.where("priority", priorityFilter));
+          }
+          if (searchQuery) {
+            conditions.push(
+              Q.where("title", Q.like(`%${Q.sanitizeLikeString(searchQuery)}%`)),
+            );
+          }
+
+          const finalConditions = [
+            ...conditions,
+            Q.sortBy("created_at", Q.desc),
+          ];
+          
+          if (selectedSiteCode !== "all") {
+            finalConditions.unshift(Q.where("site_code", selectedSiteCode));
+          }
+
           const localTickets = await ticketCollection
-            .query(
-              Q.where("site_code", selectedSiteCode),
-              Q.sortBy("created_at", Q.desc),
-            )
+            .query(...finalConditions)
             .fetch();
+
+          logger.info("Loaded tickets from WatermelonDB", {
+            module: "TICKETS",
+            count: localTickets.length,
+            siteCode: selectedSiteCode,
+            filters: { statusFilter, priorityFilter, searchQuery },
+          });
 
           if (localTickets.length > 0) {
             hasLocalData = true;
-            const formattedTickets = localTickets
-              .filter((t) => t.serverId) // Only include tickets with server IDs
-              .map((t) => ({
-                id: t.serverId!,
-                ticket_no: t.ticketNumber,
-                title: t.title,
-                description: t.description || "",
-                status: t.status,
-                priority: t.priority,
-                category: t.category || "",
-                location: t.area || "",
-                area_asset: t.area || "",
-                internal_remarks: t.description || "",
-                assigned_to: t.assignedTo || "",
-                created_user: t.createdBy,
-                site_code: t.siteCode,
-                created_at: t.createdAt.toISOString(),
-              }));
+            const formattedTickets = localTickets.map((t) => ({
+              id: t.serverId || t.id, // Fallback to local ID if no server ID
+              ticket_no: t.ticketNumber,
+              title: t.title,
+              description: t.description || "",
+              status: t.status,
+              priority: t.priority,
+              category: t.category || "",
+              location: t.area || "",
+              area_asset: t.area || "",
+              internal_remarks: t.description || "",
+              assigned_to: t.assignedTo || "",
+              created_user: t.createdBy,
+              site_code: t.siteCode,
+              created_at: t.createdAt.toISOString(),
+            }));
+            
             setTickets(formattedTickets);
-            setLoading(false); // Show cached data immediately, no skeleton needed
+            setLoading(false);
           }
         } catch (err) {
           logger.warn("Error loading tickets from WatermelonDB", {
@@ -449,6 +475,22 @@ export default function Tickets() {
         setIsFetchingMore(true);
       }
 
+      // Only call API if online
+      const netState = await NetInfo.fetch();
+      if (!netState.isConnected) {
+        // Offline - keep local data, don't overwrite
+        setLoading(false);
+        setIsFetchingMore(false);
+        setRefreshing(false);
+        setHasMore(false); // No pagination when offline
+        logger.info("Offline mode - using cached tickets", {
+          module: "TICKETS",
+          count: tickets.length,
+        });
+        return;
+      }
+
+      // Online - fetch from API
       try {
         const options: any = {
           page: p,
@@ -459,12 +501,19 @@ export default function Tickets() {
           fromDate: fromDate,
           toDate: toDate,
         };
+        
         const res = await TicketsService.getTickets(selectedSiteCode, options);
+        
         if (res.success) {
           const newTickets = res.data || [];
           if (reset) {
-            setTickets(newTickets);
-            if (p === 1) await cacheTickets(selectedSiteCode, newTickets);
+            // Only update if we got data from API
+            if (newTickets.length > 0 || !hasLocalData) {
+              setTickets(newTickets);
+              if (p === 1 && newTickets.length > 0) {
+                await cacheTickets(selectedSiteCode, newTickets);
+              }
+            }
           } else {
             setTickets((prev) => {
               const existingIds = new Set(prev.map((t) => t.id));

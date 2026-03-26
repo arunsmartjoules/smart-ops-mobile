@@ -136,10 +136,10 @@ const TicketLineItems = ({ ticketId }: TicketLineItemsProps) => {
           {/* Line */}
           {!isLast && (
             <View
+              className="bg-slate-200 dark:bg-slate-700"
               style={{
                 width: 2,
                 flex: 1,
-                backgroundColor: "#e2e8f0",
                 marginTop: 4,
               }}
             />
@@ -178,12 +178,16 @@ const TicketLineItems = ({ ticketId }: TicketLineItemsProps) => {
                 <MessageSquare size={12} color="#dc2626" />
               )}
               <Text
-                style={{ fontSize: 10, fontWeight: "700", color: "#94a3b8" }}
+                className="text-slate-400 dark:text-slate-500"
+                style={{ fontSize: 10, fontWeight: "700" }}
               >
                 {isImage ? "Image" : isVideo ? "Video" : "Comment"}
               </Text>
             </View>
-            <Text style={{ fontSize: 10, color: "#cbd5e1", fontWeight: "600" }}>
+            <Text
+              className="text-slate-300 dark:text-slate-600"
+              style={{ fontSize: 10, fontWeight: "600" }}
+            >
               {format(new Date(item.created_at), "dd MMM, HH:mm")}
             </Text>
           </View>
@@ -212,10 +216,10 @@ const TicketLineItems = ({ ticketId }: TicketLineItemsProps) => {
 
           {item.video_url ? (
             <View
+              className="bg-slate-900 dark:bg-slate-950"
               style={{
                 width: "100%",
                 height: 120,
-                backgroundColor: "#0f172a",
                 borderRadius: 10,
                 marginTop: 6,
                 justifyContent: "center",
@@ -224,8 +228,8 @@ const TicketLineItems = ({ ticketId }: TicketLineItemsProps) => {
             >
               <Video size={28} color="#fff" />
               <Text
+                className="text-slate-400 dark:text-slate-500"
                 style={{
-                  color: "#94a3b8",
                   marginTop: 6,
                   fontSize: 11,
                   fontWeight: "600",
@@ -302,8 +306,8 @@ const TicketLineItems = ({ ticketId }: TicketLineItemsProps) => {
           >
             <MessageCircle size={28} color="#cbd5e1" />
             <Text
+              className="text-slate-400 dark:text-slate-500"
               style={{
-                color: "#94a3b8",
                 marginTop: 8,
                 fontWeight: "600",
                 fontSize: 12,
@@ -312,8 +316,8 @@ const TicketLineItems = ({ ticketId }: TicketLineItemsProps) => {
               No activity yet
             </Text>
             <Text
+              className="text-slate-300 dark:text-slate-600"
               style={{
-                color: "#cbd5e1",
                 marginTop: 2,
                 fontSize: 11,
               }}
@@ -337,19 +341,17 @@ const TicketLineItems = ({ ticketId }: TicketLineItemsProps) => {
       >
         <TouchableOpacity
           onPress={pickImage}
+          className="bg-slate-100 dark:bg-slate-800 border-slate-200 dark:border-slate-700"
           style={{
             width: 40,
             height: 40,
             borderRadius: 12,
-            backgroundColor: "#f1f5f9",
             justifyContent: "center",
             alignItems: "center",
             borderWidth: 1,
-            borderColor: "#e2e8f0",
           }}
-          className="bg-slate-100 dark:bg-slate-800 border-slate-200 dark:border-slate-700"
         >
-          <ImageIcon size={18} color="#64748b" />
+          <ImageIcon size={18} className="text-slate-500 dark:text-slate-400" color="#64748b" />
         </TouchableOpacity>
 
         <View
@@ -369,7 +371,6 @@ const TicketLineItems = ({ ticketId }: TicketLineItemsProps) => {
               minHeight: 40,
               maxHeight: 100,
               paddingVertical: 10,
-              color: "#334155",
               fontSize: 13,
             }}
             className="text-slate-900 dark:text-slate-100"

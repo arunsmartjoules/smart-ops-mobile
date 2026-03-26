@@ -486,9 +486,7 @@ export default function Dashboard() {
     try {
       // Always show loading on fresh fetch
       setLoadingPending(true);
-      if (!todayAttendance) {
-        setLoadingAttendance(true);
-      }
+      setLoadingAttendance(true);
 
       // 1. Load cached data FIRST for instant UI
       const [cachedSitesList, lastSiteCode] = await Promise.all([
@@ -702,7 +700,7 @@ export default function Dashboard() {
       setLoadingAttendance(false);
       setLoadingPending(false);
     }
-  }, [user, todayAttendance]);
+  }, [user]); // ✅ Only depend on user, not todayAttendance
 
   const loadAreasAndCategories = useCallback(async () => {
     if (sites.length === 0) return;

@@ -241,8 +241,16 @@ class SyncManager {
       // CRITICAL: Cache all PM checklists FIRST before anything else
       // This ensures checklists are available offline immediately
       const PMService = (await import("./PMService")).default;
+      logger.info("🔄 Starting PM checklist bulk cache...", { module: "SYNC_MANAGER" });
       await PMService.pullAllChecklistItems();
-      logger.info("✅ PM checklists cached during prefetch", { module: "SYNC_MANAGER" });
+      
+      // Verify the cache worked
+      const { pmChecklistItemCollection } = await import("../database");
+      const cachedCount = await pmChecklistItemCollection.query().fetchCount();
+      logger.info(`✅ PM checklists cached: ${cachedCount} items in database`, { 
+        module: "SYNC_MANAGER",
+        cachedCount,
+      });
 
       // triggerSync("manual") bypasses all thresholds and runs the full push + pull
       // phase including areas, categories, and sites caching

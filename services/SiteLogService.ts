@@ -469,9 +469,9 @@ export const SiteLogService: ISiteLogService = {
    */
   async updateSiteLog(id: string, data: Partial<any>): Promise<SiteLog> {
     try {
-      return await database.write(async () => {
-        const record = await siteLogCollection.find(id);
-        await record.update((r) => {
+      const record = await database.write(async () => {
+        const rec = await siteLogCollection.find(id);
+        await rec.update((r) => {
           if (data.temperature !== undefined) r.temperature = data.temperature;
           if (data.rh !== undefined) r.rh = data.rh;
           if (data.tds !== undefined) r.tds = data.tds;
@@ -487,8 +487,11 @@ export const SiteLogService: ISiteLogService = {
           if (data.endTime !== undefined) r.endTime = data.endTime;
           r.isSynced = false;
         });
-        return record;
+        return rec;
       });
+      
+      syncManager.triggerSync("manual").catch(() => {});
+      return record;
     } catch (error: any) {
       logger.error("Error updating site log", {
         module: "SITE_LOG_SERVICE",

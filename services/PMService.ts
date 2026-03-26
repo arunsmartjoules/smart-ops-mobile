@@ -345,15 +345,17 @@ const PMService = {
    */
   async pullAllChecklistItems(): Promise<void> {
     try {
-      logger.info("Starting bulk pull of all PM checklist items", { module: "PM_SERVICE" });
+      logger.info("🔄 Starting bulk pull of all PM checklist items", { module: "PM_SERVICE" });
       
       // Fetch all checklist masters. Timeout extended to 60 seconds (60000ms) for bulk transfers
+      logger.debug("Fetching PM checklists from API...", { module: "PM_SERVICE" });
       const masterResponse = await apiFetch(`/api/pm-checklist?status=All&limit=5000`, {}, 60000);
       
       if (!masterResponse.ok) {
-        logger.error("Failed to fetch PM checklists - API response not OK", {
+        logger.error("❌ Failed to fetch PM checklists - API response not OK", {
           module: "PM_SERVICE",
           status: masterResponse.status,
+          statusText: masterResponse.statusText,
         });
         return;
       }
@@ -361,12 +363,13 @@ const PMService = {
       const masterJson = await masterResponse.json();
       const rawItems: any[] = masterJson.data || masterJson || [];
 
-      logger.info(`Received ${rawItems.length} PM checklist items from API`, {
+      logger.info(`📦 Received ${rawItems.length} PM checklist items from API`, {
         module: "PM_SERVICE",
+        itemCount: rawItems.length,
       });
 
       if (rawItems.length === 0) {
-        logger.warn("No PM checklist items returned from API", { module: "PM_SERVICE" });
+        logger.warn("⚠️ No PM checklist items returned from API", { module: "PM_SERVICE" });
         return;
       }
 
@@ -374,15 +377,18 @@ const PMService = {
         ...new Set(rawItems.map((i: any) => i.checklist_id || i.checklist_master_id).filter(Boolean)),
       ] as string[];
 
-      logger.info(`Found ${masterIds.length} unique checklist masters`, {
+      logger.info(`📋 Found ${masterIds.length} unique checklist masters`, {
         module: "PM_SERVICE",
-        masterIds: masterIds.slice(0, 5), // Log first 5 for debugging
+        masterCount: masterIds.length,
+        sampleMasterIds: masterIds.slice(0, 5), // Log first 5 for debugging
       });
 
       // Upsert into WatermelonDB using small chunks to avoid memory/SQLite limits
       const CHUNK_SIZE = 1000;
       let totalCached = 0;
 
+      logger.debug("💾 Starting database write operations...", { module: "PM_SERVICE" });
+      
       for (let i = 0; i < rawItems.length; i += CHUNK_SIZE) {
         const chunk = rawItems.slice(i, i + CHUNK_SIZE);
 
@@ -430,15 +436,17 @@ const PMService = {
           if (batch.length > 0) {
             await database.batch(batch);
             totalCached += batch.length;
-            logger.debug(`Cached chunk of ${batch.length} checklist items`, {
+            logger.debug(`✓ Cached chunk of ${batch.length} checklist items`, {
               module: "PM_SERVICE",
               progress: `${totalCached}/${rawItems.length}`,
+              percentage: Math.round((totalCached / rawItems.length) * 100),
             });
           }
         });
       }
 
       // Upsert checklist masters (only those that don't exist yet)
+      logger.debug("💾 Caching checklist masters...", { module: "PM_SERVICE" });
       await database.write(async () => {
         const existingMasters = await pmChecklistMasterCollection.query().fetch();
         const existingMasterMap = new Map(existingMasters.map((e) => [e.serverId || "", e]));
@@ -457,7 +465,7 @@ const PMService = {
         }
         if (masterBatch.length > 0) {
           await database.batch(masterBatch);
-          logger.info(`Cached ${masterBatch.length} new checklist masters`, {
+          logger.info(`✓ Cached ${masterBatch.length} new checklist masters`, {
             module: "PM_SERVICE",
           });
         }
@@ -472,11 +480,12 @@ const PMService = {
         cachedInDB: cachedCount,
       });
     } catch (error: any) {
-      logger.error("Failed to bulk pull PM checklist items", {
+      logger.error("❌ Failed to bulk pull PM checklist items", {
         module: "PM_SERVICE",
         error: error.message,
         stack: error.stack,
       });
+      throw error; // Re-throw so prefetchAll knows it failed
     }
   },
 
