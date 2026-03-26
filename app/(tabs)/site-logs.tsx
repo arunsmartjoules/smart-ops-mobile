@@ -31,7 +31,8 @@ import {
 } from "lucide-react-native";
 import { useNetworkStatus } from "@/hooks/useNetworkStatus";
 import AttendanceService, { type Site } from "@/services/AttendanceService";
-import { getCachedSites } from "@/utils/offlineDataCache";
+import { db, userSites } from "@/database";
+import { eq } from "drizzle-orm";
 import logger from "@/utils/logger";
 import Skeleton from "@/components/Skeleton";
 
@@ -84,10 +85,14 @@ export default function SiteLogs() {
     if (!userId) return;
     try {
       const storageKey = `last_site_${userId}`;
-      const [cachedSites, lastSiteCode] = await Promise.all([
-        getCachedSites(userId).catch(() => [] as Site[]),
+      const [localSiteRows, lastSiteCode] = await Promise.all([
+        db.select().from(userSites).where(eq(userSites.user_id, userId)).catch(() => []),
         AsyncStorage.getItem(storageKey),
       ]);
+      const cachedSites: Site[] = localSiteRows.map((r: any) => ({
+        site_code: r.site_code,
+        name: r.site_name || r.site_code,
+      }));
 
       // If offline, use cached sites only (skip API call)
       let effectiveSites: Site[];

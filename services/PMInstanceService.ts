@@ -1,6 +1,6 @@
-import { Q } from "@nozbe/watermelondb";
-import { database, pmInstanceCollection } from "../database";
-import PMInstance from "../database/models/PMInstance";
+import { eq, desc, and } from "drizzle-orm";
+import { v4 as uuidv4 } from "uuid";
+import { db, pmInstances } from "@/database";
 import logger from "../utils/logger";
 import { authEvents } from "../utils/authEvents";
 import { supabase } from "./supabase";
@@ -56,45 +56,50 @@ export const PMInstanceService = {
       const result = await response.json();
 
       if (result.success && Array.isArray(result.data)) {
-        await database.write(async () => {
-          for (const serverPM of result.data) {
-            const existing = await pmInstanceCollection
-              .query(Q.where("server_id", serverPM.id.toString()))
-              .fetch();
+        for (const serverPM of result.data) {
+          const serverId = serverPM.id.toString();
+          const existing = await db
+            .select()
+            .from(pmInstances)
+            .where(eq(pmInstances.id, serverId));
 
-            if (existing.length > 0) {
-              await existing[0].update((record) => {
-                record.title = serverPM.title;
-                record.assetType = serverPM.asset_type;
-                record.location = serverPM.location;
-                record.frequency = serverPM.frequency;
-                record.status = serverPM.status;
-                record.progress = serverPM.progress;
-                record.assignedToName = serverPM.assigned_to_name;
-                record.startDueDate = serverPM.start_due_date
-                  ? new Date(serverPM.start_due_date).getTime()
-                  : null;
-                record.isSynced = true;
-              });
-            } else {
-              await pmInstanceCollection.create((record) => {
-                record.serverId = serverPM.id.toString();
-                record.siteCode = siteCode;
-                record.title = serverPM.title;
-                record.assetType = serverPM.asset_type;
-                record.location = serverPM.location;
-                record.frequency = serverPM.frequency;
-                record.status = serverPM.status;
-                record.progress = serverPM.progress;
-                record.assignedToName = serverPM.assigned_to_name;
-                record.startDueDate = serverPM.start_due_date
-                  ? new Date(serverPM.start_due_date).getTime()
-                  : null;
-                record.isSynced = true;
-              });
-            }
+          const now = Date.now();
+          const startDueDate = serverPM.start_due_date
+            ? new Date(serverPM.start_due_date).getTime()
+            : null;
+
+          if (existing.length > 0) {
+            await db
+              .update(pmInstances)
+              .set({
+                title: serverPM.title,
+                asset_type: serverPM.asset_type,
+                location: serverPM.location,
+                frequency: serverPM.frequency,
+                status: serverPM.status,
+                progress: serverPM.progress,
+                assigned_to_name: serverPM.assigned_to_name,
+                start_due_date: startDueDate,
+                updated_at: now,
+              })
+              .where(eq(pmInstances.id, serverId));
+          } else {
+            await db.insert(pmInstances).values({
+              id: serverId,
+              site_code: siteCode,
+              title: serverPM.title,
+              asset_type: serverPM.asset_type,
+              location: serverPM.location,
+              frequency: serverPM.frequency,
+              status: serverPM.status,
+              progress: serverPM.progress,
+              assigned_to_name: serverPM.assigned_to_name,
+              start_due_date: startDueDate,
+              created_at: now,
+              updated_at: now,
+            });
           }
-        });
+        }
       }
     } catch (error: any) {
       logger.error("Error pulling PM instances", {
@@ -104,10 +109,12 @@ export const PMInstanceService = {
     }
   },
 
-  async getAll(siteCode: string): Promise<PMInstance[]> {
-    return await pmInstanceCollection
-      .query(Q.where("site_code", siteCode), Q.sortBy("created_at", Q.desc))
-      .fetch();
+  async getAll(siteCode: string) {
+    return await db
+      .select()
+      .from(pmInstances)
+      .where(eq(pmInstances.site_code, siteCode))
+      .orderBy(desc(pmInstances.created_at));
   },
 };
 

@@ -35,8 +35,8 @@ import AttendanceService, { Site } from "@/services/AttendanceService";
 import { LogImagePicker } from "@/components/sitelogs/LogImagePicker";
 import { SortIcon } from "@/components/SortIcon";
 import { sortBySequenceNumber, SortDirection } from "@/utils/sorting";
-import { logMasterCollection } from "@/database";
-import { Q } from "@nozbe/watermelondb";
+import { db, logMaster } from "@/database";
+import { eq } from "drizzle-orm";
 
 // Memoized Log Item Component
 const LogItem = memo(
@@ -313,12 +313,13 @@ export default function WaterTaskList() {
         const areaTasks = await SiteConfigService.getLogTasks(currentSiteCode, "Water");
 
         // Fetch sequence numbers for sorting
-        const logMasterEntries = await logMasterCollection
-          .query(Q.where("log_name", "Water"))
-          .fetch();
+        const logMasterEntries = await db
+          .select()
+          .from(logMaster)
+          .where(eq(logMaster.log_name, "Water"));
         const sMap = new Map<string, number>();
         logMasterEntries.forEach((entry) => {
-          sMap.set(entry.taskName, entry.sequenceNumber);
+          sMap.set(entry.task_name, entry.sequence_number);
         });
         setSequenceMap(sMap);
         setTasks(areaTasks);

@@ -22,7 +22,8 @@ import {
   Activity,
   ChevronRight,
 } from "lucide-react-native";
-import { database } from "@/database";
+import { db, siteLogs, chillerReadings } from "@/database";
+import { eq } from "drizzle-orm";
 import { format } from "date-fns";
 import { Svg, Path } from "react-native-svg";
 
@@ -38,12 +39,20 @@ export default function SiteLogDetail() {
   useEffect(() => {
     const fetchLog = async () => {
       try {
-        const collection =
-          type === "Chiller Logs"
-            ? database.get("chiller_readings")
-            : database.get("site_logs");
-
-        const record = await collection.find(id as string);
+        let record: any = null;
+        if (type === "Chiller Logs") {
+          const rows = await db
+            .select()
+            .from(chillerReadings)
+            .where(eq(chillerReadings.id, id as string));
+          record = rows[0] || null;
+        } else {
+          const rows = await db
+            .select()
+            .from(siteLogs)
+            .where(eq(siteLogs.id, id as string));
+          record = rows[0] || null;
+        }
         setLog(record);
       } catch (error) {
         console.error("Error fetching log detail:", error);
@@ -228,8 +237,8 @@ export default function SiteLogDetail() {
               <View className="flex-row items-center">
                 <Calendar size={14} color="#94a3b8" />
                 <Text className="text-slate-500 dark:text-slate-400 font-bold text-xs ml-2">
-                  {log.createdAt
-                    ? format(new Date(log.createdAt), "dd MMM yyyy")
+                  {log.created_at
+                    ? format(new Date(log.created_at), "dd MMM yyyy")
                     : "--"}
                 </Text>
               </View>
@@ -237,8 +246,8 @@ export default function SiteLogDetail() {
               <View className="flex-row items-center">
                 <Clock size={14} color="#94a3b8" />
                 <Text className="text-slate-500 dark:text-slate-400 font-bold text-xs ml-2">
-                  {log.createdAt
-                    ? format(new Date(log.createdAt), "hh:mm a")
+                  {log.created_at
+                    ? format(new Date(log.created_at), "hh:mm a")
                     : "--"}
                 </Text>
               </View>
@@ -292,48 +301,48 @@ export default function SiteLogDetail() {
               {type === "Chemical Dosing" && (
                 <DataRow
                   label="Dosing Details"
-                  value={log.chemicalDosing || "N/A"}
+                  value={log.chemical_dosing || "N/A"}
                 />
               )}
 
               {type === "Chiller Logs" && (
                 <>
-                  <DataRow label="Chiller ID" value={log.chillerId || "N/A"} />
+                  <DataRow label="Chiller ID" value={log.chiller_id || "N/A"} />
                   <View className="flex-row flex-wrap">
                     <View className="w-1/2">
                       <DataRow
                         label="Cond. In"
-                        value={`${log.condenserInletTemp}°C`}
+                        value={`${log.condenser_inlet_temp}°C`}
                       />
                     </View>
                     <View className="w-1/2">
                       <DataRow
                         label="Cond. Out"
-                        value={`${log.condenserOutletTemp}°C`}
+                        value={`${log.condenser_outlet_temp}°C`}
                       />
                     </View>
                     <View className="w-1/2">
                       <DataRow
                         label="Evap. In"
-                        value={`${log.evaporatorInletTemp}°C`}
+                        value={`${log.evaporator_inlet_temp}°C`}
                       />
                     </View>
                     <View className="w-1/2">
                       <DataRow
                         label="Evap. Out"
-                        value={`${log.evaporatorOutletTemp}°C`}
+                        value={`${log.evaporator_outlet_temp}°C`}
                       />
                     </View>
                     <View className="w-1/2">
                       <DataRow
                         label="Oil Pressure"
-                        value={`${log.oilPressure} PSI`}
+                        value={`${log.oil_pressure} PSI`}
                       />
                     </View>
                     <View className="w-1/2">
                       <DataRow
                         label="Load"
-                        value={`${log.compressorLoadPercentage}%`}
+                        value={`${log.compressor_load_percentage}%`}
                       />
                     </View>
                   </View>
@@ -356,8 +365,8 @@ export default function SiteLogDetail() {
             <Text className="text-slate-900 dark:text-slate-50 font-bold text-base mb-4 ml-1">
               Technician Signature
             </Text>
-            {log.signature || log.signatureText ? (
-              renderSignature(log.signature || log.signatureText)
+            {log.signature || log.signature_text ? (
+              renderSignature(log.signature || log.signature_text)
             ) : (
               <View className="bg-white dark:bg-slate-900 rounded-2xl p-8 border border-slate-100 dark:border-slate-800 items-center justify-center shadow-sm">
                 <Text className="text-slate-400 text-xs italic">
@@ -376,7 +385,7 @@ export default function SiteLogDetail() {
                 </Text>
                 <Text className="text-slate-900 dark:text-slate-50 font-bold text-sm">
                   Technician #
-                  {(log.executorId || "").slice(-4).toUpperCase() || "ADMIN"}
+                  {(log.executor_id || "").slice(-4).toUpperCase() || "ADMIN"}
                 </Text>
               </View>
             </View>

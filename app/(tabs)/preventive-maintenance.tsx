@@ -42,8 +42,10 @@ import { useNetworkStatus } from "@/hooks/useNetworkStatus";
 import NetInfo from "@react-native-community/netinfo";
 import PMService from "@/services/PMService";
 import { AttendanceService, type Site } from "@/services/AttendanceService";
-import { getCachedSites } from "@/utils/offlineDataCache";
-import PMInstance from "@/database/models/PMInstance";
+import { db, pmInstances, userSites } from "@/database";
+import { eq } from "drizzle-orm";
+
+type PMInstanceRow = typeof pmInstances.$inferSelect;
 import {
   format,
   addDays,
@@ -131,7 +133,7 @@ const PMSkeleton = () => {
 
 // ─── Memoized PM Card ──────────────────────────────────────────────────────────
 const PMCard = React.memo(
-  ({ instance, onPress }: { instance: PMInstance; onPress: () => void }) => {
+  ({ instance, onPress }: { instance: PMInstanceRow; onPress: () => void }) => {
     const isDark = useColorScheme() === "dark";
     const statusInfo =
       STATUS_COLORS[instance.status] || STATUS_COLORS["Pending"];
@@ -193,7 +195,7 @@ const PMCard = React.memo(
               className="text-slate-900 dark:text-slate-50 text-base font-bold mb-0.5"
               numberOfLines={1}
             >
-              {instance.assetId || "Unknown Asset"}
+              {instance.asset_id || "Unknown Asset"}
             </Text>
             <Text
               className="text-slate-500 dark:text-slate-400 text-sm mb-2"
@@ -208,13 +210,13 @@ const PMCard = React.memo(
                   className="text-slate-400 dark:text-slate-500 text-xs font-medium"
                   numberOfLines={1}
                 >
-                  {instance.assetType || "General Asset"}
+                  {instance.asset_type || "General Asset"}
                 </Text>
               </View>
-              {instance.maintenanceId ? (
+              {instance.maintenance_id ? (
                 <View className="bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded-md">
                   <Text className="text-slate-500 dark:text-slate-400 text-[10px] font-bold">
-                    ID: {instance.maintenanceId}
+                    ID: {instance.maintenance_id}
                   </Text>
                 </View>
               ) : null}
@@ -229,24 +231,24 @@ const PMCard = React.memo(
             <Text className="text-slate-400 dark:text-slate-500 text-xs font-medium">
               Due:{" "}
               <Text className="text-slate-600 dark:text-slate-300 font-bold">
-                {instance.startDueDate
-                  ? format(new Date(instance.startDueDate), "d MMM yyyy")
+                {instance.start_due_date
+                  ? format(new Date(instance.start_due_date), "d MMM yyyy")
                   : "N/A"}
               </Text>
             </Text>
           </View>
-          {instance.assignedToName ? (
+          {instance.assigned_to_name ? (
             <View className="flex-row items-center gap-2">
               <View className="w-6 h-6 rounded-full bg-red-100 items-center justify-center">
                 <Text className="text-red-700 text-[10px] font-bold">
-                  {instance.assignedToName.charAt(0)}
+                  {instance.assigned_to_name.charAt(0)}
                 </Text>
               </View>
               <Text
                 className="text-slate-600 dark:text-slate-300 text-xs font-bold"
                 numberOfLines={1}
               >
-                {instance.assignedToName}
+                {instance.assigned_to_name}
               </Text>
             </View>
           ) : (
@@ -321,7 +323,7 @@ export default function PreventiveMaintenance() {
   const { isConnected } = useNetworkStatus();
   const isDark = useColorScheme() === "dark";
 
-  const [allInstances, setAllInstances] = useState<PMInstance[]>([]);
+  const [allInstances, setAllInstances] = useState<PMInstanceRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [statusFilter, setStatusFilter] = useState("Pending");
@@ -368,24 +370,31 @@ export default function PreventiveMaintenance() {
       const rawLastSiteCode = await AsyncStorage.getItem(`last_site_${userId}`);
       const lastSiteCode = rawLastSiteCode === "all" ? null : rawLastSiteCode;
 
-      // Load cached sites immediately
-      const cachedSites = await getCachedSites(userId).catch(
-        () => [] as Site[],
-      );
+      // Load sites from local PowerSync-synced DB
+      const cachedSiteRows = await db
+        .select()
+        .from(userSites)
+        .where(eq(userSites.user_id, userId))
+        .catch(() => []);
+      const cachedSites: Site[] = cachedSiteRows.map((r) => ({
+        site_code: r.site_code,
+        name: r.site_name,
+        id: r.site_id || r.id,
+      })) as Site[];
 
       // Only call API when online
-      let userSites: Site[] = [];
+      let fetchedUserSites: Site[] = [];
       const netState = await NetInfo.fetch();
       const isActuallyOnline = netState.isConnected === true;
 
       if (isActuallyOnline) {
-        userSites = await AttendanceService.getUserSites(
+        fetchedUserSites = await AttendanceService.getUserSites(
           userId,
           "JouleCool",
         ).catch(() => [] as Site[]);
       }
 
-      const finalSites: Site[] = userSites.length > 0 ? userSites : cachedSites;
+      const finalSites: Site[] = fetchedUserSites.length > 0 ? fetchedUserSites : cachedSites;
 
       setSites(finalSites);
 
@@ -421,6 +430,15 @@ export default function PreventiveMaintenance() {
         const fromTs = startOfDay(fromDateObj).getTime();
         const toTs = endOfDay(toDateObj).getTime();
 
+        logger.debug("Loading PM instances", {
+          module: "PM",
+          siteCode,
+          fromDate: currentDate,
+          toDate,
+          fromTs,
+          toTs,
+        });
+
         const data = await PMService.getLocalInstances(
           siteCode,
           undefined,
@@ -429,14 +447,46 @@ export default function PreventiveMaintenance() {
           fromTs,
           toTs,
         );
-        setAllInstances(data);
+        
+        logger.info("Loaded PM instances from local DB", {
+          module: "PM",
+          count: data.length,
+          siteCode,
+        });
+        
+        // If no local data and we're online, try fetching from API
+        if (data.length === 0 && isConnected) {
+          logger.info("No local PM data, fetching from API", {
+            module: "PM",
+            siteCode,
+          });
+          
+          const apiData = await PMService.fetchFromAPI(
+            siteCode,
+            fromDateObj,
+            toDateObj,
+          );
+          
+          if (apiData.length > 0) {
+            logger.info("Loaded PM instances from API", {
+              module: "PM",
+              count: apiData.length,
+              siteCode,
+            });
+            setAllInstances(apiData);
+          } else {
+            setAllInstances(data);
+          }
+        } else {
+          setAllInstances(data);
+        }
       } catch (err) {
         logger.error("Error loading PM instances", { error: err });
       } finally {
         setLoading(false);
       }
     },
-    [siteCode, currentDate, toDate],
+    [siteCode, currentDate, toDate, isConnected],
   );
 
   // ── Reload local data when date or site changes ─────────────────────────────
@@ -452,40 +502,29 @@ export default function PreventiveMaintenance() {
       if (!siteCode) return;
       loadLocalData(true);
 
+      // PowerSync handles syncing automatically in the background
+      // Just reload local data which will show synced data
       if (isConnected && !isFetchingRef.current) {
-        const fromDateObj = parseISO(currentDate);
-        const toDateObj = parseISO(toDate);
-        if (!isValid(fromDateObj) || !isValid(toDateObj)) return;
         isFetchingRef.current = true;
         setSyncing(true);
-        PMService.pullFromServer(siteCode, fromDateObj, toDateObj)
-          .then(() => loadLocalData(true))
-          .catch(() => {})
-          .finally(() => {
-            isFetchingRef.current = false;
-            setSyncing(false);
-          });
+        // Wait a moment for PowerSync to sync, then reload
+        setTimeout(() => {
+          loadLocalData(true);
+          isFetchingRef.current = false;
+          setSyncing(false);
+        }, 1000);
       }
-    }, [loadLocalData, isConnected, siteCode, currentDate, toDate]),
+    }, [loadLocalData, isConnected, siteCode]),
   );
 
   // ── Pull-to-refresh ─────────────────────────────────────────────────────────
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    if (isConnected && siteCode) {
-      const fromDateObj = parseISO(currentDate);
-      const toDateObj = parseISO(toDate);
-      if (!isValid(fromDateObj) || !isValid(toDateObj)) {
-        setRefreshing(false);
-        return;
-      }
-      try {
-        await PMService.pullFromServer(siteCode, fromDateObj, toDateObj);
-      } catch {}
-    }
+    // PowerSync handles syncing automatically
+    // Just reload local data which will show synced data
     await loadLocalData(true);
     setRefreshing(false);
-  }, [siteCode, isConnected, loadLocalData, currentDate, toDate]);
+  }, [loadLocalData]);
 
   // ── Filtered Data for List ────────────────────────────────────────────────
   const filteredInstances = useMemo(() => {
@@ -517,15 +556,11 @@ export default function PreventiveMaintenance() {
 
   // ── Handlers ────────────────────────────────────────────────────────────────
   const handlePMCardPress = useCallback(
-    (instance: PMInstance) => {
-      // Always try to pull checklist items if we have a maintenance ID
-      // The PMService will check cache first and only fetch if needed
-      if (instance.maintenanceId) {
-        PMService.pullChecklistItems(instance.maintenanceId).catch(() => {});
-      }
+    (instance: PMInstanceRow) => {
+      // PowerSync automatically syncs checklist items — no manual pull needed
       router.push({
         pathname: "/pm-execution",
-        params: { instanceId: instance.serverId || instance.id },
+        params: { instanceId: instance.id },
       });
     },
     [],
@@ -543,14 +578,14 @@ export default function PreventiveMaintenance() {
   }, [tempSearch, tempFromDate, tempToDate]);
 
   // ── FlatList Render ──────────────────────────────────────────────────────────
-  const renderItem: ListRenderItem<PMInstance> = useCallback(
+  const renderItem: ListRenderItem<PMInstanceRow> = useCallback(
     ({ item }) => (
       <PMCard instance={item} onPress={() => handlePMCardPress(item)} />
     ),
     [handlePMCardPress],
   );
 
-  const keyExtractor = useCallback((item: PMInstance) => item.id, []);
+  const keyExtractor = useCallback((item: PMInstanceRow) => item.id, []);
 
   const ListEmpty = useMemo(
     () => (

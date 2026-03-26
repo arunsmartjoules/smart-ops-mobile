@@ -1,10 +1,5 @@
-import { Q } from "@nozbe/watermelondb";
-import {
-  areaCollection,
-  chillerReadingCollection,
-  siteLogCollection,
-  logMasterCollection,
-} from "../database";
+import { eq, and, or, ne, gte, lte, like, inArray, desc, asc, count } from "drizzle-orm";
+import { db, areas, siteLogs, chillerReadings, logMaster } from "../database";
 import logger from "../utils/logger";
 import { startOfDay, endOfDay } from "date-fns";
 
@@ -42,9 +37,12 @@ export const SiteConfigService = {
       logger.info(`Fetching tasks for ${siteCode} / ${logName}`, { shift });
 
       // 1. DISCOVERY: Find all possible areas for this site
-      const siteAreas = await areaCollection.query(Q.where("site_code", siteCode)).fetch();
-      const siteAreaNames = new Set(siteAreas.map(a => a.name.trim()).filter(n => n && n !== "Unnamed Area"));
-      
+      const siteAreas = await db
+        .select()
+        .from(areas)
+        .where(eq(areas.site_code, siteCode));
+      const siteAreaNames = new Set(siteAreas.map(a => a.asset_name.trim()).filter(n => n && n !== "Unnamed Area"));
+
       // 2. TEMPLATE: Get LogMaster entry templates using multi-variant matching
       let logVariants = [logName];
       const lowerLog = logName.toLowerCase();
@@ -58,14 +56,15 @@ export const SiteConfigService = {
         logVariants = ["Chemical Dosing", "Chemical Monitoring", "Chemical Analysis", "Chemicals", "Cooling Tower Chemical Dosing"];
       }
 
-      const logMasterEntries = await logMasterCollection.query(
-        Q.where("log_name", Q.oneOf(logVariants))
-      ).fetch();
+      const logMasterEntries = await db
+        .select()
+        .from(logMaster)
+        .where(inArray(logMaster.log_name, logVariants));
 
       const taskMap = new Map<string, TaskItem>();
 
       // A. CRITICAL LOGIC: Use correct discovery source per log type
-      //    - Temp/RH: uses areaCollection (room/AHU names)
+      //    - Temp/RH: uses areas table (room/AHU names)
       //    - Water/Chemical: uses logMaster (chemical types / water test tasks)
       //    - Fallback: if primary is empty, try the other source
       if (isTempLog) {
@@ -77,7 +76,7 @@ export const SiteConfigService = {
         } else {
           // Fallback to LogMaster when areas aren't in local DB yet
           logMasterEntries.forEach(entry => {
-            const name = entry.taskName?.trim();
+            const name = entry.task_name?.trim();
             if (name && name !== "Unnamed Area") {
               taskMap.set(name, { id: `master_${entry.id}`, name, type: "area", isCompleted: false, status: "Open" });
             }
@@ -87,7 +86,7 @@ export const SiteConfigService = {
         // Water / Chemical: use LogMaster as PRIMARY source (areas are not relevant for these)
         if (logMasterEntries.length > 0) {
           logMasterEntries.forEach(entry => {
-            const name = entry.taskName?.trim();
+            const name = entry.task_name?.trim();
             if (name && name !== "Unnamed Area") {
               taskMap.set(name, { id: `master_${entry.id}`, name, type: "area", isCompleted: false, status: "Open" });
             }
@@ -104,20 +103,23 @@ export const SiteConfigService = {
       // 3. PROGRESS: Fetch all non-completed logs + today's completed logs.
       // Non-completed (Open/Inprogress/Pending) are shown regardless of date.
       // Completed logs are scoped to the date window to show today's progress.
-      const recentLogs = await siteLogCollection
-        .query(
-          Q.where("site_code", siteCode),
-          Q.where("log_name", Q.oneOf(logVariants)),
-          Q.or(
-            Q.where("status", Q.notEq("Completed")),
-            Q.and(
-              Q.where("created_at", Q.gte(start)),
-              Q.where("created_at", Q.lte(end))
+      const recentLogs = await db
+        .select()
+        .from(siteLogs)
+        .where(
+          and(
+            eq(siteLogs.site_code, siteCode),
+            inArray(siteLogs.log_name, logVariants),
+            or(
+              ne(siteLogs.status, "Completed"),
+              and(
+                gte(siteLogs.created_at, start),
+                lte(siteLogs.created_at, end)
+              )
             )
-          ),
-          Q.sortBy("created_at", Q.desc)
+          )
         )
-        .fetch();
+        .orderBy(desc(siteLogs.created_at));
 
       const shiftMarker = shift === 'A' ? '1/3' : shift === 'B' ? '2/3' : shift === 'C' ? '3/3' : null;
 
@@ -125,17 +127,17 @@ export const SiteConfigService = {
       const templateTaskNamesObserved = new Set<string>();
 
       recentLogs.forEach(log => {
-        const name = log.taskName?.trim();
+        const name = log.task_name?.trim();
         if (!name) return;
 
         // Shift filtering
         if (shiftMarker) {
-          const isShiftMatch = log.remarks?.includes(shiftMarker) || (log as any).shift === shift;
+          const isShiftMatch = log.remarks?.includes(shiftMarker);
           if (!isShiftMatch) return;
         }
 
         const isCompleted = log.status?.toLowerCase() === "completed";
-        
+
         if (isCompleted) {
           // For completed logs, update the template entry
           const templateTask = taskMap.get(name);
@@ -172,7 +174,7 @@ export const SiteConfigService = {
       });
 
       // Add template tasks that don't have a pending log replica already in finalTasks.
-      // All site-scoped template tasks (from areaCollection or logMaster) are valid —
+      // All site-scoped template tasks (from areas or logMaster) are valid —
       // untouched ones are pending by definition.
       taskMap.forEach((task, name) => {
         if (!templateTaskNamesObserved.has(name)) {
@@ -180,10 +182,10 @@ export const SiteConfigService = {
         }
       });
 
-      logger.info(`Final task count for ${siteCode}: ${finalTasks.length}`, { 
-        siteCode, 
-        logCount: recentLogs.length, 
-        pendingCount: finalTasks.filter(t => !t.isCompleted).length 
+      logger.info(`Final task count for ${siteCode}: ${finalTasks.length}`, {
+        siteCode,
+        logCount: recentLogs.length,
+        pendingCount: finalTasks.filter(t => !t.isCompleted).length
       });
 
       // 5. SORT: Reliable alphabetical sorting.
@@ -204,40 +206,49 @@ export const SiteConfigService = {
   ): Promise<TaskItem[]> {
     try {
       // 1. Fetch distinct Chiller IDs from historical logs
-      const recentReadings = await chillerReadingCollection
-        .query(
-          Q.where("site_code", siteCode),
-          Q.sortBy("created_at", Q.desc),
-          Q.take(50),
-        )
-        .fetch();
+      const recentReadings = await db
+        .select()
+        .from(chillerReadings)
+        .where(eq(chillerReadings.site_code, siteCode))
+        .orderBy(desc(chillerReadings.created_at))
+        .limit(50);
 
       const uniqueChillers = new Set<string>();
       recentReadings.forEach((r) => {
-        if (r.chillerId) uniqueChillers.add(r.chillerId);
+        if (r.chiller_id) uniqueChillers.add(r.chiller_id);
       });
 
       if (uniqueChillers.size === 0) {
         // DISCOVERY FALLBACK: Check areas/LogMaster only if we have some local history
         // to avoid showing phantom chillers from other sites
-        const fallbackChillers = await areaCollection
-          .query(Q.where("site_code", siteCode), Q.where("name", Q.like("%Chiller%")))
-          .fetch();
-        
+        const fallbackChillers = await db
+          .select()
+          .from(areas)
+          .where(
+            and(
+              eq(areas.site_code, siteCode),
+              like(areas.asset_name, "%Chiller%")
+            )
+          );
+
         if (fallbackChillers.length > 0) {
-          fallbackChillers.forEach(a => uniqueChillers.add(a.name));
+          fallbackChillers.forEach(a => uniqueChillers.add(a.asset_name));
         } else {
           // Final fallback: LogMaster — only use if we have site-specific area data
           // to avoid cross-site inflation
-          const siteHasAreas = await areaCollection
-            .query(Q.where("site_code", siteCode))
-            .fetchCount();
+          const siteHasAreasResult = await db
+            .select({ value: count() })
+            .from(areas)
+            .where(eq(areas.site_code, siteCode));
+          const siteHasAreas = siteHasAreasResult[0]?.value ?? 0;
+
           if (siteHasAreas > 0) {
-            const masterChillers = await logMasterCollection
-              .query(Q.where("log_name", Q.like("%Chiller%")))
-              .fetch();
+            const masterChillers = await db
+              .select()
+              .from(logMaster)
+              .where(like(logMaster.log_name, "%Chiller%"));
             masterChillers.forEach(m => {
-              if (m.taskName) uniqueChillers.add(m.taskName);
+              if (m.task_name) uniqueChillers.add(m.task_name);
             });
           }
         }
@@ -255,25 +266,28 @@ export const SiteConfigService = {
         ? endOfDay(toDate).getTime()
         : endOfDay(new Date()).getTime();
 
-      const timeframeReadings = await chillerReadingCollection
-        .query(
-          Q.where("site_code", siteCode),
-          Q.or(
-            Q.where("status", Q.notEq("Completed")),
-            Q.and(
-              Q.where("reading_time", Q.gte(start)),
-              Q.where("reading_time", Q.lte(end))
+      const timeframeReadings = await db
+        .select()
+        .from(chillerReadings)
+        .where(
+          and(
+            eq(chillerReadings.site_code, siteCode),
+            or(
+              ne(chillerReadings.status, "Completed"),
+              and(
+                gte(chillerReadings.reading_time, start),
+                lte(chillerReadings.reading_time, end)
+              )
             )
-          ),
-          Q.sortBy("reading_time", Q.desc),
+          )
         )
-        .fetch();
+        .orderBy(desc(chillerReadings.reading_time));
 
       const finalTasks: TaskItem[] = [];
       const templateChillerIdsObserved = new Set<string>();
 
       timeframeReadings.forEach((reading) => {
-        const chillerId = reading.chillerId;
+        const chillerId = reading.chiller_id;
         if (!chillerId) return;
 
         let status: "Open" | "Inprogress" | "Completed" = "Open";
@@ -323,13 +337,14 @@ export const SiteConfigService = {
       });
 
       // Fetch Log Master for sorting chillers
-      const logMasterEntries = await logMasterCollection
-        .query(Q.where("log_name", "Chiller Logs"))
-        .fetch();
-      
+      const logMasterEntries = await db
+        .select()
+        .from(logMaster)
+        .where(eq(logMaster.log_name, "Chiller Logs"));
+
       const sequenceMap = new Map<string, number>();
       logMasterEntries.forEach(entry => {
-        sequenceMap.set(entry.taskName, entry.sequenceNumber);
+        sequenceMap.set(entry.task_name, entry.sequence_number);
       });
 
       return finalTasks.sort((a, b) => {
@@ -355,26 +370,31 @@ export const SiteConfigService = {
     const start = startOfDay(new Date()).getTime();
     const end = endOfDay(new Date()).getTime();
 
-    const count = await siteLogCollection
-      .query(
-        Q.where("site_code", siteCode),
-        Q.where("log_name", logName),
-        Q.or(
-          Q.where("status", Q.notEq("Completed")),
-          Q.and(
-            Q.where("created_at", Q.gte(start)),
-            Q.where("created_at", Q.lte(end))
+    const result = await db
+      .select({ value: count() })
+      .from(siteLogs)
+      .where(
+        and(
+          eq(siteLogs.site_code, siteCode),
+          eq(siteLogs.log_name, logName),
+          or(
+            ne(siteLogs.status, "Completed"),
+            and(
+              gte(siteLogs.created_at, start),
+              lte(siteLogs.created_at, end)
+            )
           )
         )
-      )
-      .fetchCount();
+      );
+
+    const logCount = result[0]?.value ?? 0;
 
     return {
       id: logName,
       name: logName === "Water" ? "Water Parameters" : `${logName} Log`,
       type: "general",
-      isCompleted: count > 0,
-      status: count > 0 ? "Completed" : "Open",
+      isCompleted: logCount > 0,
+      status: logCount > 0 ? "Completed" : "Open",
     };
   },
 };

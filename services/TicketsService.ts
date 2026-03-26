@@ -1,24 +1,12 @@
 import logger from "../utils/logger";
 import { authEvents } from "../utils/authEvents";
-import {
-  cacheAreas,
-  getCachedAreas,
-  cacheCategories,
-  getCachedCategories,
-  cacheStats,
-  getCachedStats,
-} from "../utils/offlineDataCache";
+import { areas, categories as categoriesTable } from "../database";
 import { supabase } from "./supabase";
 import { fetchWithTimeout } from "../utils/apiHelper";
-import {
-  database,
-  ticketCollection,
-  ticketUpdateCollection,
-} from "../database";
-import { Q } from "@nozbe/watermelondb";
-import { pullRecentTickets } from "../utils/syncTicketStorage";
+import { db, tickets, ticketUpdates } from "../database";
+import { eq, desc, and, like } from "drizzle-orm";
+import { v4 as uuidv4 } from "uuid";
 import { StorageService } from "./StorageService";
-import TicketModel from "../database/models/Ticket";
 
 import { API_BASE_URL } from "../constants/api";
 
@@ -123,44 +111,40 @@ export const TicketsService = {
     // 1. Return local data if searching/filtering within standard view
     if (page === 1) {
       try {
-        const queryConditions: any[] = [Q.sortBy("created_at", Q.desc)];
-        if (siteCode !== "all") {
-          queryConditions.unshift(Q.where("site_code", siteCode));
-        }
-
         const conditions: any[] = [];
-        if (status) conditions.push(Q.where("status", status));
-        if (priority && priority !== "All")
-          conditions.push(Q.where("priority", priority));
+
+        if (siteCode !== "all") {
+          conditions.push(eq(tickets.site_code, siteCode));
+        }
+        if (status) {
+          conditions.push(eq(tickets.status, status));
+        }
+        if (priority && priority !== "All") {
+          conditions.push(eq(tickets.priority, priority));
+        }
         if (search) {
-          conditions.push(
-            Q.where("title", Q.like(`%${Q.sanitizeLikeString(search)}%`)),
-          );
+          conditions.push(like(tickets.title, `%${search}%`));
         }
 
         if (conditions.length > 0) {
-          const finalConditions = [
-            ...conditions,
-            Q.sortBy("created_at", Q.desc),
-          ];
-          if (siteCode !== "all") {
-            finalConditions.unshift(Q.where("site_code", siteCode));
-          }
-          const localTickets = await ticketCollection
-            .query(...finalConditions)
-            .fetch();
+          const query =
+            conditions.length === 1
+              ? db
+                  .select()
+                  .from(tickets)
+                  .where(conditions[0])
+                  .orderBy(desc(tickets.created_at))
+              : db
+                  .select()
+                  .from(tickets)
+                  .where(and(...conditions))
+                  .orderBy(desc(tickets.created_at));
+
+          const localTickets = await query;
 
           if (localTickets.length > 0) {
-            // Fire background sync if online
-            const { data: { session: bgSession } } = await supabase.auth.getSession();
-            const token = bgSession?.access_token ?? null;
-            if (token) {
-              pullRecentTickets(siteCode, token, BACKEND_URL).catch((e) =>
-                logger.debug("Background ticket pull failed", {
-                  error: e.message,
-                }),
-              );
-            }
+            // PowerSync handles background sync automatically
+            // No need for manual pullRecentTickets call
 
             // Priority Precedence for local sorting
             const priorityOrder: Record<string, number> = {
@@ -171,18 +155,18 @@ export const TicketsService = {
 
             const sortedTickets = localTickets
               .map((t) => ({
-                id: t.serverId,
-                ticket_no: t.ticketNumber,
+                id: t.id,
+                ticket_no: t.ticket_number,
                 title: t.title,
                 description: t.description,
                 status: t.status,
                 priority: t.priority,
                 category: t.category,
                 location: t.area,
-                assigned_to: t.assignedTo,
-                created_user: t.createdBy,
-                site_code: t.siteCode,
-                created_at: t.createdAt.toISOString(),
+                assigned_to: t.assigned_to,
+                created_user: t.created_by,
+                site_code: t.site_code,
+                created_at: new Date(t.created_at).toISOString(),
               }))
               .sort((a, b) => {
                 const pA = priorityOrder[a.priority || ""] || 4;
@@ -233,65 +217,53 @@ export const TicketsService = {
 
   /**
    * Update ticket status and remarks
-   * Updates both the offline queue AND the local ticket in WatermelonDB
+   * Updates both the offline queue AND the local ticket via Drizzle/PowerSync
    */
   async updateStatus(id: string, status: string, remarks?: string) {
     try {
-      let localTicket: TicketModel | null = null;
       let serverId = id;
 
-      // 1. Update the local ticket in WatermelonDB immediately for offline persistence
-      await database.write(async () => {
-        // Try to find ticket by server_id first, then by local id
-        let tickets = await ticketCollection
-          .query(Q.where("server_id", id))
-          .fetch();
+      // 1. Update the local ticket in Drizzle/PowerSync immediately for offline persistence
+      // Try to find ticket by id
+      let localRows = await db
+        .select()
+        .from(tickets)
+        .where(eq(tickets.id, id));
 
-        if (tickets.length === 0) {
-          // Maybe id is the local WatermelonDB id, try finding by id directly
-          try {
-            const ticket = await ticketCollection.find(id);
-            if (ticket) {
-              tickets = [ticket];
-            }
-          } catch (e) {
-            // Ticket not found
-          }
-        }
+      if (localRows.length > 0) {
+        const localTicket = localRows[0];
+        serverId = localTicket.id;
 
-        if (tickets.length > 0) {
-          localTicket = tickets[0];
-          serverId = localTicket.serverId || id;
-          
-          await localTicket.update((t) => {
-            t.status = status;
-            if (remarks !== undefined) t.description = remarks;
-            // Mark as not synced since we're updating offline
-            t.isSynced = false;
-          });
-          logger.info("Updated local ticket status in WatermelonDB", {
-            module: "TICKETS_SERVICE",
-            localId: localTicket.id,
-            serverId: serverId,
-            status,
-          });
-        } else {
-          logger.warn("Ticket not found in local database for status update", {
-            module: "TICKETS_SERVICE",
-            ticketId: id,
-          });
-        }
+        const updateFields: Record<string, any> = { status };
+        if (remarks !== undefined) updateFields.description = remarks;
 
-        // 2. Create offline update record for sync (use local ticket id for reference)
-        await ticketUpdateCollection.create((record) => {
-          record.ticketId = localTicket ? localTicket.id : id;
-          record.updateType = "status";
-          record.updateData = JSON.stringify({
-            status,
-            internal_remarks: remarks,
-          });
-          record.isSynced = false;
+        await db
+          .update(tickets)
+          .set(updateFields)
+          .where(eq(tickets.id, localTicket.id));
+
+        logger.info("Updated local ticket status via Drizzle", {
+          module: "TICKETS_SERVICE",
+          ticketId: localTicket.id,
+          status,
         });
+      } else {
+        logger.warn("Ticket not found in local database for status update", {
+          module: "TICKETS_SERVICE",
+          ticketId: id,
+        });
+      }
+
+      // 2. Create offline update record for sync
+      await db.insert(ticketUpdates).values({
+        id: uuidv4(),
+        ticket_id: localRows.length > 0 ? localRows[0].id : id,
+        update_type: "status",
+        update_data: JSON.stringify({
+          status,
+          internal_remarks: remarks,
+        }),
+        created_at: Date.now(),
       });
 
       // 3. Attempt API update if online (use server ID)
@@ -308,67 +280,56 @@ export const TicketsService = {
 
   /**
    * Update ticket details (Area/Asset, Category, Status)
-   * Updates both the offline queue AND the local ticket in WatermelonDB
+   * Updates both the offline queue AND the local ticket via Drizzle/PowerSync
    */
   async updateTicket(id: string, data: any) {
     try {
-      let localTicket: TicketModel | null = null;
       let serverId = id;
 
-      // 1. Update the local ticket in WatermelonDB immediately for offline persistence
-      await database.write(async () => {
-        // Try to find ticket by server_id first, then by local id
-        let tickets = await ticketCollection
-          .query(Q.where("server_id", id))
-          .fetch();
+      // 1. Update the local ticket in Drizzle/PowerSync immediately for offline persistence
+      let localRows = await db
+        .select()
+        .from(tickets)
+        .where(eq(tickets.id, id));
 
-        if (tickets.length === 0) {
-          // Maybe id is the local WatermelonDB id, try finding by id directly
-          try {
-            const ticket = await ticketCollection.find(id);
-            if (ticket) {
-              tickets = [ticket];
-            }
-          } catch (e) {
-            // Ticket not found
-          }
+      if (localRows.length > 0) {
+        const localTicket = localRows[0];
+        serverId = localTicket.id;
+
+        const updateFields: Record<string, any> = {};
+        if (data.status !== undefined) updateFields.status = data.status;
+        if (data.internal_remarks !== undefined) updateFields.description = data.internal_remarks;
+        if (data.area_asset !== undefined) updateFields.area = data.area_asset;
+        if (data.category !== undefined) updateFields.category = data.category;
+        if (data.priority !== undefined) updateFields.priority = data.priority;
+        if (data.assigned_to !== undefined) updateFields.assigned_to = data.assigned_to;
+
+        if (Object.keys(updateFields).length > 0) {
+          await db
+            .update(tickets)
+            .set(updateFields)
+            .where(eq(tickets.id, localTicket.id));
         }
 
-        if (tickets.length > 0) {
-          localTicket = tickets[0];
-          serverId = localTicket.serverId || id;
-          
-          await localTicket.update((t) => {
-            // Update all fields that might be in the payload
-            if (data.status !== undefined) t.status = data.status;
-            if (data.internal_remarks !== undefined) t.description = data.internal_remarks;
-            if (data.area_asset !== undefined) t.area = data.area_asset;
-            if (data.category !== undefined) t.category = data.category;
-            if (data.priority !== undefined) t.priority = data.priority;
-            if (data.assigned_to !== undefined) t.assignedTo = data.assigned_to;
-            // Mark as not synced since we're updating offline
-            t.isSynced = false;
-          });
-          logger.info("Updated local ticket in WatermelonDB", {
-            module: "TICKETS_SERVICE",
-            localId: localTicket.id,
-            serverId: serverId,
-            updates: Object.keys(data),
-          });
-        } else {
-          logger.warn("Ticket not found in local database for offline update", {
-            module: "TICKETS_SERVICE",
-            ticketId: id,
-          });
-        }
-
-        // 2. Queue offline update for sync (use local ticket id for reference)
-        await ticketUpdateCollection.create((record) => {
-          record.ticketId = localTicket ? localTicket.id : id;
-          record.updateType = "details";
-          record.updateData = JSON.stringify(data);
-          record.isSynced = false;
+        logger.info("Updated local ticket via Drizzle", {
+          module: "TICKETS_SERVICE",
+          ticketId: localTicket.id,
+          updates: Object.keys(data),
         });
+      } else {
+        logger.warn("Ticket not found in local database for offline update", {
+          module: "TICKETS_SERVICE",
+          ticketId: id,
+        });
+      }
+
+      // 2. Queue offline update for sync
+      await db.insert(ticketUpdates).values({
+        id: uuidv4(),
+        ticket_id: localRows.length > 0 ? localRows[0].id : id,
+        update_type: "details",
+        update_data: JSON.stringify(data),
+        created_at: Date.now(),
       });
 
       // 3. Attempt API update if online (use server ID)
@@ -387,12 +348,12 @@ export const TicketsService = {
   async getAssets(siteCode: string) {
     const result = await apiFetch(`/api/assets/site/${siteCode}`);
     if (result.success) {
-      cacheAreas(siteCode, result.data);
       return result;
     }
     if (result.isNetworkError) {
-      const cached = await getCachedAreas(siteCode);
-      if (cached && cached.length > 0) {
+      // Fallback to local PowerSync-synced areas table
+      const cached = await db.select().from(areas).where(eq(areas.site_code, siteCode)).catch(() => []);
+      if (cached.length > 0) {
         return { success: true, data: cached, isFromCache: true };
       }
     }
@@ -405,16 +366,9 @@ export const TicketsService = {
   async getStats(siteCode: string) {
     const result = await apiFetch(`/api/complaints/site/${siteCode}/stats`);
     if (result.success) {
-      // Cache stats for offline use
-      cacheStats(siteCode, result.data).catch(() => {});
       return result;
     }
-    if (result.isNetworkError) {
-      const cached = await getCachedStats(siteCode);
-      if (cached) {
-        return { success: true, data: cached, isFromCache: true };
-      }
-    }
+    // Stats are not stored locally; return the error result as-is when offline
     return result;
   },
 
@@ -424,12 +378,12 @@ export const TicketsService = {
   async getComplaintCategories() {
     const result = await apiFetch(`/api/complaint-categories`);
     if (result.success) {
-      cacheCategories(result.data);
       return result;
     }
     if (result.isNetworkError) {
-      const cached = await getCachedCategories();
-      if (cached && cached.length > 0) {
+      // Fallback to local PowerSync-synced categories table
+      const cached = await db.select().from(categoriesTable).catch(() => []);
+      if (cached.length > 0) {
         return { success: true, data: cached, isFromCache: true };
       }
     }
@@ -455,7 +409,7 @@ export const TicketsService = {
       message_id?: string;
     },
   ) {
-    // Note: For full offline support, we would add to ticketUpdateCollection here as well.
+    // Note: For full offline support, we would add to ticketUpdates here as well.
     // Assuming simple online-first strategy for now to support attachments functionality.
     return await apiFetch(`/api/complaints/${id}/line-items`, {
       method: "POST",

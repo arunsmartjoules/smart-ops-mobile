@@ -50,11 +50,7 @@ import {
   PMSyncStatus,
 } from "@/utils/syncPMStorage";
 import { syncManager } from "@/services/SyncManager";
-import {
-  clearAllCache,
-  getCacheSize,
-  formatBytes,
-} from "@/utils/offlineDataCache";
+import { powerSync } from "@/database";
 import { useNetworkStatus } from "@/hooks/useNetworkStatus";
 import logger from "@/utils/logger";
 
@@ -90,7 +86,7 @@ export default function AppSettings() {
     autoSyncEnabled: true,
   });
 
-  // Cache info
+  // Cache info (PowerSync manages local DB; no separate cache metrics needed)
   const [cacheSize, setCacheSize] = useState({ items: 0, bytes: 0 });
 
   const [isSyncing, setIsSyncing] = useState(false);
@@ -124,9 +120,8 @@ export default function AppSettings() {
       const pmStatus = await getPMSyncStatus();
       setPmSyncStatus(pmStatus);
 
-      // Load cache size
-      const cache = await getCacheSize();
-      setCacheSize(cache);
+      // PowerSync manages caching; no separate cache size to track
+      setCacheSize({ items: 0, bytes: 0 });
     } catch (error: any) {
       logger.error("Error loading sync status", {
         module: "APP_SETTINGS",
@@ -201,7 +196,7 @@ export default function AppSettings() {
               await clearAllOfflineTicketData();
               await clearAllOfflineSiteLogData();
               await clearAllOfflinePMData();
-              await clearAllCache();
+              await powerSync.disconnectAndClear();
               await loadAllStatus();
               Alert.alert("Success", "All local data cleared");
             } catch (error: any) {
@@ -644,10 +639,10 @@ export default function AppSettings() {
                 </View>
                 <View className="items-end">
                   <Text className="text-slate-700 dark:text-slate-300 font-bold">
-                    {formatBytes(cacheSize.bytes)}
+                    Managed
                   </Text>
                   <Text className="text-slate-400 dark:text-slate-500 text-xs">
-                    {cacheSize.items} items
+                    by PowerSync
                   </Text>
                 </View>
               </View>

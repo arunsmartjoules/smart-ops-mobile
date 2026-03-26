@@ -37,8 +37,8 @@ import AttendanceService, { Site } from "@/services/AttendanceService";
 import { LogImagePicker } from "@/components/sitelogs/LogImagePicker";
 import { SortIcon } from "@/components/SortIcon";
 import { sortBySequenceNumber, SortDirection } from "@/utils/sorting";
-import { logMasterCollection } from "@/database";
-import { Q } from "@nozbe/watermelondb";
+import { db, logMaster } from "@/database";
+import { eq } from "drizzle-orm";
 import logger from "@/utils/logger";
 
 // Memoized Log Item Component

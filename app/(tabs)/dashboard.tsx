@@ -62,8 +62,8 @@ import TicketDetailModal from "@/components/TicketDetailModal";
 import { type SelectOption } from "@/components/SearchableSelect";
 import SiteLogService from "@/services/SiteLogService";
 import logger from "@/utils/logger";
-import { saveOfflineTicketUpdate } from "@/utils/offlineTicketStorage";
-import { getCachedSites } from "@/utils/offlineDataCache";
+import { db, userSites } from "@/database";
+import { eq } from "drizzle-orm";
 import { WhatsAppService } from "@/services/WhatsAppService";
 
 interface PendingItem {
@@ -488,11 +488,21 @@ export default function Dashboard() {
       setLoadingPending(true);
       setLoadingAttendance(true);
 
-      // 1. Load cached data FIRST for instant UI
-      const [cachedSitesList, lastSiteCode] = await Promise.all([
-        getCachedSites(userId).catch(() => [] as Site[]),
+      // 1. Load cached data FIRST for instant UI (Drizzle/PowerSync local query)
+      const [localSiteRows, lastSiteCode] = await Promise.all([
+        db
+          .select()
+          .from(userSites)
+          .where(eq(userSites.user_id, userId))
+          .catch(() => [] as { id: string; user_id: string; site_id: string | null; site_code: string; site_name: string }[]),
         AsyncStorage.getItem(`last_site_${userId}`).catch(() => null),
       ]);
+
+      // Map local userSites rows to the Site shape expected by the rest of the component
+      const cachedSitesList: Site[] = localSiteRows.map((row: { site_code: string; site_name: string }) => ({
+        site_code: row.site_code,
+        name: row.site_name,
+      }));
 
       if (cachedSitesList.length > 0) {
         setSites(cachedSitesList);

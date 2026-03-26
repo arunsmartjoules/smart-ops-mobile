@@ -1,264 +1,237 @@
-import { appSchema, tableSchema } from "@nozbe/watermelondb";
+/**
+ * Drizzle ORM Schema — SmartOps Local Database
+ *
+ * These tables mirror the PowerSync sync rules and define the local SQLite
+ * structure used by the Drizzle query builder. PowerSync keeps them in sync
+ * with the backend PostgreSQL database via logical replication.
+ */
 
-export const schema = appSchema({
-  version: 15,
-  tables: [
-    // Tickets for offline access and updates
-    tableSchema({
-      name: "tickets",
-      columns: [
-        {
-          name: "server_id",
-          type: "string",
-          isOptional: true,
-          isIndexed: true,
-        },
-        { name: "site_code", type: "string", isIndexed: true },
-        { name: "ticket_number", type: "string" },
-        { name: "title", type: "string" },
-        { name: "description", type: "string", isOptional: true },
-        { name: "status", type: "string" },
-        { name: "priority", type: "string" },
-        { name: "category", type: "string", isOptional: true },
-        { name: "area", type: "string", isOptional: true },
-        { name: "assigned_to", type: "string", isOptional: true },
-        { name: "created_by", type: "string" },
-        { name: "due_date", type: "number", isOptional: true },
-        { name: "closed_at", type: "number", isOptional: true },
-        { name: "is_synced", type: "boolean" },
-        { name: "has_pending_updates", type: "boolean" },
-        { name: "created_at", type: "number" },
-        { name: "updated_at", type: "number" },
-      ],
-    }),
-    // Pending ticket updates for offline sync
-    tableSchema({
-      name: "ticket_updates",
-      columns: [
-        { name: "ticket_id", type: "string", isIndexed: true },
-        { name: "update_type", type: "string" }, // 'status' | 'details' | 'comment'
-        { name: "update_data", type: "string" }, // JSON stringified
-        { name: "is_synced", type: "boolean" },
-        { name: "created_at", type: "number" },
-      ],
-    }),
-    // Cached areas/assets
-    tableSchema({
-      name: "areas",
-      columns: [
-        { name: "server_id", type: "string", isIndexed: true },
-        { name: "site_code", type: "string", isIndexed: true },
-        { name: "name", type: "string" },
-        { name: "cached_at", type: "number" },
-      ],
-    }),
-    // Cached categories
-    tableSchema({
-      name: "categories",
-      columns: [
-        { name: "server_id", type: "string", isIndexed: true },
-        { name: "name", type: "string" },
-        { name: "cached_at", type: "number" },
-      ],
-    }),
-    // User sites for quick access
-    tableSchema({
-      name: "user_sites",
-      columns: [
-        { name: "server_id", type: "string", isIndexed: true },
-        { name: "user_id", type: "string", isIndexed: true },
-        { name: "site_name", type: "string" },
-        { name: "site_code", type: "string", isIndexed: true },
-        { name: "cached_at", type: "number" },
-      ],
-    }),
-    tableSchema({
-      name: "site_logs",
-      columns: [
-        {
-          name: "server_id",
-          type: "string",
-          isOptional: true,
-          isIndexed: true,
-        },
-        { name: "site_code", type: "string", isIndexed: true },
-        { name: "executor_id", type: "string" },
-        { name: "log_name", type: "string", isIndexed: true },
-        { name: "task_name", type: "string", isOptional: true },
-        { name: "temperature", type: "number", isOptional: true },
-        { name: "rh", type: "number", isOptional: true },
-        { name: "tds", type: "number", isOptional: true },
-        { name: "ph", type: "number", isOptional: true },
-        { name: "hardness", type: "number", isOptional: true },
-        { name: "chemical_dosing", type: "string", isOptional: true },
-        { name: "remarks", type: "string", isOptional: true },
-        { name: "entry_time", type: "number", isOptional: true },
-        { name: "end_time", type: "number", isOptional: true },
-        { name: "signature", type: "string", isOptional: true },
-        { name: "assigned_to", type: "string", isOptional: true },
-        { name: "attachment", type: "string", isOptional: true },
-        { name: "status", type: "string", isOptional: true },
-        { name: "is_synced", type: "boolean" },
-        { name: "created_at", type: "number" },
-        { name: "updated_at", type: "number" },
-      ],
-    }),
-    // Chiller equipment readings
-    tableSchema({
-      name: "chiller_readings",
-      columns: [
-        {
-          name: "server_id",
-          type: "string",
-          isOptional: true,
-          isIndexed: true,
-        },
-        { name: "log_id", type: "string" },
-        { name: "site_code", type: "string", isIndexed: true },
-        { name: "chiller_id", type: "string", isOptional: true },
-        { name: "equipment_id", type: "string", isOptional: true },
-        { name: "asset_name", type: "string", isOptional: true },
-        { name: "asset_type", type: "string", isOptional: true },
-        { name: "executor_id", type: "string" },
-        { name: "date_shift", type: "string", isOptional: true },
-        { name: "assigned_to", type: "string", isOptional: true },
-        { name: "reading_time", type: "number", isOptional: true },
-        { name: "start_datetime", type: "number", isOptional: true },
-        { name: "end_datetime", type: "number", isOptional: true },
-        { name: "condenser_inlet_temp", type: "number", isOptional: true },
-        { name: "condenser_outlet_temp", type: "number", isOptional: true },
-        { name: "evaporator_inlet_temp", type: "number", isOptional: true },
-        { name: "evaporator_outlet_temp", type: "number", isOptional: true },
-        { name: "compressor_suction_temp", type: "number", isOptional: true },
-        { name: "motor_temperature", type: "number", isOptional: true },
-        { name: "saturated_condenser_temp", type: "number", isOptional: true },
-        { name: "saturated_suction_temp", type: "number", isOptional: true },
-        { name: "set_point_celsius", type: "number", isOptional: true },
-        { name: "discharge_pressure", type: "number", isOptional: true },
-        { name: "main_suction_pressure", type: "number", isOptional: true },
-        { name: "oil_pressure", type: "number", isOptional: true },
-        { name: "oil_pressure_difference", type: "number", isOptional: true },
-        { name: "condenser_inlet_pressure", type: "number", isOptional: true },
-        { name: "condenser_outlet_pressure", type: "number", isOptional: true },
-        { name: "evaporator_inlet_pressure", type: "number", isOptional: true },
-        {
-          name: "evaporator_outlet_pressure",
-          type: "number",
-          isOptional: true,
-        },
-        {
-          name: "compressor_load_percentage",
-          type: "number",
-          isOptional: true,
-        },
-        { name: "inline_btu_meter", type: "number", isOptional: true },
-        { name: "remarks", type: "string", isOptional: true },
-        { name: "sla_status", type: "string", isOptional: true },
-        { name: "reviewed_by", type: "string", isOptional: true },
-        { name: "signature_text", type: "string", isOptional: true },
-        { name: "attachments", type: "string", isOptional: true },
-        { name: "status", type: "string", isOptional: true },
-        { name: "is_synced", type: "boolean" },
-        { name: "created_at", type: "number" },
-        { name: "updated_at", type: "number" },
-      ],
-    }),
-    tableSchema({
-      name: "pm_instances",
-      columns: [
-        {
-          name: "server_id",
-          type: "string",
-          isOptional: true,
-          isIndexed: true,
-        },
-        { name: "site_code", type: "string", isIndexed: true },
-        { name: "title", type: "string" },
-        { name: "asset_id", type: "string", isOptional: true },
-        { name: "asset_type", type: "string" },
-        { name: "location", type: "string" },
-        { name: "frequency", type: "string" },
-        { name: "status", type: "string" },
-        { name: "progress", type: "string" },
-        { name: "assigned_to_name", type: "string", isOptional: true },
-        { name: "start_due_date", type: "number", isOptional: true },
-        { name: "maintenance_id", type: "string", isOptional: true },
-        { name: "client_sign", type: "string", isOptional: true },
-        { name: "before_image", type: "string", isOptional: true },
-        { name: "after_image", type: "string", isOptional: true },
-        { name: "is_synced", type: "boolean" },
-        { name: "created_at", type: "number" },
-        { name: "updated_at", type: "number" },
-      ],
-    }),
-    tableSchema({
-      name: "pm_checklist_master",
-      columns: [
-        {
-          name: "server_id",
-          type: "string",
-          isOptional: true,
-          isIndexed: true,
-        },
-        { name: "title", type: "string" },
-        { name: "asset_type", type: "string", isOptional: true },
-        { name: "frequency", type: "string", isOptional: true },
-        { name: "cached_at", type: "number" },
-      ],
-    }),
-    tableSchema({
-      name: "pm_checklist_items",
-      columns: [
-        {
-          name: "server_id",
-          type: "string",
-          isOptional: true,
-          isIndexed: true,
-        },
-        { name: "checklist_master_id", type: "string", isIndexed: true },
-        { name: "task_name", type: "string" },
-        { name: "field_type", type: "string", isOptional: true },
-        { name: "sequence_no", type: "number", isOptional: true },
-        { name: "image_mandatory", type: "boolean", isOptional: true },
-        { name: "remarks_mandatory", type: "boolean", isOptional: true },
-        { name: "cached_at", type: "number" },
-      ],
-    }),
-    tableSchema({
-      name: "pm_responses",
-      columns: [
-        {
-          name: "server_id",
-          type: "string",
-          isOptional: true,
-          isIndexed: true,
-        },
-        { name: "instance_id", type: "string", isIndexed: true },
-        { name: "checklist_item_id", type: "string", isIndexed: true },
-        { name: "response_value", type: "string", isOptional: true },
-        { name: "readings", type: "string", isOptional: true },
-        { name: "remarks", type: "string", isOptional: true },
-        { name: "image_url", type: "string", isOptional: true },
-        { name: "is_synced", type: "boolean" },
-        { name: "created_at", type: "number" },
-        { name: "updated_at", type: "number" },
-      ],
-    }),
-    tableSchema({
-      name: "log_master",
-      columns: [
-        { name: "server_id", type: "string", isOptional: true, isIndexed: true },
-        { name: "task_name", type: "string", isIndexed: true },
-        { name: "log_name", type: "string", isIndexed: true },
-        { name: "sequence_number", type: "number" },
-        { name: "log_id", type: "string", isOptional: true },
-        { name: "dlr", type: "string", isOptional: true },
-        { name: "dbr", type: "string", isOptional: true },
-        { name: "nlt", type: "string", isOptional: true },
-        { name: "nmt", type: "string", isOptional: true },
-        { name: "created_at", type: "number" },
-        { name: "updated_at", type: "number" },
-      ],
-    }),
-  ],
+import { sqliteTable, text, integer, real } from "drizzle-orm/sqlite-core";
+
+// ─── Tickets ─────────────────────────────────────────────────────────────────
+
+export const tickets = sqliteTable("tickets", {
+  id: text("id").primaryKey(),
+  site_code: text("site_code").notNull(),
+  ticket_number: text("ticket_number").notNull(),
+  title: text("title").notNull(),
+  description: text("description"),
+  status: text("status").notNull(),
+  priority: text("priority").notNull(),
+  category: text("category"),
+  area: text("area"),
+  assigned_to: text("assigned_to"),
+  created_by: text("created_by").notNull(),
+  due_date: real("due_date"),
+  closed_at: real("closed_at"),
+  created_at: real("created_at").notNull(),
+  updated_at: real("updated_at").notNull(),
+});
+
+// ─── Ticket Updates (local write queue) ──────────────────────────────────────
+
+export const ticketUpdates = sqliteTable("ticket_updates", {
+  id: text("id").primaryKey(),
+  ticket_id: text("ticket_id").notNull(),
+  update_type: text("update_type").notNull(),
+  update_data: text("update_data").notNull(),
+  created_at: real("created_at").notNull(),
+});
+
+// ─── Areas / Assets ──────────────────────────────────────────────────────────
+
+export const areas = sqliteTable("areas", {
+  id: text("id").primaryKey(),
+  site_code: text("site_code").notNull(),
+  asset_name: text("asset_name").notNull(),
+  asset_type: text("asset_type"),
+  location: text("location"),
+  description: text("description"),
+  created_at: real("created_at"),
+  updated_at: real("updated_at"),
+});
+
+// ─── Complaint Categories ────────────────────────────────────────────────────
+
+export const categories = sqliteTable("categories", {
+  id: text("id").primaryKey(),
+  category: text("category").notNull(),
+  description: text("description"),
+});
+
+// ─── User Sites ──────────────────────────────────────────────────────────────
+
+export const userSites = sqliteTable("user_sites", {
+  id: text("id").primaryKey(),
+  user_id: text("user_id").notNull(),
+  site_id: text("site_id"),
+  site_code: text("site_code").notNull(),
+  site_name: text("site_name").notNull(),
+});
+
+// ─── Site Logs ───────────────────────────────────────────────────────────────
+
+export const siteLogs = sqliteTable("site_logs", {
+  id: text("id").primaryKey(),
+  site_code: text("site_code").notNull(),
+  executor_id: text("executor_id").notNull(),
+  log_name: text("log_name").notNull(),
+  task_name: text("task_name"),
+  temperature: real("temperature"),
+  rh: real("rh"),
+  tds: real("tds"),
+  ph: real("ph"),
+  hardness: real("hardness"),
+  chemical_dosing: text("chemical_dosing"),
+  remarks: text("remarks"),
+  entry_time: real("entry_time"),
+  end_time: real("end_time"),
+  signature: text("signature"),
+  assigned_to: text("assigned_to"),
+  attachment: text("attachment"),
+  status: text("status"),
+  created_at: real("created_at").notNull(),
+  updated_at: real("updated_at").notNull(),
+});
+
+// ─── Chiller Readings ────────────────────────────────────────────────────────
+
+export const chillerReadings = sqliteTable("chiller_readings", {
+  id: text("id").primaryKey(),
+  log_id: text("log_id").notNull(),
+  site_code: text("site_code").notNull(),
+  chiller_id: text("chiller_id"),
+  equipment_id: text("equipment_id"),
+  asset_name: text("asset_name"),
+  asset_type: text("asset_type"),
+  executor_id: text("executor_id").notNull(),
+  date_shift: text("date_shift"),
+  assigned_to: text("assigned_to"),
+  reading_time: real("reading_time"),
+  start_datetime: real("start_datetime"),
+  end_datetime: real("end_datetime"),
+  condenser_inlet_temp: real("condenser_inlet_temp"),
+  condenser_outlet_temp: real("condenser_outlet_temp"),
+  evaporator_inlet_temp: real("evaporator_inlet_temp"),
+  evaporator_outlet_temp: real("evaporator_outlet_temp"),
+  compressor_suction_temp: real("compressor_suction_temp"),
+  motor_temperature: real("motor_temperature"),
+  saturated_condenser_temp: real("saturated_condenser_temp"),
+  saturated_suction_temp: real("saturated_suction_temp"),
+  set_point_celsius: real("set_point_celsius"),
+  discharge_pressure: real("discharge_pressure"),
+  main_suction_pressure: real("main_suction_pressure"),
+  oil_pressure: real("oil_pressure"),
+  oil_pressure_difference: real("oil_pressure_difference"),
+  condenser_inlet_pressure: real("condenser_inlet_pressure"),
+  condenser_outlet_pressure: real("condenser_outlet_pressure"),
+  evaporator_inlet_pressure: real("evaporator_inlet_pressure"),
+  evaporator_outlet_pressure: real("evaporator_outlet_pressure"),
+  compressor_load_percentage: real("compressor_load_percentage"),
+  inline_btu_meter: real("inline_btu_meter"),
+  remarks: text("remarks"),
+  sla_status: text("sla_status"),
+  reviewed_by: text("reviewed_by"),
+  signature_text: text("signature_text"),
+  attachments: text("attachments"),
+  status: text("status"),
+  created_at: real("created_at").notNull(),
+  updated_at: real("updated_at").notNull(),
+});
+
+// ─── PM Instances ────────────────────────────────────────────────────────────
+
+export const pmInstances = sqliteTable("pm_instances", {
+  id: text("id").primaryKey(),
+  site_code: text("site_code").notNull(),
+  title: text("title").notNull(),
+  asset_id: text("asset_id"),
+  asset_type: text("asset_type").notNull(),
+  location: text("location").notNull(),
+  frequency: text("frequency").notNull(),
+  status: text("status").notNull(),
+  progress: text("progress").notNull(),
+  assigned_to_name: text("assigned_to_name"),
+  start_due_date: real("start_due_date"),
+  maintenance_id: text("maintenance_id"),
+  client_sign: text("client_sign"),
+  before_image: text("before_image"),
+  after_image: text("after_image"),
+  created_at: real("created_at").notNull(),
+  updated_at: real("updated_at").notNull(),
+});
+
+// ─── PM Checklist Master ─────────────────────────────────────────────────────
+
+export const pmChecklistMaster = sqliteTable("pm_checklist_master", {
+  id: text("id").primaryKey(),
+  title: text("title").notNull(),
+  asset_type: text("asset_type"),
+  frequency: text("frequency"),
+  created_at: real("created_at"),
+});
+
+// ─── PM Checklist Items ──────────────────────────────────────────────────────
+
+export const pmChecklistItems = sqliteTable("pm_checklist_items", {
+  id: text("id").primaryKey(),
+  checklist_id: text("checklist_id").notNull(),
+  task_name: text("task_name").notNull(),
+  field_type: text("field_type"),
+  sequence_no: integer("sequence_no"),
+  image_mandatory: integer("image_mandatory", { mode: "boolean" }),
+  remarks_mandatory: integer("remarks_mandatory", { mode: "boolean" }),
+});
+
+// ─── PM Responses ────────────────────────────────────────────────────────────
+
+export const pmResponses = sqliteTable("pm_responses", {
+  id: text("id").primaryKey(),
+  instance_id: text("instance_id").notNull(),
+  checklist_item_id: text("checklist_item_id").notNull(),
+  response_value: text("response_value"),
+  readings: text("readings"),
+  remarks: text("remarks"),
+  image_url: text("image_url"),
+  created_at: real("created_at").notNull(),
+  updated_at: real("updated_at").notNull(),
+});
+
+// ─── Log Master ──────────────────────────────────────────────────────────────
+
+export const logMaster = sqliteTable("log_master", {
+  id: text("id").primaryKey(),
+  task_name: text("task_name").notNull(),
+  log_name: text("log_name").notNull(),
+  sequence_number: integer("sequence_number").notNull(),
+  log_id: text("log_id"),
+  dlr: text("dlr"),
+  dbr: text("dbr"),
+  nlt: text("nlt"),
+  nmt: text("nmt"),
+  created_at: real("created_at"),
+  updated_at: real("updated_at"),
+});
+
+// ─── Attendance Logs ─────────────────────────────────────────────────────────
+
+export const attendanceLogs = sqliteTable("attendance_logs", {
+  id: text("id").primaryKey(),
+  user_id: text("user_id").notNull(),
+  site_code: text("site_code").notNull(),
+  date: text("date").notNull(),
+  check_in_time: real("check_in_time"),
+  check_out_time: real("check_out_time"),
+  check_in_latitude: real("check_in_latitude"),
+  check_in_longitude: real("check_in_longitude"),
+  check_out_latitude: real("check_out_latitude"),
+  check_out_longitude: real("check_out_longitude"),
+  check_in_address: text("check_in_address"),
+  check_out_address: text("check_out_address"),
+  shift_id: text("shift_id"),
+  status: text("status").notNull(),
+  remarks: text("remarks"),
+  fieldproxy_punch_id: integer("fieldproxy_punch_id"),
+  created_at: real("created_at"),
+  updated_at: real("updated_at"),
 });

@@ -2,16 +2,19 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import NetInfo from "@react-native-community/netinfo";
 import logger from "../utils/logger";
 import { authEvents } from "../utils/authEvents";
-import {
-  cacheAttendance,
-  getCachedAttendance,
-  cacheSites,
-  getCachedSites,
-} from "../utils/offlineDataCache";
+import { db, userSites } from "../database";
+import { eq } from "drizzle-orm";
 import {
   queueOfflineCheckIn,
   queueOfflineCheckOut,
 } from "../utils/syncAttendanceStorage";
+import {
+  getCachedAttendance,
+  cacheAttendance,
+  getCachedSites,
+  cacheSites,
+  clearAllAttendanceCaches,
+} from "../utils/attendanceCache";
 import { supabase } from "./supabase";
 import { fetchWithTimeout } from "../utils/apiHelper";
 import { API_BASE_URL } from "../constants/api";

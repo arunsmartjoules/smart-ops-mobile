@@ -36,7 +36,8 @@ import AttendanceService, {
   type LocationValidationResult,
   getISTDateString,
 } from "@/services/AttendanceService";
-import { getCachedSites } from "@/utils/offlineDataCache";
+import { db, userSites } from "@/database";
+import { eq } from "drizzle-orm";
 import { syncManager } from "@/services/SyncManager";
 import logger from "@/utils/logger";
 import { format, differenceInMinutes, parseISO } from "date-fns";
@@ -559,7 +560,11 @@ export default function AttendancePage() {
 
     // Offline path — skip location validation, read directly from cache
     if (!isConnected) {
-      const cached = await getCachedSites(user.id);
+      const localSiteRows = await db.select().from(userSites).where(eq(userSites.user_id, user.id)).catch(() => []);
+      const cached = localSiteRows.map((r: any) => ({
+        site_code: r.site_code,
+        name: r.site_name || r.site_code,
+      }));
       if (cached.length === 1) {
         performCheckIn(cached[0].site_code);
       } else if (cached.length > 1) {

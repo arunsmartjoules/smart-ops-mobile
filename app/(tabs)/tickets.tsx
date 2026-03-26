@@ -27,19 +27,8 @@ import SearchableSelect, {
 } from "@/components/SearchableSelect";
 import { TicketsService, type Ticket } from "@/services/TicketsService";
 import { AttendanceService, type Site } from "@/services/AttendanceService";
-import { saveOfflineTicketUpdate } from "@/utils/offlineTicketStorage";
-import {
-  getCachedSites,
-  cacheSites,
-  cacheAreas,
-  getCachedAreas,
-  cacheTickets,
-  getCachedTickets,
-  cacheStats,
-  getCachedStats,
-} from "@/utils/offlineDataCache";
-import { database, ticketCollection } from "@/database";
-import { Q } from "@nozbe/watermelondb";
+import { db, tickets as ticketsTable, userSites, areas, categories } from "@/database";
+import { eq, desc, and, like } from "drizzle-orm";
 import logger from "@/utils/logger";
 import TicketDetailModal from "@/components/TicketDetailModal";
 import AdvancedFilterModal from "@/components/AdvancedFilterModal";
@@ -212,11 +201,12 @@ export default function Tickets() {
 
     setAreasLoading(true);
     try {
-      // Always load from cache first for instant UI
-      const [cachedAreas, cachedCategories] = await Promise.all([
-        getCachedAreas(selectedSiteCode),
+      // Always load from local DB first for instant UI
+      const [localAreas, cachedCategories] = await Promise.all([
+        db.select().from(areas).where(eq(areas.site_code, selectedSiteCode)).catch(() => []),
         TicketsService.getComplaintCategories(),
       ]);
+      const cachedAreas = localAreas;
 
       // Set cached areas immediately
       if (cachedAreas.length > 0) {
@@ -286,10 +276,14 @@ export default function Tickets() {
     setLoading(true);
     try {
       // 1. Try to load from cache and last site in parallel for instant UI
-      const [cachedSites, lastSiteCode] = await Promise.all([
-        getCachedSites(userId).catch(() => [] as Site[]),
+      const [localSiteRows, lastSiteCode] = await Promise.all([
+        db.select().from(userSites).where(eq(userSites.user_id, userId)).catch(() => []),
         AsyncStorage.getItem(`last_site_${userId}`).catch(() => null),
       ]);
+      const cachedSites: Site[] = localSiteRows.map((r: any) => ({
+        site_code: r.site_code,
+        name: r.site_name || r.site_code,
+      }));
 
       // Sanitize: remove stale "all" entries from cached sites
       const validCachedSites = (cachedSites || []).filter(
@@ -322,7 +316,7 @@ export default function Tickets() {
 
       // 3. Fetch fresh sites from API (only when online)
       const isAdmin = user?.role?.toLowerCase() === "admin";
-      let userSites: Site[] = await AttendanceService.getUserSites(userId, "JouleCool").catch((e) => {
+      let fetchedUserSites: Site[] = await AttendanceService.getUserSites(userId, "JouleCool").catch((e) => {
         logger.warn("User sites fetch failed", {
           module: "TICKETS",
           error: e,
@@ -330,7 +324,7 @@ export default function Tickets() {
         return [] as Site[];
       });
 
-      let finalSites: Site[] = userSites;
+      let finalSites: Site[] = fetchedUserSites;
 
       // If we got fresh sites, update state and cache
       if (finalSites.length > 0) {
@@ -353,7 +347,6 @@ export default function Tickets() {
         }
 
         await AsyncStorage.setItem(`last_site_${userId}`, siteToSelect);
-        await cacheSites(userId, finalSites);
       } else if (validCachedSites.length === 0) {
         // No sites at all — stop loading
         setLoading(false);
@@ -371,10 +364,6 @@ export default function Tickets() {
       const res = await TicketsService.getStats(selectedSiteCode);
       if (res.success) {
         setStats(res.data);
-        await cacheStats(selectedSiteCode, res.data);
-      } else if (res.isNetworkError) {
-        const cached = await getCachedStats(selectedSiteCode);
-        if (cached) setStats(cached);
       }
     } catch (e) {}
   }, [selectedSiteCode]);
@@ -403,35 +392,35 @@ export default function Tickets() {
       let hasLocalData = false;
 
       if (reset) {
-        // ALWAYS load from WatermelonDB first for instant content
+        // ALWAYS load from local Drizzle/PowerSync DB first for instant content
         try {
           const conditions: any[] = [];
-          
+
           // Apply the same filters as the API call
-          if (statusFilter) conditions.push(Q.where("status", statusFilter));
+          if (selectedSiteCode !== "all") {
+            conditions.push(eq(ticketsTable.site_code, selectedSiteCode));
+          }
+          if (statusFilter) {
+            conditions.push(eq(ticketsTable.status, statusFilter));
+          }
           if (priorityFilter && priorityFilter !== "All") {
-            conditions.push(Q.where("priority", priorityFilter));
+            conditions.push(eq(ticketsTable.priority, priorityFilter));
           }
           if (searchQuery) {
-            conditions.push(
-              Q.where("title", Q.like(`%${Q.sanitizeLikeString(searchQuery)}%`)),
-            );
+            conditions.push(like(ticketsTable.title, `%${searchQuery}%`));
           }
 
-          const finalConditions = [
-            ...conditions,
-            Q.sortBy("created_at", Q.desc),
-          ];
-          
-          if (selectedSiteCode !== "all") {
-            finalConditions.unshift(Q.where("site_code", selectedSiteCode));
-          }
+          const whereClause = conditions.length > 1
+            ? and(...conditions)
+            : conditions[0] ?? undefined;
 
-          const localTickets = await ticketCollection
-            .query(...finalConditions)
-            .fetch();
+          const localTickets = await db
+            .select()
+            .from(ticketsTable)
+            .where(whereClause)
+            .orderBy(desc(ticketsTable.created_at));
 
-          logger.info("Loaded tickets from WatermelonDB", {
+          logger.info("Loaded tickets from local DB", {
             module: "TICKETS",
             count: localTickets.length,
             siteCode: selectedSiteCode,
@@ -441,8 +430,8 @@ export default function Tickets() {
           if (localTickets.length > 0) {
             hasLocalData = true;
             const formattedTickets = localTickets.map((t) => ({
-              id: t.serverId || t.id, // Fallback to local ID if no server ID
-              ticket_no: t.ticketNumber,
+              id: t.id,
+              ticket_no: t.ticket_number,
               title: t.title,
               description: t.description || "",
               status: t.status,
@@ -451,17 +440,19 @@ export default function Tickets() {
               location: t.area || "",
               area_asset: t.area || "",
               internal_remarks: t.description || "",
-              assigned_to: t.assignedTo || "",
-              created_user: t.createdBy,
-              site_code: t.siteCode,
-              created_at: t.createdAt.toISOString(),
+              assigned_to: t.assigned_to || "",
+              created_user: t.created_by,
+              site_code: t.site_code,
+              created_at: t.created_at
+                ? new Date(t.created_at).toISOString()
+                : new Date().toISOString(),
             }));
-            
+
             setTickets(formattedTickets);
             setLoading(false);
           }
         } catch (err) {
-          logger.warn("Error loading tickets from WatermelonDB", {
+          logger.warn("Error loading tickets from local DB", {
             module: "TICKETS",
             error: err,
           });
@@ -510,9 +501,6 @@ export default function Tickets() {
             // Only update if we got data from API
             if (newTickets.length > 0 || !hasLocalData) {
               setTickets(newTickets);
-              if (p === 1 && newTickets.length > 0) {
-                await cacheTickets(selectedSiteCode, newTickets);
-              }
             }
           } else {
             setTickets((prev) => {
@@ -755,7 +743,7 @@ export default function Tickets() {
           Alert.alert("Error", res.error || "Failed to update ticket");
         }
       } else {
-        // Offline: Update via service (which updates WatermelonDB)
+        // Offline: Update via service (which updates local DB)
         const res = await TicketsService.updateTicket(
           selectedTicket.id || selectedTicket.ticket_no,
           payload,
@@ -775,7 +763,7 @@ export default function Tickets() {
         );
         setIsDetailVisible(false);
 
-        // Reload tickets from WatermelonDB to reflect the persisted change
+        // Reload tickets from local DB to reflect the persisted change
         resetAndFetch();
       }
     } catch (error: any) {

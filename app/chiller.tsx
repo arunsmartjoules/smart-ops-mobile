@@ -37,7 +37,8 @@ import { LogImagePicker } from "@/components/sitelogs/LogImagePicker";
 import SearchableSelect, { SelectOption } from "@/components/SearchableSelect";
 import SignaturePad from "@/components/SignaturePad";
 import { LinearGradient } from "expo-linear-gradient";
-import { chillerReadingCollection } from "@/database";
+import { db, chillerReadings } from "@/database";
+import { eq } from "drizzle-orm";
 import Skeleton from "@/components/Skeleton";
 
 export default function ChillerEntry() {
@@ -146,39 +147,43 @@ export default function ChillerEntry() {
     try {
       if (!params.id) return;
       setLoading(true);
-      const record: any = await chillerReadingCollection.find(params.id);
+      const rows = await db
+        .select()
+        .from(chillerReadings)
+        .where(eq(chillerReadings.id, params.id));
+      const record = rows[0];
       if (record) {
-        setSelectedSite(record.siteCode);
+        setSelectedSite(record.site_code);
         setFormData({
-          chillerId: record.chillerId || "",
-          equipmentId: record.equipmentId || "",
-          condenserInletTemp: record.condenserInletTemp?.toString() || "",
-          condenserOutletTemp: record.condenserOutletTemp?.toString() || "",
-          evaporatorInletTemp: record.evaporatorInletTemp?.toString() || "",
-          evaporatorOutletTemp: record.evaporatorOutletTemp?.toString() || "",
+          chillerId: record.chiller_id || "",
+          equipmentId: record.equipment_id || "",
+          condenserInletTemp: record.condenser_inlet_temp?.toString() || "",
+          condenserOutletTemp: record.condenser_outlet_temp?.toString() || "",
+          evaporatorInletTemp: record.evaporator_inlet_temp?.toString() || "",
+          evaporatorOutletTemp: record.evaporator_outlet_temp?.toString() || "",
           saturatedCondenserTemp:
-            record.saturatedCondenserTemp?.toString() || "",
-          saturatedSuctionTemp: record.saturatedSuctionTemp?.toString() || "",
-          compressorSuctionTemp: record.compressorSuctionTemp?.toString() || "",
-          motorTemperature: record.motorTemperature?.toString() || "",
-          setPointCelsius: record.setPointCelsius?.toString() || "",
-          dischargePressure: record.dischargePressure?.toString() || "",
-          mainSuctionPressure: record.mainSuctionPressure?.toString() || "",
-          oilPressure: record.oilPressure?.toString() || "",
-          oilPressureDifference: record.oilPressureDifference?.toString() || "",
+            record.saturated_condenser_temp?.toString() || "",
+          saturatedSuctionTemp: record.saturated_suction_temp?.toString() || "",
+          compressorSuctionTemp: record.compressor_suction_temp?.toString() || "",
+          motorTemperature: record.motor_temperature?.toString() || "",
+          setPointCelsius: record.set_point_celsius?.toString() || "",
+          dischargePressure: record.discharge_pressure?.toString() || "",
+          mainSuctionPressure: record.main_suction_pressure?.toString() || "",
+          oilPressure: record.oil_pressure?.toString() || "",
+          oilPressureDifference: record.oil_pressure_difference?.toString() || "",
           condenserInletPressure:
-            record.condenserInletPressure?.toString() || "",
+            record.condenser_inlet_pressure?.toString() || "",
           condenserOutletPressure:
-            record.condenserOutletPressure?.toString() || "",
+            record.condenser_outlet_pressure?.toString() || "",
           evaporatorInletPressure:
-            record.evaporatorInletPressure?.toString() || "",
+            record.evaporator_inlet_pressure?.toString() || "",
           evaporatorOutletPressure:
-            record.evaporatorOutletPressure?.toString() || "",
-          load: record.compressorLoadPercentage?.toString() || "",
-          inlineBtuMeter: record.inlineBtuMeter?.toString() || "",
+            record.evaporator_outlet_pressure?.toString() || "",
+          load: record.compressor_load_percentage?.toString() || "",
+          inlineBtuMeter: record.inline_btu_meter?.toString() || "",
           remarks: record.remarks || "",
           attachment: record.attachments || "",
-          signature: record.signatureText || "",
+          signature: record.signature_text || "",
         });
       }
     } catch (e) {

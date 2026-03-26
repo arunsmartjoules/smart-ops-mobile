@@ -28,14 +28,16 @@ import {
 } from "lucide-react-native";
 import * as ImagePicker from "expo-image-picker";
 import PMService from "@/services/PMService";
-import PMChecklistItem from "@/database/models/PMChecklistItem";
+import { pmChecklistItems } from "@/database";
 import { useNetworkStatus } from "@/hooks/useNetworkStatus";
 import SignaturePad from "@/components/SignaturePad";
 import logger from "@/utils/logger";
 import Skeleton from "@/components/Skeleton";
 import { StorageService } from "@/services/StorageService";
-import { database } from "@/database";
 import NetInfo from "@react-native-community/netinfo";
+
+// Drizzle row type inferred from the schema
+type PMChecklistItemRow = typeof pmChecklistItems.$inferSelect;
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 interface ResponseMap {
@@ -62,7 +64,7 @@ const TaskRow = React.memo(
     isCompleted,
     style,
   }: {
-    item: PMChecklistItem;
+    item: PMChecklistItemRow;
     index: number;
     response?: ResponseMap[string];
     onResponseChange: (
@@ -78,7 +80,7 @@ const TaskRow = React.memo(
   }) => {
     const isDark = useColorScheme() === "dark";
     const isDone = response?.response_value === "Done";
-    const fieldType = item.fieldType || "Multiple Choice";
+    const fieldType = item.field_type || "Multiple Choice";
 
     return (
       <View style={[styles.taskCard, style]}>
@@ -117,9 +119,9 @@ const TaskRow = React.memo(
           <Text
             style={[styles.taskName, { color: isDark ? "#f8fafc" : "#0f172a" }]}
           >
-            {item.taskName}
+            {item.task_name}
           </Text>
-          {item.imageMandatory && (
+          {item.image_mandatory && (
             <View
               style={[styles.imgTag, isDark && { backgroundColor: "#431407" }]}
             >
@@ -140,7 +142,7 @@ const TaskRow = React.memo(
                 <TouchableOpacity
                   key={opt}
                   onPress={() =>
-                    onResponseChange(item.serverId!, "response_value", opt)
+                    onResponseChange(item.id, "response_value", opt)
                   }
                   style={[
                     styles.choiceBtn,
@@ -181,7 +183,7 @@ const TaskRow = React.memo(
           <TextInput
             value={response?.response_value || ""}
             onChangeText={(val) =>
-              onResponseChange(item.serverId!, "response_value", val)
+              onResponseChange(item.id, "response_value", val)
             }
             placeholder={`Enter ${fieldType.toLowerCase()}...`}
             placeholderTextColor={isDark ? "#64748b" : "#94a3b8"}
@@ -210,7 +212,7 @@ const TaskRow = React.memo(
           <TextInput
             value={response?.readings || ""}
             onChangeText={(val) =>
-              onResponseChange(item.serverId!, "readings", val)
+              onResponseChange(item.id, "readings", val)
             }
             placeholder="Enter readings if applicable..."
             placeholderTextColor={isDark ? "#64748b" : "#94a3b8"}
@@ -229,7 +231,7 @@ const TaskRow = React.memo(
         {/* Remarks & Image Row */}
         <View style={styles.actionRow}>
           <TouchableOpacity
-            onPress={() => onImageChange(item.serverId!, "PICK")}
+            onPress={() => onImageChange(item.id, "PICK")}
             style={[
               styles.imageBtn,
               isDark && { backgroundColor: "#1e293b", borderColor: "#334155" },
@@ -246,12 +248,12 @@ const TaskRow = React.memo(
             </Text>
           </TouchableOpacity>
 
-          {(item.remarksMandatory || response?.response_value) && (
+          {(item.remarks_mandatory || response?.response_value) && (
             <View style={{ flex: 1 }}>
               <TextInput
                 value={response?.remarks || ""}
                 onChangeText={(val) =>
-                  onResponseChange(item.serverId!, "remarks", val || null)
+                  onResponseChange(item.id, "remarks", val || null)
                 }
                 placeholder="Add remarks..."
                 placeholderTextColor={isDark ? "#64748b" : "#94a3b8"}
@@ -288,7 +290,7 @@ const TaskRow = React.memo(
                     },
                     {
                       text: "Retake Photo",
-                      onPress: () => onImageChange(item.serverId!, "PICK"),
+                      onPress: () => onImageChange(item.id, "PICK"),
                     },
                     { text: "Cancel", style: "cancel" },
                   ]);
@@ -301,7 +303,7 @@ const TaskRow = React.memo(
               />
               {!isCompleted && (
                 <TouchableOpacity
-                  onPress={() => onImageChange(item.serverId!, null)}
+                  onPress={() => onImageChange(item.id, null)}
                   style={styles.removeImgBtn}
                 >
                   <X size={12} color="#fff" />
@@ -372,7 +374,7 @@ export default function PMExecutionScreen() {
   const { isConnected } = useNetworkStatus();
 
   const [instance, setInstance] = useState<any>(null);
-  const [checklistItems, setChecklistItems] = useState<PMChecklistItem[]>([]);
+  const [checklistItems, setChecklistItems] = useState<PMChecklistItemRow[]>([]);
   const [responses, setResponses] = useState<ResponseMap>({});
   const [loading, setLoading] = useState(true);
   const [fetchingChecklist, setFetchingChecklist] = useState(false);
@@ -397,64 +399,76 @@ export default function PMExecutionScreen() {
     async (forceServerFetch = false) => {
       if (!instanceId) return;
       try {
-        const inst = await PMService.getInstanceByServerId(
-          instanceId as string,
-        );
+        // Try local DB first
+        let inst = await PMService.getInstanceByServerId(instanceId as string);
+
+        // If not in local DB or missing maintenance_id, fetch from API
+        if (!inst || !inst.maintenance_id) {
+          logger.info("Instance not in local DB, fetching from API", {
+            module: "PM_EXECUTION",
+            instanceId,
+          });
+          try {
+            const response = await PMService.fetchInstanceFromAPI(instanceId as string);
+            if (response) inst = response;
+          } catch (err) {
+            logger.warn("Failed to fetch instance from API", { module: "PM_EXECUTION", error: err });
+          }
+        }
+
         setInstance(inst);
 
-        if (inst?.maintenanceId) {
-          // Load from local cache — checklist items are bulk-cached by SyncManager
-          let items = await PMService.getChecklistItems(inst.maintenanceId);
-
-          // If cache is empty for this checklist, try to pull it
-          if (items.length === 0) {
-            if (isConnected) {
-              setFetchingChecklist(true);
-              try {
-                logger.info("Checklist not cached, pulling from API", {
-                  module: "PM_EXECUTION",
-                  maintenanceId: inst.maintenanceId,
-                });
-                await PMService.pullChecklistItems(inst.maintenanceId);
-                items = await PMService.getChecklistItems(inst.maintenanceId);
-                logger.info("Checklist pulled successfully", {
-                  module: "PM_EXECUTION",
-                  maintenanceId: inst.maintenanceId,
-                  itemCount: items.length,
-                });
-              } catch (err) {
-                logger.error("Failed to fetch checklist as fallback", {
-                  module: "PM_EXECUTION",
-                  error: err,
-                });
-              } finally {
-                setFetchingChecklist(false);
-              }
-            } else {
-              logger.warn("Checklist not cached and offline", {
-                module: "PM_EXECUTION",
-                maintenanceId: inst.maintenanceId,
-              });
-            }
-          }
-
-          setChecklistItems(items);
-
-          // 3. Load existing responses
-          const existingResponses = await PMService.getResponsesForInstance(
-            instanceId as string,
-          );
-          const responseMap: ResponseMap = {};
-          existingResponses.forEach((r) => {
-            responseMap[r.checklistItemId] = {
-              response_value: r.responseValue,
-              readings: r.readings,
-              remarks: r.remarks,
-              image_url: r.imageUrl,
-            };
-          });
-          setResponses(responseMap);
+        if (!inst?.maintenance_id) {
+          logger.warn("No maintenance_id on instance", { module: "PM_EXECUTION", instanceId });
+          return;
         }
+
+        // Load checklist items - local first, API fallback
+        let items = await PMService.getChecklistItems(inst.maintenance_id);
+
+        if (items.length === 0) {
+          logger.info("No local checklist items, fetching from API", {
+            module: "PM_EXECUTION",
+            maintenanceId: inst.maintenance_id,
+          });
+          setFetchingChecklist(true);
+          try {
+            const apiItems = await PMService.fetchChecklistItemsFromAPI(inst.maintenance_id);
+            items = apiItems;
+            logger.info("Loaded checklist items from API", {
+              module: "PM_EXECUTION",
+              maintenanceId: inst.maintenance_id,
+              itemCount: items.length,
+            });
+          } catch (err) {
+            logger.error("Failed to fetch checklist from API", { module: "PM_EXECUTION", error: err });
+          } finally {
+            setFetchingChecklist(false);
+          }
+        } else {
+          logger.info("Loaded checklist items from local DB", {
+            module: "PM_EXECUTION",
+            maintenanceId: inst.maintenance_id,
+            itemCount: items.length,
+          });
+        }
+
+        setChecklistItems(items);
+
+        // Load existing responses
+        const existingResponses = await PMService.getResponsesForInstance(
+          instanceId as string,
+        );
+        const responseMap: ResponseMap = {};
+        existingResponses.forEach((r) => {
+          responseMap[r.checklist_item_id] = {
+            response_value: r.response_value,
+            readings: r.readings,
+            remarks: r.remarks,
+            image_url: r.image_url,
+          };
+        });
+        setResponses(responseMap);
       } catch (err) {
         logger.error("Error loading PM execution data:", { error: err });
       } finally {
@@ -550,7 +564,7 @@ export default function PMExecutionScreen() {
     [instanceId, isConnected],
   );
   const handleInstanceImageChange = useCallback(
-    async (type: "beforeImage" | "afterImage") => {
+    async (type: "before_image" | "after_image") => {
       const result = await ImagePicker.launchCameraAsync({
         mediaTypes: ["images"],
         allowsEditing: true,
@@ -582,7 +596,6 @@ export default function PMExecutionScreen() {
         setInstance((prev: any) => ({
           ...prev,
           [type]: finalUri,
-          isSynced: false,
         }));
       }
     },
@@ -644,8 +657,8 @@ export default function PMExecutionScreen() {
           responseData,
           {
             status: nextStatus,
-            beforeImage: instance?.beforeImage || null,
-            afterImage: instance?.afterImage || null,
+            beforeImage: instance?.before_image || null,
+            afterImage: instance?.after_image || null,
             clientSign: executionOptions?.clientSign,
           }
         );
@@ -672,8 +685,8 @@ export default function PMExecutionScreen() {
     [
       responses,
       instanceId,
-      instance?.beforeImage,
-      instance?.afterImage,
+      instance?.before_image,
+      instance?.after_image,
       instance?.status,
     ],
   );
@@ -705,16 +718,16 @@ export default function PMExecutionScreen() {
   );
 
   // ── FlatList setup ────────────────────────────────────────────────────────
-  const renderItem: ListRenderItem<PMChecklistItem> = useCallback(
+  const renderItem: ListRenderItem<PMChecklistItemRow> = useCallback(
     ({ item, index }) => (
       <TaskRow
         item={item}
         index={index}
-        response={responses[item.serverId!]}
+        response={responses[item.id]}
         onResponseChange={handleResponseChange}
         onImageChange={handleImageChange}
         onPreview={setPreviewImageUrl}
-        isUploading={uploadingItems[item.serverId!]}
+        isUploading={uploadingItems[item.id]}
         isCompleted={instance?.status === "Completed"}
         style={{ backgroundColor: cardBg, borderColor: borderColor }}
       />
@@ -730,7 +743,7 @@ export default function PMExecutionScreen() {
     ],
   );
 
-  const keyExtractor = useCallback((item: PMChecklistItem) => item.id, []);
+  const keyExtractor = useCallback((item: PMChecklistItemRow) => item.id, []);
 
   const ListEmpty = (
     <View style={[styles.flex, { backgroundColor: bgColor }]}>
@@ -743,13 +756,13 @@ export default function PMExecutionScreen() {
       ) : (
         <View style={styles.emptyChecklist}>
           <Text style={[styles.emptyText, isDark && { color: "#64748b" }]}>
-            {!instance?.maintenanceId
+            {!instance?.maintenance_id
               ? "No checklist linked to this PM instance."
               : checklistItems.length === 0 && !isConnected
                 ? "Checklist not cached yet.\nPlease connect to internet and sync to cache all checklists."
                 : "No checklist items found."}
           </Text>
-          {checklistItems.length === 0 && !isConnected && instance?.maintenanceId && (
+          {checklistItems.length === 0 && !isConnected && instance?.maintenance_id && (
             <TouchableOpacity
               onPress={() => {
                 Alert.alert(
@@ -779,8 +792,8 @@ export default function PMExecutionScreen() {
   const isCompleted = instance?.status === "Completed";
   const canComplete =
     (progressPercent === 100 || Object.keys(responses).length > 0) &&
-    !!instance?.beforeImage &&
-    !!instance?.afterImage;
+    !!instance?.before_image &&
+    !!instance?.after_image;
 
   if (loading && !instance) {
     return (
@@ -826,10 +839,10 @@ export default function PMExecutionScreen() {
               style={[styles.headerTitle, { color: headerTextCol }]}
               numberOfLines={1}
             >
-              {instance?.assetId || instance?.title || "PM Task"}
+              {instance?.asset_id || instance?.title || "PM Task"}
             </Text>
             <Text style={[styles.headerSub, { color: subTextColor }]}>
-              {instance?.title} · {instance?.assetType}
+              {instance?.title} · {instance?.asset_type}
             </Text>
           </View>
           {isConnected && (
@@ -887,9 +900,9 @@ export default function PMExecutionScreen() {
           <View style={styles.evidenceCol}>
             <TouchableOpacity
               onPress={() => {
-                if (instance?.beforeImage) {
+                if (instance?.before_image) {
                   if (instance.status === "Completed") {
-                    setPreviewImageUrl(instance.beforeImage);
+                    setPreviewImageUrl(instance.before_image);
                   } else {
                     Alert.alert(
                       "Evidence Photo",
@@ -898,19 +911,19 @@ export default function PMExecutionScreen() {
                         {
                           text: "Show Preview",
                           onPress: () =>
-                            setPreviewImageUrl(instance.beforeImage),
+                            setPreviewImageUrl(instance.before_image),
                         },
                         {
                           text: "Retake Photo",
                           onPress: () =>
-                            handleInstanceImageChange("beforeImage"),
+                            handleInstanceImageChange("before_image"),
                         },
                         { text: "Cancel", style: "cancel" },
                       ],
                     );
                   }
                 } else {
-                  handleInstanceImageChange("beforeImage");
+                  handleInstanceImageChange("before_image");
                 }
               }}
               style={[
@@ -919,16 +932,16 @@ export default function PMExecutionScreen() {
                   backgroundColor: isDark ? "#1e293b" : "#f8fafc",
                   borderColor: isDark ? "#334155" : "#e2e8f0",
                 },
-                instance?.beforeImage
+                instance?.before_image
                   ? isDark
                     ? { borderColor: "#3b82f6", backgroundColor: "#172554" }
                     : styles.compactEvidenceBtnActive
                   : {},
               ]}
             >
-              {instance?.beforeImage ? (
+              {instance?.before_image ? (
                 <Image
-                  source={{ uri: instance.beforeImage }}
+                  source={{ uri: instance.before_image }}
                   style={styles.compactEvidencePreview}
                 />
               ) : (
@@ -938,21 +951,21 @@ export default function PMExecutionScreen() {
                 style={[
                   styles.compactEvidenceText,
                   { color: isDark ? "#475569" : "#94a3b8" },
-                  instance?.beforeImage ? { color: "#3b82f6" } : {},
+                  instance?.before_image ? { color: "#3b82f6" } : {},
                 ]}
               >
                 Before
               </Text>
-              {!instance?.beforeImage && (
+              {!instance?.before_image && (
                 <Text style={styles.mandatoryDot}>•</Text>
               )}
             </TouchableOpacity>
 
             <TouchableOpacity
               onPress={() => {
-                if (instance?.afterImage) {
+                if (instance?.after_image) {
                   if (instance.status === "Completed") {
-                    setPreviewImageUrl(instance.afterImage);
+                    setPreviewImageUrl(instance.after_image);
                   } else {
                     Alert.alert(
                       "Evidence Photo",
@@ -961,19 +974,19 @@ export default function PMExecutionScreen() {
                         {
                           text: "Show Preview",
                           onPress: () =>
-                            setPreviewImageUrl(instance.afterImage),
+                            setPreviewImageUrl(instance.after_image),
                         },
                         {
                           text: "Retake Photo",
                           onPress: () =>
-                            handleInstanceImageChange("afterImage"),
+                            handleInstanceImageChange("after_image"),
                         },
                         { text: "Cancel", style: "cancel" },
                       ],
                     );
                   }
                 } else {
-                  handleInstanceImageChange("afterImage");
+                  handleInstanceImageChange("after_image");
                 }
               }}
               style={[
@@ -982,16 +995,16 @@ export default function PMExecutionScreen() {
                   backgroundColor: isDark ? "#1e293b" : "#f8fafc",
                   borderColor: isDark ? "#334155" : "#e2e8f0",
                 },
-                instance?.afterImage
+                instance?.after_image
                   ? isDark
                     ? { borderColor: "#3b82f6", backgroundColor: "#172554" }
                     : styles.compactEvidenceBtnActive
                   : {},
               ]}
             >
-              {instance?.afterImage ? (
+              {instance?.after_image ? (
                 <Image
-                  source={{ uri: instance.afterImage }}
+                  source={{ uri: instance.after_image }}
                   style={styles.compactEvidencePreview}
                 />
               ) : (
@@ -1004,12 +1017,12 @@ export default function PMExecutionScreen() {
                 style={[
                   styles.compactEvidenceText,
                   { color: isDark ? "#475569" : "#94a3b8" },
-                  instance?.afterImage ? { color: "#3b82f6" } : {},
+                  instance?.after_image ? { color: "#3b82f6" } : {},
                 ]}
               >
                 After
               </Text>
-              {!instance?.afterImage && (
+              {!instance?.after_image && (
                 <Text style={styles.mandatoryDot}>•</Text>
               )}
             </TouchableOpacity>

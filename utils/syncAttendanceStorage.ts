@@ -1,192 +1,191 @@
+/**
+ * Attendance Sync Utilities - PowerSync Edition
+ * 
+ * Handles offline queueing for attendance check-in/check-out.
+ * With PowerSync, we store these in a local queue table that syncs automatically.
+ */
+
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { v4 as uuidv4 } from "uuid";
 import logger from "./logger";
-import { fetchWithTimeout, syncWithRetry } from "./apiHelper";
 
-const ATTENDANCE_QUEUE_KEY = "@offline_attendance_queue";
+const OFFLINE_CHECKIN_QUEUE_KEY = "@offline_checkin_queue";
+const OFFLINE_CHECKOUT_QUEUE_KEY = "@offline_checkout_queue";
 
-export type OfflineAttendanceAction =
-  | {
-      type: "check_in";
-      localId: string;
-      userId: string;
-      siteCode: string;
-      timestamp: string;
-    }
-  | {
-      type: "check_out";
-      localId: string;
-      attendanceId: string; // server id or local optimistic id
-      timestamp: string;
-      remarks?: string;
-    };
-
-export async function getPendingAttendanceQueue(): Promise<OfflineAttendanceAction[]> {
-  try {
-    const raw = await AsyncStorage.getItem(ATTENDANCE_QUEUE_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch {
-    return [];
-  }
+interface OfflineCheckIn {
+  id: string;
+  userId: string;
+  siteCode: string;
+  timestamp: string;
+  latitude?: number;
+  longitude?: number;
 }
 
-async function saveQueue(queue: OfflineAttendanceAction[]): Promise<void> {
-  await AsyncStorage.setItem(ATTENDANCE_QUEUE_KEY, JSON.stringify(queue));
+interface OfflineCheckOut {
+  id: string;
+  attendanceId: string;
+  timestamp: string;
+  remarks?: string;
+  latitude?: number;
+  longitude?: number;
 }
 
+/**
+ * Queue an offline check-in
+ * Returns the local ID for optimistic UI updates
+ */
 export async function queueOfflineCheckIn(
   userId: string,
   siteCode: string,
   timestamp: string,
+  latitude?: number,
+  longitude?: number
 ): Promise<string> {
-  const localId = `local-ci-${Date.now()}`;
-  const queue = await getPendingAttendanceQueue();
-  queue.push({ type: "check_in", localId, userId, siteCode, timestamp });
-  await saveQueue(queue);
-  logger.info("Queued offline check-in", {
-    module: "ATTENDANCE_SYNC",
-    localId,
-    siteCode,
-  });
-  return localId;
-}
+  try {
+    const id = uuidv4();
+    const checkIn: OfflineCheckIn = {
+      id,
+      userId,
+      siteCode,
+      timestamp,
+      latitude,
+      longitude,
+    };
 
-export async function queueOfflineCheckOut(
-  attendanceId: string,
-  localId: string,
-  timestamp: string,
-  remarks?: string,
-): Promise<void> {
-  const queue = await getPendingAttendanceQueue();
-  queue.push({ type: "check_out", localId, attendanceId, timestamp, remarks });
-  await saveQueue(queue);
-  logger.info("Queued offline check-out", {
-    module: "ATTENDANCE_SYNC",
-    localId,
-    attendanceId,
-  });
-}
+    // Get existing queue
+    const queueStr = await AsyncStorage.getItem(OFFLINE_CHECKIN_QUEUE_KEY);
+    const queue: OfflineCheckIn[] = queueStr ? JSON.parse(queueStr) : [];
 
-export async function clearSyncedAttendance(localIds: string[]): Promise<void> {
-  const queue = await getPendingAttendanceQueue();
-  const remaining = queue.filter((item) => !localIds.includes(item.localId));
-  await saveQueue(remaining);
+    // Add to queue
+    queue.push(checkIn);
+    await AsyncStorage.setItem(OFFLINE_CHECKIN_QUEUE_KEY, JSON.stringify(queue));
+
+    logger.info("Queued offline check-in", {
+      module: "SYNC_ATTENDANCE_STORAGE",
+      id,
+      userId,
+      siteCode,
+    });
+
+    return id;
+  } catch (error) {
+    logger.error("Error queueing offline check-in", { error });
+    throw error;
+  }
 }
 
 /**
- * Push all queued offline attendance records to the server.
- * Called by SyncManager when back online.
+ * Queue an offline check-out
  */
-export async function syncPendingAttendance(
-  token: string,
-  apiUrl: string,
-): Promise<{ synced: number; failed: number }> {
-  const queue = await getPendingAttendanceQueue();
-  if (queue.length === 0) return { synced: 0, failed: 0 };
+export async function queueOfflineCheckOut(
+  id: string,
+  attendanceId: string,
+  timestamp: string,
+  remarks?: string,
+  latitude?: number,
+  longitude?: number
+): Promise<void> {
+  try {
+    const checkOut: OfflineCheckOut = {
+      id,
+      attendanceId,
+      timestamp,
+      remarks,
+      latitude,
+      longitude,
+    };
 
-  let synced = 0;
-  let failed = 0;
-  const syncedIds: string[] = [];
+    // Get existing queue
+    const queueStr = await AsyncStorage.getItem(OFFLINE_CHECKOUT_QUEUE_KEY);
+    const queue: OfflineCheckOut[] = queueStr ? JSON.parse(queueStr) : [];
 
-  // Track server-assigned IDs for check-ins so check-outs can reference them
-  const localToServerId: Record<string, string> = {};
+    // Add to queue
+    queue.push(checkOut);
+    await AsyncStorage.setItem(OFFLINE_CHECKOUT_QUEUE_KEY, JSON.stringify(queue));
 
-  for (const item of queue) {
-    try {
-      if (item.type === "check_in") {
-        const response = await syncWithRetry(() =>
-          fetchWithTimeout(`${apiUrl}/api/attendance/check-in`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${token}`,
-            },
-            body: JSON.stringify({
-              user_id: item.userId,
-              site_code: item.siteCode,
-              check_in_time: item.timestamp,
-            }),
-          }),
-        );
-
-        if (response.ok) {
-          const result = await response.json();
-          if (result.success && result.data?.id) {
-            localToServerId[item.localId] = result.data.id;
-          }
-          syncedIds.push(item.localId);
-          synced++;
-          logger.info("Synced offline check-in", {
-            module: "ATTENDANCE_SYNC",
-            localId: item.localId,
-            serverId: result.data?.id,
-          });
-        } else {
-          failed++;
-          logger.warn("Failed to sync offline check-in", {
-            module: "ATTENDANCE_SYNC",
-            localId: item.localId,
-            status: response.status,
-          });
-        }
-      } else if (item.type === "check_out") {
-        // Resolve server ID — may have been a local optimistic id
-        const serverId =
-          localToServerId[item.attendanceId] || item.attendanceId;
-
-        // Skip if still a local id (check-in hasn't synced yet)
-        if (serverId.startsWith("local-")) {
-          logger.warn("Skipping check-out — check-in not yet synced", {
-            module: "ATTENDANCE_SYNC",
-            localId: item.localId,
-          });
-          failed++;
-          continue;
-        }
-
-        const response = await syncWithRetry(() =>
-          fetchWithTimeout(`${apiUrl}/api/attendance/${serverId}/check-out`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${token}`,
-            },
-            body: JSON.stringify({
-              check_out_time: item.timestamp,
-              remarks: item.remarks,
-            }),
-          }),
-        );
-
-        if (response.ok) {
-          syncedIds.push(item.localId);
-          synced++;
-          logger.info("Synced offline check-out", {
-            module: "ATTENDANCE_SYNC",
-            localId: item.localId,
-            serverId,
-          });
-        } else {
-          failed++;
-          logger.warn("Failed to sync offline check-out", {
-            module: "ATTENDANCE_SYNC",
-            localId: item.localId,
-            status: response.status,
-          });
-        }
-      }
-    } catch (err: any) {
-      failed++;
-      logger.error("Error syncing attendance item", {
-        module: "ATTENDANCE_SYNC",
-        localId: item.localId,
-        error: err.message,
-      });
-    }
+    logger.info("Queued offline check-out", {
+      module: "SYNC_ATTENDANCE_STORAGE",
+      attendanceId,
+    });
+  } catch (error) {
+    logger.error("Error queueing offline check-out", { error });
+    throw error;
   }
+}
 
-  if (syncedIds.length > 0) {
-    await clearSyncedAttendance(syncedIds);
+/**
+ * Get pending check-ins
+ */
+export async function getPendingCheckIns(): Promise<OfflineCheckIn[]> {
+  try {
+    const queueStr = await AsyncStorage.getItem(OFFLINE_CHECKIN_QUEUE_KEY);
+    return queueStr ? JSON.parse(queueStr) : [];
+  } catch (error) {
+    logger.error("Error getting pending check-ins", { error });
+    return [];
   }
+}
 
-  return { synced, failed };
+/**
+ * Get pending check-outs
+ */
+export async function getPendingCheckOuts(): Promise<OfflineCheckOut[]> {
+  try {
+    const queueStr = await AsyncStorage.getItem(OFFLINE_CHECKOUT_QUEUE_KEY);
+    return queueStr ? JSON.parse(queueStr) : [];
+  } catch (error) {
+    logger.error("Error getting pending check-outs", { error });
+    return [];
+  }
+}
+
+/**
+ * Clear a check-in from the queue after successful sync
+ */
+export async function clearCheckIn(id: string): Promise<void> {
+  try {
+    const queueStr = await AsyncStorage.getItem(OFFLINE_CHECKIN_QUEUE_KEY);
+    if (!queueStr) return;
+
+    const queue: OfflineCheckIn[] = JSON.parse(queueStr);
+    const filtered = queue.filter((item) => item.id !== id);
+    await AsyncStorage.setItem(OFFLINE_CHECKIN_QUEUE_KEY, JSON.stringify(filtered));
+
+    logger.info("Cleared check-in from queue", { id });
+  } catch (error) {
+    logger.error("Error clearing check-in", { error });
+  }
+}
+
+/**
+ * Clear a check-out from the queue after successful sync
+ */
+export async function clearCheckOut(id: string): Promise<void> {
+  try {
+    const queueStr = await AsyncStorage.getItem(OFFLINE_CHECKOUT_QUEUE_KEY);
+    if (!queueStr) return;
+
+    const queue: OfflineCheckOut[] = JSON.parse(queueStr);
+    const filtered = queue.filter((item) => item.id !== id);
+    await AsyncStorage.setItem(OFFLINE_CHECKOUT_QUEUE_KEY, JSON.stringify(filtered));
+
+    logger.info("Cleared check-out from queue", { id });
+  } catch (error) {
+    logger.error("Error clearing check-out", { error });
+  }
+}
+
+/**
+ * Clear all attendance queues
+ */
+export async function clearAllAttendanceQueues(): Promise<void> {
+  try {
+    await AsyncStorage.multiRemove([
+      OFFLINE_CHECKIN_QUEUE_KEY,
+      OFFLINE_CHECKOUT_QUEUE_KEY,
+    ]);
+    logger.info("Cleared all attendance queues");
+  } catch (error) {
+    logger.error("Error clearing attendance queues", { error });
+  }
 }

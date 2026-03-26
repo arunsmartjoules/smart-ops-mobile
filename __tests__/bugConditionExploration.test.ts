@@ -118,7 +118,7 @@ jest.mock("../services/SyncManager", () => ({
   syncManager: { triggerSync: jest.fn().mockResolvedValue(undefined) },
 }));
 
-// Minimal WatermelonDB collection stub
+// Minimal database collection stub (PowerSync/Drizzle)
 const makeCollection = () => ({
   query: jest.fn(() => ({
     fetch: jest.fn().mockResolvedValue([]),
