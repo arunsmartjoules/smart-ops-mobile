@@ -31,7 +31,8 @@ import {
 } from "lucide-react-native";
 import { useNetworkStatus } from "@/hooks/useNetworkStatus";
 import AttendanceService, { type Site } from "@/services/AttendanceService";
-import { db, userSites } from "@/database";
+import { useSites } from "@/hooks/useSites";
+import { db } from "@/database";
 import { eq } from "drizzle-orm";
 import logger from "@/utils/logger";
 import Skeleton from "@/components/Skeleton";
@@ -41,13 +42,10 @@ export default function SiteLogs() {
   const isDark = useColorScheme() === "dark";
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [siteCode, setSiteCode] = useState<string | null>(null);
-  const [siteName, setSiteName] = useState<string>("Select Site");
   const [logProgress, setLogProgress] = useState<
     Record<string, { total: number; completed: number }>
   >({});
   const [openCounts, setOpenCounts] = useState<Record<string, number>>({});
-  const [availableSites, setAvailableSites] = useState<Site[]>([]);
   const [filterVisible, setFilterVisible] = useState(false);
   const [fromDate, setFromDate] = useState<Date | null>(null);
   const [toDate, setToDate] = useState<Date | null>(null);
@@ -57,16 +55,11 @@ export default function SiteLogs() {
   const [shiftModalVisible, setShiftModalVisible] = useState(false);
   const { isConnected } = useNetworkStatus();
 
-  // Clear stale state when user changes to prevent showing previous user's data
-  useEffect(() => {
-    setLogProgress({});
-    setOpenCounts({});
-    setSiteCode(null);
-    setSiteName("Select Site");
-    setAvailableSites([]);
-    lastSyncRef.current = {};
-    setLoading(true);
-  }, [user?.user_id, user?.id]);
+  // ── Clean sites hook ──────────────────────────────────────────────────────
+  const userId = user?.user_id || user?.id;
+  const { sites: availableSites, selectedSite, selectSite } = useSites(userId);
+  const siteCode = selectedSite?.site_code ?? null;
+  const siteName = selectedSite?.name ?? selectedSite?.site_code ?? "Select Site";
 
   // Safety timer to clear loading no matter what
   useEffect(() => {
@@ -78,56 +71,6 @@ export default function SiteLogs() {
     }, 10000);
     return () => clearTimeout(timer);
   }, []);
-
-  // Fetch sites once and set the active site code
-  const loadSites = useCallback(async () => {
-    const userId = user?.user_id || user?.id;
-    if (!userId) return;
-    try {
-      const storageKey = `last_site_${userId}`;
-      const [localSiteRows, lastSiteCode] = await Promise.all([
-        db.select().from(userSites).where(eq(userSites.user_id, userId)).catch(() => []),
-        AsyncStorage.getItem(storageKey),
-      ]);
-      const cachedSites: Site[] = localSiteRows.map((r: any) => ({
-        site_code: r.site_code,
-        name: r.site_name || r.site_code,
-      }));
-
-      // If offline, use cached sites only (skip API call)
-      let effectiveSites: Site[];
-      const netState = await NetInfo.fetch();
-      const isActuallyOnline = netState.isConnected === true;
-
-      if (isActuallyOnline) {
-        const sites = await AttendanceService.getUserSites(userId, "JouleCool").catch(() => [] as Site[]);
-        effectiveSites = sites.length > 0 ? sites : cachedSites;
-      } else {
-        effectiveSites = cachedSites;
-      }
-
-      setAvailableSites(effectiveSites);
-
-      if (effectiveSites.length === 0) return;
-
-      // Determine which site to activate
-      const effectiveLast = lastSiteCode && lastSiteCode !== "all" ? lastSiteCode : null;
-      const siteToSelect =
-        effectiveLast && effectiveSites.find((s) => s.site_code === effectiveLast)
-          ? effectiveLast
-          : effectiveSites[0].site_code;
-
-      const activeSite = effectiveSites.find((s) => s.site_code === siteToSelect);
-      setSiteCode(siteToSelect);
-      setSiteName(activeSite?.name || siteToSelect);
-
-      if (siteToSelect !== lastSiteCode) {
-        await AsyncStorage.setItem(storageKey, siteToSelect);
-      }
-    } catch (e) {
-      logger.error("Error loading sites for logs", { module: "SITE_LOGS_SCREEN", error: e });
-    }
-  }, [user?.user_id, user?.id, isConnected]);
 
   // Fetch log progress for the currently active siteCode
   const fetchLogs = useCallback(async (targetSite: string) => {
@@ -175,11 +118,6 @@ export default function SiteLogs() {
   useEffect(() => {
     fetchLogsRef.current = fetchLogs;
   }, [fetchLogs]);
-
-  // Load sites once on mount / user change
-  useEffect(() => {
-    loadSites();
-  }, [loadSites]);
 
   // Fetch logs whenever siteCode or date filters change
   useEffect(() => {
@@ -522,15 +460,9 @@ export default function SiteLogs() {
         selectedSiteCode={siteCode}
       onSiteSelect={async (id) => {
           const s = availableSites.find((site) => site.site_code === id);
-          setSiteCode(id);
-          setSiteName(s?.name || id);
+          if (s) await selectSite(s);
           setOpenCounts({});
           setLogProgress({});
-          await AsyncStorage.setItem(
-            `last_site_${user?.id || user?.user_id}`,
-            id,
-          );
-          // Pass id directly — don't rely on siteCode state which hasn't updated yet
           fetchLogs(id);
         }}
         onApply={() => {

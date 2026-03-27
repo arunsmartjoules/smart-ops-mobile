@@ -14,8 +14,6 @@
   "dependencies": {
     "@expo/vector-icons": "~15.0.3",
     "@journeyapps/react-native-quick-sqlite": "^2.5.1",
-    "@powersync/drizzle-driver": "^0.7.0",
-    "@powersync/react-native": "^1.30.0",
     "@react-native-async-storage/async-storage": "2.2.0",
     "@react-native-community/datetimepicker": "8.4.4",
     "@react-native-community/netinfo": "11.4.1",
@@ -49,6 +47,7 @@
     "expo-router": "~6.0.23",
     "expo-secure-store": "~15.0.8",
     "expo-splash-screen": "~31.0.13",
+    "expo-sqlite": "~16.0.10",
     "expo-status-bar": "~3.0.9",
     "expo-symbols": "~1.0.8",
     "expo-system-ui": "~6.0.9",
@@ -95,9 +94,6 @@
         "expo-background-fetch",
         "expo-task-manager",
         "@shopify/flash-list",
-        "@powersync/react-native",
-        "@powersync/drizzle-driver",
-        "@journeyapps/react-native-quick-sqlite",
         "drizzle-orm",
         "@react-navigation/native"
       ]
@@ -105,10 +101,7 @@
     "doctor": {
       "reactNativeDirectoryCheck": {
         "exclude": [
-          "react-native-vector-icons",
-          "@powersync/react-native",
-          "@powersync/drizzle-driver",
-          "@journeyapps/react-native-quick-sqlite"
+          "react-native-vector-icons"
         ]
       }
     }

@@ -10,7 +10,6 @@ import { eq, desc, and } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
 import {
   db,
-  powerSync,
   tickets,
   ticketUpdates,
   areas,
@@ -80,9 +79,7 @@ export const UserSiteDB = {
 
 export const SyncDB = {
   async clearAllData(): Promise<void> {
-    await powerSync.disconnectAndClear();
-    logger.info("Database cleared via PowerSync", {
-      module: "DATABASE_SERVICE",
-    });
+    // No-op in cache mode — data is cleared on logout via AsyncStorage
+    logger.info("clearAllData called", { module: "DATABASE_SERVICE" });
   },
 };

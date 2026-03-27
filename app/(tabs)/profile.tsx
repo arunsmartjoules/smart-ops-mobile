@@ -104,7 +104,7 @@ export default function Profile() {
       color: "#8b5cf6", 
       value: theme.charAt(0).toUpperCase() + theme.slice(1) 
     },
-    { icon: Info, label: "App Version", color: "#8b5cf6", value: "1.0.21 (Beta)" },    { 
+    { icon: Info, label: "App Version", color: "#8b5cf6", value: "1.0.22 (Beta)" },    { 
       icon: ArrowUpCircle, 
       label: "Check for Updates", 
       color: "#3b82f6", 

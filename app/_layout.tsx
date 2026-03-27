@@ -5,11 +5,10 @@ import "./global.css";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { ThemeProvider } from "@/contexts/ThemeContext";
 import { SafeAreaProvider } from "react-native-safe-area-context";
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
 import { View, Text } from "react-native";
 import { syncManager } from "@/services/SyncManager";
-import { GestureHandlerRootView } from "react-native-gesture-handler";
-import "@/services/SyncManager"; // Ensure background task is defined early
+import { initDatabase } from "@/database";
 import UpdateService from "@/services/UpdateService";
 import UpdateBanner from "@/components/UpdateBanner";
 import { supabase } from "@/services/supabase";
@@ -27,7 +26,6 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
   const { token, isLoading } = useAuth();
   const segments = useSegments();
   const router = useRouter();
-  const prevTokenRef = useRef<string | null | undefined>(undefined);
 
   useEffect(() => {
     if (isLoading) return;
@@ -46,14 +44,8 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
     }
   }, [token, isLoading, segments]);
 
-  // Trigger prefetchAll when user logs in (token transitions from falsy to truthy)
   useEffect(() => {
     if (isLoading) return;
-    const prev = prevTokenRef.current;
-    prevTokenRef.current = token;
-    if (prev !== undefined && !prev && token) {
-      syncManager.prefetchAll();
-    }
   }, [token, isLoading]);
 
   // Handle PASSWORD_RECOVERY deep link — navigate to reset-password screen
@@ -86,6 +78,8 @@ export default function RootLayout() {
   useEffect(() => {
     const init = async () => {
       try {
+        // Initialize local SQLite database
+        initDatabase();
         // Request location permission on startup so it's ready for punch-in
         await Location.requestForegroundPermissionsAsync();
         syncManager.initialize();

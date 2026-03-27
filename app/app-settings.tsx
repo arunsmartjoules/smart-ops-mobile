@@ -1,309 +1,134 @@
-import React, { useState, useEffect, useCallback, useMemo } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import {
   View,
   Text,
   TouchableOpacity,
-  Alert,
   ActivityIndicator,
-  Switch,
   ScrollView,
-  useColorScheme,
+  RefreshControl,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { LinearGradient } from "expo-linear-gradient";
 import {
   ArrowLeft,
-  RefreshCw,
-  Trash2,
-  Cloud,
   Clock,
   Database,
   CheckCircle,
-  Ticket,
   HardDrive,
   Wifi,
   WifiOff,
+  Activity,
+  AlertCircle,
+  Layers,
+  Zap,
+  Ticket,
 } from "lucide-react-native";
 import { router } from "expo-router";
-import { useAuth } from "@/contexts/AuthContext";
-// Removed UpdateService import from here
-import {
-  getSiteLogSyncStatus,
-  getPendingSiteLogsCount,
-  clearAllOfflineSiteLogData,
-  setSiteLogAutoSyncEnabled,
-  SiteLogSyncStatus,
-} from "@/utils/syncSiteLogStorage";
-import {
-  getTicketSyncStatus,
-  getPendingTicketUpdates,
-  setTicketAutoSyncEnabled,
-  clearAllOfflineTicketData,
-  TicketSyncStatus,
-  getPendingTicketUpdatesDebug,
-} from "@/utils/syncTicketStorage";
-import {
-  getPMSyncStatus,
-  getPendingPMCount,
-  setPMAutoSyncEnabled,
-  clearAllOfflinePMData,
-  PMSyncStatus,
-} from "@/utils/syncPMStorage";
-import { syncManager } from "@/services/SyncManager";
-import { powerSync } from "@/database";
+import { openDatabaseSync } from "expo-sqlite";
 import { useNetworkStatus } from "@/hooks/useNetworkStatus";
 import logger from "@/utils/logger";
 
-import { API_BASE_URL } from "../constants/api";
-import { format } from "date-fns";
+function formatBytes(bytes: number): string {
+  if (!bytes || bytes === 0) return "0 B";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
 
-const API_URL = API_BASE_URL;
+const TABLE_DEFS = [
+  { name: "tickets", label: "Tickets", icon: Ticket, color: "#dc2626" },
+  { name: "site_logs", label: "Site Logs", icon: Activity, color: "#f97316" },
+  { name: "chiller_readings", label: "Chiller Readings", icon: Database, color: "#0d9488" },
+  { name: "pm_instances", label: "PM Instances", icon: CheckCircle, color: "#8b5cf6" },
+  { name: "pm_responses", label: "PM Responses", icon: Layers, color: "#6366f1" },
+  { name: "attendance_logs", label: "Attendance", icon: HardDrive, color: "#22c55e" },
+  { name: "user_sites", label: "User Sites", icon: HardDrive, color: "#64748b" },
+  { name: "areas", label: "Assets", icon: HardDrive, color: "#0ea5e9" },
+  { name: "categories", label: "Categories", icon: AlertCircle, color: "#f59e0b" },
+  { name: "pm_checklist_items", label: "PM Checklists", icon: CheckCircle, color: "#ec4899" },
+  { name: "log_master", label: "Log Master", icon: Database, color: "#94a3b8" },
+];
 
 export default function AppSettings() {
-  const { token } = useAuth();
   const { isConnected } = useNetworkStatus();
-
-  // Ticket sync status
-  const [ticketSyncStatus, setTicketSyncStatus] = useState<TicketSyncStatus>({
-    lastSynced: null,
-    pendingCount: 0,
-    autoSyncEnabled: true,
-  });
-
-  // Site Log sync status
-  const [siteLogSyncStatus, setSiteLogSyncStatus] = useState<SiteLogSyncStatus>(
-    {
-      lastSynced: null,
-      pendingCount: 0,
-      autoSyncEnabled: true,
-    },
-  );
-
-  // PM sync status
-  const [pmSyncStatus, setPmSyncStatus] = useState<PMSyncStatus>({
-    lastSynced: null,
-    pendingCount: 0,
-    autoSyncEnabled: true,
-  });
-
-  // Cache info (PowerSync manages local DB; no separate cache metrics needed)
-  const [cacheSize, setCacheSize] = useState({ items: 0, bytes: 0 });
-
-  const [isSyncing, setIsSyncing] = useState(false);
+  const [tableCounts, setTableCounts] = useState<Record<string, number>>({});
+  const [totalRecords, setTotalRecords] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
-  useEffect(() => {
-    loadAllStatus();
-  }, []);
-
-  const loadAllStatus = useCallback(async () => {
-    setIsLoading(true);
+  const loadData = useCallback(async () => {
     try {
-      // Load ticket status
-      const ticketStatus = await getTicketSyncStatus();
-      const ticketPending = await getPendingTicketUpdates();
-      setTicketSyncStatus((prev) => ({
-        ...ticketStatus,
-        pendingCount: ticketPending.length,
-      }));
-
-      // Load site log status
-      const siteLogStatus = await getSiteLogSyncStatus();
-      const siteLogPending = await getPendingSiteLogsCount();
-      setSiteLogSyncStatus((prev) => ({
-        lastSynced: siteLogStatus.lastSynced,
-        pendingCount: siteLogPending,
-        autoSyncEnabled: siteLogStatus.autoSyncEnabled,
-      }));
-
-      // Load PM status
-      const pmStatus = await getPMSyncStatus();
-      setPmSyncStatus(pmStatus);
-
-      // PowerSync manages caching; no separate cache size to track
-      setCacheSize({ items: 0, bytes: 0 });
-    } catch (error: any) {
-      logger.error("Error loading sync status", {
-        module: "APP_SETTINGS",
-        error: error.message,
-      });
+      const sqlite = openDatabaseSync("smartops.db");
+      const counts: Record<string, number> = {};
+      let total = 0;
+      for (const t of TABLE_DEFS) {
+        try {
+          const result = sqlite.getFirstSync<{ count: number }>(
+            `SELECT COUNT(*) as count FROM ${t.name}`
+          );
+          const count = result?.count ?? 0;
+          counts[t.name] = count;
+          total += count;
+        } catch {
+          counts[t.name] = 0;
+        }
+      }
+      setTableCounts(counts);
+      setTotalRecords(total);
+    } catch (err: any) {
+      logger.error("Failed to load cache stats", { module: "APP_SETTINGS", error: err.message });
     } finally {
       setIsLoading(false);
+      setRefreshing(false);
     }
   }, []);
 
-  const handleSyncAll = useCallback(async () => {
-    if (!token) {
-      Alert.alert("Error", "Please sign in to sync data");
-      return;
-    }
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
 
-    if (isConnected === false) {
-      Alert.alert("Offline", "You need to be online to sync data");
-      return;
-    }
-
-    setIsSyncing(true);
-    try {
-      // Use unified sync manager for smart pull and push
-      await syncManager.triggerSync("manual");
-
-      // Wait a bit for database writes to complete
-      await new Promise(resolve => setTimeout(resolve, 500));
-      
-      // Reload status to reflect changes
-      await loadAllStatus();
-      
-      // Check if there are still pending items
-      const ticketPending = await getPendingTicketUpdates();
-      const siteLogPending = await getPendingSiteLogsCount();
-      const pmPending = await getPendingPMCount();
-      const totalStillPending = ticketPending.length + siteLogPending + pmPending;
-      
-      if (totalStillPending > 0) {
-        Alert.alert(
-          "Sync Complete",
-          `Synchronized successfully, but ${totalStillPending} item(s) still pending. This may be due to network issues or validation errors.`,
-        );
-      } else {
-        Alert.alert(
-          "Success",
-          "Synchronization complete. All data is up to date.",
-        );
-      }
-    } catch (error: any) {
-      logger.error("Manual sync all failed", {
-        module: "APP_SETTINGS",
-        error: error.message,
-      });
-      Alert.alert("Sync Error", error.message || "Failed to sync data");
-    } finally {
-      setIsSyncing(false);
-    }
-  }, [token, isConnected, loadAllStatus]);
-
-  const handleClearAllData = useCallback(async () => {
-    Alert.alert(
-      "Clear All Offline Data",
-      "This will permanently delete ALL local data including pending records. This cannot be undone!",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Delete All",
-          style: "destructive",
-          onPress: async () => {
-            try {
-              await clearAllOfflineTicketData();
-              await clearAllOfflineSiteLogData();
-              await clearAllOfflinePMData();
-              await powerSync.disconnectAndClear();
-              await loadAllStatus();
-              Alert.alert("Success", "All local data cleared");
-            } catch (error: any) {
-              logger.error("Clear all offline data failed", {
-                module: "APP_SETTINGS",
-                error: error.message,
-              });
-              Alert.alert("Error", "Failed to clear local data");
-            }
-          },
-        },
-      ],
-    );
-  }, [loadAllStatus]);
-
-  const handleToggleAutoSync = useCallback(
-    async (module: "tickets" | "site_logs", enabled: boolean) => {
-      try {
-        if (module === "tickets") {
-          await setTicketAutoSyncEnabled(enabled);
-          setTicketSyncStatus((prev) => ({
-            ...prev,
-            autoSyncEnabled: enabled,
-          }));
-        } else if (module === "site_logs") {
-          await setSiteLogAutoSyncEnabled(enabled);
-          setSiteLogSyncStatus((prev) => ({
-            ...prev,
-            autoSyncEnabled: enabled,
-          }));
-        } else if (module === "pm" as any) {
-          await setPMAutoSyncEnabled(enabled);
-          setPmSyncStatus((prev) => ({
-            ...prev,
-            autoSyncEnabled: enabled,
-          }));
-        }
-      } catch (error: any) {
-        logger.error("Toggle auto-sync failed", {
-          module: "APP_SETTINGS",
-          subModule: module,
-          error: error.message,
-        });
-        Alert.alert("Error", "Failed to update auto-sync setting");
-      }
-    },
-    [],
-  );
-
-  const formatLastSynced = useCallback((dateString: string | null) => {
-    if (!dateString) return "Never";
-    const date = new Date(dateString);
-    const now = new Date();
-    const diffMs = now.getTime() - date.getTime();
-    const diffMins = Math.floor(diffMs / 60000);
-    const diffHours = Math.floor(diffMs / 3600000);
-
-    if (diffMins < 1) return "Just now";
-    if (diffMins < 60) return `${diffMins}m ago`;
-    if (diffHours < 24) return `${diffHours}h ago`;
-    return format(date, "dd MMM yyyy");
-  }, []);
-
-  const totalPending = useMemo(
-    () =>
-      ticketSyncStatus.pendingCount +
-      siteLogSyncStatus.pendingCount +
-      pmSyncStatus.pendingCount,
-    [
-      ticketSyncStatus.pendingCount,
-      siteLogSyncStatus.pendingCount,
-      pmSyncStatus.pendingCount,
-    ],
-  );
+  const onRefresh = useCallback(() => {
+    setRefreshing(true);
+    loadData();
+  }, [loadData]);
 
   return (
     <View className="flex-1 bg-slate-50 dark:bg-slate-950">
       <SafeAreaView className="flex-1">
-        {/* Header */}
-        <View className="px-5 pt-2 pb-3 flex-row items-center">
-          <TouchableOpacity
-            onPress={() => router.back()}
-            className="w-10 h-10 rounded-full bg-white dark:bg-slate-900 items-center justify-center mr-4"
-            style={{
-              shadowColor: "#000",
-              shadowOffset: { width: 0, height: 2 },
-              shadowOpacity: 0.08,
-              shadowRadius: 8,
-              elevation: 3,
-            }}
-          >
-            <ArrowLeft size={18} color="#64748b" />
-          </TouchableOpacity>
-          <Text className="text-slate-900 dark:text-slate-50 text-xl font-bold flex-1">
-            Offline & Sync
-          </Text>
-          {/* Network Status */}
+        <View className="px-5 pt-2 pb-3 flex-row items-center justify-between">
+          <View className="flex-row items-center flex-1">
+            <TouchableOpacity
+              onPress={() => router.back()}
+              className="w-10 h-10 rounded-full bg-white dark:bg-slate-900 items-center justify-center mr-3 border border-slate-200 dark:border-slate-800"
+            >
+              <ArrowLeft size={18} color="#64748b" />
+            </TouchableOpacity>
+            <View>
+              <Text className="text-slate-400 dark:text-slate-500 text-[10px] font-black uppercase tracking-[0.2em]">
+                Settings
+              </Text>
+              <Text className="text-slate-900 dark:text-slate-50 text-xl font-black tracking-tight">
+                Offline & Cache
+              </Text>
+            </View>
+          </View>
           <View
-            className={`flex-row items-center px-3 py-1.5 rounded-full ${isConnected !== false ? "bg-green-100 dark:bg-green-900/30" : "bg-amber-100 dark:bg-amber-900/30"}`}
+            className={`flex-row items-center px-3 py-1.5 rounded-full border ${
+              isConnected !== false
+                ? "bg-green-50 dark:bg-green-950/30 border-green-100 dark:border-green-900/50"
+                : "bg-amber-50 dark:bg-amber-950/30 border-amber-100 dark:border-amber-900/50"
+            }`}
           >
             {isConnected !== false ? (
-              <Wifi size={14} color="#22c55e" />
+              <Wifi size={13} color="#22c55e" />
             ) : (
-              <WifiOff size={14} color="#f59e0b" />
+              <WifiOff size={13} color="#f59e0b" />
             )}
             <Text
-              className={`text-xs font-medium ml-1.5 ${isConnected !== false ? "text-green-700 dark:text-green-400" : "text-amber-700 dark:text-amber-400"}`}
+              className={`text-xs font-bold ml-1.5 ${
+                isConnected !== false
+                  ? "text-green-700 dark:text-green-400"
+                  : "text-amber-700 dark:text-amber-400"
+              }`}
             >
               {isConnected !== false ? "Online" : "Offline"}
             </Text>
@@ -316,361 +141,73 @@ export default function AppSettings() {
           </View>
         ) : (
           <ScrollView
-            className="flex-1 px-5"
+            className="flex-1"
+            contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 40 }}
             showsVerticalScrollIndicator={false}
+            refreshControl={
+              <RefreshControl
+                refreshing={refreshing}
+                onRefresh={onRefresh}
+                tintColor="#dc2626"
+              />
+            }
           >
-            {/* Sync Overview Card */}
-            <View
-              className="bg-white dark:bg-slate-900 rounded-2xl p-5 mb-4"
-              style={{
-                shadowColor: "#000",
-                shadowOffset: { width: 0, height: 2 },
-                shadowOpacity: 0.06,
-                shadowRadius: 12,
-                elevation: 3,
-              }}
-            >
-              <View className="flex-row items-center mb-4">
-                <LinearGradient
-                  colors={
-                    totalPending > 0
-                      ? ["#dc2626", "#b91c1c"]
-                      : ["#22c55e", "#16a34a"]
-                  }
-                  style={{
-                    width: 44,
-                    height: 44,
-                    borderRadius: 22,
-                    alignItems: "center",
-                    justifyContent: "center",
-                  }}
-                >
-                  <RefreshCw size={22} color="white" />
-                </LinearGradient>
-                <View className="ml-4 flex-1">
-                  <Text className="text-slate-900 dark:text-slate-50 font-bold text-base">
-                    {totalPending > 0
-                      ? `${totalPending} Pending Sync`
-                      : "All Synced"}
-                  </Text>
-                  <Text className="text-slate-400 dark:text-slate-500 text-sm">
-                    {totalPending > 0
-                      ? "Sync when online"
-                      : "Everything is up to date"}
-                  </Text>
-                </View>
-              </View>
-
-              {/* Sync All Button */}
-              <TouchableOpacity
-                onPress={handleSyncAll}
-                disabled={isSyncing || isConnected === false}
-                className={`flex-row items-center justify-center py-3 rounded-xl ${
-                  isConnected === false || isSyncing
-                    ? "bg-slate-100 dark:bg-slate-800"
-                    : "bg-red-50 dark:bg-red-900/20"
+            {/* Status Banner */}
+            <View className="bg-white dark:bg-slate-900 rounded-2xl p-4 mb-4 border border-slate-200 dark:border-slate-800 flex-row items-center">
+              <View
+                className={`w-10 h-10 rounded-xl items-center justify-center mr-3 ${
+                  isConnected !== false ? "bg-green-50" : "bg-amber-50"
                 }`}
               >
-                {isSyncing ? (
-                  <ActivityIndicator size="small" color="#dc2626" />
-                ) : (
-                  <>
-                    <RefreshCw
-                      size={18}
-                      color={
-                        isConnected === false
-                          ? "#94a3b8"
-                          : "#dc2626"
-                      }
-                    />
-                    <Text
-                      className={`font-semibold ml-2 ${
-                        isConnected === false
-                          ? "text-slate-400"
-                          : "text-red-600"
-                      }`}
-                    >
-                      {isSyncing ? "Syncing..." : "Sync All Now"}
-                    </Text>
-                  </>
-                )}
-              </TouchableOpacity>
-            </View>
-
-            {/* Tickets Section */}
-            <View
-              className="bg-white dark:bg-slate-900 rounded-2xl p-5 mb-4"
-              style={{
-                shadowColor: "#000",
-                shadowOffset: { width: 0, height: 2 },
-                shadowOpacity: 0.06,
-                shadowRadius: 12,
-                elevation: 3,
-              }}
-            >
-              <View className="flex-row items-center mb-4">
-                <View className="w-10 h-10 rounded-xl bg-red-50 dark:bg-red-900/20 items-center justify-center">
-                  <Ticket size={20} color="#dc2626" />
-                </View>
-                <View className="ml-3 flex-1">
-                  <Text className="text-slate-900 dark:text-slate-50 font-bold">
-                    Tickets
-                  </Text>
-                  <Text className="text-slate-400 dark:text-slate-500 text-xs">
-                    Status updates & changes
-                  </Text>
-                </View>
-                <View className="items-end">
-                  <Text
-                    className={`font-bold ${ticketSyncStatus.pendingCount > 0 ? "text-red-600 dark:text-red-400" : "text-green-600 dark:text-green-400"}`}
-                  >
-                    {ticketSyncStatus.pendingCount}
-                  </Text>
-                  <Text className="text-slate-400 text-xs">pending</Text>
-                </View>
+                <Zap size={20} color={isConnected !== false ? "#22c55e" : "#f59e0b"} />
               </View>
-
-              <View className="flex-row items-center justify-between py-3 border-t border-slate-100">
+              <View className="flex-1">
                 <View className="flex-row items-center">
-                  <Clock size={14} color="#94a3b8" />
-                  <Text className="text-slate-500 text-sm ml-2">
-                    Last synced
+                  <View
+                    className={`w-2 h-2 rounded-full mr-2 ${
+                      isConnected !== false ? "bg-green-500" : "bg-amber-500"
+                    }`}
+                  />
+                  <Text className="text-slate-900 dark:text-slate-50 font-bold text-sm">
+                    {isConnected !== false
+                      ? "Online — data syncing"
+                      : "Offline — using cached data"}
                   </Text>
                 </View>
-                <Text className="text-slate-700 dark:text-slate-300 font-medium text-sm">
-                  {formatLastSynced(ticketSyncStatus.lastSynced)}
+                <Text className="text-slate-400 dark:text-slate-500 text-xs mt-0.5">
+                  {totalRecords.toLocaleString()} records cached locally
                 </Text>
               </View>
+            </View>
 
-              <View className="flex-row items-center justify-between py-3 border-t border-slate-100">
-                <View className="flex-row items-center">
-                  <Cloud size={14} color="#22c55e" />
-                  <Text className="text-slate-500 text-sm ml-2">Auto-sync</Text>
-                </View>
-                <Switch
-                  value={ticketSyncStatus.autoSyncEnabled}
-                  onValueChange={(v) => handleToggleAutoSync("tickets", v)}
-                  trackColor={{ false: "#e2e8f0", true: "#bbf7d0" }}
-                  thumbColor={
-                    ticketSyncStatus.autoSyncEnabled ? "#22c55e" : "#94a3b8"
-                  }
-                />
-              </View>
-
-              {/* Debug button for pending tickets */}
-              {ticketSyncStatus.pendingCount > 0 && (
-                <TouchableOpacity
-                  onPress={async () => {
-                    const debug = await getPendingTicketUpdatesDebug();
-                    Alert.alert(
-                      "Pending Ticket Updates",
-                      `Found ${debug.length} pending update(s):\n\n` +
-                        debug
-                          .map(
-                            (d, i) =>
-                              `${i + 1}. Update ID: ${d.updateId}\n` +
-                              `   Ticket exists: ${d.ticketExists ? "Yes" : "No"}\n` +
-                              `   Server ID: ${d.ticketServerId || "None"}\n` +
-                              `   Type: ${d.updateType || "Unknown"}`,
-                          )
-                          .join("\n\n"),
-                      [{ text: "OK" }],
-                    );
-                  }}
-                  className="flex-row items-center py-3 border-t border-slate-100"
+            {/* Table Cards */}
+            <Text className="text-slate-900 dark:text-slate-50 font-black text-base mb-3">
+              Cached Data
+            </Text>
+            {TABLE_DEFS.map((t) => {
+              const Icon = t.icon;
+              const count = tableCounts[t.name] ?? 0;
+              return (
+                <View
+                  key={t.name}
+                  className="bg-white dark:bg-slate-900 rounded-2xl mb-3 border border-slate-200 dark:border-slate-800 px-4 py-3 flex-row items-center"
                 >
-                  <View className="w-9 h-9 rounded-xl bg-amber-50 items-center justify-center">
-                    <Text className="text-amber-600 font-bold text-xs">?</Text>
+                  <View className="w-9 h-9 rounded-xl items-center justify-center mr-3 bg-slate-50 dark:bg-slate-800">
+                    <Icon size={18} color={t.color} />
                   </View>
-                  <View className="ml-3 flex-1">
-                    <Text className="text-amber-600 dark:text-amber-400 font-medium text-sm">
-                      Debug Pending Items
-                    </Text>
-                    <Text className="text-slate-400 dark:text-slate-500 text-xs">
-                      View details about pending updates
-                    </Text>
-                  </View>
-                </TouchableOpacity>
-              )}
-            </View>
+                  <Text className="text-slate-900 dark:text-slate-50 font-semibold flex-1">
+                    {t.label}
+                  </Text>
+                  <Text className="text-slate-400 dark:text-slate-500 text-sm font-bold">
+                    {count.toLocaleString()}
+                  </Text>
+                </View>
+              );
+            })}
 
-            {/* Site Logs Section */}
-            <View
-              className="bg-white dark:bg-slate-900 rounded-2xl p-5 mb-4"
-              style={{
-                shadowColor: "#000",
-                shadowOffset: { width: 0, height: 2 },
-                shadowOpacity: 0.06,
-                shadowRadius: 12,
-                elevation: 3,
-              }}
-            >
-              <View className="flex-row items-center mb-4">
-                <View className="w-10 h-10 rounded-xl bg-orange-50 dark:bg-orange-900/20 items-center justify-center">
-                  <Database size={20} color="#f97316" />
-                </View>
-                <View className="ml-3 flex-1">
-                  <Text className="text-slate-900 dark:text-slate-50 font-bold">
-                    Site Logs
-                  </Text>
-                  <Text className="text-slate-400 dark:text-slate-500 text-xs">
-                    Temp, Water, Chemical & Chiller
-                  </Text>
-                </View>
-                <View className="items-end">
-                  <Text
-                    className={`font-bold ${siteLogSyncStatus.pendingCount > 0 ? "text-red-600 dark:text-red-400" : "text-green-600 dark:text-green-400"}`}
-                  >
-                    {siteLogSyncStatus.pendingCount}
-                  </Text>
-                  <Text className="text-slate-400 text-xs">pending</Text>
-                </View>
-              </View>
-
-              <View className="flex-row items-center justify-between py-3 border-t border-slate-100">
-                <View className="flex-row items-center">
-                  <Clock size={14} color="#94a3b8" />
-                  <Text className="text-slate-500 text-sm ml-2">
-                    Last synced
-                  </Text>
-                </View>
-                <Text className="text-slate-700 dark:text-slate-300 font-medium text-sm">
-                  {formatLastSynced(siteLogSyncStatus.lastSynced)}
-                </Text>
-              </View>
-
-              <View className="flex-row items-center justify-between py-3 border-t border-slate-100">
-                <View className="flex-row items-center">
-                  <Cloud size={14} color="#22c55e" />
-                  <Text className="text-slate-500 text-sm ml-2">Auto-sync</Text>
-                </View>
-                <Switch
-                  value={siteLogSyncStatus.autoSyncEnabled}
-                  onValueChange={(v) => handleToggleAutoSync("site_logs", v)}
-                  trackColor={{ false: "#e2e8f0", true: "#bbf7d0" }}
-                  thumbColor={
-                    siteLogSyncStatus.autoSyncEnabled ? "#22c55e" : "#94a3b8"
-                  }
-                />
-              </View>
-            </View>
-
-            {/* PM Section (Placeholder) */}
-            <View
-              className="bg-white dark:bg-slate-900 rounded-2xl p-5 mb-4"
-              style={{
-                shadowColor: "#000",
-                shadowOffset: { width: 0, height: 2 },
-                shadowOpacity: 0.06,
-                shadowRadius: 12,
-                elevation: 3,
-              }}
-            >
-              <View className="flex-row items-center mb-4">
-                <View className="w-10 h-10 rounded-xl bg-violet-50 dark:bg-violet-900/20 items-center justify-center">
-                  <CheckCircle size={20} color="#8b5cf6" />
-                </View>
-                <View className="ml-3 flex-1">
-                  <Text className="text-slate-900 dark:text-slate-50 font-bold">
-                    Preventive Maintenance
-                  </Text>
-                  <Text className="text-slate-400 dark:text-slate-500 text-xs">
-                    Scheduled maintenance tasks
-                  </Text>
-                </View>
-                <View className="items-end">
-                  <Text
-                    className={`font-bold ${pmSyncStatus.pendingCount > 0 ? "text-red-600 dark:text-red-400" : "text-green-600 dark:text-green-400"}`}
-                  >
-                    {pmSyncStatus.pendingCount}
-                  </Text>
-                  <Text className="text-slate-400 text-xs">pending</Text>
-                </View>
-              </View>
-
-              <View className="flex-row items-center justify-between py-3 border-t border-slate-100">
-                <View className="flex-row items-center">
-                  <Clock size={14} color="#94a3b8" />
-                  <Text className="text-slate-500 text-sm ml-2">
-                    Last synced
-                  </Text>
-                </View>
-                <Text className="text-slate-700 dark:text-slate-300 font-medium text-sm">
-                  {formatLastSynced(pmSyncStatus.lastSynced)}
-                </Text>
-              </View>
-
-              <View className="flex-row items-center justify-between py-3 border-t border-slate-100">
-                <View className="flex-row items-center">
-                  <Cloud size={14} color="#22c55e" />
-                  <Text className="text-slate-500 text-sm ml-2">Auto-sync</Text>
-                </View>
-                <Switch
-                  value={pmSyncStatus.autoSyncEnabled}
-                  onValueChange={(v) => handleToggleAutoSync("pm" as any, v)}
-                  trackColor={{ false: "#e2e8f0", true: "#bbf7d0" }}
-                  thumbColor={pmSyncStatus.autoSyncEnabled ? "#22c55e" : "#94a3b8"}
-                />
-              </View>
-            </View>
-
-            {/* Storage Section */}
-            <View
-              className="bg-white dark:bg-slate-900 rounded-2xl p-5 mb-4"
-              style={{
-                shadowColor: "#000",
-                shadowOffset: { width: 0, height: 2 },
-                shadowOpacity: 0.06,
-                shadowRadius: 12,
-                elevation: 3,
-              }}
-            >
-              <View className="flex-row items-center mb-4">
-                <View className="w-10 h-10 rounded-xl bg-slate-100 dark:bg-slate-800 items-center justify-center">
-                  <HardDrive size={20} color="#64748b" />
-                </View>
-                <View className="ml-3 flex-1">
-                  <Text className="text-slate-900 dark:text-slate-50 font-bold">
-                    Local Storage
-                  </Text>
-                  <Text className="text-slate-400 dark:text-slate-500 text-xs">
-                    Cached data for offline use
-                  </Text>
-                </View>
-                <View className="items-end">
-                  <Text className="text-slate-700 dark:text-slate-300 font-bold">
-                    Managed
-                  </Text>
-                  <Text className="text-slate-400 dark:text-slate-500 text-xs">
-                    by PowerSync
-                  </Text>
-                </View>
-              </View>
-
-              <TouchableOpacity
-                onPress={handleClearAllData}
-                className="flex-row items-center py-3 border-t border-slate-100 dark:border-slate-800"
-              >
-                <View className="w-9 h-9 rounded-xl bg-red-50 items-center justify-center">
-                  <Trash2 size={18} color="#dc2626" />
-                </View>
-                <View className="ml-3 flex-1">
-                  <Text className="text-red-600 dark:text-red-400 font-medium">
-                    Clear All Local Data
-                  </Text>
-                  <Text className="text-slate-400 dark:text-slate-500 text-xs">
-                    Delete all cached and pending data
-                  </Text>
-                </View>
-              </TouchableOpacity>
-            </View>
-
-            {/* Info */}
-            <View className="mt-2 mb-8 items-center px-4">
-              <Text className="text-slate-400 text-xs text-center leading-5">
-                This app is designed to work offline.
-              </Text>
-            </View>
+            <Text className="text-slate-400 dark:text-slate-500 text-xs text-center mt-2">
+              Pull down to refresh · Data cached on fetch
+            </Text>
           </ScrollView>
         )}
       </SafeAreaView>

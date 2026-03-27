@@ -1,26 +1,30 @@
 /**
- * SyncManager — PowerSync Edition
+ * SyncManager — Simple Cache Manager
  *
- * Dramatically simplified from the WatermelonDB version. PowerSync handles:
- *  - Pull sync (via Postgres logical replication — automatic)
- *  - Background sync scheduling
- *  - Network reconnection detection
- *  - Conflict detection
- *
- * This manager now only handles:
- *  - Connecting/disconnecting PowerSync
- *  - Exposing sync status to the UI
- *  - Login prefetch trigger
+ * No sync engine. Data is cached locally via API fetches.
+ * This is a lightweight replacement for the PowerSync-based SyncManager.
  */
 
-import { powerSync } from "@/database";
-import { SmartOpsConnector } from "@/database/connector";
+import NetInfo from "@react-native-community/netinfo";
 import logger from "@/utils/logger";
+
+export type SyncStatus = {
+  connected: boolean;
+  hasSynced: boolean;
+  downloading: boolean;
+};
+
+type StatusListener = (status: SyncStatus) => void;
 
 class SyncManager {
   private static instance: SyncManager;
-  private connector: SmartOpsConnector | null = null;
-  private isConnected = false;
+  private listeners: Set<StatusListener> = new Set();
+  private _status: SyncStatus = {
+    connected: false,
+    hasSynced: false,
+    downloading: false,
+  };
+  private netUnsubscribe: (() => void) | null = null;
 
   private constructor() {}
 
@@ -31,120 +35,51 @@ class SyncManager {
     return SyncManager.instance;
   }
 
-  /**
-   * Initialize — call once on app start after authentication.
-   * Connects PowerSync to the backend via the SmartOpsConnector.
-   */
+  get status(): SyncStatus {
+    return this._status;
+  }
+
+  subscribe(listener: StatusListener): () => void {
+    this.listeners.add(listener);
+    listener(this._status);
+    return () => this.listeners.delete(listener);
+  }
+
+  private emit() {
+    this.listeners.forEach((l) => l(this._status));
+  }
+
   async initialize(): Promise<void> {
-    if (this.isConnected) {
-      logger.debug("SyncManager already connected", {
-        module: "SYNC_MANAGER",
-      });
-      return;
-    }
+    // Watch network connectivity
+    this.netUnsubscribe = NetInfo.addEventListener((state) => {
+      const isOnline = state.isConnected === true;
+      this._status = {
+        ...this._status,
+        connected: isOnline,
+        hasSynced: this._status.hasSynced || isOnline,
+      };
+      this.emit();
+    });
 
-    try {
-      this.connector = new SmartOpsConnector();
-      await powerSync.connect(this.connector);
-      this.isConnected = true;
-      logger.info("PowerSync connected", { module: "SYNC_MANAGER" });
-    } catch (err: any) {
-      logger.error("Failed to connect PowerSync", {
-        module: "SYNC_MANAGER",
-        error: err.message,
-      });
-    }
+    // Check current state immediately
+    const state = await NetInfo.fetch();
+    const isOnline = state.isConnected === true;
+    this._status = { connected: isOnline, hasSynced: isOnline, downloading: false };
+    this.emit();
+
+    logger.info("SyncManager initialized", { module: "SYNC_MANAGER", online: isOnline });
   }
 
-  /**
-   * Disconnect PowerSync — call on logout or app teardown.
-   */
   async cleanup(): Promise<void> {
-    try {
-      await powerSync.disconnect();
-      this.isConnected = false;
-      this.connector = null;
-      logger.info("PowerSync disconnected", { module: "SYNC_MANAGER" });
-    } catch (err: any) {
-      logger.error("PowerSync disconnect error", {
-        module: "SYNC_MANAGER",
-        error: err.message,
-      });
-    }
+    this.netUnsubscribe?.();
+    this.netUnsubscribe = null;
+    this._status = { connected: false, hasSynced: false, downloading: false };
+    this.emit();
   }
 
-  /**
-   * Trigger a manual sync (e.g. pull-to-refresh).
-   * PowerSync handles the actual sync — this just nudges it.
-   */
-  async triggerSync(_reason: string = "manual"): Promise<void> {
-    if (!this.isConnected) {
-      logger.warn("Cannot sync — PowerSync not connected", {
-        module: "SYNC_MANAGER",
-      });
-      return;
-    }
-
-    // PowerSync automatically syncs, but we can trigger an immediate check
-    // by disconnecting and reconnecting (the SDK doesn't expose a force-sync API).
-    // For pull-to-refresh UX, the data is already live — this is mostly a no-op.
-    logger.debug("Manual sync requested — PowerSync handles this automatically", {
-      module: "SYNC_MANAGER",
-    });
-  }
-
-  /**
-   * Prefetch all data — called after login.
-   * With PowerSync, the initial sync happens automatically on connect.
-   * This method ensures we wait for the first full sync to complete.
-   */
-  async prefetchAll(): Promise<void> {
-    if (!this.isConnected) {
-      await this.initialize();
-    }
-
-    // Wait for the initial sync to complete (or timeout after 30s)
-    const start = Date.now();
-    const timeout = 30000;
-
-    while (Date.now() - start < timeout) {
-      const status = powerSync.currentStatus;
-      if (status?.connected && !status?.downloading) {
-        logger.info("Initial sync complete", { module: "SYNC_MANAGER" });
-        return;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 500));
-    }
-
-    logger.warn("Prefetch timed out — sync may still be in progress", {
-      module: "SYNC_MANAGER",
-    });
-  }
-
-  /**
-   * Get current sync status for UI display.
-   */
-  getStatus(): {
-    isSyncing: boolean;
-    lastSyncTime: number;
-    connected: boolean;
-  } {
-    const status = powerSync.currentStatus;
-    return {
-      isSyncing: status?.downloading || status?.uploading || false,
-      lastSyncTime: status?.lastSyncedAt?.getTime() || 0,
-      connected: status?.connected || false,
-    };
-  }
-
-  /**
-   * Clear all local data — used for logout.
-   */
+  // No-op — kept for API compatibility
   async clearAllData(): Promise<void> {
-    await powerSync.disconnectAndClear();
-    this.isConnected = false;
-    this.connector = null;
-    logger.info("PowerSync data cleared", { module: "SYNC_MANAGER" });
+    logger.info("clearAllData called — no-op in cache mode", { module: "SYNC_MANAGER" });
   }
 }
 

@@ -1,4 +1,4 @@
-import { eq, and, desc, asc, ne, gte, lte, inArray, count, sql } from "drizzle-orm";
+import { eq, and, desc, asc, ne, gte, lte, inArray, count } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
 import NetInfo from "@react-native-community/netinfo";
 import { startOfDay, endOfDay } from "date-fns";
@@ -7,8 +7,7 @@ import logger from "../utils/logger";
 import { authEvents } from "../utils/authEvents";
 import { supabase } from "./supabase";
 import { fetchWithTimeout } from "../utils/apiHelper";
-import { syncManager } from "./SyncManager";
-import { SiteConfigService } from "./SiteConfigService";
+import { syncManager } from "./SyncManager";import { SiteConfigService } from "./SiteConfigService";
 import type { TaskItem } from "./SiteConfigService";
 
 import { API_BASE_URL } from "../constants/api";
@@ -967,20 +966,8 @@ export const SiteLogService: ISiteLogService = {
    * This returns the count of pending local mutations.
    */
   async getUnsyncedCounts(): Promise<number> {
-    try {
-      // PowerSync tracks unsynced mutations in the internal ps_crud table.
-      // Use a raw SQL query to count pending writes.
-      const result = await db.all<{ count: number }>(
-        sql`SELECT COUNT(*) as count FROM ps_crud`,
-      );
-      return result[0]?.count ?? 0;
-    } catch (error: any) {
-      logger.error("Error getting unsynced counts", {
-        module: "SITE_LOG_SERVICE",
-        error: error.message,
-      });
-      return 0;
-    }
+    // No unsynced queue in cache mode — always returns 0
+    return 0;
   },
 
   /**

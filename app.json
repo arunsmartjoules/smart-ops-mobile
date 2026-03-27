@@ -68,7 +68,8 @@
         }
       ],
       "expo-task-manager",
-      "expo-background-task"
+      "expo-background-task",
+      "expo-sqlite"
     ],
     "experiments": {
       "typedRoutes": true

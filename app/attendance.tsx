@@ -418,9 +418,6 @@ export default function AttendancePage() {
       fetchData();
       // Always request location regardless of work_location_type
       ensureLocation();
-
-      // Prefetch other data in background
-      syncManager.prefetchAll();
     }, [fetchData, ensureLocation]),
   );
 

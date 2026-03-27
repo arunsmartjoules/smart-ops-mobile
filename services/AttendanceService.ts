@@ -15,6 +15,7 @@ import {
   cacheSites,
   clearAllAttendanceCaches,
 } from "../utils/attendanceCache";
+import { cacheUserSites } from "../utils/siteCache";
 import { supabase } from "./supabase";
 import { fetchWithTimeout } from "../utils/apiHelper";
 import { API_BASE_URL } from "../constants/api";
@@ -301,6 +302,7 @@ export const AttendanceService = {
         });
         // Keep cache warm so offline fallback has fresh data
         cacheSites(userId, mappedSites).catch(() => {});
+        cacheUserSites(userId, mappedSites.map(s => ({ site_code: s.site_code, name: s.name || s.site_code }))).catch(() => {});
         return mappedSites;
       }
     }
@@ -322,6 +324,7 @@ export const AttendanceService = {
       });
       // Keep cache warm so offline fallback has fresh data
       cacheSites(userId, attendanceSites).catch(() => {});
+      cacheUserSites(userId, attendanceSites.map(s => ({ site_code: s.site_code, name: s.name || s.site_code }))).catch(() => {});
       return attendanceSites;
     }
 

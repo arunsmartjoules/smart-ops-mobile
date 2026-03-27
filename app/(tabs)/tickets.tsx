@@ -27,7 +27,8 @@ import SearchableSelect, {
 } from "@/components/SearchableSelect";
 import { TicketsService, type Ticket } from "@/services/TicketsService";
 import { AttendanceService, type Site } from "@/services/AttendanceService";
-import { db, tickets as ticketsTable, userSites, areas, categories } from "@/database";
+import { useSites } from "@/hooks/useSites";
+import { db, tickets as ticketsTable, areas, categories } from "@/database";
 import { eq, desc, and, like } from "drizzle-orm";
 import logger from "@/utils/logger";
 import TicketDetailModal from "@/components/TicketDetailModal";
@@ -45,10 +46,15 @@ const { width } = Dimensions.get("window");
 export default function Tickets() {
   const { user, isLoading } = useAuth();
   const isDark = useColorScheme() === "dark";
+  const { isConnected } = useNetworkStatus();
+
+  // ── Clean sites hook ──────────────────────────────────────────────────────
+  const userId = user?.user_id || user?.id;
+  const { sites, selectedSite, selectSite, loading: sitesLoading } = useSites(userId);
+  const selectedSiteCode = selectedSite?.site_code ?? "";
+  const siteName = selectedSite?.name ?? selectedSite?.site_code ?? "Select Site";
+
   const [tickets, setTickets] = useState<Ticket[]>([]);
-  const [sites, setSites] = useState<Site[]>([]);
-  const [selectedSiteCode, setSelectedSiteCode] = useState<string>("");
-  const [siteName, setSiteName] = useState<string>("Select Site");
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [assets, setAssets] = useState<any[]>([]);
@@ -84,9 +90,6 @@ export default function Tickets() {
   const [areaOptions, setAreaOptions] = useState<SelectOption[]>([]);
   const [categoryOptions, setCategoryOptions] = useState<SelectOption[]>([]);
   const [areasLoading, setAreasLoading] = useState(false);
-
-  // Network status for offline support
-  const { isConnected } = useNetworkStatus();
 
   // Memoized callbacks to prevent unnecessary re-renders
   const handleCloseDetail = useCallback(() => {
@@ -146,41 +149,9 @@ export default function Tickets() {
     });
   }, [isDetailVisible, selectedTicket]);
 
-  useEffect(() => {
-    logger.debug("User state update", {
-      module: "TICKETS",
-      userId: user?.user_id || user?.id,
-    });
-
-    // Safety timeout: ensure loading stops after 8 seconds no matter what
-    const safetyTimer = setTimeout(() => {
-      setLoading((prev) => {
-        if (prev)
-          logger.debug("Safety timeout triggered - forcing loading to false", {
-            module: "TICKETS",
-          });
-        return false;
-      });
-    }, 8000);
-
-    const userId = user?.user_id || user?.id;
-    if (userId) {
-      loadSites(userId);
-    } else if (!isLoading) {
-      // Auth finished but no user?
-      setLoading(false);
-    }
-
-    return () => clearTimeout(safetyTimer);
-  }, [user?.user_id, user?.id, isLoading]);
-
+  // Trigger fetch when site or filters change
   useEffect(() => {
     if (selectedSiteCode) {
-      logger.debug("Site ready, triggering fetch", { module: "TICKETS" });
-      const currentSite = sites.find((s) => s.site_code === selectedSiteCode);
-      if (currentSite) {
-        setSiteName(currentSite.site_code);
-      }
       resetAndFetch();
       fetchStats();
       loadAreasAndCategories();
@@ -266,97 +237,6 @@ export default function Tickets() {
       setAreasLoading(false);
     }
   }, [selectedSiteCode]);
-
-  const loadSites = async (userId: string) => {
-    if (!userId) {
-      setLoading(false);
-      return;
-    }
-
-    setLoading(true);
-    try {
-      // 1. Try to load from cache and last site in parallel for instant UI
-      const [localSiteRows, lastSiteCode] = await Promise.all([
-        db.select().from(userSites).where(eq(userSites.user_id, userId)).catch(() => []),
-        AsyncStorage.getItem(`last_site_${userId}`).catch(() => null),
-      ]);
-      const cachedSites: Site[] = localSiteRows.map((r: any) => ({
-        site_code: r.site_code,
-        name: r.site_name || r.site_code,
-      }));
-
-      // Sanitize: remove stale "all" entries from cached sites
-      const validCachedSites = (cachedSites || []).filter(
-        (s: Site) => s.site_code && s.site_code !== "all",
-      );
-      let effectiveLastSite = lastSiteCode === "all" ? null : lastSiteCode;
-
-      if (validCachedSites.length > 0) {
-        setSites(validCachedSites);
-        if (effectiveLastSite) {
-          setSelectedSiteCode(effectiveLastSite);
-          const currentSite = validCachedSites.find(
-            (s: Site) => s.site_code === effectiveLastSite,
-          );
-          if (currentSite) setSiteName(currentSite.name || currentSite.site_code);
-        } else if (validCachedSites.length > 0) {
-          // "all" was stale, pick first valid site
-          const firstSite = validCachedSites[0];
-          setSelectedSiteCode(firstSite.site_code);
-          setSiteName(firstSite.name || firstSite.site_code);
-          await AsyncStorage.setItem(`last_site_${userId}`, firstSite.site_code);
-        }
-      }
-
-      // 2. If offline and we have cached sites, skip API fetch entirely
-      if (!isConnected && validCachedSites.length > 0) {
-        // Loading will be cleared by fetchTickets triggered via selectedSiteCode change
-        return;
-      }
-
-      // 3. Fetch fresh sites from API (only when online)
-      const isAdmin = user?.role?.toLowerCase() === "admin";
-      let fetchedUserSites: Site[] = await AttendanceService.getUserSites(userId, "JouleCool").catch((e) => {
-        logger.warn("User sites fetch failed", {
-          module: "TICKETS",
-          error: e,
-        });
-        return [] as Site[];
-      });
-
-      let finalSites: Site[] = fetchedUserSites;
-
-      // If we got fresh sites, update state and cache
-      if (finalSites.length > 0) {
-        setSites(finalSites);
-
-        let siteToSelect = lastSiteCode || "";
-        if (
-          !siteToSelect ||
-          !finalSites.find((s) => s.site_code === siteToSelect)
-        ) {
-          siteToSelect = finalSites[0].site_code;
-        }
-
-        setSelectedSiteCode(siteToSelect);
-        const currentSite = finalSites.find(
-          (s) => s.site_code === siteToSelect,
-        );
-        if (currentSite) {
-          setSiteName(currentSite.name || currentSite.site_code);
-        }
-
-        await AsyncStorage.setItem(`last_site_${userId}`, siteToSelect);
-      } else if (validCachedSites.length === 0) {
-        // No sites at all — stop loading
-        setLoading(false);
-      }
-      // Otherwise fetchTickets (triggered by selectedSiteCode change) will clear loading
-    } catch (error) {
-      logger.error("loadSites critical error", { module: "TICKETS", error });
-      setLoading(false);
-    }
-  };
 
   const fetchStats = useCallback(async () => {
     if (!selectedSiteCode) return;
@@ -899,7 +779,10 @@ export default function Tickets() {
             setTempToDate={setTempToDate}
             sites={sites}
             selectedSiteCode={selectedSiteCode}
-            setSelectedSiteCode={setSelectedSiteCode}
+            setSelectedSiteCode={(code: string) => {
+              const site = sites.find((s) => s.site_code === code);
+              if (site) selectSite(site);
+            }}
             user={user}
             statusFilter={statusFilter}
             setStatusFilter={setStatusFilter}

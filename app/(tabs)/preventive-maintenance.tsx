@@ -42,7 +42,8 @@ import { useNetworkStatus } from "@/hooks/useNetworkStatus";
 import NetInfo from "@react-native-community/netinfo";
 import PMService from "@/services/PMService";
 import { AttendanceService, type Site } from "@/services/AttendanceService";
-import { db, pmInstances, userSites } from "@/database";
+import { useSites } from "@/hooks/useSites";
+import { db, pmInstances } from "@/database";
 import { eq } from "drizzle-orm";
 
 type PMInstanceRow = typeof pmInstances.$inferSelect;
@@ -327,10 +328,13 @@ export default function PreventiveMaintenance() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [statusFilter, setStatusFilter] = useState("Pending");
-  const [siteCode, setSiteCode] = useState("");
-  const [sites, setSites] = useState<Site[]>([]);
-  const [siteName, setSiteName] = useState("Select Site");
   const [showFiltersModal, setShowFiltersModal] = useState(false);
+
+  // ── Clean sites hook ──────────────────────────────────────────────────────
+  const userId = user?.user_id || user?.id;
+  const { sites, selectedSite, selectSite } = useSites(userId);
+  const siteCode = selectedSite?.site_code ?? "";
+  const siteName = selectedSite?.name ?? selectedSite?.site_code ?? "Select Site";
 
   // Date handling (using strings for consistency and to avoid stale closures)
   const [currentDate, setCurrentDate] = useState(
@@ -358,64 +362,6 @@ export default function PreventiveMaintenance() {
       setTempToDate(toDate);
     }
   }, [showFiltersModal, currentDate, toDate]);
-
-  // ── Load Sites ──────────────────────────────────────────────────────────────
-  useEffect(() => {
-    const userId = user?.user_id || user?.id;
-    if (userId) loadSites(userId);
-  }, [user]);
-
-  const loadSites = async (userId: string) => {
-    try {
-      const rawLastSiteCode = await AsyncStorage.getItem(`last_site_${userId}`);
-      const lastSiteCode = rawLastSiteCode === "all" ? null : rawLastSiteCode;
-
-      // Load sites from local PowerSync-synced DB
-      const cachedSiteRows = await db
-        .select()
-        .from(userSites)
-        .where(eq(userSites.user_id, userId))
-        .catch(() => []);
-      const cachedSites: Site[] = cachedSiteRows.map((r) => ({
-        site_code: r.site_code,
-        name: r.site_name,
-        id: r.site_id || r.id,
-      })) as Site[];
-
-      // Only call API when online
-      let fetchedUserSites: Site[] = [];
-      const netState = await NetInfo.fetch();
-      const isActuallyOnline = netState.isConnected === true;
-
-      if (isActuallyOnline) {
-        fetchedUserSites = await AttendanceService.getUserSites(
-          userId,
-          "JouleCool",
-        ).catch(() => [] as Site[]);
-      }
-
-      const finalSites: Site[] = fetchedUserSites.length > 0 ? fetchedUserSites : cachedSites;
-
-      setSites(finalSites);
-
-      if (finalSites.length > 0) {
-        let siteToSelect = lastSiteCode || finalSites[0].site_code;
-        if (!finalSites.find((s) => s.site_code === siteToSelect)) {
-          siteToSelect = finalSites[0].site_code;
-        }
-        await AsyncStorage.setItem(`last_site_${userId}`, siteToSelect);
-        setSiteCode(siteToSelect);
-        const currentSite = finalSites.find(
-          (s) => s.site_code === siteToSelect,
-        );
-        if (currentSite) {
-          setSiteName(currentSite.name || currentSite.site_code);
-        }
-      }
-    } catch (error) {
-      logger.error("Error loading sites for PM", { error });
-    }
-  };
 
   // ── Load Local Data (paginated) ─────────────────────────────────────────────
   const loadLocalData = useCallback(
@@ -761,13 +707,8 @@ export default function PreventiveMaintenance() {
           sites={sites}
           selectedSiteCode={siteCode}
           setSelectedSiteCode={(code) => {
-            setSiteCode(code);
             const site = sites.find((s) => s.site_code === code);
-            if (site) setSiteName(site.name || site.site_code);
-            AsyncStorage.setItem(
-              `last_site_${user?.user_id || user?.id}`,
-              code,
-            );
+            if (site) selectSite(site);
           }}
           user={user}
           statusFilter={statusFilter}

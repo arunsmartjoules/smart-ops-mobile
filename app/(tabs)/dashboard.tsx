@@ -53,7 +53,6 @@ import AttendanceService, {
 import { format } from "date-fns";
 import { useNetworkStatus } from "@/hooks/useNetworkStatus";
 import { WifiOff } from "lucide-react-native";
-import { syncManager } from "@/services/SyncManager";
 import Skeleton from "@/components/Skeleton";
 import TicketsService, { type Ticket } from "@/services/TicketsService";
 import { API_BASE_URL } from "@/constants/api";
@@ -64,6 +63,7 @@ import SiteLogService from "@/services/SiteLogService";
 import logger from "@/utils/logger";
 import { db, userSites } from "@/database";
 import { eq } from "drizzle-orm";
+import { useSites } from "@/hooks/useSites";
 import { WhatsAppService } from "@/services/WhatsAppService";
 
 interface PendingItem {
@@ -954,15 +954,22 @@ export default function Dashboard() {
     router.push("/all-tasks");
   }, []);
 
+  const lastFetchRef = useRef<number>(0);
+
   useFocusEffect(
     useCallback(() => {
-      fetchData();
-      syncManager.prefetchAll();
+      const now = Date.now();
+      // Only refetch if data is older than 2 minutes
+      if (now - lastFetchRef.current > 2 * 60 * 1000) {
+        lastFetchRef.current = now;
+        fetchData();
+      }
     }, [fetchData]),
   );
 
   const onRefresh = React.useCallback(async () => {
     setRefreshing(true);
+    lastFetchRef.current = Date.now();
     await fetchData();
     // Simulate other API calls (with cleanup)
     if (refreshTimeoutRef.current) clearTimeout(refreshTimeoutRef.current);
