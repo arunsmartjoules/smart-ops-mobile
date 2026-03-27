@@ -31,6 +31,7 @@
     "expo-auth-session": "~7.0.10",
     "expo-background-fetch": "~14.0.9",
     "expo-background-task": "~1.0.10",
+    "expo-camera": "~17.0.10",
     "expo-constants": "~18.0.13",
     "expo-crypto": "~15.0.8",
     "expo-dev-client": "~6.0.20",
@@ -54,6 +55,7 @@
     "expo-task-manager": "~14.0.9",
     "expo-updates": "~29.0.16",
     "expo-web-browser": "~15.0.10",
+    "jsqr": "^1.4.0",
     "lucide-react-native": "^0.554.0",
     "nativewind": "^4.2.2",
     "react": "19.1.0",
@@ -101,7 +103,8 @@
     "doctor": {
       "reactNativeDirectoryCheck": {
         "exclude": [
-          "react-native-vector-icons"
+          "react-native-vector-icons",
+          "@journeyapps/react-native-quick-sqlite"
         ]
       }
     }

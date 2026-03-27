@@ -26,7 +26,7 @@ import {
 import { SiteConfigService, TaskItem } from "@/services/SiteConfigService";
 import { useAuth } from "@/contexts/AuthContext";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { format } from "date-fns";
+import { format, subDays, addDays } from "date-fns";
 import SiteLogService from "@/services/SiteLogService";
 import SignaturePad from "@/components/SignaturePad";
 import Skeleton from "@/components/Skeleton";
@@ -37,6 +37,7 @@ import { SortIcon } from "@/components/SortIcon";
 import { sortBySequenceNumber, SortDirection } from "@/utils/sorting";
 import { db, logMaster } from "@/database";
 import { eq } from "drizzle-orm";
+import { DateNavBar } from "@/components/sitelogs/DateNavBar";
 
 // Memoized Log Item Component
 const LogItem = memo(
@@ -167,6 +168,28 @@ export default function WaterTaskList() {
   const [signatureModalVisible, setSignatureModalVisible] = useState(false);
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
   const autoSyncedRef = React.useRef(false);
+
+  // Date navigation — default to today
+  const [pickedDate, setPickedDate] = useState<Date>(new Date());
+  const [showDatePicker, setShowDatePicker] = useState(false);
+
+  const scheduledDate = useMemo(() => format(pickedDate, "yyyy-MM-dd"), [pickedDate]);
+
+  const prevCount = useMemo(() => {
+    const prev = format(subDays(pickedDate, 1), "yyyy-MM-dd");
+    return tasks.filter((t) => {
+      const d = t.meta?.scheduledDate || t.meta?.scheduled_date;
+      return d === prev && t.status !== "Completed";
+    }).length;
+  }, [tasks, pickedDate]);
+
+  const nextCount = useMemo(() => {
+    const next = format(addDays(pickedDate, 1), "yyyy-MM-dd");
+    return tasks.filter((t) => {
+      const d = t.meta?.scheduledDate || t.meta?.scheduled_date;
+      return d === next && t.status !== "Completed";
+    }).length;
+  }, [tasks, pickedDate]);
 
   useEffect(() => {
     if (user) {
@@ -458,19 +481,18 @@ export default function WaterTaskList() {
   };
 
   const filteredData = useMemo(() => {
-    // In edit mode, tasks is already pre-filtered to the single record
-    if (editId) {
-      return tasks;
-    }
+    if (editId) return tasks;
 
     const filtered = tasks.filter((task) => {
       const matchesSearch = task.name.toLowerCase().includes(searchQuery.toLowerCase());
       const isNotCompleted = task.status !== "Completed";
+      const taskScheduledDate = task.meta?.scheduledDate || task.meta?.scheduled_date;
+      if (taskScheduledDate !== scheduledDate) return false;
       return showCompleted ? matchesSearch : matchesSearch && isNotCompleted;
     });
 
     return sortBySequenceNumber(filtered, sequenceMap, sortDirection);
-  }, [tasks, searchQuery, sequenceMap, sortDirection, editId, showCompleted]);
+  }, [tasks, searchQuery, sequenceMap, sortDirection, editId, showCompleted, scheduledDate]);
 
   const renderItem = useCallback(
     ({ item }: { item: TaskItem }) => {
@@ -539,32 +561,45 @@ export default function WaterTaskList() {
             </View>
 
             {!editId && (
-              <View className="flex-row items-center gap-2">
-                <View className="flex-1 bg-slate-100 dark:bg-slate-800 rounded-xl px-4 py-2 flex-row items-center">
-                  <TextInput
-                    placeholder="Filter areas..."
-                    value={searchQuery}
-                    onChangeText={(t) => {
-                      setSearchQuery(t);
+              <View>
+                <View className="flex-row items-center gap-2 mb-2">
+                  <View className="flex-1 bg-slate-100 dark:bg-slate-800 rounded-xl px-4 py-2 flex-row items-center">
+                    <TextInput
+                      placeholder="Filter areas..."
+                      value={searchQuery}
+                      onChangeText={(t) => {
+                        setSearchQuery(t);
+                      }}
+                      className="flex-1 font-medium text-slate-900 dark:text-slate-50"
+                      placeholderTextColor="#94a3b8"
+                    />
+                  </View>
+                  <SortIcon
+                    direction={sortDirection}
+                    onPress={() => {
+                      setSortDirection((prev) =>
+                        prev === "asc" ? "desc" : prev === "desc" ? null : "asc",
+                      );
                     }}
-                    className="flex-1 font-medium text-slate-900 dark:text-slate-50"
-                    placeholderTextColor="#94a3b8"
                   />
+                  <TouchableOpacity
+                    onPress={() => setShowCompleted(!showCompleted)}
+                    className={`w-10 h-10 rounded-xl items-center justify-center border ${showCompleted ? "bg-green-50 border-green-200" : "bg-slate-50 border-slate-200 dark:bg-slate-800 dark:border-slate-700"}`}
+                  >
+                    <CheckCircle2 size={18} color={showCompleted ? "#16a34a" : "#94a3b8"} />
+                  </TouchableOpacity>
                 </View>
-                <SortIcon
-                  direction={sortDirection}
-                  onPress={() => {
-                    setSortDirection((prev) =>
-                      prev === "asc" ? "desc" : prev === "desc" ? null : "asc",
-                    );
-                  }}
+
+                {/* Quick date filter chips */}
+                <DateNavBar
+                  date={pickedDate}
+                  onDateChange={setPickedDate}
+                  showPicker={showDatePicker}
+                  onShowPicker={setShowDatePicker}
+                  prevCount={prevCount}
+                  nextCount={nextCount}
+                  accentColor="#3b82f6"
                 />
-                <TouchableOpacity
-                  onPress={() => setShowCompleted(!showCompleted)}
-                  className={`w-10 h-10 rounded-xl items-center justify-center border ${showCompleted ? "bg-green-50 border-green-200" : "bg-slate-50 border-slate-200 dark:bg-slate-800 dark:border-slate-700"}`}
-                >
-                  <CheckCircle2 size={18} color={showCompleted ? "#16a34a" : "#94a3b8"} />
-                </TouchableOpacity>
               </View>
             )}
           </View>
@@ -672,6 +707,7 @@ export default function WaterTaskList() {
           </View>
         </View>
       </Modal>
+
     </View>
   );
 }

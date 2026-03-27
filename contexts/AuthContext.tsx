@@ -43,7 +43,8 @@ interface AuthContextType {
     name: string,
   ) => Promise<{ error: any }>;
   signOut: () => Promise<void>;
-  resetPassword: (email: string) => Promise<{ error: any }>;
+  sendPasswordResetCode: (email: string) => Promise<{ error: any }>;
+  resetPasswordWithCode: (email: string, code: string, newPassword: string) => Promise<{ error: any }>;
   refreshProfile: () => Promise<void>;
 }
 
@@ -54,7 +55,8 @@ const AuthContext = createContext<AuthContextType>({
   signIn: async () => ({ error: null }),
   signUp: async () => ({ error: null }),
   signOut: async () => {},
-  resetPassword: async () => ({ error: null }),
+  sendPasswordResetCode: async () => ({ error: null }),
+  resetPasswordWithCode: async () => ({ error: null }),
   refreshProfile: async () => {},
 });
 
@@ -347,15 +349,38 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     }
   }, []);
 
-  const resetPassword = useCallback(async (email: string) => {
-    const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: "jouleops://reset-password",
-    });
-    if (error) {
-      return { error: error.message };
+  const sendPasswordResetCode = useCallback(async (email: string) => {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/auth/forgot-password`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+      });
+      const result = await res.json();
+      if (!res.ok) return { error: result.error || "Failed to send code" };
+      return { error: null };
+    } catch (e: any) {
+      return { error: e.message || "Network error" };
     }
-    return { error: null };
   }, []);
+
+  const resetPasswordWithCode = useCallback(
+    async (email: string, code: string, newPassword: string) => {
+      try {
+        const res = await fetch(`${BACKEND_URL}/api/auth/reset-password-with-code`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email, code, newPassword }),
+        });
+        const result = await res.json();
+        if (!res.ok) return { error: result.error || "Failed to reset password" };
+        return { error: null };
+      } catch (e: any) {
+        return { error: e.message || "Network error" };
+      }
+    },
+    [],
+  );
 
   const refreshProfile = useCallback(async () => {
     const { data: { session } } = await supabase.auth.getSession();
@@ -371,7 +396,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       signIn,
       signUp,
       signOut,
-      resetPassword,
+      sendPasswordResetCode,
+      resetPasswordWithCode,
       refreshProfile,
     }),
     [
@@ -381,7 +407,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       signIn,
       signUp,
       signOut,
-      resetPassword,
+      sendPasswordResetCode,
+      resetPasswordWithCode,
       refreshProfile,
     ],
   );

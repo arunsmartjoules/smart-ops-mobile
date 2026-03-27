@@ -246,7 +246,7 @@ export const getNotificationPreferences = async (authToken: string) => {
  */
 export const updateNotificationPreferences = async (
   authToken: string,
-  preferences: { attendance_notifications_enabled: boolean },
+  preferences: { attendance_notifications_enabled?: boolean; ticket_notifications_enabled?: boolean },
 ) => {
   try {
     const response = await fetchWithTimeout(

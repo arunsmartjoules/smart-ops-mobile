@@ -7,7 +7,7 @@ import logger from "../utils/logger";
 import { authEvents } from "../utils/authEvents";
 import { supabase } from "./supabase";
 import { fetchWithTimeout } from "../utils/apiHelper";
-import { syncManager } from "./SyncManager";import { SiteConfigService } from "./SiteConfigService";
+import { SiteConfigService } from "./SiteConfigService";
 import type { TaskItem } from "./SiteConfigService";
 
 import { API_BASE_URL } from "../constants/api";
@@ -140,11 +140,16 @@ const _fetchLogs = async (
       conditions.push(eq(siteLogs.site_code, siteCode));
     }
     conditions.push(eq(siteLogs.log_name, logType));
-    if (options.fromDate) {
-      conditions.push(gte(siteLogs.created_at, options.fromDate));
-    }
-    if (options.toDate) {
-      conditions.push(lte(siteLogs.created_at, options.toDate));
+    if (options.scheduledDate) {
+      // Filter by scheduled_date (YYYY-MM-DD string column)
+      conditions.push(eq(siteLogs.scheduled_date, options.scheduledDate));
+    } else {
+      if (options.fromDate) {
+        conditions.push(gte(siteLogs.created_at, options.fromDate));
+      }
+      if (options.toDate) {
+        conditions.push(lte(siteLogs.created_at, options.toDate));
+      }
     }
     return db
       .select()
@@ -245,7 +250,7 @@ export const SiteLogService: ISiteLogService = {
       });
     }
     // Trigger background sync
-    syncManager.triggerSync("manual").catch(() => {});
+    
   },
 
   /**
@@ -277,7 +282,7 @@ export const SiteLogService: ISiteLogService = {
       updated_at: now,
     });
 
-    syncManager.triggerSync("manual").catch(() => {});
+    
 
     const [record] = await db
       .select()
@@ -334,7 +339,7 @@ export const SiteLogService: ISiteLogService = {
       updated_at: now,
     });
 
-    syncManager.triggerSync("manual").catch(() => {});
+    
 
     const [record] = await db
       .select()
@@ -391,7 +396,7 @@ export const SiteLogService: ISiteLogService = {
       .set(updateFields)
       .where(eq(chillerReadings.id, id));
 
-    syncManager.triggerSync("manual").catch(() => {});
+    
 
     const [record] = await db
       .select()
@@ -409,7 +414,7 @@ export const SiteLogService: ISiteLogService = {
       await db
         .delete(chillerReadings)
         .where(eq(chillerReadings.id, id));
-      syncManager.triggerSync("manual").catch(() => {});
+      
     } catch (error: any) {
       logger.error("Error deleting chiller reading", {
         module: "SITE_LOG_SERVICE",
@@ -427,7 +432,7 @@ export const SiteLogService: ISiteLogService = {
       await db
         .delete(siteLogs)
         .where(eq(siteLogs.id, id));
-      syncManager.triggerSync("manual").catch(() => {});
+      
     } catch (error: any) {
       logger.error("Error deleting site log", {
         module: "SITE_LOG_SERVICE",
@@ -483,7 +488,7 @@ export const SiteLogService: ISiteLogService = {
         .set(updateFields)
         .where(eq(siteLogs.id, id));
 
-      syncManager.triggerSync("manual").catch(() => {});
+      
 
       const [record] = await db
         .select()

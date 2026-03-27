@@ -205,6 +205,43 @@ export const TicketsService = {
       `/api/complaints/site/${siteCode}?${params.toString()}`,
     );
 
+    // Cache API response to local DB for offline use
+    if (result?.success && result.data?.length > 0) {
+      try {
+        const { isCacheEnabled } = await import("../app/app-settings");
+        const enabled = await isCacheEnabled("tickets");
+        if (enabled) {
+          for (const t of result.data) {
+            await db.insert(tickets).values({
+              id: t.id,
+              site_code: t.site_code || siteCode,
+              ticket_number: t.ticket_no || t.ticket_number || "",
+              title: t.title || "",
+              description: t.internal_remarks || t.description || "",
+              status: t.status || "",
+              priority: t.priority || "",
+              category: t.category || "",
+              area: t.area_asset || t.location || "",
+              assigned_to: t.assigned_to || "",
+              created_by: t.created_user || "",
+              created_at: t.created_at ? new Date(t.created_at).getTime() : Date.now(),
+              updated_at: Date.now(),
+            }).onConflictDoUpdate({
+              target: tickets.id,
+              set: {
+                status: t.status || "",
+                priority: t.priority || "",
+                assigned_to: t.assigned_to || "",
+                updated_at: Date.now(),
+              },
+            });
+          }
+        }
+      } catch (cacheErr) {
+        logger.warn("Failed to cache tickets", { error: cacheErr });
+      }
+    }
+
     return result;
   },
 

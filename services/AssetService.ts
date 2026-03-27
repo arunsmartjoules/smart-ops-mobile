@@ -33,6 +33,34 @@ const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
 
 export const AssetService = {
   /**
+   * Look up an asset by its QR code ID.
+   * Returns { asset_name, site_code } or null if not found.
+   */
+  async getAssetByQrId(
+    qrId: string,
+    siteCode: string,
+  ): Promise<{ asset_name: string; site_code: string } | null> {
+    try {
+      const { data, error } = await supabase
+        .from("assets")
+        .select("asset_name, site_code")
+        .eq("qr_id", qrId)
+        .maybeSingle();
+
+      if (error) throw error;
+      if (!data) return null;
+
+      return data as { asset_name: string; site_code: string };
+    } catch (error: any) {
+      logger.error("Error fetching asset by QR ID", {
+        module: "ASSET_SERVICE",
+        error: error.message,
+      });
+      return null;
+    }
+  },
+
+  /**
    * Get assets by site and equipment type
    */
   async getAssetsBySite(siteCode: string, equipmentType?: string) {

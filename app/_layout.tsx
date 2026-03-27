@@ -9,11 +9,14 @@ import { useEffect } from "react";
 import { View, Text } from "react-native";
 import { syncManager } from "@/services/SyncManager";
 import { initDatabase } from "@/database";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
 import UpdateService from "@/services/UpdateService";
 import UpdateBanner from "@/components/UpdateBanner";
 import { supabase } from "@/services/supabase";
 import * as SplashScreen from "expo-splash-screen";
 import * as Location from "expo-location";
+import * as Notifications from "expo-notifications";
+import * as ImagePicker from "expo-image-picker";
 import { setupNotificationHandlers } from "@/services/NotificationService";
 
 // Keep the native splash visible until JS is ready
@@ -80,8 +83,11 @@ export default function RootLayout() {
       try {
         // Initialize local SQLite database
         initDatabase();
-        // Request location permission on startup so it's ready for punch-in
+        // Request all permissions on startup
         await Location.requestForegroundPermissionsAsync();
+        await Notifications.requestPermissionsAsync();
+        await ImagePicker.requestCameraPermissionsAsync();
+        await ImagePicker.requestMediaLibraryPermissionsAsync();
         syncManager.initialize();
         UpdateService.checkForUpdate();
       } catch (e) {

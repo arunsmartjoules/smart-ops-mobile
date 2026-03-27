@@ -139,6 +139,43 @@ export default function WaterEntry() {
     ]);
   };
 
+  const handleSave = async () => {
+    try {
+      setSaving(true);
+      if (isEditMode && params.id) {
+        await SiteLogService.updateSiteLog(params.id, {
+          tds: formData.tds ? parseFloat(formData.tds) : null,
+          ph: formData.ph ? parseFloat(formData.ph) : null,
+          hardness: formData.hardness ? parseFloat(formData.hardness) : null,
+          remarks: formData.remarks,
+          attachment: formData.attachment,
+          status: "Inprogress",
+          assignedTo: user?.name || user?.user_id || "unknown",
+        });
+      } else {
+        await SiteLogService.saveSiteLog({
+          siteCode: params.siteCode,
+          executorId: user?.user_id || user?.id || "unknown",
+          assignedTo: user?.name || user?.user_id || "unknown",
+          logName: "Water",
+          taskName: params.areaName,
+          tds: formData.tds ? parseFloat(formData.tds) : null,
+          ph: formData.ph ? parseFloat(formData.ph) : null,
+          hardness: formData.hardness ? parseFloat(formData.hardness) : null,
+          remarks: formData.remarks,
+          attachment: formData.attachment,
+          entryTime: entryTime,
+          status: "Inprogress",
+        });
+      }
+      router.back();
+    } catch (error: any) {
+      Alert.alert("Error", error.message || "Failed to save log");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const handleCompletePress = () => {
     const hasData = !!(
       (formData.tds && formData.tds.trim().length > 0) ||
@@ -340,30 +377,32 @@ export default function WaterEntry() {
           </View>
         </ScrollView>
 
-        {/* Fixed Bottom Submit Button */}
-        <View className="absolute bottom-0 left-0 right-0 bg-white dark:bg-slate-900 border-t border-slate-100 dark:border-slate-800 px-5 pb-8 pt-4">
+        {/* Fixed Bottom Buttons */}
+        <View className="absolute bottom-0 left-0 right-0 bg-white dark:bg-slate-900 border-t border-slate-100 dark:border-slate-800 px-5 pb-8 pt-4 flex-row gap-3">
+          <TouchableOpacity
+            onPress={handleSave}
+            disabled={saving}
+            activeOpacity={0.8}
+            className="flex-1 py-4 rounded-xl items-center justify-center border-2 border-blue-600"
+          >
+            {saving ? (
+              <ActivityIndicator color="#2563eb" />
+            ) : (
+              <Text className="text-blue-600 font-bold text-base uppercase tracking-widest">Save</Text>
+            )}
+          </TouchableOpacity>
           <TouchableOpacity
             onPress={handleCompletePress}
             disabled={saving}
             activeOpacity={0.8}
-            className={`py-4 rounded-xl flex-row items-center justify-center ${saving ? "bg-slate-200" : "bg-blue-600 shadow-md shadow-blue-600/20"}`}
-            style={
-              !saving
-                ? {
-                    shadowColor: "#2563eb",
-                    shadowOffset: { width: 0, height: 4 },
-                    shadowOpacity: 0.2,
-                    shadowRadius: 8,
-                    elevation: 4,
-                  }
-                : {}
-            }
+            className={`flex-1 py-4 rounded-xl flex-row items-center justify-center ${saving ? "bg-slate-200" : "bg-blue-600"}`}
+            style={!saving ? { shadowColor: "#2563eb", shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.2, shadowRadius: 8, elevation: 4 } : {}}
           >
             {saving ? (
               <ActivityIndicator color="white" />
             ) : (
               <Text className="text-white font-bold text-base uppercase tracking-widest">
-                {isEditMode ? "Update Log" : "Complete & Sign"}
+                {isEditMode ? "Update" : "Complete"}
               </Text>
             )}
           </TouchableOpacity>

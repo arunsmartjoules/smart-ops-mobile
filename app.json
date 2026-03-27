@@ -2,7 +2,7 @@
   "expo": {
     "name": "Jouleops",
     "slug": "smart-ops",
-    "version": "1.0.0",
+    "version": "1.0.24",
     "orientation": "portrait",
     "icon": "./assets/images/jouleops-icon.png",
     "scheme": "jouleops",
@@ -69,7 +69,13 @@
       ],
       "expo-task-manager",
       "expo-background-task",
-      "expo-sqlite"
+      "expo-sqlite",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Jouleops needs camera access to scan QR codes on assets."
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true

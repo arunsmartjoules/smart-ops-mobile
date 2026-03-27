@@ -94,8 +94,8 @@ const HistoryItem = memo(
                 numberOfLines={1}
               >
                 {logName === "Chiller Logs"
-                  ? item.assetName || item.chillerId || "Unknown Asset"
-                  : item.taskName ||
+                  ? item.asset_name || item.chiller_id || "Unknown Asset"
+                  : item.task_name ||
                     format(
                       new Date(item.created_at || item.createdAt),
                       "dd MMM yyyy",
@@ -113,7 +113,7 @@ const HistoryItem = memo(
                       new Date(item.created_at || item.createdAt),
                       "HH:mm",
                     )}{" "}
-                • {resolvedName || item.executorId || "Unknown"}
+                • {resolvedName || item.executor_id || "Unknown"}
               </Text>
             </View>
           </View>
@@ -131,7 +131,7 @@ const HistoryItem = memo(
         </View>
 
         <View className="bg-slate-50 dark:bg-slate-800/50 rounded-lg p-2 mb-2">
-          {item.logName === "Temp RH" && (
+          {item.log_name === "Temp RH" && (
             <View className="flex-row justify-between">
               <View>
                 <Text className="text-slate-400 text-[10px] uppercase font-bold tracking-widest mb-0.5">
@@ -151,7 +151,7 @@ const HistoryItem = memo(
               </View>
             </View>
           )}
-          {item.logName === "Water" && (
+          {item.log_name === "Water" && (
             <View className="flex-row flex-wrap gap-y-1">
               <View className="w-1/3">
                 <Text className="text-slate-400 text-[10px] uppercase font-bold tracking-widest mb-0.5">
@@ -179,26 +179,26 @@ const HistoryItem = memo(
               </View>
             </View>
           )}
-          {item.logName === "Chemical Dosing" && (
+          {item.log_name === "Chemical Dosing" && (
             <View>
               <Text className="text-slate-400 text-[10px] uppercase font-bold tracking-widest mb-0.5">
                 Dosing
               </Text>
               <Text className="text-slate-900 dark:text-slate-50 font-bold text-xs">
-                {item.chemicalDosing}
+                {item.chemical_dosing}
               </Text>
             </View>
           )}
-          {(logName === "Chiller Logs" || item.chillerId) && (
+          {(logName === "Chiller Logs" || item.chiller_id) && (
             <View className="flex-row items-center justify-between">
               <View className="flex-row items-center">
                 <Activity size={10} color="#0d9488" />
                 <Text className="text-xs font-bold text-teal-600 ml-1">
-                  {item.compressorLoadPercentage}% LOAD
+                  {item.compressor_load_percentage}% LOAD
                 </Text>
               </View>
               <Text className="text-slate-400 text-[10px] font-bold">
-                ID: {item.chillerId?.slice(-6) || "N/A"}
+                ID: {item.chiller_id?.slice(-6) || "N/A"}
               </Text>
             </View>
           )}
@@ -234,7 +234,7 @@ const HistoryItem = memo(
           <View className="flex-row items-center">
             <MapPin size={10} color="#94a3b8" />
             <Text className="text-slate-400 text-xs ml-1">
-              {item.siteCode}
+              {item.site_code}
             </Text>
           </View>
           <View
@@ -328,7 +328,7 @@ export default function SiteHistory() {
   // Resolve employee codes to names
   useEffect(() => {
     const resolveCodes = async () => {
-      const codes = [...new Set(logs.map((l) => l.executorId).filter(Boolean))];
+      const codes = [...new Set(logs.map((l) => l.executor_id).filter(Boolean))];
       if (codes.length > 0) {
         const names = await UserLookupService.resolveMany(codes);
         setResolvedNames(names);
@@ -440,7 +440,7 @@ export default function SiteHistory() {
             style: "destructive",
             onPress: async () => {
               try {
-                if (params.logName === "Chiller Logs" || item.chillerId) {
+                if (params.logName === "Chiller Logs" || item.chiller_id) {
                   await SiteLogService.deleteChillerReading(item.id);
                 } else {
                   await SiteLogService.deleteSiteLog(item.id);
@@ -475,7 +475,7 @@ export default function SiteHistory() {
   const renderHistoryItem = useCallback(
     ({ item }: { item: any }) => {
       const route = getRoute();
-      const resolvedName = resolvedNames.get(item.executorId) || item.executorId;
+      const resolvedName = resolvedNames.get(item.executor_id) || item.executor_id;
 
       return (
         <HistoryItem
@@ -489,9 +489,9 @@ export default function SiteHistory() {
                 pathname: route,
                 params: {
                   editId: item.id,
-                  siteCode: item.siteCode || siteCode,
-                  areaName: item.taskName || "",
-                  chillerId: item.chillerId || item.equipmentId,
+                  siteCode: item.site_code || siteCode,
+                  areaName: item.task_name || "",
+                  chillerId: item.chiller_id || item.equipment_id,
                   mode: "edit",
                 },
               });

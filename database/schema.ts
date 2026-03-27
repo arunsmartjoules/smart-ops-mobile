@@ -24,6 +24,8 @@ export const tickets = sqliteTable("tickets", {
   created_by: text("created_by").notNull(),
   due_date: real("due_date"),
   closed_at: real("closed_at"),
+  before_temp: real("before_temp"),
+  after_temp: real("after_temp"),
   created_at: real("created_at").notNull(),
   updated_at: real("updated_at").notNull(),
 });
@@ -90,6 +92,7 @@ export const siteLogs = sqliteTable("site_logs", {
   assigned_to: text("assigned_to"),
   attachment: text("attachment"),
   status: text("status"),
+  scheduled_date: text("scheduled_date"), // YYYY-MM-DD
   created_at: real("created_at").notNull(),
   updated_at: real("updated_at").notNull(),
 });

@@ -159,7 +159,7 @@ export default function SiteLogs() {
   const categories = [
     {
       id: "temp-rh",
-      title: "Temp & Humidity",
+      title: "Temp & RH",
       shortTitle: "Temp",
       route: "/temp-rh",
       subtitle: "Monitoring Points",

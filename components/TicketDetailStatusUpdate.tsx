@@ -58,6 +58,10 @@ interface TicketDetailStatusUpdateProps {
   areaOptions: SelectOption[];
   categoryOptions: SelectOption[];
   areasLoading?: boolean;
+  beforeTemp: string;
+  setBeforeTemp: (v: string) => void;
+  afterTemp: string;
+  setAfterTemp: (v: string) => void;
 }
 
 const TicketDetailStatusUpdate = ({
@@ -73,6 +77,10 @@ const TicketDetailStatusUpdate = ({
   areaOptions,
   categoryOptions,
   areasLoading,
+  beforeTemp,
+  setBeforeTemp,
+  afterTemp,
+  setAfterTemp,
 }: TicketDetailStatusUpdateProps) => {
   const statuses = [
     "Inprogress",
@@ -196,6 +204,74 @@ const TicketDetailStatusUpdate = ({
             searchPlaceholder="Search categories..."
             emptyMessage="No categories found"
           />
+        </View>
+      )}
+
+      {/* Before / After Temp (for Inprogress and Resolved) */}
+      {(updateStatus === "Inprogress" || updateStatus === "Resolved") && (
+        <View style={{ flexDirection: "row", gap: 10, marginBottom: 16 }}>
+          <View style={{ flex: 1 }}>
+            <Text
+              className="text-slate-500 dark:text-slate-400"
+              style={{
+                fontSize: 10,
+                fontWeight: "700",
+                textTransform: "uppercase",
+                letterSpacing: 1.2,
+                marginBottom: 6,
+                marginLeft: 2,
+              }}
+            >
+              Before Temp (°C)
+            </Text>
+            <TextInput
+              style={{
+                borderWidth: 1,
+                borderRadius: 12,
+                padding: 12,
+                fontWeight: "600",
+                fontSize: 14,
+                textAlign: "center",
+              }}
+              className="bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-50 border-slate-200 dark:border-slate-700"
+              placeholder="e.g. 24.5"
+              placeholderTextColor="#94a3b8"
+              keyboardType="decimal-pad"
+              value={beforeTemp}
+              onChangeText={setBeforeTemp}
+            />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text
+              className="text-slate-500 dark:text-slate-400"
+              style={{
+                fontSize: 10,
+                fontWeight: "700",
+                textTransform: "uppercase",
+                letterSpacing: 1.2,
+                marginBottom: 6,
+                marginLeft: 2,
+              }}
+            >
+              After Temp (°C)
+            </Text>
+            <TextInput
+              style={{
+                borderWidth: 1,
+                borderRadius: 12,
+                padding: 12,
+                fontWeight: "600",
+                fontSize: 14,
+                textAlign: "center",
+              }}
+              className="bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-50 border-slate-200 dark:border-slate-700"
+              placeholder="e.g. 22.0"
+              placeholderTextColor="#94a3b8"
+              keyboardType="decimal-pad"
+              value={afterTemp}
+              onChangeText={setAfterTemp}
+            />
+          </View>
         </View>
       )}
 

@@ -85,6 +85,8 @@ export default function Tickets() {
   const [updateArea, setUpdateArea] = useState("");
   const [updateCategory, setUpdateCategory] = useState("");
   const [isUpdating, setIsUpdating] = useState(false);
+  const [beforeTemp, setBeforeTemp] = useState("");
+  const [afterTemp, setAfterTemp] = useState("");
 
   // Area and Category options for dropdowns
   const [areaOptions, setAreaOptions] = useState<SelectOption[]>([]);
@@ -478,6 +480,8 @@ export default function Tickets() {
     setUpdateRemarks(ticket.internal_remarks || "");
     setUpdateArea(ticket.area_asset || "");
     setUpdateCategory(ticket.category || "");
+    setBeforeTemp("");
+    setAfterTemp("");
     setIsDetailVisible(true);
   }, []);
 
@@ -575,6 +579,14 @@ export default function Tickets() {
       area_asset: updateArea || selectedTicket.area_asset,
       category: updateCategory || selectedTicket.category,
     };
+
+    // Include temp readings if provided
+    if (beforeTemp.trim() !== "") {
+      payload.before_temp = parseFloat(beforeTemp);
+    }
+    if (afterTemp.trim() !== "") {
+      payload.after_temp = parseFloat(afterTemp);
+    }
 
     // If status is Inprogress or Cancelled, assign to current user
     if (updateStatus === "Inprogress" || updateStatus === "Cancelled") {
@@ -810,6 +822,10 @@ export default function Tickets() {
             areaOptions={areaOptions}
             categoryOptions={categoryOptions}
             areasLoading={areasLoading}
+            beforeTemp={beforeTemp}
+            setBeforeTemp={setBeforeTemp}
+            afterTemp={afterTemp}
+            setAfterTemp={setAfterTemp}
           />
         )}
       </SafeAreaView>

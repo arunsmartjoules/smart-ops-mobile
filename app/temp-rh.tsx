@@ -27,7 +27,7 @@ import {
 import { SiteConfigService, TaskItem } from "@/services/SiteConfigService";
 import { useAuth } from "@/contexts/AuthContext";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { format } from "date-fns";
+import { format, subDays, addDays } from "date-fns";
 import SiteLogService from "@/services/SiteLogService";
 import SignaturePad from "@/components/SignaturePad";
 import { StorageService } from "@/services/StorageService";
@@ -40,6 +40,7 @@ import { sortBySequenceNumber, SortDirection } from "@/utils/sorting";
 import { db, logMaster } from "@/database";
 import { eq } from "drizzle-orm";
 import logger from "@/utils/logger";
+import { DateNavBar } from "@/components/sitelogs/DateNavBar";
 
 // Memoized Log Item Component
 const LogItem = memo(
@@ -163,6 +164,28 @@ export default function TempRHTaskList() {
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
   const autoSyncedRef = React.useRef(false);
+
+  // Date navigation — default to today
+  const [pickedDate, setPickedDate] = useState<Date>(new Date());
+  const [showDatePicker, setShowDatePicker] = useState(false);
+
+  const scheduledDate = useMemo(() => format(pickedDate, "yyyy-MM-dd"), [pickedDate]);
+
+  const prevCount = useMemo(() => {
+    const prev = format(subDays(pickedDate, 1), "yyyy-MM-dd");
+    return tasks.filter((t) => {
+      const d = t.meta?.scheduledDate || t.meta?.scheduled_date;
+      return d === prev && t.status?.toLowerCase() !== "completed";
+    }).length;
+  }, [tasks, pickedDate]);
+
+  const nextCount = useMemo(() => {
+    const next = format(addDays(pickedDate, 1), "yyyy-MM-dd");
+    return tasks.filter((t) => {
+      const d = t.meta?.scheduledDate || t.meta?.scheduled_date;
+      return d === next && t.status?.toLowerCase() !== "completed";
+    }).length;
+  }, [tasks, pickedDate]);
 
   useEffect(() => {
     if (user) {
@@ -480,9 +503,9 @@ export default function TempRHTaskList() {
         .toLowerCase()
         .includes(searchQuery.toLowerCase());
       const isNotCompleted = task.status?.toLowerCase() !== "completed";
-      if (!showCompleted) {
-        return matchesSearch && isNotCompleted;
-      }
+      const taskScheduledDate = task.meta?.scheduledDate || task.meta?.scheduled_date;
+      if (taskScheduledDate !== scheduledDate) return false;
+      if (!showCompleted) return matchesSearch && isNotCompleted;
       return matchesSearch;
     });
 
@@ -490,7 +513,7 @@ export default function TempRHTaskList() {
       const comparison = a.name.localeCompare(b.name);
       return sortDirection === "desc" ? -comparison : comparison;
     });
-  }, [tasks, searchQuery, sortDirection, editId, showCompleted]);
+  }, [tasks, searchQuery, sortDirection, editId, showCompleted, scheduledDate]);
 
   const renderItem = useCallback(
     ({ item }: { item: TaskItem }) => {
@@ -580,35 +603,48 @@ export default function TempRHTaskList() {
             </View>
 
             {!editId && (
-              <View className="flex-row items-center gap-2">
-                <View className="flex-1 bg-slate-100 dark:bg-slate-800 rounded-xl px-4 py-2 flex-row items-center">
-                  <TextInput
-                    placeholder="Filter areas..."
-                    value={searchQuery}
-                    onChangeText={(t) => {
-                      setSearchQuery(t);
+              <View>
+                <View className="flex-row items-center gap-2 mb-2">
+                  <View className="flex-1 bg-slate-100 dark:bg-slate-800 rounded-xl px-4 py-2 flex-row items-center">
+                    <TextInput
+                      placeholder="Filter areas..."
+                      value={searchQuery}
+                      onChangeText={(t) => {
+                        setSearchQuery(t);
+                      }}
+                      className="flex-1 font-medium text-slate-900 dark:text-slate-50"
+                      placeholderTextColor="#94a3b8"
+                    />
+                  </View>
+                  <SortIcon
+                    direction={sortDirection}
+                    onPress={() => {
+                      setSortDirection((prev) =>
+                        prev === "asc" ? "desc" : prev === "desc" ? null : "asc",
+                      );
                     }}
-                    className="flex-1 font-medium text-slate-900 dark:text-slate-50"
-                    placeholderTextColor="#94a3b8"
                   />
+                  <TouchableOpacity
+                    onPress={() => setShowCompleted(!showCompleted)}
+                    className={`w-10 h-10 rounded-xl items-center justify-center border ${showCompleted ? "bg-green-50 border-green-200" : "bg-slate-50 border-slate-200 dark:bg-slate-800 dark:border-slate-700"}`}
+                  >
+                    <CheckCircle2
+                      size={18}
+                      color={showCompleted ? "#16a34a" : "#94a3b8"}
+                    />
+                  </TouchableOpacity>
                 </View>
-                <SortIcon
-                  direction={sortDirection}
-                  onPress={() => {
-                    setSortDirection((prev) =>
-                      prev === "asc" ? "desc" : prev === "desc" ? null : "asc",
-                    );
-                  }}
+
+                {/* Quick date filter chips */}
+                <DateNavBar
+                  date={pickedDate}
+                  onDateChange={setPickedDate}
+                  showPicker={showDatePicker}
+                  onShowPicker={setShowDatePicker}
+                  prevCount={prevCount}
+                  nextCount={nextCount}
+                  accentColor="#dc2626"
                 />
-                <TouchableOpacity
-                  onPress={() => setShowCompleted(!showCompleted)}
-                  className={`w-10 h-10 rounded-xl items-center justify-center border ${showCompleted ? "bg-green-50 border-green-200" : "bg-slate-50 border-slate-200 dark:bg-slate-800 dark:border-slate-700"}`}
-                >
-                  <CheckCircle2
-                    size={18}
-                    color={showCompleted ? "#16a34a" : "#94a3b8"}
-                  />
-                </TouchableOpacity>
               </View>
             )}
           </View>
@@ -731,6 +767,7 @@ export default function TempRHTaskList() {
           </View>
         </View>
       </Modal>
+
     </View>
   );
 }

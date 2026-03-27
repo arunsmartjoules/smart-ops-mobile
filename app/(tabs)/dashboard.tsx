@@ -1046,9 +1046,7 @@ export default function Dashboard() {
         {/* Header Section */}
         <View className="px-6 pt-6 pb-4 flex-row items-center justify-between">
           <View>
-            <Text className="text-slate-400 dark:text-slate-500 text-[10px] font-black uppercase tracking-[0.2em] mb-1">
-              JouleOps • Dashboard
-            </Text>
+            
             <Text className="text-slate-900 dark:text-slate-50 text-2xl font-black tracking-tight">
               Site Overview
             </Text>

@@ -26,6 +26,8 @@ export default function NotificationSettingsPage() {
   const [saving, setSaving] = useState(false);
   const [attendanceNotificationsEnabled, setAttendanceNotificationsEnabled] =
     useState(true);
+  const [ticketNotificationsEnabled, setTicketNotificationsEnabled] =
+    useState(true);
   const [hasSystemPermission, setHasSystemPermission] = useState(false);
 
   useEffect(() => {
@@ -53,6 +55,9 @@ export default function NotificationSettingsPage() {
       if (result.success && result.data) {
         setAttendanceNotificationsEnabled(
           result.data.attendance_notifications_enabled ?? true
+        );
+        setTicketNotificationsEnabled(
+          result.data.ticket_notifications_enabled ?? true
         );
       }
     } catch (error: any) {
@@ -108,6 +113,38 @@ export default function NotificationSettingsPage() {
           error: error.message,
         });
         // Don't revert - keep the toggle state the user selected
+      } finally {
+        setSaving(false);
+      }
+    },
+    [hasSystemPermission, token]
+  );
+
+  const handleToggleTicketNotifications = useCallback(
+    async (value: boolean) => {
+      if (!hasSystemPermission && value) {
+        Alert.alert(
+          "Permission Required",
+          "Please enable notifications in your device settings first.",
+          [{ text: "OK" }]
+        );
+        return;
+      }
+      if (!token) {
+        setTicketNotificationsEnabled(value);
+        return;
+      }
+      try {
+        setSaving(true);
+        setTicketNotificationsEnabled(value);
+        await updateNotificationPreferences(token, {
+          ticket_notifications_enabled: value,
+        });
+      } catch (error: any) {
+        logger.error("Update ticket notification preferences error", {
+          module: "NOTIFICATION_SETTINGS",
+          error: error.message,
+        });
       } finally {
         setSaving(false);
       }
@@ -216,6 +253,41 @@ export default function NotificationSettingsPage() {
                     </Text>
                   </View>
                 )}
+              </View>
+
+              {/* Ticket Notifications */}
+              <View
+                className="bg-white dark:bg-slate-900 rounded-2xl p-4 mb-4"
+                style={{
+                  shadowColor: "#000",
+                  shadowOffset: { width: 0, height: 2 },
+                  shadowOpacity: 0.05,
+                  shadowRadius: 8,
+                  elevation: 2,
+                }}
+              >
+                <View className="flex-row items-center">
+                  <View className="w-10 h-10 rounded-full bg-orange-50 dark:bg-orange-900/20 items-center justify-center mr-3">
+                    <Bell size={20} color="#f59e0b" />
+                  </View>
+                  <View className="flex-1">
+                    <Text className="text-slate-900 dark:text-slate-50 font-semibold text-base">
+                      Ticket Notifications
+                    </Text>
+                    <Text className="text-slate-500 dark:text-slate-400 text-sm">
+                      Get notified when a new ticket is raised at your site
+                    </Text>
+                  </View>
+                  <Switch
+                    value={ticketNotificationsEnabled}
+                    onValueChange={handleToggleTicketNotifications}
+                    disabled={saving}
+                    trackColor={{ false: "#cbd5e1", true: "#fed7aa" }}
+                    thumbColor={
+                      ticketNotificationsEnabled ? "#f59e0b" : "#f1f5f9"
+                    }
+                  />
+                </View>
               </View>
 
               {/* Info Section */}

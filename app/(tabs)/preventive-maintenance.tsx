@@ -35,6 +35,8 @@ import {
   Search,
   ChevronLeft,
   Calendar as CalendarIcon,
+  QrCode,
+  X,
 } from "lucide-react-native";
 import { router, useFocusEffect } from "expo-router";
 import { useAuth } from "@/contexts/AuthContext";
@@ -56,6 +58,7 @@ import {
   isValid,
 } from "date-fns";
 import AdvancedFilterModal from "@/components/AdvancedFilterModal";
+import QRScannerModal, { type QRScannerRef } from "@/components/QRScannerModal";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import logger from "@/utils/logger";
 import Skeleton from "@/components/Skeleton";
@@ -351,6 +354,10 @@ export default function PreventiveMaintenance() {
     format(new Date(), "yyyy-MM-dd"),
   );
 
+  // QR filter state
+  const qrScannerRef = useRef<QRScannerRef>(null);
+  const [qrAssetFilter, setQrAssetFilter] = useState<string | null>(null);
+
   // Guard against re-fetching while server pull is in progress
   const isFetchingRef = useRef(false);
   const [syncing, setSyncing] = useState(false);
@@ -406,23 +413,21 @@ export default function PreventiveMaintenance() {
             module: "PM",
             siteCode,
           });
-          
-          const apiData = await PMService.fetchFromAPI(
+
+          const apiData = await PMService.fetchFromAPI(siteCode, fromDateObj, toDateObj);
+
+          // Try reading back from local DB (populated by fetchFromAPI cache)
+          const cached = await PMService.getLocalInstances(
             siteCode,
-            fromDateObj,
-            toDateObj,
+            undefined,
+            undefined,
+            undefined,
+            fromTs,
+            toTs,
           );
-          
-          if (apiData.length > 0) {
-            logger.info("Loaded PM instances from API", {
-              module: "PM",
-              count: apiData.length,
-              siteCode,
-            });
-            setAllInstances(apiData);
-          } else {
-            setAllInstances(data);
-          }
+
+          // Use cached if available, otherwise fall back to raw API data
+          setAllInstances(cached.length > 0 ? cached : apiData);
         } else {
           setAllInstances(data);
         }
@@ -478,17 +483,22 @@ export default function PreventiveMaintenance() {
     if (statusFilter !== "All") {
       list = list.filter((i) => i.status === statusFilter);
     }
-    if (searchQuery) {
+    if (qrAssetFilter) {
+      const q = qrAssetFilter.toLowerCase();
+      list = list.filter(
+        (i) => i.asset_id && i.asset_id.toLowerCase().includes(q),
+      );
+    } else if (searchQuery) {
       const q = searchQuery.toLowerCase();
       list = list.filter(
         (i) =>
           (i.title && i.title.toLowerCase().includes(q)) ||
-          (i.assetId && i.assetId.toLowerCase().includes(q)) ||
-          (i.maintenanceId && i.maintenanceId.toLowerCase().includes(q)),
+          (i.asset_id && i.asset_id.toLowerCase().includes(q)) ||
+          (i.maintenance_id && i.maintenance_id.toLowerCase().includes(q)),
       );
     }
     return list;
-  }, [allInstances, statusFilter, searchQuery]);
+  }, [allInstances, statusFilter, searchQuery, qrAssetFilter]);
 
   // ── Statistics ──────────────────────────────────────────────────────────────
   const stats = useMemo(() => {
@@ -522,6 +532,34 @@ export default function PreventiveMaintenance() {
     }
     setShowFiltersModal(false);
   }, [tempSearch, tempFromDate, tempToDate]);
+
+  const handleQRAssetFound = useCallback(
+    (assetName: string) => {
+      // Set date range to current month for QR filter
+      const now = new Date();
+      const monthStart = format(
+        new Date(now.getFullYear(), now.getMonth(), 1),
+        "yyyy-MM-dd",
+      );
+      const monthEnd = format(
+        new Date(now.getFullYear(), now.getMonth() + 1, 0),
+        "yyyy-MM-dd",
+      );
+      setCurrentDate(monthStart);
+      setToDate(monthEnd);
+      setQrAssetFilter(assetName);
+      setSearchQuery("");
+    },
+    [],
+  );
+
+  const clearQRFilter = useCallback(() => {
+    setQrAssetFilter(null);
+    // Reset to today
+    const today = format(new Date(), "yyyy-MM-dd");
+    setCurrentDate(today);
+    setToDate(today);
+  }, []);
 
   // ── FlatList Render ──────────────────────────────────────────────────────────
   const renderItem: ListRenderItem<PMInstanceRow> = useCallback(
@@ -657,7 +695,31 @@ export default function PreventiveMaintenance() {
               value={searchQuery}
               onChangeText={setSearchQuery}
             />
+            <TouchableOpacity
+              onPress={() => qrScannerRef.current?.open()}
+              style={[
+                styles.qrBtn,
+                qrAssetFilter
+                  ? { backgroundColor: "#dc2626" }
+                  : { backgroundColor: isDark ? "#1e293b" : "#f1f5f9" },
+              ]}
+            >
+              <QrCode size={18} color={qrAssetFilter ? "#fff" : "#64748b"} />
+            </TouchableOpacity>
           </View>
+
+          {/* QR Active Filter Chip */}
+          {qrAssetFilter ? (
+            <View style={styles.qrChip}>
+              <QrCode size={12} color="#dc2626" />
+              <Text style={styles.qrChipText} numberOfLines={1}>
+                {qrAssetFilter}
+              </Text>
+              <TouchableOpacity onPress={clearQRFilter} hitSlop={8}>
+                <X size={14} color="#dc2626" />
+              </TouchableOpacity>
+            </View>
+          ) : null}
         </View>
 
         <View style={styles.listHeader}>
@@ -714,6 +776,13 @@ export default function PreventiveMaintenance() {
           statusFilter={statusFilter}
           setStatusFilter={setStatusFilter}
           applyAdvancedFilters={applyAdvancedFilters}
+        />
+
+        <QRScannerModal
+          ref={qrScannerRef}
+          siteCode={siteCode}
+          onClose={() => {}}
+          onAssetFound={handleQRAssetFound}
         />
       </SafeAreaView>
     </View>
@@ -785,6 +854,34 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     borderWidth: 1,
     borderColor: "#f1f5f9",
+  },
+  qrBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 8,
+    alignItems: "center",
+    justifyContent: "center",
+    marginLeft: 6,
+  },
+  qrChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginTop: 8,
+    backgroundColor: "#fef2f2",
+    borderWidth: 1,
+    borderColor: "#fecaca",
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    alignSelf: "flex-start",
+  },
+  qrChipText: {
+    color: "#dc2626",
+    fontSize: 12,
+    fontWeight: "600",
+    flex: 1,
+    maxWidth: 200,
   },
 
   sectionRow: {

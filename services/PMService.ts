@@ -86,7 +86,9 @@ const PMService = {
   },
 
   /**
-   * Fetch PM instances from API (fallback when PowerSync hasn't synced yet)
+   * Fetch PM instances from API and cache them to local DB.
+   * After caching instances, pre-fetches all linked checklists that aren't
+   * already cached so every PM can show its checklist offline.
    */
   async fetchFromAPI(
     siteCode: string,
@@ -96,30 +98,128 @@ const PMService = {
     try {
       let endpoint = `/api/pm-instances/site/${siteCode}`;
       const params = new URLSearchParams();
-      
-      if (fromDate) {
-        params.append('from_date', fromDate.toISOString());
-      }
-      if (toDate) {
-        params.append('to_date', toDate.toISOString());
-      }
-      
-      if (params.toString()) {
-        endpoint += `?${params.toString()}`;
-      }
+      if (fromDate) params.append("from_date", fromDate.toISOString());
+      if (toDate) params.append("to_date", toDate.toISOString());
+      if (params.toString()) endpoint += `?${params.toString()}`;
 
       const response = await apiFetch(endpoint);
       const data = await response.json();
-      
-      if (data.success && data.data) {
+
+      if (data.success && data.data?.length > 0) {
         logger.info("Fetched PM instances from API", {
           module: "PM_SERVICE",
           count: data.data.length,
           siteCode,
         });
+
+        // Cache instances to local DB (best-effort)
+        try {
+          for (const inst of data.data) {
+            await db
+              .insert(pmInstances)
+              .values({
+                id: inst.id,
+                site_code: inst.site_code || siteCode,
+                title: inst.title || "",
+                asset_id: inst.asset_id || null,
+                asset_type: inst.asset_type || "",
+                location: inst.location || "",
+                frequency: inst.frequency || "",
+                status: inst.status || "",
+                progress: inst.progress || "0/0",
+                assigned_to_name: inst.assigned_to_name || null,
+                start_due_date: inst.start_due_date
+                  ? new Date(inst.start_due_date).getTime()
+                  : null,
+                maintenance_id: inst.maintenance_id || inst.checklist_id || null,
+                client_sign: inst.client_sign || null,
+                before_image: inst.before_image || null,
+                after_image: inst.after_image || null,
+                created_at: inst.created_at
+                  ? new Date(inst.created_at).getTime()
+                  : Date.now(),
+                updated_at: Date.now(),
+              })
+              .onConflictDoUpdate({
+                target: pmInstances.id,
+                set: {
+                  status: inst.status || "",
+                  progress: inst.progress || "0/0",
+                  assigned_to_name: inst.assigned_to_name || null,
+                  client_sign: inst.client_sign || null,
+                  before_image: inst.before_image || null,
+                  after_image: inst.after_image || null,
+                  updated_at: Date.now(),
+                },
+              });
+          }
+          logger.info("Cached PM instances to local DB", {
+            module: "PM_SERVICE",
+            count: data.data.length,
+            siteCode,
+          });
+        } catch (cacheErr) {
+          logger.warn("Failed to cache PM instances to local DB", {
+            module: "PM_SERVICE",
+            error: cacheErr,
+            siteCode,
+          });
+        }
+
+        // Pre-fetch all checklists that aren't already cached locally
+        const checklistIds: string[] = [
+          ...new Set(
+            data.data
+              .map((inst: any) => inst.maintenance_id || inst.checklist_id)
+              .filter(Boolean) as string[],
+          ),
+        ];
+
+        if (checklistIds.length > 0) {
+          // Find which ones are already cached
+          const alreadyCached = new Set<string>();
+          try {
+            for (const cid of checklistIds) {
+              const existing = await db
+                .select({ id: pmChecklistItems.id })
+                .from(pmChecklistItems)
+                .where(eq(pmChecklistItems.checklist_id, cid))
+                .limit(1);
+              if (existing.length > 0) alreadyCached.add(cid);
+            }
+          } catch {
+            // DB not ready yet — fetch all
+          }
+
+          const toFetch = checklistIds.filter((id) => !alreadyCached.has(id));
+
+          logger.info("Pre-fetching checklists", {
+            module: "PM_SERVICE",
+            total: checklistIds.length,
+            toFetch: toFetch.length,
+            alreadyCached: alreadyCached.size,
+          });
+
+          // Fetch concurrently in small batches to avoid hammering the API
+          const BATCH = 5;
+          for (let i = 0; i < toFetch.length; i += BATCH) {
+            await Promise.all(
+              toFetch.slice(i, i + BATCH).map((cid) =>
+                this.fetchChecklistItemsFromAPI(cid).catch((err) =>
+                  logger.warn("Failed to pre-fetch checklist", {
+                    module: "PM_SERVICE",
+                    checklistId: cid,
+                    error: err,
+                  }),
+                ),
+              ),
+            );
+          }
+        }
+
         return data.data;
       }
-      
+
       return [];
     } catch (error) {
       logger.error("Failed to fetch PM instances from API", {
@@ -186,23 +286,82 @@ const PMService = {
   },
 
   /**
-   * Fetch checklist items from API (fallback when PowerSync hasn't synced yet)
+   * Fetch checklist items from API and cache them to local DB.
    */
   async fetchChecklistItemsFromAPI(checklistId: string): Promise<any[]> {
     try {
       const response = await apiFetch(`/api/pm-checklists/${checklistId}`);
       const data = await response.json();
-      
+
       if (data.success && data.data) {
-        const items = Array.isArray(data.data) ? data.data : [data.data];
-        logger.info("Fetched checklist items from API", {
-          module: "PM_SERVICE",
-          count: items.length,
-          checklistId,
-        });
+        const items: any[] = Array.isArray(data.data) ? data.data : [data.data];
+
+        // Cache to local DB (best-effort)
+        try {
+          // Cache checklist master row
+          const master = items[0];
+          if (master?.checklist_id || master?.id) {
+            const masterId = master.checklist_id || checklistId;
+            await db
+              .insert(pmChecklistMaster)
+              .values({
+                id: masterId,
+                title: master.title || master.checklist_title || "",
+                asset_type: master.asset_type || null,
+                frequency: master.frequency || null,
+                created_at: master.created_at
+                  ? new Date(master.created_at).getTime()
+                  : Date.now(),
+              })
+              .onConflictDoUpdate({
+                target: pmChecklistMaster.id,
+                set: { title: master.title || master.checklist_title || "" },
+              });
+          }
+
+          // Cache checklist items
+          for (const item of items) {
+            const itemId = item.id || item.checklist_item_id;
+            if (!itemId) continue;
+            await db
+              .insert(pmChecklistItems)
+              .values({
+                id: itemId,
+                checklist_id: item.checklist_id || checklistId,
+                task_name: item.task_name || "",
+                field_type: item.field_type || null,
+                sequence_no: item.sequence_no ?? null,
+                image_mandatory: !!item.image_mandatory,
+                remarks_mandatory: !!item.remarks_mandatory,
+              })
+              .onConflictDoUpdate({
+                target: pmChecklistItems.id,
+                set: {
+                  task_name: item.task_name || "",
+                  field_type: item.field_type || null,
+                  sequence_no: item.sequence_no ?? null,
+                  image_mandatory: !!item.image_mandatory,
+                  remarks_mandatory: !!item.remarks_mandatory,
+                },
+              });
+          }
+
+          logger.info("Fetched and cached checklist items", {
+            module: "PM_SERVICE",
+            count: items.length,
+            checklistId,
+          });
+        } catch (cacheErr) {
+          logger.warn("Failed to cache checklist items to local DB", {
+            module: "PM_SERVICE",
+            error: cacheErr,
+            checklistId,
+          });
+        }
+
         return items;
       }
-      
+
       return [];
     } catch (error) {
       logger.error("Failed to fetch checklist items from API", {

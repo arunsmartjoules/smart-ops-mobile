@@ -137,6 +137,45 @@ export default function TempRHEntry() {
     ]);
   };
 
+  const handleSave = async () => {
+    try {
+      setSaving(true);
+      const hasTemp = !!(formData.temperature && formData.temperature.trim().length > 0);
+      const hasRH = !!(formData.rh && formData.rh.trim().length > 0);
+      const status = hasTemp && hasRH ? "Completed" : hasTemp || hasRH ? "Inprogress" : "Open";
+
+      if (isEditMode && params.id) {
+        await SiteLogService.updateSiteLog(params.id, {
+          temperature: hasTemp ? parseFloat(formData.temperature) : null,
+          rh: hasRH ? parseFloat(formData.rh) : null,
+          remarks: formData.remarks,
+          attachment: formData.attachment,
+          status,
+          assignedTo: user?.name || user?.user_id || "unknown",
+        });
+      } else {
+        await SiteLogService.saveSiteLog({
+          siteCode: params.siteCode,
+          executorId: user?.user_id || user?.id || "unknown",
+          assignedTo: user?.name || user?.user_id || "unknown",
+          logName: "Temp RH",
+          taskName: params.areaName,
+          temperature: hasTemp ? parseFloat(formData.temperature) : null,
+          rh: hasRH ? parseFloat(formData.rh) : null,
+          remarks: formData.remarks,
+          attachment: formData.attachment,
+          entryTime: entryTime,
+          status,
+        });
+      }
+      router.back();
+    } catch (error: any) {
+      Alert.alert("Error", error.message || "Failed to save log");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const handleCompletePress = () => {
     // Open signature modal
     setSignatureModalVisible(true);
@@ -332,30 +371,32 @@ export default function TempRHEntry() {
           </View>
         </ScrollView>
 
-        {/* Fixed Bottom Submit Button */}
-        <View className="absolute bottom-0 left-0 right-0 bg-white dark:bg-slate-900 border-t border-slate-100 dark:border-slate-800 px-5 pb-8 pt-4">
+        {/* Fixed Bottom Buttons */}
+        <View className="absolute bottom-0 left-0 right-0 bg-white dark:bg-slate-900 border-t border-slate-100 dark:border-slate-800 px-5 pb-8 pt-4 flex-row gap-3">
+          <TouchableOpacity
+            onPress={handleSave}
+            disabled={saving}
+            activeOpacity={0.8}
+            className="flex-1 py-4 rounded-xl items-center justify-center border-2 border-red-600"
+          >
+            {saving ? (
+              <ActivityIndicator color="#dc2626" />
+            ) : (
+              <Text className="text-red-600 font-bold text-base uppercase tracking-widest">Save</Text>
+            )}
+          </TouchableOpacity>
           <TouchableOpacity
             onPress={handleCompletePress}
             disabled={saving}
             activeOpacity={0.8}
-            className={`py-4 rounded-xl flex-row items-center justify-center ${saving ? "bg-slate-200" : "bg-red-600 shadow-md shadow-red-600/20"}`}
-            style={
-              !saving
-                ? {
-                    shadowColor: "#dc2626",
-                    shadowOffset: { width: 0, height: 4 },
-                    shadowOpacity: 0.2,
-                    shadowRadius: 8,
-                    elevation: 4,
-                  }
-                : {}
-            }
+            className={`flex-1 py-4 rounded-xl flex-row items-center justify-center ${saving ? "bg-slate-200" : "bg-red-600"}`}
+            style={!saving ? { shadowColor: "#dc2626", shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.2, shadowRadius: 8, elevation: 4 } : {}}
           >
             {saving ? (
               <ActivityIndicator color="white" />
             ) : (
               <Text className="text-white font-bold text-base uppercase tracking-widest">
-                {isEditMode ? "Update Log" : "Complete & Sign"}
+                {isEditMode ? "Update" : "Complete"}
               </Text>
             )}
           </TouchableOpacity>

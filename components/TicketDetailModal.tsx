@@ -33,6 +33,10 @@ interface TicketDetailModalProps {
   areaOptions: SelectOption[];
   categoryOptions: SelectOption[];
   areasLoading?: boolean;
+  beforeTemp: string;
+  setBeforeTemp: (v: string) => void;
+  afterTemp: string;
+  setAfterTemp: (v: string) => void;
 }
 
 const TicketDetailModal = React.memo(
@@ -53,6 +57,10 @@ const TicketDetailModal = React.memo(
     areaOptions,
     categoryOptions,
     areasLoading,
+    beforeTemp,
+    setBeforeTemp,
+    afterTemp,
+    setAfterTemp,
   }: TicketDetailModalProps) => {
     const isDirty = React.useMemo(() => {
       if (!ticket) return false;
@@ -127,6 +135,10 @@ const TicketDetailModal = React.memo(
                     areaOptions={areaOptions}
                     categoryOptions={categoryOptions}
                     areasLoading={areasLoading}
+                    beforeTemp={beforeTemp}
+                    setBeforeTemp={setBeforeTemp}
+                    afterTemp={afterTemp}
+                    setAfterTemp={setAfterTemp}
                   />
 
                   {/* Comments & Timeline */}

@@ -16,9 +16,9 @@ const sqlite = openDatabaseSync("smartops.db");
 // Drizzle query builder
 export const db = drizzle(sqlite, { schema });
 
-// Run migrations to create tables if they don't exist
-export function initDatabase() {
-  sqlite.execSync(`
+// Run migrations synchronously at module load time so tables always exist
+// before any component or service tries to query them.
+sqlite.execSync(`
     CREATE TABLE IF NOT EXISTS tickets (
       id TEXT PRIMARY KEY,
       site_code TEXT NOT NULL,
@@ -84,6 +84,7 @@ export function initDatabase() {
       assigned_to TEXT,
       attachment TEXT,
       status TEXT,
+      scheduled_date TEXT,
       created_at REAL NOT NULL,
       updated_at REAL NOT NULL
     );
@@ -208,8 +209,11 @@ export function initDatabase() {
       created_at REAL,
       updated_at REAL
     );
-  `);
-}
+`);
+
+// Keep initDatabase exported for backwards compatibility — now a no-op since
+// tables are created above at module load time.
+export function initDatabase() {}
 
 // Re-export schema tables for convenient imports
 export {
