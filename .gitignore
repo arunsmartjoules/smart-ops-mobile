@@ -43,6 +43,10 @@ app-example
 /ios
 /android
 
+# Native sensitive configurational files
+google-services.json
+GoogleService-Info.plist
+
 # Log files
 *.log
 trace.log
