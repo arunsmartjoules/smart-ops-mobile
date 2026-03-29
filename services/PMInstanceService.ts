@@ -50,7 +50,7 @@ const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
 export const PMInstanceService = {
   async pullPMInstances(siteCode: string): Promise<void> {
     try {
-      const response = await apiFetch(`/api/pm-instances/site/${siteCode}`);
+      const response = await apiFetch(`/api/pm-instances/site/${siteCode}?limit=2000`);
       if (!response.ok) return;
 
       const result = await response.json();

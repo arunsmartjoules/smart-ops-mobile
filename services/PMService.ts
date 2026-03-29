@@ -1,9 +1,11 @@
-import { eq, and, inArray, between, gte, lte, asc } from "drizzle-orm";
+import { eq, and, inArray, or, isNull, gte, lte, asc } from "drizzle-orm";
 import { db, pmInstances, pmChecklistMaster, pmChecklistItems, pmResponses } from "@/database";
 import { v4 as uuidv4 } from "uuid";
+import cacheManager from "./CacheManager";
 import { supabase } from "./supabase";
 import { fetchWithTimeout } from "../utils/apiHelper";
 import { StorageService } from "./StorageService";
+import { AttachmentQueueService } from "./AttachmentQueueService";
 import { format } from "date-fns";
 import logger from "../utils/logger";
 import { API_BASE_URL } from "../constants/api";
@@ -24,6 +26,35 @@ const apiFetch = async (endpoint: string, options: RequestInit = {}, customTimeo
   }, customTimeout);
 };
 
+const LOCAL_URI_PREFIXES = ["file://", "content://", "ph://", "asset-library://"];
+
+const isLikelyLocalUri = (value?: string | null) =>
+  !!value && LOCAL_URI_PREFIXES.some((prefix) => value.startsWith(prefix));
+
+const isLocalUri = isLikelyLocalUri;
+
+/**
+ * If the given URI is a local file, queue it for deferred upload
+ * and return the persistent local URI. Otherwise return the URI as-is.
+ */
+const queuePMAttachmentIfLocal = async (
+  uri: string | null | undefined,
+  entityType: "pm_instance" | "pm_response",
+  entityId: string,
+  field: string,
+): Promise<string | null> => {
+  if (!uri) return null;
+  if (!isLocalUri(uri)) return uri;
+  return AttachmentQueueService.queueAttachment({
+    localUri: uri,
+    bucketName: "jouleops-attachments",
+    remotePath: `pm/${entityType}/${entityId}_${field}_${Date.now()}.jpg`,
+    relatedEntityType: entityType,
+    relatedEntityId: entityId,
+    relatedField: field,
+  });
+};
+
 export interface PMChecklistItemData {
   id: string;
   task_name: string;
@@ -41,27 +72,21 @@ export interface PMResponseData {
   image_url: string | null;
 }
 
-const LOCAL_URI_PREFIXES = ["file://", "content://", "ph://", "asset-library://"];
-
-const isLikelyLocalUri = (value?: string | null) =>
-  !!value && LOCAL_URI_PREFIXES.some((prefix) => value.startsWith(prefix));
-
+/**
+ * Upload pending asset if online, or queue for deferred upload if offline.
+ * Uses AttachmentQueueService for offline-safe handling.
+ */
 const uploadPendingAssetIfNeeded = async (
   uriOrUrl: string | null | undefined,
   folder: "pm-checklists" | "pm-completion",
   recordId: string,
+  entityType: "pm_instance" | "pm_response" = "pm_instance",
+  field: string = "image_url",
 ): Promise<string | null> => {
   if (!uriOrUrl) return null;
   if (!isLikelyLocalUri(uriOrUrl)) return uriOrUrl;
 
-  const fileName = `${folder}/${recordId}_${Date.now()}.jpg`;
-  const uploadedUrl = await StorageService.uploadFile(
-    "jouleops-attachments",
-    fileName,
-    uriOrUrl,
-  );
-
-  return uploadedUrl;
+  return queuePMAttachmentIfLocal(uriOrUrl, entityType, recordId, field);
 };
 
 // Helper type for PM instance rows returned by Drizzle
@@ -94,13 +119,31 @@ const PMService = {
     siteCode: string,
     fromDate?: Date,
     toDate?: Date,
+    limit?: number,
+    offset?: number,
+    status?: string,
   ): Promise<any[]> {
     try {
       let endpoint = `/api/pm-instances/site/${siteCode}`;
       const params = new URLSearchParams();
       if (fromDate) params.append("from_date", fromDate.toISOString());
       if (toDate) params.append("to_date", toDate.toISOString());
+      
+      // Pagination support: Backend expects 'page' instead of 'offset'
+      const requestedLimit = limit || 50;
+      params.append("limit", requestedLimit.toString());
+      
+      if (offset !== undefined) {
+        const page = Math.floor(offset / requestedLimit) + 1;
+        params.append("page", page.toString());
+      }
+      
+      if (status && status !== "All") {
+        params.append("status", status);
+      }
+      
       if (params.toString()) endpoint += `?${params.toString()}`;
+
 
       const response = await apiFetch(endpoint);
       const data = await response.json();
@@ -112,47 +155,83 @@ const PMService = {
           siteCode,
         });
 
-        // Cache instances to local DB (best-effort)
+        // Cache instances to local DB via CacheManager (best-effort)
         try {
-          for (const inst of data.data) {
-            await db
-              .insert(pmInstances)
-              .values({
-                id: inst.id,
-                site_code: inst.site_code || siteCode,
-                title: inst.title || "",
-                asset_id: inst.asset_id || null,
-                asset_type: inst.asset_type || "",
-                location: inst.location || "",
-                frequency: inst.frequency || "",
-                status: inst.status || "",
-                progress: inst.progress || "0/0",
-                assigned_to_name: inst.assigned_to_name || null,
-                start_due_date: inst.start_due_date
-                  ? new Date(inst.start_due_date).getTime()
-                  : null,
-                maintenance_id: inst.maintenance_id || inst.checklist_id || null,
-                client_sign: inst.client_sign || null,
-                before_image: inst.before_image || null,
-                after_image: inst.after_image || null,
-                created_at: inst.created_at
-                  ? new Date(inst.created_at).getTime()
-                  : Date.now(),
-                updated_at: Date.now(),
-              })
-              .onConflictDoUpdate({
-                target: pmInstances.id,
-                set: {
-                  status: inst.status || "",
-                  progress: inst.progress || "0/0",
-                  assigned_to_name: inst.assigned_to_name || null,
-                  client_sign: inst.client_sign || null,
-                  before_image: inst.before_image || null,
-                  after_image: inst.after_image || null,
-                  updated_at: Date.now(),
-                },
-              });
+          const records = data.data.map((inst: any) => ({
+            id: inst.id,
+            site_code: inst.site_code || siteCode,
+            title: inst.title || "",
+            asset_id: inst.asset_id || null,
+            asset_type: inst.asset_type || "",
+            location: inst.location || "",
+            frequency: inst.frequency || "",
+            status: inst.status || "",
+            progress: inst.progress || "0/0",
+            assigned_to_name: inst.assigned_to_name || null,
+            start_due_date: inst.start_due_date
+              ? new Date(inst.start_due_date).getTime()
+              : null,
+            maintenance_id: inst.maintenance_id || inst.checklist_id || null,
+            client_sign: inst.client_sign || null,
+            before_image: inst.before_image || null,
+            after_image: inst.after_image || null,
+            created_at: inst.created_at
+              ? new Date(inst.created_at).getTime()
+              : Date.now(),
+            updated_at: Date.now(),
+          }));
+
+          // ── Merge pending offline changes ─────────────────────────────
+          // If the user made changes offline (e.g. moved a PM to In-progress),
+          // those changes are in the offline_queue but may not be on the server yet.
+          // We must overlay the local state so the API doesn't overwrite it.
+          try {
+            const pendingUpdates = await cacheManager.getPendingQueueItemsByType("pm_instance_update");
+            if (pendingUpdates.length > 0) {
+              const pendingMap = new Map<string, Record<string, any>>();
+              for (const item of pendingUpdates) {
+                const id = item.payload?.id;
+                if (id) pendingMap.set(id, item.payload);
+              }
+
+              let mergedCount = 0;
+              for (const record of records) {
+                const pending = pendingMap.get(record.id);
+                if (pending) {
+                  // Overlay local fields onto the API record
+                  if (pending.status) record.status = pending.status;
+                  if (pending.progress) record.progress = pending.progress;
+                  if (pending.before_image !== undefined) record.before_image = pending.before_image;
+                  if (pending.after_image !== undefined) record.after_image = pending.after_image;
+                  if (pending.client_sign !== undefined) record.client_sign = pending.client_sign;
+                  mergedCount++;
+                }
+              }
+
+              if (mergedCount > 0) {
+                logger.info("PMService: merged pending syncs into fetched records", {
+                  module: "PM_SERVICE",
+                  mergedCount,
+                  totalPending: pendingUpdates.length,
+                });
+              }
+            }
+          } catch (mergeErr) {
+            logger.debug("PMService: could not merge pending syncs", {
+              module: "PM_SERVICE",
+              error: mergeErr,
+            });
           }
+
+          if (records.length > 0) {
+            logger.debug("PMService: caching records sample", {
+              siteCode,
+              firstRecordSiteCode: records[0].site_code,
+              totalRecords: records.length,
+            });
+          }
+
+          await cacheManager.write("pm_instances", records);
           logger.info("Cached PM instances to local DB", {
             module: "PM_SERVICE",
             count: data.data.length,
@@ -246,7 +325,7 @@ const PMService = {
     const conditions: any[] = [];
 
     if (siteCode && siteCode !== "all") {
-      conditions.push(eq(pmInstances.site_code, siteCode));
+      conditions.push(eq(pmInstances.site_code, siteCode.trim().toUpperCase()));
     }
 
     if (statusFilter && statusFilter.length > 0) {
@@ -258,12 +337,24 @@ const PMService = {
     if (assetTypeFilter) {
       conditions.push(eq(pmInstances.asset_type, assetTypeFilter));
     }
-    if (fromDate && toDate) {
-      conditions.push(between(pmInstances.start_due_date, fromDate, toDate));
-    } else if (fromDate) {
-      conditions.push(gte(pmInstances.start_due_date, fromDate));
+    if (fromDate && toDate && fromDate !== 0) {
+      conditions.push(
+        or(
+          isNull(pmInstances.start_due_date),
+          and(
+            gte(pmInstances.start_due_date, fromDate),
+            lte(pmInstances.start_due_date, toDate),
+          ),
+        ) as any,
+      );
+    } else if (fromDate && fromDate !== 0) {
+      conditions.push(
+        or(isNull(pmInstances.start_due_date), gte(pmInstances.start_due_date, fromDate)) as any,
+      );
     } else if (toDate) {
-      conditions.push(lte(pmInstances.start_due_date, toDate));
+      conditions.push(
+        or(isNull(pmInstances.start_due_date), lte(pmInstances.start_due_date, toDate)) as any,
+      );
     }
 
     return db
@@ -296,9 +387,9 @@ const PMService = {
       if (data.success && data.data) {
         const items: any[] = Array.isArray(data.data) ? data.data : [data.data];
 
-        // Cache to local DB (best-effort)
+        // Cache to local DB via CacheManager (best-effort)
         try {
-          // Cache checklist master row
+          // Cache checklist master row (direct write — no CacheManager domain for pm_checklist_master)
           const master = items[0];
           if (master?.checklist_id || master?.id) {
             const masterId = master.checklist_id || checklistId;
@@ -319,13 +410,12 @@ const PMService = {
               });
           }
 
-          // Cache checklist items
-          for (const item of items) {
-            const itemId = item.id || item.checklist_item_id;
-            if (!itemId) continue;
-            await db
-              .insert(pmChecklistItems)
-              .values({
+          // Cache checklist items via CacheManager
+          const itemRecords = items
+            .map((item: any) => {
+              const itemId = item.id || item.checklist_item_id;
+              if (!itemId) return null;
+              return {
                 id: itemId,
                 checklist_id: item.checklist_id || checklistId,
                 task_name: item.task_name || "",
@@ -333,18 +423,11 @@ const PMService = {
                 sequence_no: item.sequence_no ?? null,
                 image_mandatory: !!item.image_mandatory,
                 remarks_mandatory: !!item.remarks_mandatory,
-              })
-              .onConflictDoUpdate({
-                target: pmChecklistItems.id,
-                set: {
-                  task_name: item.task_name || "",
-                  field_type: item.field_type || null,
-                  sequence_no: item.sequence_no ?? null,
-                  image_mandatory: !!item.image_mandatory,
-                  remarks_mandatory: !!item.remarks_mandatory,
-                },
-              });
-          }
+              };
+            })
+            .filter(Boolean) as Record<string, any>[];
+
+          await cacheManager.write("pm_checklist_items", itemRecords);
 
           logger.info("Fetched and cached checklist items", {
             module: "PM_SERVICE",
@@ -490,6 +573,63 @@ const PMService = {
       .update(pmInstances)
       .set(updateData)
       .where(eq(pmInstances.id, instanceServerId));
+
+    // Enqueue each response for offline sync
+    for (const data of responses) {
+      if (data.response_value === undefined) continue;
+      const existingItem = existingMap.get(data.checklist_item_id);
+      await cacheManager.enqueue({
+        entity_type: "pm_response_upsert",
+        operation: existingItem ? "update" : "create",
+        payload: {
+          id: existingItem?.id || undefined,
+          instance_id: instanceServerId,
+          checklist_item_id: data.checklist_item_id,
+          response_value: data.response_value,
+          readings: data.readings || null,
+          remarks: data.remarks || null,
+          image_url: data.image_url || null,
+        },
+      });
+    }
+
+    // Enqueue instance update if status/images changed
+    if (options?.status || options?.beforeImage !== undefined || options?.afterImage !== undefined || options?.clientSign !== undefined) {
+      await cacheManager.enqueue({
+        entity_type: "pm_instance_update",
+        operation: "update",
+        payload: {
+          id: instanceServerId,
+          ...updateData,
+        },
+      });
+    }
+
+    // Best-effort API calls
+    try {
+      for (const data of responses) {
+        if (data.response_value === undefined) continue;
+        await apiFetch("/api/pm-response", {
+          method: "POST",
+          body: JSON.stringify({
+            instance_id: instanceServerId,
+            checklist_item_id: data.checklist_item_id,
+            response_value: data.response_value,
+            readings: data.readings || null,
+            remarks: data.remarks || null,
+            image_url: data.image_url || null,
+          }),
+        });
+      }
+      if (options?.status) {
+        await apiFetch(`/api/pm-instances/${instanceServerId}`, {
+          method: "PUT",
+          body: JSON.stringify(updateData),
+        });
+      }
+    } catch {
+      logger.debug("saveExecutionProgress: API call failed, will sync later", { module: "PM_SERVICE" });
+    }
   },
 
   /**
@@ -566,6 +706,39 @@ const PMService = {
         .where(eq(pmInstances.id, data.instanceServerId));
     }
 
+    // Enqueue for offline sync
+    await cacheManager.enqueue({
+      entity_type: "pm_response_upsert",
+      operation: existing.length > 0 ? "update" : "create",
+      payload: {
+        id: resultRecord.id,
+        instance_id: data.instanceServerId,
+        checklist_item_id: data.checklist_item_id,
+        response_value: data.response_value,
+        readings: data.readings || null,
+        remarks: data.remarks || null,
+        image_url: data.image_url || null,
+      },
+    });
+
+    // Best-effort API call
+    try {
+      await apiFetch("/api/pm-response", {
+        method: "POST",
+        body: JSON.stringify({
+          id: resultRecord.id,
+          instance_id: data.instanceServerId,
+          checklist_item_id: data.checklist_item_id,
+          response_value: data.response_value,
+          readings: data.readings || null,
+          remarks: data.remarks || null,
+          image_url: data.image_url || null,
+        }),
+      });
+    } catch {
+      logger.debug("saveResponseLocally: API call failed, will sync later", { module: "PM_SERVICE" });
+    }
+
     return resultRecord;
   },
 
@@ -593,8 +766,7 @@ const PMService = {
   },
 
   /**
-   * Mark PM instance as In Progress locally.
-   * PowerSync handles syncing the change to the backend automatically.
+   * Mark PM instance as In Progress locally and queue for sync.
    */
   async startInstance(instanceServerId: string): Promise<void> {
     const local = await this.getInstanceByServerId(instanceServerId);
@@ -606,12 +778,29 @@ const PMService = {
           updated_at: Date.now(),
         })
         .where(eq(pmInstances.id, instanceServerId));
+
+      // Enqueue for offline sync
+      await cacheManager.enqueue({
+        entity_type: "pm_instance_update",
+        operation: "update",
+        payload: { id: instanceServerId, status: "In-progress" },
+      });
+
+      // Best-effort API call
+      try {
+        await apiFetch(`/api/pm-instances/${instanceServerId}`, {
+          method: "PUT",
+          body: JSON.stringify({ status: "In-progress" }),
+        });
+      } catch {
+        logger.debug("startInstance: API call failed, will sync later", { module: "PM_SERVICE" });
+      }
     }
   },
 
   /**
    * Complete a PM instance with signature and images.
-   * PowerSync handles syncing the change to the backend automatically.
+   * Changes are queued for sync to the backend.
    */
   async completeInstance(
     instanceServerId: string,
@@ -624,17 +813,36 @@ const PMService = {
       const checklistItemsList = await this.getChecklistItems(local.maintenance_id!);
       const total = checklistItemsList.length;
 
+      const updateData = {
+        status: "Completed",
+        progress: `${total}/${total}`,
+        client_sign: clientSign,
+        before_image: beforeImage || null,
+        after_image: afterImage || null,
+        updated_at: Date.now(),
+      };
+
       await db
         .update(pmInstances)
-        .set({
-          status: "Completed",
-          progress: `${total}/${total}`,
-          client_sign: clientSign,
-          before_image: beforeImage || null,
-          after_image: afterImage || null,
-          updated_at: Date.now(),
-        })
+        .set(updateData)
         .where(eq(pmInstances.id, instanceServerId));
+
+      // Enqueue for offline sync
+      await cacheManager.enqueue({
+        entity_type: "pm_instance_update",
+        operation: "update",
+        payload: { id: instanceServerId, ...updateData },
+      });
+
+      // Best-effort API call
+      try {
+        await apiFetch(`/api/pm-instances/${instanceServerId}`, {
+          method: "PUT",
+          body: JSON.stringify(updateData),
+        });
+      } catch {
+        logger.debug("completeInstance: API call failed, will sync later", { module: "PM_SERVICE" });
+      }
     }
   },
 };

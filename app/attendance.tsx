@@ -50,16 +50,21 @@ import Skeleton from "@/components/Skeleton";
 const HistoryItem = React.memo(
   ({
     log,
+    currentTime,
     getDuration,
   }: {
     log: AttendanceLog;
+    currentTime: Date;
     getDuration: (log: AttendanceLog) => string;
   }) => {
-    const isToday =
-      log.date &&
-      getISTDateString(new Date(log.date)) === getISTDateString(new Date());
-    const hasMissedCheckout =
-      !isToday && !log.check_out_time && log.status !== "Leave";
+    const hasMissedCheckout = useMemo(() => {
+      if (log.check_out_time || log.status === "Leave" || !log.check_in_time)
+        return false;
+      const checkIn = new Date(log.check_in_time);
+      const diffHours =
+        (currentTime.getTime() - checkIn.getTime()) / (1000 * 60 * 60);
+      return diffHours > 17;
+    }, [log.check_out_time, log.status, log.check_in_time, currentTime]);
 
     return (
       <View
@@ -474,6 +479,100 @@ export default function AttendancePage() {
     setRefreshing(false);
   }, [fetchData]);
 
+  const handleCheckOutPress = useCallback(async () => {
+    if (!todayAttendance) return;
+
+    setValidatingLocation(true);
+    try {
+      // Skip location fetch when offline
+      let currentLoc: Location.LocationObject | null = null;
+      const netState = await NetInfo.fetch();
+      const isActuallyOnline = netState.isConnected === true;
+
+      if (isActuallyOnline) {
+        currentLoc = await ensureLocation();
+        if (!currentLoc) {
+          setValidatingLocation(false);
+          return;
+        }
+      }
+
+      // Optimistic UI: show checkout immediately
+      const previousAttendance = todayAttendance;
+      setTodayAttendance({
+        ...todayAttendance,
+        check_out_time: new Date().toISOString(),
+      });
+      setValidatingLocation(false);
+
+      // Fire API call (or queue offline)
+      const res = await AttendanceService.checkOut(
+        todayAttendance.id,
+        currentLoc?.coords.latitude,
+        currentLoc?.coords.longitude,
+      );
+
+      if (res.success) {
+        if (res.isOffline) {
+          Alert.alert(
+            "Checked Out Offline",
+            "Your check-out has been saved and will sync when you're back online.",
+          );
+        } else {
+          Alert.alert("Success", "Checked out successfully!");
+        }
+        fetchData();
+      } else if (res.isEarlyCheckout) {
+        // Revert optimistic update — need reason
+        setTodayAttendance(previousAttendance);
+        setEarlyCheckoutHours(res.hoursWorked || "0");
+        setCheckoutReason("");
+        setIsCheckoutModalVisible(true);
+      } else {
+        // Revert optimistic update
+        setTodayAttendance(previousAttendance);
+        if (res.error?.includes("reason") || res.isEarlyCheckout) {
+          setEarlyCheckoutHours(res.hoursWorked || "0");
+          setIsCheckoutModalVisible(true);
+          return;
+        }
+        Alert.alert("Failed", res.error || "Check-out failed");
+      }
+    } catch (error: any) {
+      // Revert on error
+      fetchData();
+      Alert.alert("Error", error.message);
+      setValidatingLocation(false);
+    }
+  }, [todayAttendance, ensureLocation, fetchData]);
+
+  const submitEarlyCheckout = useCallback(async () => {
+    if (!checkoutReason.trim()) {
+      Alert.alert("Required", "Please provide a reason for early checkout");
+      return;
+    }
+
+    try {
+      const res = await AttendanceService.checkOut(
+        todayAttendance!.id,
+        location?.coords.latitude,
+        location?.coords.longitude,
+        undefined,
+        checkoutReason,
+      );
+
+      if (res.success) {
+        setIsCheckoutModalVisible(false);
+        Alert.alert("Success", "Checked out successfully!");
+        fetchData();
+      } else {
+        Alert.alert("Failed", res.error || "Check-out failed");
+      }
+    } catch (error: any) {
+      Alert.alert("Error", error.message);
+    }
+  }, [todayAttendance, location, checkoutReason, fetchData]);
+
   const performCheckIn = useCallback(
     async (siteCode: string) => {
       // Offline allowed
@@ -633,100 +732,6 @@ export default function AttendancePage() {
     }
   }, [user, isConnected, ensureLocation, performCheckIn]);
 
-  const handleCheckOutPress = useCallback(async () => {
-    if (!todayAttendance) return;
-
-    setValidatingLocation(true);
-    try {
-      // Skip location fetch when offline
-      let currentLoc: Location.LocationObject | null = null;
-      const netState = await NetInfo.fetch();
-      const isActuallyOnline = netState.isConnected === true;
-
-      if (isActuallyOnline) {
-        currentLoc = await ensureLocation();
-        if (!currentLoc) {
-          setValidatingLocation(false);
-          return;
-        }
-      }
-
-      // Optimistic UI: show checkout immediately
-      const previousAttendance = todayAttendance;
-      setTodayAttendance({
-        ...todayAttendance,
-        check_out_time: new Date().toISOString(),
-      });
-      setValidatingLocation(false);
-
-      // Fire API call (or queue offline)
-      const res = await AttendanceService.checkOut(
-        todayAttendance.id,
-        currentLoc?.coords.latitude,
-        currentLoc?.coords.longitude,
-      );
-
-      if (res.success) {
-        if (res.isOffline) {
-          Alert.alert(
-            "Checked Out Offline",
-            "Your check-out has been saved and will sync when you're back online.",
-          );
-        } else {
-          Alert.alert("Success", "Checked out successfully!");
-        }
-        fetchData();
-      } else if (res.isEarlyCheckout) {
-        // Revert optimistic update — need reason
-        setTodayAttendance(previousAttendance);
-        setEarlyCheckoutHours(res.hoursWorked || "0");
-        setCheckoutReason("");
-        setIsCheckoutModalVisible(true);
-      } else {
-        // Revert optimistic update
-        setTodayAttendance(previousAttendance);
-        if (res.error?.includes("reason") || res.isEarlyCheckout) {
-          setEarlyCheckoutHours(res.hoursWorked || "0");
-          setIsCheckoutModalVisible(true);
-          return;
-        }
-        Alert.alert("Failed", res.error || "Check-out failed");
-      }
-    } catch (error: any) {
-      // Revert on error
-      fetchData();
-      Alert.alert("Error", error.message);
-      setValidatingLocation(false);
-    }
-  }, [todayAttendance, ensureLocation, fetchData]);
-
-  const submitEarlyCheckout = useCallback(async () => {
-    if (!checkoutReason.trim()) {
-      Alert.alert("Required", "Please provide a reason for early checkout");
-      return;
-    }
-
-    try {
-      const res = await AttendanceService.checkOut(
-        todayAttendance!.id,
-        location?.coords.latitude,
-        location?.coords.longitude,
-        undefined,
-        checkoutReason,
-      );
-
-      if (res.success) {
-        setIsCheckoutModalVisible(false);
-        Alert.alert("Success", "Checked out successfully!");
-        fetchData();
-      } else {
-        Alert.alert("Failed", res.error || "Check-out failed");
-      }
-    } catch (error: any) {
-      Alert.alert("Error", error.message);
-    }
-  }, [todayAttendance, location, checkoutReason, fetchData]);
-
   // Helper to calculate duration
   const getDuration = useCallback(
     (log: AttendanceLog) => {
@@ -740,16 +745,14 @@ export default function AttendancePage() {
       if (log.check_out_time) {
         end = new Date(log.check_out_time);
       } else {
-        const todayStr = getISTDateString(currentTime);
-        // DB DATE column serializes as UTC (e.g. '2026-03-10T18:30:00.000Z' for Mar 11 IST)
-        // Convert to IST date string for accurate comparison
-        const logDateIST = getISTDateString(new Date(log.date));
-        if (logDateIST === todayStr) {
+        const diffMs = currentTime.getTime() - start.getTime();
+        const diffHours = diffMs / (1000 * 60 * 60);
+
+        if (diffHours <= 17) {
           end = currentTime;
         } else {
-          // Past day without checkout — cap at 11:59:59 PM of that IST day
-          const [y, m, d] = logDateIST.split("-").map(Number);
-          end = new Date(y, m - 1, d, 23, 59, 59);
+          // Cap at 17 hours exactly for sessions that exceeded the limit
+          end = new Date(start.getTime() + 17 * 60 * 60 * 1000);
         }
       }
 
@@ -947,7 +950,12 @@ export default function AttendancePage() {
           ) : (
             <View className="gap-3">
               {attendanceHistory.map((log) => (
-                <HistoryItem key={log.id} log={log} getDuration={getDuration} />
+                <HistoryItem
+                  key={log.id}
+                  log={log}
+                  currentTime={currentTime}
+                  getDuration={getDuration}
+                />
               ))}
             </View>
           )}

@@ -1,4 +1,4 @@
-import { eq, and, desc, asc, ne, gte, lte, inArray, count } from "drizzle-orm";
+import { eq, and, desc, asc, ne, gte, lte, lt, inArray, count, sql } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
 import NetInfo from "@react-native-community/netinfo";
 import { startOfDay, endOfDay } from "date-fns";
@@ -9,6 +9,8 @@ import { supabase } from "./supabase";
 import { fetchWithTimeout } from "../utils/apiHelper";
 import { SiteConfigService } from "./SiteConfigService";
 import type { TaskItem } from "./SiteConfigService";
+import cacheManager from "./CacheManager";
+import { AttachmentQueueService } from "./AttachmentQueueService";
 
 import { API_BASE_URL } from "../constants/api";
 
@@ -26,6 +28,33 @@ const normalizeLogName = (serverLogName: string): string => {
   if (lower.includes("chiller")) return "Chiller Logs";
   if (lower.includes("water")) return "Water";
   return serverLogName;
+};
+
+const LOCAL_URI_PREFIXES = ["file://", "content://", "ph://", "asset-library://"];
+const isLocalUri = (uri?: string | null) =>
+  !!uri && LOCAL_URI_PREFIXES.some((p) => uri.startsWith(p));
+
+/**
+ * If the given URI is a local file, queue it for deferred upload and
+ * return the persistent local URI. Otherwise return the URI as-is.
+ */
+const queueAttachmentIfLocal = async (
+  uri: string | null | undefined,
+  folder: string,
+  entityType: "site_log" | "chiller_reading",
+  entityId: string,
+  field: string,
+): Promise<string | null> => {
+  if (!uri) return null;
+  if (!isLocalUri(uri)) return uri;
+  return AttachmentQueueService.queueAttachment({
+    localUri: uri,
+    bucketName: "jouleops-attachments",
+    remotePath: `${folder}/${entityId}_${Date.now()}.jpg`,
+    relatedEntityType: entityType,
+    relatedEntityId: entityId,
+    relatedField: field,
+  });
 };
 
 // Helper for API requests with auth and retry logic
@@ -108,6 +137,7 @@ interface ISiteLogService {
   getUnsyncedCounts(): Promise<number>;
   pullLogMaster(): Promise<void>;
   getLogMaster(logName: string): Promise<any[]>;
+  runCleanup(): Promise<void>;
 }
 
 /**
@@ -140,22 +170,35 @@ const _fetchLogs = async (
       conditions.push(eq(siteLogs.site_code, siteCode));
     }
     conditions.push(eq(siteLogs.log_name, logType));
+
     if (options.scheduledDate) {
-      // Filter by scheduled_date (YYYY-MM-DD string column)
       conditions.push(eq(siteLogs.scheduled_date, options.scheduledDate));
-    } else {
+    } else if (options.fromDate || options.toDate) {
+      const toDateStr = (ms: number) => new Date(ms).toISOString().slice(0, 10);
       if (options.fromDate) {
-        conditions.push(gte(siteLogs.created_at, options.fromDate));
+        conditions.push(gte(siteLogs.scheduled_date, toDateStr(options.fromDate)));
       }
       if (options.toDate) {
-        conditions.push(lte(siteLogs.created_at, options.toDate));
+        conditions.push(lte(siteLogs.scheduled_date, toDateStr(options.toDate)));
       }
     }
+
     return db
       .select()
       .from(siteLogs)
       .where(conditions.length > 1 ? and(...conditions) : conditions[0])
-      .orderBy(desc(siteLogs.created_at));
+      .orderBy(desc(siteLogs.scheduled_date), desc(siteLogs.created_at))
+      .then((rows) => {
+        logger.debug("_fetchLogs raw query result", {
+          module: "SITE_LOG_SERVICE",
+          siteCode,
+          logType,
+          conditionsCount: conditions.length,
+          rowCount: rows.length,
+          firstRow: rows[0] ? { id: rows[0].id, log_name: (rows[0] as any).log_name, site_code: (rows[0] as any).site_code, scheduled_date: (rows[0] as any).scheduled_date } : null,
+        });
+        return rows;
+      });
   }
 };
 
@@ -165,7 +208,15 @@ export const SiteLogService: ISiteLogService = {
    */
   async getLogsByType(siteCode: string, logType: string, options: any = {}) {
     try {
-      return await _fetchLogs(siteCode, logType, options);
+      const result = await _fetchLogs(siteCode, logType, options);
+      logger.debug("getLogsByType result", {
+        module: "SITE_LOG_SERVICE",
+        siteCode,
+        logType,
+        count: result.length,
+        options,
+      });
+      return result;
     } catch (error: any) {
       logger.error("Error fetching logs by type", {
         module: "SITE_LOG_SERVICE",
@@ -179,78 +230,100 @@ export const SiteLogService: ISiteLogService = {
 
   /**
    * Observe logs for a site by type (Live Updates)
-   * NOTE: With PowerSync/Drizzle there is no built-in .observe().
-   * Callers should use PowerSync's watch API or useLiveQuery hook instead.
-   * This returns the current snapshot as a fallback.
+   * Returns the current snapshot from local SQLite.
+   * For reactive updates, callers should re-query on data change events.
    */
   observeLogsByType(siteCode: string, logType: string, options: any = {}) {
-    // Return a promise of the current data; callers should migrate to
-    // PowerSync's reactive watch/useLiveQuery for live updates.
     return _fetchLogs(siteCode, logType, options);
   },
 
+
+
   /**
-   * Save multiple logs at once (from bulk form)
+   * Save multiple logs at once
    */
   async saveBulkSiteLogs(logs: any[]) {
+    if (!logs || logs.length === 0) return;
     const now = Date.now();
-    for (const data of logs) {
-      // Check if data.id is a potential local record ID
-      if (data.id && data.id.length > 10) {
-        const existing = await db
-          .select()
-          .from(siteLogs)
-          .where(eq(siteLogs.id, data.id))
-          .limit(1);
+    const nowLocal = new Date();
+    const formattedToday = nowLocal.toISOString().split("T")[0];
 
-        if (existing.length > 0) {
-          await db
-            .update(siteLogs)
-            .set({
-              temperature: data.temperature ?? existing[0].temperature,
-              rh: data.rh ?? existing[0].rh,
-              tds: data.tds ?? existing[0].tds,
-              ph: data.ph ?? existing[0].ph,
-              hardness: data.hardness ?? existing[0].hardness,
-              chemical_dosing: data.chemicalDosing ?? existing[0].chemical_dosing,
-              remarks: data.remarks ?? existing[0].remarks,
-              signature: data.signature ?? existing[0].signature,
-              attachment: data.attachment ?? existing[0].attachment,
-              status: data.status ?? existing[0].status,
-              entry_time: data.entryTime ?? existing[0].entry_time,
-              end_time: data.endTime ?? existing[0].end_time,
-              updated_at: now,
-            })
-            .where(eq(siteLogs.id, data.id));
-          continue;
+    try {
+      // 1. Prepare records for batch insert
+      const recordsToInsert = await Promise.all(logs.map(async (data) => {
+        const id = data.id || uuidv4();
+        const scheduledDate = data.scheduled_date || data.scheduledDate || formattedToday;
+
+        // Queue attachment if local
+        const attachment = await queueAttachmentIfLocal(
+          data.attachment, "site-logs", "site_log", id, "attachment"
+        );
+
+        return {
+          id,
+          site_code: data.site_code || data.siteCode,
+          executor_id: data.executor_id || data.executorId,
+          assigned_to: data.assigned_to || data.assignedTo || null,
+          log_name: data.log_name || data.logName,
+          task_name: data.task_name || data.taskName || null,
+          temperature: data.temperature || null,
+          rh: data.rh || null,
+          tds: data.tds || null,
+          ph: data.ph || null,
+          hardness: data.hardness || null,
+          chemical_dosing: data.chemical_dosing || data.chemicalDosing || null,
+          remarks: data.remarks || null,
+          signature: data.signature || null,
+          attachment,
+          status: data.status || "Completed",
+          scheduled_date: scheduledDate,
+          created_at: now,
+          updated_at: now,
+        };
+      }));
+
+      // 2. Batch Insert
+      await db.insert(siteLogs).values(recordsToInsert as any).onConflictDoUpdate({
+        target: [siteLogs.id],
+        set: {
+          temperature: sql`excluded.temperature`,
+          rh: sql`excluded.rh`,
+          tds: sql`excluded.tds`,
+          ph: sql`excluded.ph`,
+          hardness: sql`excluded.hardness`,
+          chemical_dosing: sql`excluded.chemical_dosing`,
+          remarks: sql`excluded.remarks`,
+          signature: sql`excluded.signature`,
+          attachment: sql`excluded.attachment`,
+          status: sql`excluded.status`,
+          updated_at: now,
         }
+      });
+
+      // 3. Enqueue for Sync
+      for (const record of recordsToInsert) {
+        await cacheManager.enqueue({
+          entity_type: "site_log_create",
+          operation: "create",
+          payload: {
+            ...record,
+            scheduled_date: record.scheduled_date
+          }
+        });
       }
 
-      await db.insert(siteLogs).values({
-        id: uuidv4(),
-        site_code: data.siteCode,
-        executor_id: data.executorId,
-        assigned_to: data.assignedTo || null,
-        log_name: data.logName,
-        task_name: data.taskName || null,
-        temperature: data.temperature || null,
-        rh: data.rh || null,
-        tds: data.tds || null,
-        ph: data.ph || null,
-        hardness: data.hardness || null,
-        chemical_dosing: data.chemicalDosing || null,
-        remarks: data.remarks || null,
-        entry_time: data.entryTime || null,
-        end_time: data.endTime || null,
-        signature: data.signature || null,
-        attachment: data.attachment || null,
-        status: data.status || null,
-        created_at: now,
-        updated_at: now,
+      logger.info(`Bulk saved ${recordsToInsert.length} logs`, { 
+        module: "SITE_LOG_SERVICE",
+        siteCode: recordsToInsert[0]?.site_code 
       });
+
+    } catch (e: any) {
+      logger.error("saveBulkSiteLogs failed", {
+        module: "SITE_LOG_SERVICE",
+        error: e.message
+      });
+      throw e;
     }
-    // Trigger background sync
-    
   },
 
   /**
@@ -259,6 +332,20 @@ export const SiteLogService: ISiteLogService = {
   async saveSiteLog(data: any) {
     const now = Date.now();
     const id = uuidv4();
+    // Default scheduled_date to today (YYYY-MM-DD) in local time if not provided
+    const nowLocal = new Date();
+    const year = nowLocal.getFullYear();
+    const month = String(nowLocal.getMonth() + 1).padStart(2, '0');
+    const day = String(nowLocal.getDate()).padStart(2, '0');
+    const localToday = `${year}-${month}-${day}`;
+
+    const scheduledDate = data.scheduledDate || localToday;
+
+    // Queue attachment for deferred upload if it's a local file
+    const attachment = await queueAttachmentIfLocal(
+      data.attachment, "site-logs", "site_log", id, "attachment",
+    );
+
     await db.insert(siteLogs).values({
       id,
       site_code: data.siteCode,
@@ -276,19 +363,84 @@ export const SiteLogService: ISiteLogService = {
       entry_time: data.entryTime || null,
       end_time: data.endTime || null,
       signature: data.signature || null,
-      attachment: data.attachment || null,
+      attachment: attachment,
       status: data.status || null,
+      scheduled_date: scheduledDate,
       created_at: now,
       updated_at: now,
     });
-
-    
 
     const [record] = await db
       .select()
       .from(siteLogs)
       .where(eq(siteLogs.id, id))
       .limit(1);
+
+    logger.activity("CREATE", "SITE_LOG", `New ${data.logName} log created for ${data.siteCode}`, {
+      log_id: id,
+      log_name: data.logName,
+      site_code: data.siteCode,
+      task_name: data.taskName,
+      status: data.status,
+    });
+
+    // Enqueue for offline sync
+    await cacheManager.enqueue({
+      entity_type: "site_log_create",
+      operation: "create",
+      payload: {
+        id,
+        site_code: data.siteCode,
+        executor_id: data.executorId,
+        assigned_to: data.assignedTo || null,
+        log_name: data.logName,
+        task_name: data.taskName || null,
+        temperature: data.temperature || null,
+        rh: data.rh || null,
+        tds: data.tds || null,
+        ph: data.ph || null,
+        hardness: data.hardness || null,
+        chemical_dosing: data.chemicalDosing || null,
+        remarks: data.remarks || null,
+        entry_time: data.entryTime || null,
+        end_time: data.endTime || null,
+        signature: data.signature || null,
+        attachment: data.attachment || null,
+        status: data.status || null,
+        scheduled_date: scheduledDate,
+      },
+    });
+
+    // Best-effort API call
+    try {
+      await apiFetch("/api/site-logs", {
+        method: "POST",
+        body: JSON.stringify({
+          id,
+          site_code: data.siteCode,
+          executor_id: data.executorId,
+          assigned_to: data.assignedTo || null,
+          log_name: data.logName,
+          task_name: data.taskName || null,
+          temperature: data.temperature || null,
+          rh: data.rh || null,
+          tds: data.tds || null,
+          ph: data.ph || null,
+          hardness: data.hardness || null,
+          chemical_dosing: data.chemicalDosing || null,
+          remarks: data.remarks || null,
+          entry_time: data.entryTime || null,
+          end_time: data.endTime || null,
+          signature: data.signature || null,
+          attachment: data.attachment || null,
+          status: data.status || null,
+          scheduled_date: scheduledDate,
+        }),
+      });
+    } catch {
+      logger.debug("saveSiteLog: API call failed, will sync later", { module: "SITE_LOG_SERVICE" });
+    }
+
     return record;
   },
 
@@ -298,6 +450,12 @@ export const SiteLogService: ISiteLogService = {
   async saveChillerReading(data: any): Promise<any> {
     const now = Date.now();
     const id = uuidv4();
+
+    // Queue attachment for deferred upload if it's a local file
+    const attachments = await queueAttachmentIfLocal(
+      data.attachments, "chiller-readings", "chiller_reading", id, "attachments",
+    );
+
     await db.insert(chillerReadings).values({
       id,
       log_id: data.logId || id,
@@ -333,19 +491,43 @@ export const SiteLogService: ISiteLogService = {
       inline_btu_meter: data.inlineBtuMeter || null,
       remarks: data.remarks || null,
       signature_text: data.signature || null,
-      attachments: data.attachments || null,
+      attachments: attachments,
       status: data.status || "Completed",
       created_at: now,
       updated_at: now,
     });
-
-    
 
     const [record] = await db
       .select()
       .from(chillerReadings)
       .where(eq(chillerReadings.id, id))
       .limit(1);
+
+    logger.activity("CREATE", "CHILLER_READING", `New chiller reading created for ${data.siteCode}`, {
+      log_id: id,
+      site_code: data.siteCode,
+      asset_name: data.assetName,
+      chiller_id: data.chillerId,
+      status: data.status || "Completed",
+    });
+
+    // Enqueue for offline sync
+    await cacheManager.enqueue({
+      entity_type: "chiller_reading_create",
+      operation: "create",
+      payload: record,
+    });
+
+    // Best-effort API call
+    try {
+      await apiFetch("/api/chiller-readings", {
+        method: "POST",
+        body: JSON.stringify(record),
+      });
+    } catch {
+      logger.debug("saveChillerReading: API call failed, will sync later", { module: "SITE_LOG_SERVICE" });
+    }
+
     return record;
   },
 
@@ -396,13 +578,38 @@ export const SiteLogService: ISiteLogService = {
       .set(updateFields)
       .where(eq(chillerReadings.id, id));
 
-    
-
     const [record] = await db
       .select()
       .from(chillerReadings)
       .where(eq(chillerReadings.id, id))
       .limit(1);
+
+    logger.activity("UPDATE", "CHILLER_READING", `Chiller reading updated for ${record?.site_code || id}`, {
+      log_id: id,
+      site_code: record?.site_code,
+      asset_name: record?.asset_name,
+      chiller_id: record?.chiller_id,
+      updated_fields: Object.keys(updateFields).filter((k) => k !== "updated_at"),
+      status: data.status,
+    });
+
+    // Enqueue for offline sync
+    await cacheManager.enqueue({
+      entity_type: "chiller_reading_update",
+      operation: "update",
+      payload: { id, ...updateFields },
+    });
+
+    // Best-effort API call
+    try {
+      await apiFetch(`/api/chiller-readings/${id}`, {
+        method: "PUT",
+        body: JSON.stringify(updateFields),
+      });
+    } catch {
+      logger.debug("updateChillerReading: API call failed, will sync later", { module: "SITE_LOG_SERVICE" });
+    }
+
     return record;
   },
 
@@ -414,7 +621,22 @@ export const SiteLogService: ISiteLogService = {
       await db
         .delete(chillerReadings)
         .where(eq(chillerReadings.id, id));
-      
+
+      // Enqueue for offline sync
+      await cacheManager.enqueue({
+        entity_type: "chiller_reading_delete",
+        operation: "delete",
+        payload: { id },
+      });
+
+      // Best-effort API call
+      try {
+        await apiFetch(`/api/chiller-readings/${id}`, { method: "DELETE" });
+      } catch {
+        logger.debug("deleteChillerReading: API call failed, will sync later", { module: "SITE_LOG_SERVICE" });
+      }
+
+      logger.activity("DELETE", "CHILLER_READING", `Chiller reading deleted: ${id}`, { log_id: id });
     } catch (error: any) {
       logger.error("Error deleting chiller reading", {
         module: "SITE_LOG_SERVICE",
@@ -432,7 +654,22 @@ export const SiteLogService: ISiteLogService = {
       await db
         .delete(siteLogs)
         .where(eq(siteLogs.id, id));
-      
+
+      // Enqueue for offline sync
+      await cacheManager.enqueue({
+        entity_type: "site_log_delete",
+        operation: "delete",
+        payload: { id },
+      });
+
+      // Best-effort API call
+      try {
+        await apiFetch(`/api/site-logs/${id}`, { method: "DELETE" });
+      } catch {
+        logger.debug("deleteSiteLog: API call failed, will sync later", { module: "SITE_LOG_SERVICE" });
+      }
+
+      logger.activity("DELETE", "SITE_LOG", `Site log deleted: ${id}`, { log_id: id });
     } catch (error: any) {
       logger.error("Error deleting site log", {
         module: "SITE_LOG_SERVICE",
@@ -482,19 +719,44 @@ export const SiteLogService: ISiteLogService = {
       if (data.status !== undefined) updateFields.status = data.status;
       if (data.assignedTo !== undefined) updateFields.assigned_to = data.assignedTo;
       if (data.endTime !== undefined) updateFields.end_time = data.endTime;
+      if (data.scheduledDate !== undefined) updateFields.scheduled_date = data.scheduledDate;
 
       await db
         .update(siteLogs)
         .set(updateFields)
         .where(eq(siteLogs.id, id));
 
-      
-
       const [record] = await db
         .select()
         .from(siteLogs)
         .where(eq(siteLogs.id, id))
         .limit(1);
+
+      logger.activity("UPDATE", "SITE_LOG", `Site log updated (${record?.log_name || "unknown"}) for ${record?.site_code || id}`, {
+        log_id: id,
+        log_name: record?.log_name,
+        site_code: record?.site_code,
+        updated_fields: Object.keys(updateFields).filter((k) => k !== "updated_at"),
+        status: data.status,
+      });
+
+      // Enqueue for offline sync
+      await cacheManager.enqueue({
+        entity_type: "site_log_update",
+        operation: "update",
+        payload: { id, ...updateFields },
+      });
+
+      // Best-effort API call
+      try {
+        await apiFetch(`/api/site-logs/${id}`, {
+          method: "PUT",
+          body: JSON.stringify(updateFields),
+        });
+      } catch {
+        logger.debug("updateSiteLog: API call failed, will sync later", { module: "SITE_LOG_SERVICE" });
+      }
+
       return record;
     } catch (error: any) {
       logger.error("Error updating site log", {
@@ -519,9 +781,9 @@ export const SiteLogService: ISiteLogService = {
         finalSiteCode = options.siteCodes[0];
       }
 
-      let url = `/api/site-logs/site/${finalSiteCode}?limit=500`;
+      let url = `/api/site-logs/site/${finalSiteCode}?limit=2000`;
       if (options.logName)
-        url += `&logName=${encodeURIComponent(options.logName)}`;
+        url += `&log_name=${encodeURIComponent(options.logName)}`;
       if (options.fromDate) url += `&fromDate=${options.fromDate}`;
       if (options.toDate) url += `&toDate=${options.toDate}`;
       if (options.status) url += `&status=${options.status}`;
@@ -533,6 +795,12 @@ export const SiteLogService: ISiteLogService = {
       if (response.ok) {
         const result = await response.json();
         const serverLogs = result.data || [];
+        logger.debug("pullSiteLogs API response", {
+          module: "SITE_LOG_SERVICE",
+          url,
+          count: serverLogs.length,
+          firstLog: serverLogs[0] ? { id: serverLogs[0].id, log_name: serverLogs[0].log_name, site_code: serverLogs[0].site_code } : null,
+        });
         const serverIds = serverLogs.map((l: any) => l.id);
 
         // 1. STALE LOG CLEANUP: If we're pulling pending logs, any local log that has
@@ -562,81 +830,65 @@ export const SiteLogService: ISiteLogService = {
 
           if (staleLogs.length > 0) {
             const now = Date.now();
-            for (const stale of staleLogs) {
+            if (staleLogs.length > 0) {
+              const staleLogIds = staleLogs.map((s: any) => s.id);
               await db
                 .update(siteLogs)
                 .set({ status: "Completed", updated_at: now })
-                .where(eq(siteLogs.id, stale.id));
+                .where(inArray(siteLogs.id, staleLogIds));
+              logger.info(`Marked ${staleLogs.length} stale logs as Completed`);
             }
-            logger.info(`Marked ${staleLogs.length} stale logs as Completed`);
           }
         }
 
         if (serverLogs.length === 0) return;
 
-        // 2. Fetch all local records matching server IDs in this batch (Single Query)
-        const existingLocalRecords = await db
-          .select()
-          .from(siteLogs)
-          .where(inArray(siteLogs.id, serverIds));
-
-        const localMap = new Map(
-          existingLocalRecords.map((r) => [r.id, r]),
-        );
-
-        const now = Date.now();
-        for (const serverLog of serverLogs) {
-          const localRecord = localMap.get(serverLog.id);
-          const normalizedLogName = normalizeLogName(serverLog.log_name);
-
-          if (localRecord) {
-            await db
-              .update(siteLogs)
-              .set({
-                site_code: serverLog.site_code,
-                executor_id: serverLog.executor_id,
-                assigned_to: serverLog.assigned_to || null,
-                log_name: normalizedLogName,
-                task_name: serverLog.task_name || null,
-                temperature: parseFloat(serverLog.temperature),
-                rh: parseFloat(serverLog.rh),
-                tds: parseFloat(serverLog.tds),
-                ph: parseFloat(serverLog.ph),
-                hardness: parseFloat(serverLog.hardness),
-                chemical_dosing: serverLog.chemical_dosing,
-                remarks: serverLog.remarks,
-                signature: serverLog.signature || localRecord.signature,
-                status: serverLog.status,
-                created_at: serverLog.created_at
-                  ? new Date(serverLog.created_at).getTime()
-                  : localRecord.created_at,
-                updated_at: now,
-              })
-              .where(eq(siteLogs.id, serverLog.id));
-          } else {
-            await db.insert(siteLogs).values({
-              id: serverLog.id,
-              site_code: serverLog.site_code,
-              executor_id: serverLog.executor_id,
-              assigned_to: serverLog.assigned_to || null,
-              log_name: normalizedLogName,
-              task_name: serverLog.task_name || null,
-              temperature: parseFloat(serverLog.temperature),
-              rh: parseFloat(serverLog.rh),
-              tds: parseFloat(serverLog.tds),
-              ph: parseFloat(serverLog.ph),
-              hardness: parseFloat(serverLog.hardness),
-              chemical_dosing: serverLog.chemical_dosing,
-              remarks: serverLog.remarks,
-              signature: serverLog.signature,
-              status: serverLog.status,
-              created_at: serverLog.created_at
-                ? new Date(serverLog.created_at).getTime()
-                : now,
-              updated_at: now,
-            });
+        // 2. Upsert all server logs via CacheManager (Req 1.6, 10.4)
+        const normalizedLogs = serverLogs.map((serverLog: any) => {
+          let scheduledDate: string | null = null;
+          if (serverLog.scheduled_date) {
+            // Server DATE column is returned as midnight UTC ISO string (e.g. 18:30 UTC previous day).
+            // We must convert it to IST (+5:30) to get the correct LOCAL calendar day.
+            const d = new Date(serverLog.scheduled_date);
+            const istDate = new Date(d.getTime() + 5.5 * 60 * 60 * 1000);
+            scheduledDate = istDate.toISOString().split("T")[0];
           }
-        }
+
+          const safeParseFloat = (val: any) => {
+            if (val === null || val === undefined || val === "") return null;
+            const parsed = parseFloat(val);
+            return isNaN(parsed) ? null : parsed;
+          };
+
+          const safeTimestamp = (val: any) => {
+            if (!val) return Date.now();
+            const d = new Date(val);
+            const ts = d.getTime();
+            return isNaN(ts) ? Date.now() : ts;
+          };
+
+          return {
+            id: serverLog.id,
+            site_code: serverLog.site_code || siteCode,
+            executor_id: serverLog.executor_id || "system",
+            assigned_to: serverLog.assigned_to || null,
+            log_name: normalizeLogName(serverLog.log_name),
+            task_name: serverLog.task_name || null,
+            temperature: safeParseFloat(serverLog.temperature),
+            rh: safeParseFloat(serverLog.rh),
+            tds: safeParseFloat(serverLog.tds),
+            ph: safeParseFloat(serverLog.ph),
+            hardness: safeParseFloat(serverLog.hardness),
+            chemical_dosing: serverLog.chemical_dosing || null,
+            remarks: serverLog.remarks || null,
+            signature: serverLog.signature || null,
+            status: serverLog.status || null,
+            scheduled_date: scheduledDate,
+            created_at: safeTimestamp(serverLog.created_at),
+            updated_at: Date.now(),
+          };
+        });
+        await cacheManager.write("site_logs", normalizedLogs);
       }
     } catch (error: any) {
       logger.error("Error pulling site logs", {
@@ -684,146 +936,63 @@ export const SiteLogService: ISiteLogService = {
           }
         }
 
-        const now = Date.now();
-        for (const serverLog of result.data) {
-          const localRecords = await db
-            .select()
-            .from(chillerReadings)
-            .where(eq(chillerReadings.id, serverLog.id))
-            .limit(1);
+        const safeParseFloat = (val: any) => {
+          if (val === null || val === undefined || val === "") return null;
+          const parsed = parseFloat(val);
+          return isNaN(parsed) ? null : parsed;
+        };
 
-          const executorId = serverLog.executor_id;
-          const readingTime = serverLog.reading_time
-            ? new Date(serverLog.reading_time).getTime()
-            : serverLog.reading_time || null;
-          const startDateTime = serverLog.start_datetime
-            ? new Date(serverLog.start_datetime).getTime()
-            : serverLog.start_datetime || null;
-          const endDateTime = serverLog.end_datetime
-            ? new Date(serverLog.end_datetime).getTime()
-            : serverLog.end_datetime || null;
+        const safeTimestamp = (val: any) => {
+          if (!val) return null;
+          const d = new Date(val);
+          const ts = d.getTime();
+          return isNaN(ts) ? null : ts;
+        };
 
-          if (localRecords.length > 0) {
-            await db
-              .update(chillerReadings)
-              .set({
-                site_code:
-                  serverLog.site_code || serverLog.siteCode || localRecords[0].site_code,
-                chiller_id: serverLog.chiller_id,
-                equipment_id: serverLog.equipment_id,
-                asset_name: serverLog.asset_name,
-                assigned_to: serverLog.assigned_to,
-                asset_type: serverLog.asset_type,
-                executor_id: executorId || "unknown",
-                reading_time: readingTime,
-                start_datetime: startDateTime,
-                end_datetime: endDateTime,
-                condenser_inlet_temp:
-                  parseFloat(serverLog.condenser_inlet_temp) || null,
-                condenser_outlet_temp:
-                  parseFloat(serverLog.condenser_outlet_temp) || null,
-                evaporator_inlet_temp:
-                  parseFloat(serverLog.evaporator_inlet_temp) || null,
-                evaporator_outlet_temp:
-                  parseFloat(serverLog.evaporator_outlet_temp) || null,
-                compressor_suction_temp:
-                  parseFloat(serverLog.compressor_suction_temp) || null,
-                motor_temperature:
-                  parseFloat(serverLog.motor_temperature) || null,
-                saturated_condenser_temp:
-                  parseFloat(serverLog.saturated_condenser_temp) || null,
-                saturated_suction_temp:
-                  parseFloat(serverLog.saturated_suction_temp) || null,
-                set_point_celsius:
-                  parseFloat(serverLog.set_point_celsius) || null,
-                discharge_pressure:
-                  parseFloat(serverLog.discharge_pressure) || null,
-                main_suction_pressure:
-                  parseFloat(serverLog.main_suction_pressure) || null,
-                oil_pressure: parseFloat(serverLog.oil_pressure) || null,
-                oil_pressure_difference:
-                  parseFloat(serverLog.oil_pressure_difference) || null,
-                condenser_inlet_pressure:
-                  parseFloat(serverLog.condenser_inlet_pressure) || null,
-                condenser_outlet_pressure:
-                  parseFloat(serverLog.condenser_outlet_pressure) || null,
-                evaporator_inlet_pressure:
-                  parseFloat(serverLog.evaporator_inlet_pressure) || null,
-                evaporator_outlet_pressure:
-                  parseFloat(serverLog.evaporator_outlet_pressure) || null,
-                compressor_load_percentage:
-                  parseFloat(serverLog.compressor_load_percentage) || null,
-                inline_btu_meter:
-                  parseFloat(serverLog.inline_btu_meter) || null,
-                remarks: serverLog.remarks,
-                signature_text: serverLog.signature_text,
-                attachments: serverLog.attachments,
-                status: serverLog.status || "Completed",
-                updated_at: now,
-              })
-              .where(eq(chillerReadings.id, serverLog.id));
-          } else {
-            const sCode =
-              serverLog.site_code || serverLog.siteCode || siteCode;
-            await db.insert(chillerReadings).values({
-              id: serverLog.id,
-              log_id: serverLog.log_id || serverLog.id,
-              site_code: sCode,
-              chiller_id: serverLog.chiller_id,
-              equipment_id: serverLog.equipment_id,
-              asset_name: serverLog.asset_name,
-              assigned_to: serverLog.assigned_to,
-              asset_type: serverLog.asset_type,
-              executor_id: executorId || "unknown",
-              date_shift: serverLog.date_shift,
-              reading_time: readingTime,
-              start_datetime: startDateTime,
-              end_datetime: endDateTime,
-              condenser_inlet_temp:
-                parseFloat(serverLog.condenser_inlet_temp) || null,
-              condenser_outlet_temp:
-                parseFloat(serverLog.condenser_outlet_temp) || null,
-              evaporator_inlet_temp:
-                parseFloat(serverLog.evaporator_inlet_temp) || null,
-              evaporator_outlet_temp:
-                parseFloat(serverLog.evaporator_outlet_temp) || null,
-              compressor_suction_temp:
-                parseFloat(serverLog.compressor_suction_temp) || null,
-              motor_temperature:
-                parseFloat(serverLog.motor_temperature) || null,
-              saturated_condenser_temp:
-                parseFloat(serverLog.saturated_condenser_temp) || null,
-              saturated_suction_temp:
-                parseFloat(serverLog.saturated_suction_temp) || null,
-              set_point_celsius:
-                parseFloat(serverLog.set_point_celsius) || null,
-              discharge_pressure:
-                parseFloat(serverLog.discharge_pressure) || null,
-              main_suction_pressure:
-                parseFloat(serverLog.main_suction_pressure) || null,
-              oil_pressure: parseFloat(serverLog.oil_pressure) || null,
-              oil_pressure_difference:
-                parseFloat(serverLog.oil_pressure_difference) || null,
-              condenser_inlet_pressure:
-                parseFloat(serverLog.condenser_inlet_pressure) || null,
-              condenser_outlet_pressure:
-                parseFloat(serverLog.condenser_outlet_pressure) || null,
-              evaporator_inlet_pressure:
-                parseFloat(serverLog.evaporator_inlet_pressure) || null,
-              evaporator_outlet_pressure:
-                parseFloat(serverLog.evaporator_outlet_pressure) || null,
-              compressor_load_percentage:
-                parseFloat(serverLog.compressor_load_percentage) || null,
-              inline_btu_meter:
-                parseFloat(serverLog.inline_btu_meter) || null,
-              remarks: serverLog.remarks,
-              signature_text: serverLog.signature_text,
-              status: serverLog.status || "Completed",
-              created_at: now,
-              updated_at: now,
-            });
-          }
-        }
+        // Upsert all server readings via CacheManager (Req 1.6, 10.4)
+        const normalizedReadings = result.data.map((serverLog: any) => ({
+          id: serverLog.id,
+          log_id: serverLog.log_id || serverLog.id,
+          site_code: serverLog.site_code || serverLog.siteCode || siteCode,
+          chiller_id: serverLog.chiller_id || null,
+          equipment_id: serverLog.equipment_id || null,
+          asset_name: serverLog.asset_name || null,
+          asset_type: serverLog.asset_type || null,
+          executor_id: serverLog.executor_id || "system",
+          date_shift: serverLog.date_shift || null,
+          assigned_to: serverLog.assigned_to || null,
+          reading_time: safeTimestamp(serverLog.reading_time),
+          start_datetime: safeTimestamp(serverLog.start_datetime),
+          end_datetime: safeTimestamp(serverLog.end_datetime),
+          condenser_inlet_temp: safeParseFloat(serverLog.condenser_inlet_temp),
+          condenser_outlet_temp: safeParseFloat(serverLog.condenser_outlet_temp),
+          evaporator_inlet_temp: safeParseFloat(serverLog.evaporator_inlet_temp),
+          evaporator_outlet_temp: safeParseFloat(serverLog.evaporator_outlet_temp),
+          compressor_suction_temp: safeParseFloat(serverLog.compressor_suction_temp),
+          motor_temperature: safeParseFloat(serverLog.motor_temperature),
+          saturated_condenser_temp: safeParseFloat(serverLog.saturated_condenser_temp),
+          saturated_suction_temp: safeParseFloat(serverLog.saturated_suction_temp),
+          set_point_celsius: safeParseFloat(serverLog.set_point_celsius),
+          discharge_pressure: safeParseFloat(serverLog.discharge_pressure),
+          main_suction_pressure: safeParseFloat(serverLog.main_suction_pressure),
+          oil_pressure: safeParseFloat(serverLog.oil_pressure),
+          oil_pressure_difference: safeParseFloat(serverLog.oil_pressure_difference),
+          condenser_inlet_pressure: parseFloat(serverLog.condenser_inlet_pressure) || null,
+          condenser_outlet_pressure: parseFloat(serverLog.condenser_outlet_pressure) || null,
+          evaporator_inlet_pressure: parseFloat(serverLog.evaporator_inlet_pressure) || null,
+          evaporator_outlet_pressure: parseFloat(serverLog.evaporator_outlet_pressure) || null,
+          compressor_load_percentage: parseFloat(serverLog.compressor_load_percentage) || null,
+          inline_btu_meter: parseFloat(serverLog.inline_btu_meter) || null,
+          remarks: serverLog.remarks || null,
+          sla_status: serverLog.sla_status || null,
+          reviewed_by: serverLog.reviewed_by || null,
+          signature_text: serverLog.signature_text || null,
+          attachments: serverLog.attachments || null,
+          status: serverLog.status || "Completed",
+          created_at: serverLog.created_at ? new Date(serverLog.created_at).getTime() : Date.now(),
+          updated_at: Date.now(),
+        }));
+        await cacheManager.write("chiller_readings", normalizedReadings);
       }
     } catch (error: any) {
       logger.error("Error pulling chiller readings", {
@@ -920,16 +1089,29 @@ export const SiteLogService: ISiteLogService = {
       "Chemical Dosing": 0,
     };
 
-    try {
-      // PROACTIVE OFFLINE CHECK: skip API entirely if no connection
-      const netState = await NetInfo.fetch();
-      if (netState.isConnected === false) {
-        throw new Error("Offline"); // Jump to catch block for local counts
-      }
+    // PROACTIVE OFFLINE CHECK: skip API entirely if no connection
+    const netState = await NetInfo.fetch();
+    const isOffline = netState.isConnected === false;
 
-      // Fetch from backend in parallel -- status=pending means != Completed on the server
+    try {
       await Promise.all(
         logTypes.map(async (logName) => {
+          if (isOffline) {
+            // Offline: count local non-completed records
+            const [result] = await db
+              .select({ count: count() })
+              .from(siteLogs)
+              .where(
+                and(
+                  eq(siteLogs.site_code, siteCode),
+                  eq(siteLogs.log_name, logName),
+                  ne(siteLogs.status, "Completed"),
+                ),
+              );
+            counts[logName] = result?.count ?? 0;
+            return;
+          }
+
           try {
             const url = `/api/site-logs/site/${siteCode}?log_name=${encodeURIComponent(logName)}&status=pending&limit=1`;
             const response = await apiFetch(url);
@@ -940,7 +1122,7 @@ export const SiteLogService: ISiteLogService = {
               throw new Error("non-ok response");
             }
           } catch {
-            // Offline fallback: count local non-completed records
+            // Network fallback: count local non-completed records
             const [result] = await db
               .select({ count: count() })
               .from(siteLogs)
@@ -967,12 +1149,10 @@ export const SiteLogService: ISiteLogService = {
 
   /**
    * Get total unsynced count across all logs.
-   * With PowerSync, unsynced rows are tracked in the ps_crud table.
-   * This returns the count of pending local mutations.
+   * Returns the count of pending items in the offline queue.
    */
   async getUnsyncedCounts(): Promise<number> {
-    // No unsynced queue in cache mode — always returns 0
-    return 0;
+    return cacheManager.getQueueCount();
   },
 
   /**
@@ -990,44 +1170,20 @@ export const SiteLogService: ISiteLogService = {
       const serverLogs = result.data || [];
       const now = Date.now();
 
-      for (const serverLog of serverLogs) {
-        const localRecords = await db
-          .select()
-          .from(logMaster)
-          .where(eq(logMaster.id, serverLog.id))
-          .limit(1);
-
-        if (localRecords.length > 0) {
-          await db
-            .update(logMaster)
-            .set({
-              task_name: serverLog.task_name,
-              log_name: serverLog.log_name,
-              sequence_number: serverLog.sequence_number || 0,
-              log_id: serverLog.log_id,
-              dlr: serverLog.dlr,
-              dbr: serverLog.dbr,
-              nlt: serverLog.nlt,
-              nmt: serverLog.nmt,
-              updated_at: now,
-            })
-            .where(eq(logMaster.id, serverLog.id));
-        } else {
-          await db.insert(logMaster).values({
-            id: serverLog.id,
-            task_name: serverLog.task_name,
-            log_name: serverLog.log_name,
-            sequence_number: serverLog.sequence_number || 0,
-            log_id: serverLog.log_id,
-            dlr: serverLog.dlr,
-            dbr: serverLog.dbr,
-            nlt: serverLog.nlt,
-            nmt: serverLog.nmt,
-            created_at: now,
-            updated_at: now,
-          });
-        }
-      }
+      const records = serverLogs.map((serverLog: any) => ({
+        id: serverLog.id,
+        task_name: serverLog.task_name,
+        log_name: serverLog.log_name,
+        sequence_number: serverLog.sequence_number || 0,
+        log_id: serverLog.log_id,
+        dlr: serverLog.dlr,
+        dbr: serverLog.dbr,
+        nlt: serverLog.nlt,
+        nmt: serverLog.nmt,
+        created_at: now,
+        updated_at: now,
+      }));
+      await cacheManager.write("log_master", records);
 
       logger.info("Log Master synchronized", {
         module: "SITE_LOG_SERVICE",
@@ -1054,6 +1210,44 @@ export const SiteLogService: ISiteLogService = {
         .orderBy(asc(logMaster.sequence_number));
     } catch (error) {
       return [];
+    }
+  },
+
+  /**
+   * Database Maintenance: Cleanup synced logs older than 90 days
+   */
+  async runCleanup(): Promise<void> {
+    try {
+      const ninetyDaysAgo = Date.now() - 90 * 24 * 60 * 60 * 1000;
+      
+      // Delete old synced logs
+      const deletedLogs = await db
+        .delete(siteLogs)
+        .where(
+          and(
+            lt(siteLogs.created_at, ninetyDaysAgo),
+            eq(siteLogs.status, "Completed")
+          )
+        );
+
+      // Delete old synced chiller readings
+      const deletedReadings = await db
+        .delete(chillerReadings)
+        .where(
+          and(
+            lt(chillerReadings.created_at, ninetyDaysAgo),
+            eq(chillerReadings.status, "Completed")
+          )
+        );
+
+      logger.info(`Database maintenance complete. Cleaned up old synced logs.`, {
+        module: "SITE_LOG_SERVICE"
+      });
+    } catch (error: any) {
+      logger.error("Database maintenance failed", {
+        module: "SITE_LOG_SERVICE",
+        error: error.message
+      });
     }
   },
 };

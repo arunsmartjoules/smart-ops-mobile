@@ -13,6 +13,7 @@ import { router } from "expo-router";
 import { useAuth } from "@/contexts/AuthContext";
 import NetInfo from "@react-native-community/netinfo";
 import SiteLogService from "@/services/SiteLogService";
+import { SiteConfigService } from "@/services/SiteConfigService";
 import LogFilterModal from "@/components/sitelogs/LogFilterModal";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect } from "@react-navigation/native";
@@ -34,6 +35,7 @@ import AttendanceService, { type Site } from "@/services/AttendanceService";
 import { useSites } from "@/hooks/useSites";
 import { db } from "@/database";
 import { eq } from "drizzle-orm";
+import { startOfDay, endOfDay, addDays } from "date-fns";
 import logger from "@/utils/logger";
 import Skeleton from "@/components/Skeleton";
 
@@ -47,19 +49,20 @@ export default function SiteLogs() {
   >({});
   const [openCounts, setOpenCounts] = useState<Record<string, number>>({});
   const [filterVisible, setFilterVisible] = useState(false);
-  const [fromDate, setFromDate] = useState<Date | null>(null);
-  const [toDate, setToDate] = useState<Date | null>(null);
+  const [fromDate, setFromDate] = useState<Date | null>(startOfDay(new Date()));
+  const [toDate, setToDate] = useState<Date | null>(endOfDay(new Date()));
   const lastSyncRef = React.useRef<Record<string, number>>({});
   const refreshingRef = useRef(false);
   const fetchLogsRef = useRef<((targetSite: string) => Promise<void>) | null>(null);
   const [shiftModalVisible, setShiftModalVisible] = useState(false);
+  const [shiftCounts, setShiftCounts] = useState<Record<string, number>>({ A: 0, B: 0, C: 0 });
   const { isConnected } = useNetworkStatus();
 
   // ── Clean sites hook ──────────────────────────────────────────────────────
   const userId = user?.user_id || user?.id;
   const { sites: availableSites, selectedSite, selectSite } = useSites(userId);
   const siteCode = selectedSite?.site_code ?? null;
-  const siteName = selectedSite?.name ?? selectedSite?.site_code ?? "Select Site";
+  const siteName = selectedSite?.site_name ?? selectedSite?.site_code ?? "Select Site";
 
   // Safety timer to clear loading no matter what
   useEffect(() => {
@@ -83,13 +86,18 @@ export default function SiteLogs() {
 
       if (shouldSync) {
         try {
-          const pullOptions = {
-            fromDate: fromDate?.getTime(),
-            toDate: toDate?.getTime(),
-          };
+          const fromDateObj = startOfDay(addDays(new Date(), -7));
+          const toDateObj = endOfDay(addDays(new Date(), 7));
+          
           await Promise.all([
-            SiteLogService.pullSiteLogs(targetSite, pullOptions),
-            SiteLogService.pullChillerReadings(targetSite, pullOptions),
+            SiteLogService.pullSiteLogs(targetSite, {
+              fromDate: fromDateObj.getTime(),
+              toDate: toDateObj.getTime()
+            }),
+            SiteLogService.pullChillerReadings(targetSite, {
+              fromDate: fromDateObj.getTime(),
+              toDate: toDateObj.getTime()
+            }),
             SiteLogService.pullLogMaster(),
           ]);
           lastSyncRef.current = { ...lastSyncRef.current, [targetSite]: now };
@@ -392,6 +400,15 @@ export default function SiteLogs() {
                         onPress={() => {
                           if (item.id === "temp-rh") {
                             setShiftModalVisible(true);
+                            // Load pending counts for each shift
+                            if (siteCode) {
+                              const today = new Date().toISOString().slice(0, 10);
+                              Promise.all([
+                                SiteConfigService.getPendingCountForDate(siteCode, "Temp RH", today, "A"),
+                                SiteConfigService.getPendingCountForDate(siteCode, "Temp RH", today, "B"),
+                                SiteConfigService.getPendingCountForDate(siteCode, "Temp RH", today, "C"),
+                              ]).then(([a, b, c]) => setShiftCounts({ A: a, B: b, C: c })).catch(() => {});
+                            }
                           } else {
                             router.push({
                               pathname: item.route,
@@ -490,6 +507,7 @@ export default function SiteLogs() {
               </View>
               <TouchableOpacity
                 onPress={() => setShiftModalVisible(false)}
+                hitSlop={{ top: 20, bottom: 20, left: 20, right: 20 }}
                 className="w-10 h-10 bg-slate-100 dark:bg-slate-800 rounded-full items-center justify-center"
               >
                 <X size={20} color="#94a3b8" />
@@ -501,34 +519,45 @@ export default function SiteLogs() {
                 { label: "Shift A (1/3)", value: "A", time: "Morning" },
                 { label: "Shift B (2/3)", value: "B", time: "Evening" },
                 { label: "Shift C (3/3)", value: "C", time: "Night" },
-              ].map((shift) => (
-                <TouchableOpacity
-                  key={shift.value}
-                  onPress={() => {
-                    setShiftModalVisible(false);
-                    router.push({
-                      pathname: "/temp-rh",
-                      params: { siteCode, isNew: "true", shift: shift.value },
-                    });
-                  }}
-                  className="flex-row items-center p-4 bg-slate-50 dark:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-700"
-                >
-                  <View className="w-12 h-12 bg-red-100 dark:bg-red-900/30 rounded-xl items-center justify-center mr-4">
-                    <Clock size={20} color="#ef4444" />
-                  </View>
-                  <View className="flex-1">
-                    <Text className="text-slate-900 dark:text-slate-100 font-bold text-base">
-                      {shift.label}
-                    </Text>
-                    <Text className="text-slate-400 text-xs">
-                      {shift.time} Observations
-                    </Text>
-                  </View>
-                  <View className="w-8 h-8 rounded-full bg-slate-200/50 dark:bg-slate-700 items-center justify-center">
-                    <Plus size={16} color="#94a3b8" />
-                  </View>
-                </TouchableOpacity>
-              ))}
+              ].map((shift) => {
+                const pendingCount = shiftCounts[shift.value] ?? 0;
+                return (
+                  <TouchableOpacity
+                    key={shift.value}
+                    onPress={() => {
+                      setShiftModalVisible(false);
+                      router.push({
+                        pathname: "/temp-rh",
+                        params: { siteCode, isNew: "true", shift: shift.value },
+                      });
+                    }}
+                    className="flex-row items-center p-4 bg-slate-50 dark:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-700"
+                  >
+                    <View className="w-12 h-12 bg-red-100 dark:bg-red-900/30 rounded-xl items-center justify-center mr-4">
+                      <Clock size={20} color="#ef4444" />
+                    </View>
+                    <View className="flex-1">
+                      <Text className="text-slate-900 dark:text-slate-100 font-bold text-base">
+                        {shift.label}
+                      </Text>
+                      <Text className="text-slate-400 text-xs">
+                        {shift.time} Observations
+                      </Text>
+                    </View>
+                    {pendingCount > 0 ? (
+                      <View className="min-w-[20px] h-5 bg-red-600 rounded-full items-center justify-center px-1.5">
+                        <Text className="text-white text-[10px] font-black leading-none">
+                          {pendingCount > 99 ? "99+" : pendingCount}
+                        </Text>
+                      </View>
+                    ) : (
+                      <View className="w-8 h-8 rounded-full bg-slate-200/50 dark:bg-slate-700 items-center justify-center">
+                        <Plus size={16} color="#94a3b8" />
+                      </View>
+                    )}
+                  </TouchableOpacity>
+                );
+              })}
             </View>
 
             <TouchableOpacity

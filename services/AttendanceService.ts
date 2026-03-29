@@ -1,24 +1,14 @@
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import NetInfo from "@react-native-community/netinfo";
 import logger from "../utils/logger";
 import { authEvents } from "../utils/authEvents";
-import { db, userSites } from "../database";
-import { eq } from "drizzle-orm";
-import {
-  queueOfflineCheckIn,
-  queueOfflineCheckOut,
-} from "../utils/syncAttendanceStorage";
-import {
-  getCachedAttendance,
-  cacheAttendance,
-  getCachedSites,
-  cacheSites,
-  clearAllAttendanceCaches,
-} from "../utils/attendanceCache";
-import { cacheUserSites } from "../utils/siteCache";
 import { supabase } from "./supabase";
 import { fetchWithTimeout } from "../utils/apiHelper";
 import { API_BASE_URL } from "../constants/api";
+import { cacheManager } from "./CacheManager";
+import { siteResolver } from "./SiteResolver";
+import { v4 as uuidv4 } from "uuid";
+import { db, attendanceLogs } from "../database";
+import { and, eq, desc } from "drizzle-orm";
 
 const BACKEND_URL = API_BASE_URL;
 
@@ -125,6 +115,7 @@ const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
 export interface Site {
   site_code: string;
   name: string;
+  site_name?: string; // Compatibility alias
   address?: string;
   city?: string;
   state?: string;
@@ -166,15 +157,51 @@ export interface LocationValidationResult {
 export const AttendanceService = {
   /**
    * Get today's attendance for a user.
+   * Reads from attendance_logs filtered by user_id and current IST date via CacheManager.
    * If force is true, it will wait for the API and ignore the cache return path.
    */
   async getTodayAttendance(userId: string, force = false): Promise<AttendanceLog | null> {
-    // 1. Try to get from cache first for immediate return
-    const cached = await getCachedAttendance(userId);
-    const cachedToday = normalizeAttendanceLog(cached?.today);
+    const today = getISTDateString();
 
-    // If we have a valid cached log for today, return it immediately to unblock UI
-    const hasValidCache = cachedToday && isAttendanceForToday(cachedToday);
+    // 1. Read from SQLite attendance_logs — look for the most recent session
+    let cachedToday: AttendanceLog | null = null;
+    try {
+      const rows = await db
+        .select()
+        .from(attendanceLogs)
+        .where(eq(attendanceLogs.user_id, userId))
+        .orderBy(desc(attendanceLogs.check_in_time))
+        .limit(1);
+
+      if (rows.length > 0) {
+        const log = normalizeAttendanceLog(rows[0]);
+        if (log && !log.check_out_time && log.check_in_time) {
+          // If still checked in, check 17-hour limit
+          const checkIn = new Date(log.check_in_time);
+          const diffHours = (Date.now() - checkIn.getTime()) / (1000 * 60 * 60);
+          if (diffHours <= 17) {
+            cachedToday = log;
+            logger.debug("Found active cross-day/today session", {
+              module: "ATTENDANCE_SERVICE",
+              diffHours,
+            });
+          }
+        }
+        
+        // If no active 17h session found, fall back to simple "is it today?" check for the record
+        if (!cachedToday && log && log.date === today) {
+          cachedToday = log;
+        }
+      }
+    } catch (err) {
+      logger.warn("AttendanceService.getTodayAttendance: SQLite read failed", {
+        module: "ATTENDANCE_SERVICE",
+        userId,
+        error: err,
+      });
+    }
+
+    const hasValidCache = !!cachedToday;
 
     // 2. Fire off the API check in the background
     const apiPromise = (async () => {
@@ -187,14 +214,13 @@ export const AttendanceService = {
         const result = await apiFetch(`/api/attendance/user/${userId}/today`);
         if (result.success) {
           const normalized = normalizeAttendanceLog(result.data);
-          const todayFromApi =
-            normalized && isAttendanceForToday(normalized) ? normalized : null;
+          // If API returns a check-in from today or a very recent cross-day one
+          const todayFromApi = normalized;
 
-          // Update cache with fresh data
-          cacheAttendance(userId, {
-            today: todayFromApi,
-            history: cached ? cached.history : [],
-          });
+          // Write API result back via CacheManager
+          if (todayFromApi) {
+            await cacheManager.write("attendance", [todayFromApi]);
+          }
           return todayFromApi;
         }
         return null;
@@ -240,6 +266,7 @@ export const AttendanceService = {
 
   /**
    * Get user's assigned sites with coordinates.
+   * Uses siteResolver for cache reads/writes instead of getCachedSites/cacheSites.
    * Defaults to 'JouleCool' project type — only mapped sites are returned.
    */
   async getUserSites(userId: string, projectType: string = "JouleCool"): Promise<Site[]> {
@@ -253,6 +280,7 @@ export const AttendanceService = {
         uniqueSites.set(siteCode, {
           site_code: siteCode,
           name: site?.site_name || site?.name || siteCode,
+          site_name: site?.site_name || site?.name || siteCode,
           address: site?.address,
           city: site?.city,
           state: site?.state,
@@ -267,18 +295,19 @@ export const AttendanceService = {
       return Array.from(uniqueSites.values());
     };
 
-    // OFFLINE FAST PATH: skip all API calls when offline, return cached immediately
+    // OFFLINE FAST PATH: skip all API calls when offline, return from siteResolver immediately
     try {
       const netState = await NetInfo.fetch();
       if (netState.isConnected === false) {
-        const cached = await getCachedSites(userId);
-        if (cached.length > 0) {
-          logger.debug("Offline — returning cached sites immediately", {
+        const resolvedSites = siteResolver.getSites();
+        if (resolvedSites.length > 0) {
+          const mapped = normalizeSites(resolvedSites);
+          logger.debug("Offline — returning siteResolver sites immediately", {
             module: "ATTENDANCE_SERVICE",
             userId,
-            count: cached.length,
+            count: mapped.length,
           });
-          return cached;
+          return mapped;
         }
         // No cache available offline — return empty
         return [];
@@ -300,9 +329,8 @@ export const AttendanceService = {
           count: mappedSites.length,
           projectType,
         });
-        // Keep cache warm so offline fallback has fresh data
-        cacheSites(userId, mappedSites).catch(() => {});
-        cacheUserSites(userId, mappedSites.map(s => ({ site_code: s.site_code, name: s.name || s.site_code }))).catch(() => {});
+        // Refresh siteResolver so offline fallback has fresh data
+        siteResolver.refresh(userId).catch(() => {});
         return mappedSites;
       }
     }
@@ -322,22 +350,22 @@ export const AttendanceService = {
         count: attendanceSites.length,
         projectType,
       });
-      // Keep cache warm so offline fallback has fresh data
-      cacheSites(userId, attendanceSites).catch(() => {});
-      cacheUserSites(userId, attendanceSites.map(s => ({ site_code: s.site_code, name: s.name || s.site_code }))).catch(() => {});
+      // Refresh siteResolver so offline fallback has fresh data
+      siteResolver.refresh(userId).catch(() => {});
       return attendanceSites;
     }
 
-    // Offline fallback: return previously cached sites if both network calls failed
+    // Offline fallback: return from siteResolver if both network calls failed
     try {
-      const cached = await getCachedSites(userId);
-      if (cached.length > 0) {
-        logger.debug("Returning cached sites (offline fallback)", {
+      const resolvedSites = siteResolver.getSites();
+      if (resolvedSites.length > 0) {
+        const mapped = normalizeSites(resolvedSites);
+        logger.debug("Returning siteResolver sites (offline fallback)", {
           module: "ATTENDANCE_SERVICE",
           userId,
-          count: cached.length,
+          count: mapped.length,
         });
-        return cached;
+        return mapped;
       }
     } catch (_) {}
 
@@ -364,7 +392,7 @@ export const AttendanceService = {
 
   /**
    * Check in to a site.
-   * When offline, queues the record locally and returns an optimistic log.
+   * When offline, enqueues via CacheManager and returns an optimistic log.
    */
   async checkIn(
     userId: string,
@@ -389,10 +417,37 @@ export const AttendanceService = {
       }),
     });
 
+    if (result.success && result.data) {
+      logger.activity("PUNCH_IN", "ATTENDANCE", `User punched in at ${siteCode}`, {
+        site_code: siteCode,
+        attendance_id: result.data.id,
+        offline: false,
+      });
+    }
+
     if (!result.success && result.isNetworkError) {
-      // Queue locally and return optimistic log
+      // Queue locally via CacheManager and return optimistic log
       const timestamp = new Date().toISOString();
-      const localId = await queueOfflineCheckIn(userId, siteCode, timestamp);
+      const localId = uuidv4();
+      await cacheManager.enqueue({
+        entity_type: "attendance_check_in",
+        operation: "create",
+        payload: {
+          id: localId,
+          user_id: userId,
+          site_code: siteCode,
+          check_in_time: timestamp,
+          latitude,
+          longitude,
+          address,
+        },
+      });
+
+      logger.activity("PUNCH_IN", "ATTENDANCE", `User punched in at ${siteCode} (Offline)`, {
+        site_code: siteCode,
+        offline: true,
+      });
+
       const optimisticLog: AttendanceLog = {
         id: localId,
         user_id: userId,
@@ -409,7 +464,7 @@ export const AttendanceService = {
 
   /**
    * Check out from attendance.
-   * When offline, queues the record locally and returns success.
+   * When offline, enqueues via CacheManager and returns success.
    */
   async checkOut(
     attendanceId: string,
@@ -435,9 +490,33 @@ export const AttendanceService = {
       }),
     });
 
+    if (result.success) {
+      logger.activity("PUNCH_OUT", "ATTENDANCE", "User punched out", {
+        attendance_id: attendanceId,
+        offline: false,
+      });
+    }
+
     if (!result.success && result.isNetworkError) {
       const timestamp = new Date().toISOString();
-      await queueOfflineCheckOut(attendanceId, attendanceId, timestamp, remarks);
+      await cacheManager.enqueue({
+        entity_type: "attendance_check_out",
+        operation: "update",
+        payload: {
+          id: attendanceId,
+          check_out_time: timestamp,
+          latitude,
+          longitude,
+          address,
+          remarks,
+        },
+      });
+
+      logger.activity("PUNCH_OUT", "ATTENDANCE", "User punched out (Offline)", {
+        attendance_id: attendanceId,
+        offline: true,
+      });
+
       return { success: true, isOffline: true };
     }
 
@@ -445,7 +524,8 @@ export const AttendanceService = {
   },
 
   /**
-   * Get attendance history for a user
+   * Get attendance history for a user.
+   * Reads from attendance_logs filtered by user_id ordered by check_in_time desc via CacheManager.
    */
   async getAttendanceHistory(
     userId: string,
@@ -457,8 +537,15 @@ export const AttendanceService = {
       const netState = await NetInfo.fetch();
       if (netState.isConnected === false) {
         if (page === 1) {
-          const cached = await getCachedAttendance(userId);
-          return { data: cached ? cached.history : [], pagination: {} };
+          const rows = await db
+            .select()
+            .from(attendanceLogs)
+            .where(eq(attendanceLogs.user_id, userId))
+            .orderBy(desc(attendanceLogs.check_in_time));
+          return {
+            data: rows.map((r) => normalizeAttendanceLog(r)).filter(Boolean) as AttendanceLog[],
+            pagination: {},
+          };
         }
         return { data: [], pagination: {} };
       }
@@ -468,22 +555,24 @@ export const AttendanceService = {
       `/api/attendance/user/${userId}?page=${page}&limit=${limit}`,
     );
     if (result.success) {
-      // If first page, update the 'history' part of the cache
-      if (page === 1) {
-        getCachedAttendance(userId).then((cached) => {
-          cacheAttendance(userId, {
-            today: cached ? cached.today : null,
-            history: result.data,
-          });
-        });
+      // Write API result back via CacheManager (first page only to avoid stale overwrites)
+      if (page === 1 && Array.isArray(result.data)) {
+        await cacheManager.write("attendance", result.data);
       }
       return { data: result.data, pagination: result.pagination };
     }
 
-    // Fallback to cache if network error and first page
+    // Fallback to SQLite cache if network error and first page
     if (result.isNetworkError && page === 1) {
-      const cached = await getCachedAttendance(userId);
-      return { data: cached ? cached.history : [], pagination: {} };
+      const rows = await db
+        .select()
+        .from(attendanceLogs)
+        .where(eq(attendanceLogs.user_id, userId))
+        .orderBy(desc(attendanceLogs.check_in_time));
+      return {
+        data: rows.map((r) => normalizeAttendanceLog(r)).filter(Boolean) as AttendanceLog[],
+        pagination: {},
+      };
     }
     return { data: [], pagination: {} };
   },

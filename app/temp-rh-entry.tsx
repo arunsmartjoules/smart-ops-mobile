@@ -294,6 +294,7 @@ export default function TempRHEntry() {
         <View className="flex-row items-center justify-between px-5 py-4 bg-white dark:bg-slate-900 border-b border-slate-100 dark:border-slate-800">
           <TouchableOpacity
             onPress={() => router.back()}
+            hitSlop={{ top: 20, bottom: 20, left: 20, right: 20 }}
             className="w-10 h-10 rounded-full bg-slate-50 dark:bg-slate-800 items-center justify-center"
           >
             <ChevronLeft size={20} color="#0f172a" />

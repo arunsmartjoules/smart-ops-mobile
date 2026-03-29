@@ -408,12 +408,17 @@ export default function Dashboard() {
   const [areaOptions, setAreaOptions] = useState<SelectOption[]>([]);
   const [categoryOptions, setCategoryOptions] = useState<SelectOption[]>([]);
   const [areasLoading, setAreasLoading] = useState(false);
+  const [beforeTemp, setBeforeTemp] = useState("");
+  const [afterTemp, setAfterTemp] = useState("");
 
   // Ref for timeout cleanup
   const refreshTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Safety timer to ensure loading icons are never stuck
   useEffect(() => {
+    // RUN DB CLEANUP: Best place to trigger periodic maintenance
+    SiteLogService.runCleanup();
+
     const timer = setTimeout(() => {
       setLoadingPending((prev) => {
         if (prev) console.log("[Dashboard] Pending safety timeout triggered");
@@ -1347,6 +1352,10 @@ export default function Dashboard() {
           areaOptions={areaOptions}
           categoryOptions={categoryOptions}
           areasLoading={areasLoading}
+          beforeTemp={beforeTemp}
+          setBeforeTemp={setBeforeTemp}
+          afterTemp={afterTemp}
+          setAfterTemp={setAfterTemp}
         />
       </SafeAreaView>
     </View>

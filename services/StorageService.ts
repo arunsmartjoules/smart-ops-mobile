@@ -45,4 +45,16 @@ export const StorageService = {
       return null;
     }
   },
+
+  /**
+   * Upload from a persistent local file URI, returning the public URL.
+   * Alias for uploadFile — used by AttachmentQueueService during background sync.
+   */
+  async uploadFromLocalUri(
+    bucketName: string,
+    remotePath: string,
+    localUri: string,
+  ): Promise<string | null> {
+    return this.uploadFile(bucketName, remotePath, localUri);
+  },
 };

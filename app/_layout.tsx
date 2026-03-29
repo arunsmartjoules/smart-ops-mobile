@@ -7,6 +7,7 @@ import { ThemeProvider } from "@/contexts/ThemeContext";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { useEffect } from "react";
 import { View, Text } from "react-native";
+import { syncEngine, registerBackgroundSyncAsync } from "@/services/SyncEngine";
 import { syncManager } from "@/services/SyncManager";
 import { initDatabase } from "@/database";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
@@ -17,7 +18,18 @@ import * as SplashScreen from "expo-splash-screen";
 import * as Location from "expo-location";
 import * as Notifications from "expo-notifications";
 import * as ImagePicker from "expo-image-picker";
-import { setupNotificationHandlers } from "@/services/NotificationService";
+import * as Crypto from "expo-crypto";
+import { setupNotificationHandlers, setupAndroidChannels } from "@/services/NotificationService";
+
+// Fix: crypto.getRandomValues() not supported — required for uuid library in React Native
+if (!global.crypto) {
+  Object.defineProperty(global, "crypto", {
+    value: {
+      getRandomValues: (array: any) => Crypto.getRandomValues(array),
+    },
+  });
+}
+
 
 // Keep the native splash visible until JS is ready
 SplashScreen.preventAutoHideAsync().catch(() => {});
@@ -89,6 +101,8 @@ export default function RootLayout() {
         await ImagePicker.requestCameraPermissionsAsync();
         await ImagePicker.requestMediaLibraryPermissionsAsync();
         syncManager.initialize();
+        await setupAndroidChannels();
+        await registerBackgroundSyncAsync();
         UpdateService.checkForUpdate();
       } catch (e) {
         console.error("Init error:", e);

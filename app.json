@@ -2,7 +2,7 @@
   "expo": {
     "name": "Jouleops",
     "slug": "smart-ops",
-    "version": "1.0.24",
+    "version": "1.0.27",
     "orientation": "portrait",
     "icon": "./assets/images/jouleops-icon.png",
     "scheme": "jouleops",
@@ -12,10 +12,15 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.arundev2025.jouleops",
       "infoPlist": {
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "UIBackgroundModes": [
+          "fetch",
+          "remote-notification"
+        ]
       }
     },
     "android": {
+      "googleServicesFile": "./google-services.json",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/images/jouleops-icon.png"
@@ -32,7 +37,9 @@
         "android.permission.WRITE_EXTERNAL_STORAGE",
         "android.permission.INTERNET",
         "android.permission.ACCESS_NETWORK_STATE",
-        "android.permission.POST_NOTIFICATIONS"
+        "android.permission.POST_NOTIFICATIONS",
+        "android.permission.RECEIVE_BOOT_COMPLETED",
+        "android.permission.WAKE_LOCK"
       ]
     },
     "web": {
@@ -68,7 +75,7 @@
         }
       ],
       "expo-task-manager",
-      "expo-background-task",
+      "expo-background-fetch",
       "expo-sqlite",
       [
         "expo-camera",

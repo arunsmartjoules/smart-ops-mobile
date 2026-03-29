@@ -84,6 +84,7 @@ const QRScannerModal = React.forwardRef<QRScannerRef, QRScannerModalProps>(
         setValidating(true);
 
         try {
+          // 1. Fetch asset by QR ID
           const asset = await AssetService.getAssetByQrId(data, siteCode);
 
           if (!asset) {
@@ -100,7 +101,23 @@ const QRScannerModal = React.forwardRef<QRScannerRef, QRScannerModalProps>(
             return;
           }
 
-          if (asset.site_code !== siteCode) {
+          // 2. Resolve current site ID for validation
+          const { siteResolver } = require("@/services/SiteResolver");
+          const currentSites = siteResolver.getSites();
+          const currentSite = currentSites.find((s: any) => s.site_code === siteCode);
+          
+          // 3. Compare Site ID
+          // My database research shows asset.site_id is actually the site_code
+          const checkCode = siteCode.trim().toUpperCase();
+          const assetSiteId = (asset.site_id || "").trim().toUpperCase();
+
+          const isCorrectSite = 
+            !asset.site_id || 
+            assetSiteId === checkCode || 
+            assetSiteId === (currentSite?.site_id || "").trim().toUpperCase() || 
+            assetSiteId === (currentSite?.id || "").trim().toUpperCase();
+
+          if (!isCorrectSite) {
             setValidating(false);
             Alert.alert("Access Denied", "You are not part of that site.", [
               {
@@ -116,7 +133,7 @@ const QRScannerModal = React.forwardRef<QRScannerRef, QRScannerModalProps>(
 
           close();
           onAssetFound(asset.asset_name);
-        } catch {
+        } catch (err) {
           setValidating(false);
           scannedRef.current = false;
           Alert.alert("Error", "Failed to validate QR code. Please try again.");

@@ -1,9 +1,9 @@
 /**
  * Drizzle ORM Schema — SmartOps Local Database
  *
- * These tables mirror the PowerSync sync rules and define the local SQLite
- * structure used by the Drizzle query builder. PowerSync keeps them in sync
- * with the backend PostgreSQL database via logical replication.
+ * These tables define the local SQLite structure used by the Drizzle query
+ * builder. Data is populated via explicit API calls (cache-on-fetch) and
+ * local writes are synced to the backend through the offline_queue + SyncEngine.
  */
 
 import { sqliteTable, text, integer, real } from "drizzle-orm/sqlite-core";
@@ -216,6 +216,26 @@ export const logMaster = sqliteTable("log_master", {
   updated_at: real("updated_at"),
 });
 
+// ─── Offline Queue ───────────────────────────────────────────────────────────
+
+export const offlineQueue = sqliteTable("offline_queue", {
+  id:          text("id").primaryKey(),
+  entity_type: text("entity_type").notNull(),
+  operation:   text("operation").notNull(),
+  payload:     text("payload").notNull(),
+  created_at:  real("created_at").notNull(),
+  retry_count: integer("retry_count").notNull().default(0),
+  last_error:  text("last_error"),
+  status:      text("status").notNull().default("pending"),
+});
+
+// ─── Sync Meta ───────────────────────────────────────────────────────────────
+
+export const syncMeta = sqliteTable("sync_meta", {
+  domain:         text("domain").primaryKey(),
+  last_synced_at: real("last_synced_at"),
+});
+
 // ─── Attendance Logs ─────────────────────────────────────────────────────────
 
 export const attendanceLogs = sqliteTable("attendance_logs", {
@@ -237,4 +257,22 @@ export const attendanceLogs = sqliteTable("attendance_logs", {
   fieldproxy_punch_id: integer("fieldproxy_punch_id"),
   created_at: real("created_at"),
   updated_at: real("updated_at"),
+});
+
+// ─── Attachment Queue ────────────────────────────────────────────────────────
+
+export const attachmentQueue = sqliteTable("attachment_queue", {
+  id: text("id").primaryKey(),
+  local_uri: text("local_uri").notNull(),
+  bucket_name: text("bucket_name").notNull(),
+  remote_path: text("remote_path").notNull(),
+  related_entity_type: text("related_entity_type").notNull(), // "site_log" | "chiller_reading" | "pm_response" | "pm_instance" | "ticket_line_item"
+  related_entity_id: text("related_entity_id").notNull(),
+  related_field: text("related_field").notNull(), // "attachment" | "image_url" | "before_image" | "after_image" | "attachments"
+  status: text("status").notNull().default("pending"), // "pending" | "uploading" | "completed" | "failed"
+  retry_count: integer("retry_count").notNull().default(0),
+  last_error: text("last_error"),
+  uploaded_url: text("uploaded_url"),
+  created_at: real("created_at").notNull(),
+  updated_at: real("updated_at").notNull(),
 });

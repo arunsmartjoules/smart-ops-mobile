@@ -29,7 +29,7 @@ import { TicketsService, type Ticket } from "@/services/TicketsService";
 import { AttendanceService, type Site } from "@/services/AttendanceService";
 import { useSites } from "@/hooks/useSites";
 import { db, tickets as ticketsTable, areas, categories } from "@/database";
-import { eq, desc, and, like } from "drizzle-orm";
+import { eq, desc } from "drizzle-orm";
 import logger from "@/utils/logger";
 import TicketDetailModal from "@/components/TicketDetailModal";
 import AdvancedFilterModal from "@/components/AdvancedFilterModal";
@@ -43,6 +43,39 @@ import TicketSkeleton, {
 
 const { width } = Dimensions.get("window");
 
+const parseCreatedAtMs = (value: unknown) => {
+  if (typeof value === "number") return value;
+  if (typeof value === "string") {
+    const parsed = Date.parse(value);
+    return Number.isNaN(parsed) ? null : parsed;
+  }
+  return null;
+};
+
+const getLocalDayStartMs = (dateStr: string | null) => {
+  if (!dateStr) return null;
+  const [year, month, day] = dateStr.slice(0, 10).split("-").map(Number);
+  if (!year || !month || !day) return null;
+  return new Date(year, month - 1, day, 0, 0, 0, 0).getTime();
+};
+
+const getLocalDayEndMs = (dateStr: string | null) => {
+  if (!dateStr) return null;
+  const [year, month, day] = dateStr.slice(0, 10).split("-").map(Number);
+  if (!year || !month || !day) return null;
+  return new Date(year, month - 1, day, 23, 59, 59, 999).getTime();
+};
+
+const toApiStartDate = (dateStr: string | null) => {
+  const ms = getLocalDayStartMs(dateStr);
+  return ms == null ? undefined : new Date(ms).toISOString();
+};
+
+const toApiEndDate = (dateStr: string | null) => {
+  const ms = getLocalDayEndMs(dateStr);
+  return ms == null ? undefined : new Date(ms).toISOString();
+};
+
 export default function Tickets() {
   const { user, isLoading } = useAuth();
   const isDark = useColorScheme() === "dark";
@@ -52,7 +85,7 @@ export default function Tickets() {
   const userId = user?.user_id || user?.id;
   const { sites, selectedSite, selectSite, loading: sitesLoading } = useSites(userId);
   const selectedSiteCode = selectedSite?.site_code ?? "";
-  const siteName = selectedSite?.name ?? selectedSite?.site_code ?? "Select Site";
+  const siteName = selectedSite?.site_name ?? selectedSite?.site_code ?? "Select Site";
 
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [loading, setLoading] = useState(true);
@@ -130,8 +163,7 @@ export default function Tickets() {
       if (site) {
         return {
           ...t,
-          site_name:
-            site.name || (site as any).siteName || (site as any).site_name,
+          site_name: site.site_name,
           site_code: site.site_code || t.site_code,
         };
       }
@@ -274,69 +306,108 @@ export default function Tickets() {
       let hasLocalData = false;
 
       if (reset) {
-        // ALWAYS load from local Drizzle/PowerSync DB first for instant content
         try {
-          const conditions: any[] = [];
-
-          // Apply the same filters as the API call
-          if (selectedSiteCode !== "all") {
-            conditions.push(eq(ticketsTable.site_code, selectedSiteCode));
-          }
-          if (statusFilter) {
-            conditions.push(eq(ticketsTable.status, statusFilter));
-          }
-          if (priorityFilter && priorityFilter !== "All") {
-            conditions.push(eq(ticketsTable.priority, priorityFilter));
-          }
-          if (searchQuery) {
-            conditions.push(like(ticketsTable.title, `%${searchQuery}%`));
-          }
-
-          const whereClause = conditions.length > 1
-            ? and(...conditions)
-            : conditions[0] ?? undefined;
-
           const localTickets = await db
             .select()
             .from(ticketsTable)
-            .where(whereClause)
+            .where(
+              selectedSiteCode !== "all"
+                ? eq(ticketsTable.site_code, selectedSiteCode)
+                : undefined,
+            )
             .orderBy(desc(ticketsTable.created_at));
 
-          logger.info("Loaded tickets from local DB", {
-            module: "TICKETS",
-            count: localTickets.length,
-            siteCode: selectedSiteCode,
-            filters: { statusFilter, priorityFilter, searchQuery },
+          const normalizedSearch = searchQuery.trim().toLowerCase();
+          const fromDateMs = getLocalDayStartMs(fromDate);
+          const toDateMs = getLocalDayEndMs(toDate);
+          const filteredLocalTickets = localTickets.filter((t) => {
+            if (statusFilter && statusFilter !== "All" && t.status !== statusFilter) {
+              return false;
+            }
+
+            if (
+              priorityFilter &&
+              priorityFilter !== "All" &&
+              t.priority !== priorityFilter
+            ) {
+              return false;
+            }
+
+            const createdAtMs = parseCreatedAtMs(t.created_at);
+
+            if ((fromDateMs != null || toDateMs != null) && createdAtMs == null) {
+              return false;
+            }
+
+            if (fromDateMs != null && createdAtMs != null && createdAtMs < fromDateMs) {
+              return false;
+            }
+
+            if (toDateMs != null && createdAtMs != null && createdAtMs > toDateMs) {
+              return false;
+            }
+
+            if (!normalizedSearch) {
+              return true;
+            }
+
+            const searchHaystack = [
+              t.ticket_number,
+              t.title,
+              t.description,
+              t.category,
+              t.area,
+              t.status,
+              t.priority,
+              t.assigned_to,
+              t.created_by,
+            ]
+              .filter(Boolean)
+              .join(" ")
+              .toLowerCase();
+
+            return searchHaystack.includes(normalizedSearch);
           });
 
-          if (localTickets.length > 0) {
+          if (filteredLocalTickets.length > 0) {
             hasLocalData = true;
-            const formattedTickets = localTickets.map((t) => ({
-              id: t.id,
-              ticket_no: t.ticket_number,
-              title: t.title,
-              description: t.description || "",
-              status: t.status,
-              priority: t.priority,
-              category: t.category || "",
-              location: t.area || "",
-              area_asset: t.area || "",
-              internal_remarks: t.description || "",
-              assigned_to: t.assigned_to || "",
-              created_user: t.created_by,
-              site_code: t.site_code,
-              created_at: t.created_at
-                ? new Date(t.created_at).toISOString()
-                : new Date().toISOString(),
-            }));
+            const formattedTickets = filteredLocalTickets.map((t) => {
+              // Safe date conversion to prevent .toISOString() crashes on invalid data
+              let isoDate = new Date().toISOString();
+              try {
+                if (t.created_at) {
+                  const d = new Date(Number(t.created_at));
+                  if (!isNaN(d.getTime())) {
+                    isoDate = d.toISOString();
+                  }
+                }
+              } catch {}
+
+              return {
+                id: t.id,
+                ticket_no: t.ticket_number,
+                title: t.title,
+                description: t.description || "",
+                status: t.status,
+                priority: t.priority,
+                category: t.category || "",
+                location: t.area || "",
+                area_asset: t.area || "",
+                internal_remarks: t.description || "",
+                assigned_to: t.assigned_to || "",
+                created_user: t.created_by,
+                site_code: t.site_code,
+                created_at: isoDate,
+              };
+            });
 
             setTickets(formattedTickets);
             setLoading(false);
           }
-        } catch (err) {
+        } catch (err: any) {
           logger.warn("Error loading tickets from local DB", {
             module: "TICKETS",
-            error: err,
+            error: err.message || String(err),
           });
         }
 
@@ -371,8 +442,8 @@ export default function Tickets() {
           status: statusFilter,
           priority: priorityFilter === "All" ? undefined : priorityFilter,
           search: searchQuery,
-          fromDate: fromDate,
-          toDate: toDate,
+          fromDate: toApiStartDate(fromDate),
+          toDate: toApiEndDate(toDate),
         };
         
         const res = await TicketsService.getTickets(selectedSiteCode, options);
@@ -550,8 +621,7 @@ export default function Tickets() {
     if (site) {
       return {
         ...selectedTicket,
-        site_name:
-          site.name || (site as any).siteName || (site as any).site_name,
+        site_name: site.site_name,
         site_code: site.site_code || selectedTicket.site_code,
       };
     }
@@ -800,6 +870,15 @@ export default function Tickets() {
             setStatusFilter={setStatusFilter}
             priorityFilter={priorityFilter}
             setPriorityFilter={setPriorityFilter}
+            statusOptions={[
+              "All",
+              "Open",
+              "Inprogress",
+              "Resolved",
+              "Hold",
+              "Waiting",
+              "Cancelled",
+            ]}
             applyAdvancedFilters={applyAdvancedFilters}
           />
         )}

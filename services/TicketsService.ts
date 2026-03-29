@@ -3,14 +3,44 @@ import { authEvents } from "../utils/authEvents";
 import { areas, categories as categoriesTable } from "../database";
 import { supabase } from "./supabase";
 import { fetchWithTimeout } from "../utils/apiHelper";
-import { db, tickets, ticketUpdates } from "../database";
-import { eq, desc, and, like } from "drizzle-orm";
-import { v4 as uuidv4 } from "uuid";
+import { db, tickets } from "../database";
+import { eq } from "drizzle-orm";
 import { StorageService } from "./StorageService";
+import { AttachmentQueueService } from "./AttachmentQueueService";
+import cacheManager from "./CacheManager";
 
 import { API_BASE_URL } from "../constants/api";
 
 const BACKEND_URL = API_BASE_URL;
+
+const parseCreatedAtMs = (value: unknown) => {
+  if (typeof value === "number") return value;
+  if (typeof value === "string") {
+    const parsed = Date.parse(value);
+    return Number.isNaN(parsed) ? null : parsed;
+  }
+  return null;
+};
+
+const toBoundaryMs = (value: string | undefined, endOfDay = false) => {
+  if (!value) return null;
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    const [year, month, day] = value.split("-").map(Number);
+    return new Date(
+      year,
+      month - 1,
+      day,
+      endOfDay ? 23 : 0,
+      endOfDay ? 59 : 0,
+      endOfDay ? 59 : 0,
+      endOfDay ? 999 : 0,
+    ).getTime();
+  }
+
+  const parsed = Date.parse(value);
+  return Number.isNaN(parsed) ? null : parsed;
+};
 
 // Helper for API requests with auth and retry logic
 const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
@@ -111,80 +141,87 @@ export const TicketsService = {
     // 1. Return local data if searching/filtering within standard view
     if (page === 1) {
       try {
-        const conditions: any[] = [];
+        const whereFilter: Record<string, any> = {};
+        if (siteCode !== "all") whereFilter.site_code = siteCode;
+        if (status) whereFilter.status = status;
+        if (priority && priority !== "All") whereFilter.priority = priority;
 
-        if (siteCode !== "all") {
-          conditions.push(eq(tickets.site_code, siteCode));
-        }
-        if (status) {
-          conditions.push(eq(tickets.status, status));
-        }
-        if (priority && priority !== "All") {
-          conditions.push(eq(tickets.priority, priority));
-        }
-        if (search) {
-          conditions.push(like(tickets.title, `%${search}%`));
-        }
+        const allCached = await cacheManager.read<typeof tickets.$inferSelect>(
+          "tickets",
+          { where: Object.keys(whereFilter).length > 0 ? whereFilter : undefined },
+        );
 
-        if (conditions.length > 0) {
-          const query =
-            conditions.length === 1
-              ? db
-                  .select()
-                  .from(tickets)
-                  .where(conditions[0])
-                  .orderBy(desc(tickets.created_at))
-              : db
-                  .select()
-                  .from(tickets)
-                  .where(and(...conditions))
-                  .orderBy(desc(tickets.created_at));
-
-          const localTickets = await query;
-
-          if (localTickets.length > 0) {
-            // PowerSync handles background sync automatically
-            // No need for manual pullRecentTickets call
-
-            // Priority Precedence for local sorting
-            const priorityOrder: Record<string, number> = {
-              "Very High": 1,
-              High: 2,
-              Medium: 3,
-            };
-
-            const sortedTickets = localTickets
-              .map((t) => ({
-                id: t.id,
-                ticket_no: t.ticket_number,
-                title: t.title,
-                description: t.description,
-                status: t.status,
-                priority: t.priority,
-                category: t.category,
-                location: t.area,
-                assigned_to: t.assigned_to,
-                created_user: t.created_by,
-                site_code: t.site_code,
-                created_at: new Date(t.created_at).toISOString(),
-              }))
-              .sort((a, b) => {
-                const pA = priorityOrder[a.priority || ""] || 4;
-                const pB = priorityOrder[b.priority || ""] || 4;
-                if (pA !== pB) return pA - pB;
-                // Secondary sort: Newest first
-                return (
-                  new Date(b.created_at).getTime() -
-                  new Date(a.created_at).getTime()
-                );
-              });
-
-            return {
-              success: true,
-              data: sortedTickets,
-              isFromCache: true,
-            };
+        const normalizedSearch = search?.trim().toLowerCase() || "";
+        const fromDateMs = toBoundaryMs(fromDate, false);
+        const toDateMs = toBoundaryMs(toDate, true);
+        const localTickets = allCached.filter((t) => {
+          if (fromDateMs != null || toDateMs != null) {
+            const createdAtMs = parseCreatedAtMs(t.created_at);
+            if (createdAtMs == null) return false;
+            if (fromDateMs != null && createdAtMs < fromDateMs) return false;
+            if (toDateMs != null && createdAtMs > toDateMs) return false;
           }
+
+          if (!normalizedSearch) {
+            return true;
+          }
+
+          const haystack = [
+            t.ticket_number,
+            t.title,
+            t.description,
+            t.category,
+            t.area,
+            t.status,
+            t.priority,
+            t.assigned_to,
+            t.created_by,
+          ]
+            .filter(Boolean)
+            .join(" ")
+            .toLowerCase();
+
+          return haystack.includes(normalizedSearch);
+        });
+
+        if (localTickets.length > 0) {
+          // Priority Precedence for local sorting
+          const priorityOrder: Record<string, number> = {
+            "Very High": 1,
+            High: 2,
+            Medium: 3,
+          };
+
+          const sortedTickets = localTickets
+            .map((t) => ({
+              id: t.id,
+              ticket_no: t.ticket_number,
+              title: t.title,
+              description: t.description,
+              status: t.status,
+              priority: t.priority,
+              category: t.category,
+              location: t.area,
+              assigned_to: t.assigned_to,
+              created_user: t.created_by,
+              site_code: t.site_code,
+              created_at: new Date(t.created_at).toISOString(),
+            }))
+            .sort((a, b) => {
+              const pA = priorityOrder[a.priority || ""] || 4;
+              const pB = priorityOrder[b.priority || ""] || 4;
+              if (pA !== pB) return pA - pB;
+              return (
+                new Date(b.created_at).getTime() -
+                new Date(a.created_at).getTime()
+              );
+            });
+
+          return {
+            success: true,
+            data: sortedTickets,
+            isFromCache: true,
+          };
         }
       } catch (err) {
         logger.error("Error fetching local tickets", { error: err });
@@ -208,35 +245,24 @@ export const TicketsService = {
     // Cache API response to local DB for offline use
     if (result?.success && result.data?.length > 0) {
       try {
-        const { isCacheEnabled } = await import("../app/app-settings");
-        const enabled = await isCacheEnabled("tickets");
-        if (enabled) {
-          for (const t of result.data) {
-            await db.insert(tickets).values({
-              id: t.id,
-              site_code: t.site_code || siteCode,
-              ticket_number: t.ticket_no || t.ticket_number || "",
-              title: t.title || "",
-              description: t.internal_remarks || t.description || "",
-              status: t.status || "",
-              priority: t.priority || "",
-              category: t.category || "",
-              area: t.area_asset || t.location || "",
-              assigned_to: t.assigned_to || "",
-              created_by: t.created_user || "",
-              created_at: t.created_at ? new Date(t.created_at).getTime() : Date.now(),
-              updated_at: Date.now(),
-            }).onConflictDoUpdate({
-              target: tickets.id,
-              set: {
-                status: t.status || "",
-                priority: t.priority || "",
-                assigned_to: t.assigned_to || "",
-                updated_at: Date.now(),
-              },
-            });
-          }
-        }
+        const records = result.data.map((t: any) => ({
+          id: t.id,
+          site_code: t.site_code || siteCode,
+          ticket_number: t.ticket_no || t.ticket_number || "",
+          title: t.title || "",
+          description: t.internal_remarks || t.description || "",
+          status: t.status || "",
+          priority: t.priority || "",
+          category: t.category || "",
+          area: t.area_asset || t.location || "",
+          assigned_to: t.assigned_to || "",
+          created_by: t.created_user || "",
+          before_temp: t.before_temp ?? null,
+          after_temp: t.after_temp ?? null,
+          created_at: t.created_at ? new Date(t.created_at).getTime() : Date.now(),
+          updated_at: Date.now(),
+        }));
+        await cacheManager.write("tickets", records);
       } catch (cacheErr) {
         logger.warn("Failed to cache tickets", { error: cacheErr });
       }
@@ -292,15 +318,15 @@ export const TicketsService = {
       }
 
       // 2. Create offline update record for sync
-      await db.insert(ticketUpdates).values({
-        id: uuidv4(),
-        ticket_id: localRows.length > 0 ? localRows[0].id : id,
-        update_type: "status",
-        update_data: JSON.stringify({
+      await cacheManager.enqueue({
+        entity_type: "ticket_update",
+        operation: "update",
+        payload: {
+          ticket_id: localRows.length > 0 ? localRows[0].id : id,
+          update_type: "status",
           status,
           internal_remarks: remarks,
-        }),
-        created_at: Date.now(),
+        },
       });
 
       // 3. Attempt API update if online (use server ID)
@@ -340,6 +366,8 @@ export const TicketsService = {
         if (data.category !== undefined) updateFields.category = data.category;
         if (data.priority !== undefined) updateFields.priority = data.priority;
         if (data.assigned_to !== undefined) updateFields.assigned_to = data.assigned_to;
+        if (data.before_temp !== undefined) updateFields.before_temp = data.before_temp;
+        if (data.after_temp !== undefined) updateFields.after_temp = data.after_temp;
 
         if (Object.keys(updateFields).length > 0) {
           await db
@@ -361,12 +389,13 @@ export const TicketsService = {
       }
 
       // 2. Queue offline update for sync
-      await db.insert(ticketUpdates).values({
-        id: uuidv4(),
-        ticket_id: localRows.length > 0 ? localRows[0].id : id,
-        update_type: "details",
-        update_data: JSON.stringify(data),
-        created_at: Date.now(),
+      await cacheManager.enqueue({
+        entity_type: "ticket_update",
+        operation: "update",
+        payload: {
+          ticket_id: localRows.length > 0 ? localRows[0].id : id,
+          ...data,
+        },
       });
 
       // 3. Attempt API update if online (use server ID)
@@ -446,21 +475,34 @@ export const TicketsService = {
       message_id?: string;
     },
   ) {
-    // Note: For full offline support, we would add to ticketUpdates here as well.
-    // Assuming simple online-first strategy for now to support attachments functionality.
-    return await apiFetch(`/api/complaints/${id}/line-items`, {
-      method: "POST",
-      body: JSON.stringify(data),
+    // Enqueue for offline sync
+    await cacheManager.enqueue({
+      entity_type: "ticket_line_item",
+      operation: "create",
+      payload: { ticket_id: id, ...data },
     });
+
+    // Best-effort API call
+    try {
+      const result = await apiFetch(`/api/complaints/${id}/line-items`, {
+        method: "POST",
+        body: JSON.stringify(data),
+      });
+      return result;
+    } catch {
+      return { success: false, error: "Offline: Line item queued for sync.", queued: true };
+    }
   },
 
   /**
-   * Upload image to Supabase storage
+   * Upload image to Supabase storage, or queue for deferred upload.
+   * Returns { success, url } with either the remote URL or a local persistent URI.
    */
-  async uploadImage(uri: string) {
+  async uploadImage(uri: string, relatedTicketId?: string) {
     try {
       const fileName = `tickets/${Date.now()}_${Math.random().toString(36).substring(7)}.jpg`;
 
+      // Try immediate upload first
       const publicUrl = await StorageService.uploadFile(
         "jouleops-attachments",
         fileName,
@@ -469,12 +511,36 @@ export const TicketsService = {
 
       if (publicUrl) {
         return { success: true, url: publicUrl };
-      } else {
-        return { success: false, error: "Upload failed via StorageService" };
       }
+
+      // Upload failed (likely offline) — queue for deferred upload
+      const persistentUri = await AttachmentQueueService.queueAttachment({
+        localUri: uri,
+        bucketName: "jouleops-attachments",
+        remotePath: fileName,
+        relatedEntityType: "ticket_line_item",
+        relatedEntityId: relatedTicketId || "unknown",
+        relatedField: "image_url",
+      });
+
+      return { success: true, url: persistentUri, queued: true };
     } catch (error: any) {
-      logger.error("Upload image exception", { error: error.message });
-      return { success: false, error: error.message };
+      // Even if exception, try to queue
+      try {
+        const fileName = `tickets/${Date.now()}_${Math.random().toString(36).substring(7)}.jpg`;
+        const persistentUri = await AttachmentQueueService.queueAttachment({
+          localUri: uri,
+          bucketName: "jouleops-attachments",
+          remotePath: fileName,
+          relatedEntityType: "ticket_line_item",
+          relatedEntityId: relatedTicketId || "unknown",
+          relatedField: "image_url",
+        });
+        return { success: true, url: persistentUri, queued: true };
+      } catch {
+        logger.error("Upload image exception", { error: error.message });
+        return { success: false, error: error.message };
+      }
     }
   },
 };

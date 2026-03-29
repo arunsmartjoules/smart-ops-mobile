@@ -53,7 +53,7 @@ const LogFilterModal = ({
   const siteOptions = React.useMemo(() => {
     return availableSites.map((site) => ({
       value: site.site_code || site.id,
-      label: `${site.site_code} - ${site.name}`,
+      label: `${site.site_code} - ${site.site_name || site.name || site.site_code}`,
       description: `${site.city || ""}, ${site.state || ""}`
         .trim()
         .replace(/^, |, $/g, ""),

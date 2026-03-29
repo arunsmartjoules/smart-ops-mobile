@@ -1,4 +1,10 @@
-import { View, Text, TouchableOpacity, Alert, ActivityIndicator } from "react-native";
+import {
+  View,
+  Text,
+  TouchableOpacity,
+  Alert,
+  ActivityIndicator,
+} from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import { useAuth } from "@/contexts/AuthContext";
@@ -98,18 +104,24 @@ export default function Profile() {
     { icon: Bell, label: "Notifications", color: "#3b82f6" },
     { icon: Shield, label: "Privacy & Security", color: "#22c55e" },
     { icon: Settings, label: "Offline & Sync", color: "#64748b" },
-    { 
-      icon: theme === "light" ? Sun : theme === "dark" ? Moon : Monitor, 
-      label: "Appearance", 
-      color: "#8b5cf6", 
-      value: theme.charAt(0).toUpperCase() + theme.slice(1) 
+    {
+      icon: theme === "light" ? Sun : theme === "dark" ? Moon : Monitor,
+      label: "Appearance",
+      color: "#8b5cf6",
+      value: theme.charAt(0).toUpperCase() + theme.slice(1),
     },
-    { icon: Info, label: "App Version", color: "#8b5cf6", value: "1.0.24 (Beta)" },    { 
-      icon: ArrowUpCircle, 
-      label: "Check for Updates", 
-      color: "#3b82f6", 
+    {
+      icon: Info,
+      label: "App Version",
+      color: "#8b5cf6",
+      value: "1.0.27 (Beta)",
+    },
+    {
+      icon: ArrowUpCircle,
+      label: "Check for Updates",
+      color: "#3b82f6",
       loading: isCheckingUpdates,
-      hasBadge: updateAvailable 
+      hasBadge: updateAvailable,
     },
   ];
 
@@ -206,10 +218,7 @@ export default function Profile() {
                     </Text>
                     <Text className="text-slate-900 dark:text-slate-50 text-xs font-medium">
                       {(user as any)?.created_at
-                        ? format(
-                            new Date((user as any).created_at),
-                            "MMM yyyy",
-                          )
+                        ? format(new Date((user as any).created_at), "MMM yyyy")
                         : "N/A"}
                     </Text>
                   </View>
@@ -218,7 +227,6 @@ export default function Profile() {
             </View>
           </View>
         </View>
-
 
         {/* Menu Items */}
         <View className="px-5 mb-4">
@@ -268,7 +276,7 @@ export default function Profile() {
                 <Text className="flex-1 text-slate-700 dark:text-slate-300 font-medium text-sm">
                   {item.label}
                 </Text>
-                
+
                 {item.value ? (
                   <Text className="text-slate-400 dark:text-slate-500 text-xs font-bold mr-1">
                     {item.value}
@@ -276,7 +284,9 @@ export default function Profile() {
                 ) : item.label === "Check for Updates" ? (
                   item.hasBadge && (
                     <View className="bg-red-500 px-2 py-0.5 rounded-full mr-1">
-                      <Text className="text-white text-[10px] font-bold">NEW</Text>
+                      <Text className="text-white text-[10px] font-bold">
+                        NEW
+                      </Text>
                     </View>
                   )
                 ) : (

@@ -1,0 +1,825 @@
+/**
+ * SyncEngine — Background sync orchestrator for SmartOps offline architecture.
+ *
+ * Responsibilities:
+ *  - Watch NetInfo + AppState to trigger syncs on foreground/online transitions
+ *  - Flush the offline_queue before pulling fresh data
+ *  - Pull each DataDomain in priority order, isolated per domain
+ *  - Respect per-domain TTLs via CacheManager.getLastSyncedAt
+ *  - Emit SyncStatus to all subscribers after every state change
+ *  - Debounce concurrent syncNow() calls (return in-flight Promise)
+ */
+
+import NetInfo, { NetInfoState } from "@react-native-community/netinfo";
+import { startOfDay, endOfDay, addDays } from "date-fns";
+import { AppState, AppStateStatus } from "react-native";
+import * as TaskManager from "expo-task-manager";
+import * as BackgroundFetch from "expo-background-fetch";
+import { supabase } from "./supabase";
+import { fetchWithTimeout } from "../utils/apiHelper";
+import { API_BASE_URL } from "../constants/api";
+import cacheManager, { DataDomain } from "./CacheManager";
+import { SiteLogService } from "./SiteLogService";
+import PMService from "./PMService";
+import logger from "../utils/logger";
+
+// ─── Background Fetch Task ────────────────────────────────────────────────────
+
+export const BACKGROUND_SYNC_TASK = "BACKGROUND_SYNC_TASK";
+
+/**
+ * Global background task definition — MUST be in global scope.
+ * This runs when the OS wakes the app in the background.
+ */
+TaskManager.defineTask(BACKGROUND_SYNC_TASK, async () => {
+  try {
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+
+    if (!session?.user?.id) {
+      logger.debug("BackgroundSync: skipping task — no active session", {
+        module: "SYNC_ENGINE",
+      });
+      return BackgroundFetch.BackgroundFetchResult.NoData;
+    }
+
+    const userId = session.user.id;
+    logger.info("BackgroundSync: task triggered", {
+      module: "SYNC_ENGINE",
+      userId,
+    });
+
+    // Initialize the engine for this user session if needed
+    await syncEngine.initialize(userId);
+
+    // Run a full sync cycle
+    await syncEngine.syncNow();
+
+    logger.info("BackgroundSync: task completed successfully", {
+      module: "SYNC_ENGINE",
+      userId,
+    });
+    return BackgroundFetch.BackgroundFetchResult.NewData;
+  } catch (error) {
+    logger.error("BackgroundSync: task failed", {
+      module: "SYNC_ENGINE",
+      error,
+    });
+    return BackgroundFetch.BackgroundFetchResult.Failed;
+  }
+});
+
+// ─── Public types ─────────────────────────────────────────────────────────────
+
+export interface SyncStatus {
+  connected: boolean;
+  downloading: boolean;
+  lastSyncedAt: string | null; // ISO 8601 timestamp
+  pendingQueueCount: number;
+}
+
+export interface SyncEngine {
+  initialize(userId: string): Promise<void>;
+  cleanup(): Promise<void>;
+  syncNow(): Promise<void>;
+  subscribe(listener: (status: SyncStatus) => void): () => void;
+  get status(): SyncStatus;
+}
+
+// ─── Internal types ───────────────────────────────────────────────────────────
+
+interface DomainSyncHandler {
+  domain: DataDomain;
+  ttlMs: number;
+  sync(userId: string): Promise<void>;
+}
+
+// ─── TTL constants (ms) ───────────────────────────────────────────────────────
+
+const TTL = {
+  tickets: 10 * 60 * 1000,
+  site_logs: 10 * 60 * 1000,
+  pm_instances: 15 * 60 * 1000,
+  attendance: 5 * 60 * 1000,
+  chiller_readings: 15 * 60 * 1000,
+  sites: 60 * 60 * 1000,
+  reference: 120 * 60 * 1000,
+} as const;
+
+// ─── Shared apiFetch helper ───────────────────────────────────────────────────
+
+const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+  const token = session?.access_token ?? null;
+
+  const response = await fetchWithTimeout(`${API_BASE_URL}${endpoint}`, {
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...options.headers,
+    },
+  });
+  return response;
+};
+
+// ─── SyncEngine implementation ────────────────────────────────────────────────
+
+class SyncEngineImpl implements SyncEngine {
+  private _status: SyncStatus = {
+    connected: false,
+    downloading: false,
+    lastSyncedAt: null,
+    pendingQueueCount: 0,
+  };
+
+  private listeners: Set<(status: SyncStatus) => void> = new Set();
+  private userId: string | null = null;
+
+  // Lifecycle handles
+  private netUnsubscribe: (() => void) | null = null;
+  private appStateSubscription: { remove: () => void } | null = null;
+  private intervalHandle: ReturnType<typeof setInterval> | null = null;
+
+  // Debounce: in-flight sync promise
+  private syncPromise: Promise<void> | null = null;
+
+  // Track previous connectivity to detect offline→online transitions
+  private wasConnected = false;
+
+  // ── Domain handlers (priority order) ────────────────────────────────────
+
+  private readonly domainHandlers: DomainSyncHandler[] = [
+    // Priority 0: sites
+    {
+      domain: "sites",
+      ttlMs: TTL.sites,
+      sync: async (userId: string) => {
+        const response = await apiFetch(`/api/site-users/user/${userId}`);
+        if (!response.ok) throw new Error(`sites API ${response.status}`);
+        const result = await response.json();
+        const records = (result.data || []).map((r: any) => ({
+          id: r.id || `${userId}_${r.site_code}`,
+          user_id: userId,
+          site_id: r.site_id || null,
+          site_code: r.site_code,
+          site_name: r.site_name || r.name || r.site_code,
+        }));
+        await cacheManager.write("sites", records);
+      },
+    },
+
+    // Priority 1: tickets
+    {
+      domain: "tickets",
+      ttlMs: TTL.tickets,
+      sync: async (userId: string) => {
+        // Fetch tickets for all user sites
+        const sites = await cacheManager.read<{ site_code: string }>("sites");
+        const siteCodes = sites.length > 0
+          ? [...new Set(sites.map((s) => s.site_code))]
+          : ["all"];
+
+        for (const siteCode of siteCodes) {
+          const response = await apiFetch(
+            `/api/complaints/site/${siteCode}?limit=100`,
+          );
+          if (!response.ok) continue;
+          const result = await response.json();
+          const records = (result.data || []).map((t: any) => ({
+            id: t.id,
+            site_code: t.site_code || siteCode,
+            ticket_number: t.ticket_no || t.ticket_number || "",
+            title: t.title || "",
+            description: t.internal_remarks || t.description || "",
+            status: t.status || "",
+            priority: t.priority || "",
+            category: t.category || "",
+            area: t.area_asset || t.location || "",
+            assigned_to: t.assigned_to || "",
+            created_by: t.created_user || "",
+            created_at: t.created_at ? new Date(t.created_at).getTime() : Date.now(),
+            updated_at: Date.now(),
+          }));
+          await cacheManager.write("tickets", records);
+        }
+      },
+    },
+
+    // Priority 2: site_logs
+    {
+      domain: "site_logs",
+      ttlMs: TTL.site_logs,
+      sync: async (_userId: string) => {
+        const sites = await cacheManager.read<{ site_code: string }>("sites");
+        const siteCodes = sites.length > 0
+          ? [...new Set(sites.map((s) => s.site_code))]
+          : [];
+
+        // Pull each log type separately to avoid the 500-record limit cutting off any type
+        const fromDateObj = startOfDay(addDays(new Date(), -7));
+        const toDateObj = endOfDay(addDays(new Date(), 7));
+        
+        const logTypes = ["Temp RH", "Water", "Chemical Dosing"];
+        for (const siteCode of siteCodes) {
+          for (const logName of logTypes) {
+            await SiteLogService.pullSiteLogs(siteCode, { 
+              logName,
+              fromDate: fromDateObj.getTime(),
+              toDate: toDateObj.getTime()
+            });
+          }
+        }
+        await cacheManager.write("site_logs", []);
+      },
+    },
+
+    // Priority 3: pm_instances
+    {
+      domain: "pm_instances",
+      ttlMs: TTL.pm_instances,
+      sync: async (_userId: string) => {
+        const sites = await cacheManager.read<{ site_code: string }>("sites");
+        const siteCodes = sites.length > 0
+          ? [...new Set(sites.map((s) => s.site_code))]
+          : [];
+
+        const fromDate = new Date();
+        fromDate.setDate(fromDate.getDate() - 30);
+        const toDate = new Date();
+        toDate.setDate(toDate.getDate() + 60);
+
+        for (const siteCode of siteCodes) {
+          await PMService.fetchFromAPI(siteCode, fromDate, toDate, 500);
+        }
+      },
+    },
+
+    // Priority 4: attendance
+    {
+      domain: "attendance",
+      ttlMs: TTL.attendance,
+      sync: async (userId: string) => {
+        const response = await apiFetch(
+          `/api/attendance/user/${userId}?page=1&limit=100`,
+        );
+        if (!response.ok) throw new Error(`attendance API ${response.status}`);
+        const result = await response.json();
+        const records = (result.data || []).map((log: any) => ({
+          id: log.id,
+          user_id: log.user_id || userId,
+          site_code: log.site_code || "",
+          date: log.date || "",
+          check_in_time: log.check_in_time
+            ? new Date(log.check_in_time).getTime()
+            : null,
+          check_out_time: log.check_out_time
+            ? new Date(log.check_out_time).getTime()
+            : null,
+          check_in_latitude: log.check_in_latitude ?? null,
+          check_in_longitude: log.check_in_longitude ?? null,
+          check_out_latitude: log.check_out_latitude ?? null,
+          check_out_longitude: log.check_out_longitude ?? null,
+          check_in_address: log.check_in_address ?? null,
+          check_out_address: log.check_out_address ?? null,
+          shift_id: log.shift_id ?? null,
+          status: log.status || "Present",
+          remarks: log.remarks ?? null,
+          fieldproxy_punch_id: log.fieldproxy_punch_id ?? null,
+          created_at: log.created_at ? new Date(log.created_at).getTime() : Date.now(),
+          updated_at: log.updated_at ? new Date(log.updated_at).getTime() : Date.now(),
+        }));
+        await cacheManager.write("attendance", records);
+      },
+    },
+
+    // Priority 5: chiller_readings
+    {
+      domain: "chiller_readings",
+      ttlMs: TTL.chiller_readings,
+      sync: async (_userId: string) => {
+        const sites = await cacheManager.read<{ site_code: string }>("sites");
+        const siteCodes = sites.length > 0
+          ? [...new Set(sites.map((s) => s.site_code))]
+          : [];
+
+        for (const siteCode of siteCodes) {
+          await SiteLogService.pullChillerReadings(siteCode);
+        }
+        await cacheManager.write("chiller_readings", []);
+      },
+    },
+
+    // Priority 6: reference (areas + categories + log_master)
+    {
+      domain: "areas", // used as the representative domain for TTL check
+      ttlMs: TTL.reference,
+      sync: async (_userId: string) => {
+        // areas — per site
+        const sites = await cacheManager.read<{ site_code: string }>("sites");
+        const siteCodes = sites.length > 0
+          ? [...new Set(sites.map((s) => s.site_code))]
+          : [];
+
+        for (const siteCode of siteCodes) {
+          const response = await apiFetch(`/api/assets/site/${siteCode}`);
+          if (!response.ok) continue;
+          const result = await response.json();
+          const records = (result.data || []).map((a: any) => ({
+            id: a.id,
+            site_code: a.site_code || siteCode,
+            asset_name: a.asset_name || "",
+            asset_type: a.asset_type ?? null,
+            location: a.location ?? null,
+            description: a.description ?? null,
+            created_at: a.created_at ? new Date(a.created_at).getTime() : null,
+            updated_at: a.updated_at ? new Date(a.updated_at).getTime() : null,
+          }));
+          await cacheManager.write("areas", records);
+        }
+
+        // categories
+        const catResponse = await apiFetch("/api/complaint-categories");
+        if (catResponse.ok) {
+          const catResult = await catResponse.json();
+          const catRecords = (catResult.data || []).map((c: any) => ({
+            id: c.id,
+            category: c.category || "",
+            description: c.description ?? null,
+          }));
+          await cacheManager.write("categories", catRecords);
+        }
+
+        // log_master
+        await SiteLogService.pullLogMaster();
+        await cacheManager.write("log_master", []);
+      },
+    },
+  ];
+
+  // ── Status helpers ────────────────────────────────────────────────────────
+
+  get status(): SyncStatus {
+    return { ...this._status };
+  }
+
+  private setStatus(patch: Partial<SyncStatus>): void {
+    this._status = { ...this._status, ...patch };
+    this.emit();
+  }
+
+  private emit(): void {
+    const snapshot = this.status;
+    this.listeners.forEach((l) => {
+      try {
+        l(snapshot);
+      } catch (e) {
+        logger.warn("SyncEngine: subscriber threw", { module: "SYNC_ENGINE", error: e });
+      }
+    });
+  }
+
+  // ── subscribe ─────────────────────────────────────────────────────────────
+
+  subscribe(listener: (status: SyncStatus) => void): () => void {
+    this.listeners.add(listener);
+    // Call immediately with current status (Req 7.2)
+    try {
+      listener(this.status);
+    } catch (e) {
+      logger.warn("SyncEngine: subscriber threw on immediate call", {
+        module: "SYNC_ENGINE",
+        error: e,
+      });
+    }
+    return () => {
+      this.listeners.delete(listener);
+    };
+  }
+
+  // ── initialize ────────────────────────────────────────────────────────────
+
+  async initialize(userId: string): Promise<void> {
+    // If already initialized for the same user, skip to avoid stacking listeners
+    if (this.userId === userId && this.netUnsubscribe !== null) {
+      logger.debug("SyncEngine: already initialized for user, skipping", {
+        module: "SYNC_ENGINE",
+        userId,
+      });
+      return;
+    }
+
+    // Clean up any previous listeners before re-initializing for a new user
+    if (this.netUnsubscribe !== null) {
+      await this.cleanup();
+    }
+
+    this.userId = userId;
+
+    // Seed connected state
+    const netState = await NetInfo.fetch();
+    this.wasConnected = netState.isConnected === true;
+    const pendingQueueCount = await cacheManager.getQueueCount();
+    this.setStatus({
+      connected: this.wasConnected,
+      pendingQueueCount,
+    });
+
+    // Watch network changes
+    this.netUnsubscribe = NetInfo.addEventListener(
+      (state: NetInfoState) => this.onNetworkChange(state),
+    );
+
+    // Watch app foreground/background transitions
+    this.appStateSubscription = AppState.addEventListener(
+      "change",
+      (nextState: AppStateStatus) => this.onAppStateChange(nextState),
+    );
+
+    // 15-minute background interval (Req 2.3)
+    this.intervalHandle = setInterval(() => {
+      if (this._status.connected) {
+        this.syncNow().catch((e) =>
+          logger.warn("SyncEngine: interval sync failed", {
+            module: "SYNC_ENGINE",
+            error: e,
+          }),
+        );
+      }
+    }, 15 * 60 * 1000);
+
+    // Trigger an initial sync if online
+    if (this.wasConnected) {
+      this.syncNow().catch((e) =>
+        logger.warn("SyncEngine: initial sync failed", {
+          module: "SYNC_ENGINE",
+          error: e,
+        }),
+      );
+    }
+
+    logger.info("SyncEngine initialized", {
+      module: "SYNC_ENGINE",
+      userId,
+      connected: this.wasConnected,
+    });
+  }
+
+  // ── cleanup ───────────────────────────────────────────────────────────────
+
+  async cleanup(): Promise<void> {
+    this.netUnsubscribe?.();
+    this.netUnsubscribe = null;
+
+    this.appStateSubscription?.remove();
+    this.appStateSubscription = null;
+
+    if (this.intervalHandle !== null) {
+      clearInterval(this.intervalHandle);
+      this.intervalHandle = null;
+    }
+
+    this.userId = null;
+    this.syncPromise = null;
+    this.wasConnected = false;
+
+    this.setStatus({
+      connected: false,
+      downloading: false,
+      lastSyncedAt: null,
+      pendingQueueCount: 0,
+    });
+
+    logger.info("SyncEngine cleaned up", { module: "SYNC_ENGINE" });
+  }
+
+  // ── syncNow ───────────────────────────────────────────────────────────────
+
+  syncNow(): Promise<void> {
+    // Debounce: return in-flight promise if already running (Req 2.8 / design note)
+    if (this.syncPromise) {
+      return this.syncPromise;
+    }
+
+    this.syncPromise = this._runSync().finally(() => {
+      this.syncPromise = null;
+    });
+
+    return this.syncPromise;
+  }
+
+  private async _runSync(): Promise<void> {
+    if (!this.userId) {
+      logger.warn("SyncEngine.syncNow: no userId, skipping", {
+        module: "SYNC_ENGINE",
+      });
+      return;
+    }
+
+    const syncStartedAt = Date.now();
+
+    // Set downloading = true (Req 2.5)
+    this.setStatus({ downloading: true });
+
+    try {
+      // Step 1: Flush offline queue BEFORE pulling fresh data (Req 2.10, 3.7)
+      await this._flushQueue();
+
+      // Step 2: Pull each domain in priority order (Req 2.4)
+      for (const handler of this.domainHandlers) {
+        const eligible = await this.isDomainEligible(handler.domain);
+        if (!eligible) {
+          logger.debug(`SyncEngine: skipping ${handler.domain} (within TTL)`, {
+            module: "SYNC_ENGINE",
+          });
+          continue;
+        }
+
+        try {
+          await handler.sync(this.userId!);
+          logger.info(`SyncEngine: synced ${handler.domain}`, {
+            module: "SYNC_ENGINE",
+          });
+        } catch (err) {
+          // Isolated per domain — failure does not stop others (Req 2.7)
+          logger.error(`SyncEngine: domain ${handler.domain} sync failed`, {
+            module: "SYNC_ENGINE",
+            error: err,
+          });
+        }
+      }
+    } finally {
+      // Always clear downloading flag and update lastSyncedAt (Req 2.6)
+      const pendingQueueCount = await cacheManager.getQueueCount();
+      this.setStatus({
+        downloading: false,
+        lastSyncedAt: new Date(syncStartedAt).toISOString(),
+        pendingQueueCount,
+      });
+    }
+  }
+
+  // ── isDomainEligible ──────────────────────────────────────────────────────
+
+  async isDomainEligible(domain: DataDomain): Promise<boolean> {
+    const lastSyncedAt = await cacheManager.getLastSyncedAt(domain);
+    if (lastSyncedAt === null) return true; // Never synced → eligible (Req 8.4)
+
+    const ttl = this._getTtlForDomain(domain);
+    return Date.now() - lastSyncedAt > ttl;
+  }
+
+  private _getTtlForDomain(domain: DataDomain): number {
+    const handler = this.domainHandlers.find((h) => h.domain === domain);
+    if (handler) return handler.ttlMs;
+
+    // Fallback TTLs for sub-domains not directly in the handler list
+    switch (domain) {
+      case "categories":
+      case "log_master":
+        return TTL.reference;
+      default:
+        return 15 * 60 * 1000;
+    }
+  }
+
+  // ── Queue flush ───────────────────────────────────────────────────────────
+
+  private async _flushQueue(): Promise<void> {
+    const items = await cacheManager.getQueue();
+    if (items.length === 0) return;
+
+    logger.info(`SyncEngine: flushing ${items.length} queue items`, {
+      module: "SYNC_ENGINE",
+    });
+
+    for (const item of items) {
+      // Items with retry_count > 5 → dead letter (Req 3.5)
+      if (item.retry_count > 5) {
+        await cacheManager.deadLetterQueueItem(item.id);
+        logger.warn("SyncEngine: item moved to dead_letter", {
+          module: "SYNC_ENGINE",
+          id: item.id,
+          entity_type: item.entity_type,
+        });
+        continue;
+      }
+
+      try {
+        await this._processQueueItem(item);
+        await cacheManager.dequeue(item.id); // Success → remove (Req 3.3)
+      } catch (err: any) {
+        const statusCode = err?.statusCode ?? err?.status ?? 0;
+        const is4xx = statusCode >= 400 && statusCode < 500;
+        const is5xx = statusCode >= 500;
+
+        if (is4xx) {
+          // 4xx: increment retry_count, record error, skip for this cycle (Req 3.4)
+          await cacheManager.markQueueItemFailed(
+            item.id,
+            err?.message ?? String(err),
+          );
+          logger.warn("SyncEngine: queue item 4xx, incremented retry_count", {
+            module: "SYNC_ENGINE",
+            id: item.id,
+            statusCode,
+          });
+        } else if (is5xx) {
+          // 5xx: transient, do NOT increment retry_count (Req 3.4 / design)
+          logger.warn("SyncEngine: queue item 5xx, will retry next cycle", {
+            module: "SYNC_ENGINE",
+            id: item.id,
+            statusCode,
+          });
+        } else {
+          // Network error or unknown — treat as transient
+          logger.warn("SyncEngine: queue item network error, will retry", {
+            module: "SYNC_ENGINE",
+            id: item.id,
+            error: err?.message,
+          });
+        }
+      }
+    }
+
+    // Refresh pending count after flush
+    const pendingQueueCount = await cacheManager.getQueueCount();
+    this.setStatus({ pendingQueueCount });
+  }
+
+  private async _processQueueItem(item: {
+    id: string;
+    entity_type: string;
+    operation: string;
+    payload: Record<string, any>;
+  }): Promise<void> {
+    const { entity_type, operation, payload } = item;
+
+    let endpoint = "";
+    let method = "POST";
+    let body: string | undefined = JSON.stringify(payload);
+
+    if (entity_type === "ticket_update") {
+      const ticketId = payload.ticket_id || payload.id;
+      if (operation === "update") {
+        endpoint = `/api/complaints?id=${ticketId}`;
+        method = "PUT";
+      } else {
+        endpoint = `/api/complaints`;
+        method = "POST";
+      }
+    } else if (entity_type === "attendance_check_in") {
+      endpoint = "/api/attendance/check-in";
+      method = "POST";
+    } else if (entity_type === "attendance_check_out") {
+      const attendanceId = payload.attendance_id || payload.id;
+      endpoint = `/api/attendance/${attendanceId}/check-out`;
+      method = "POST";
+
+    // ── Site log operations ───────────────────────────────────────────────
+    } else if (entity_type === "site_log_create") {
+      endpoint = "/api/site-logs";
+      method = "POST";
+    } else if (entity_type === "site_log_update") {
+      endpoint = `/api/site-logs/${payload.id}`;
+      method = "PUT";
+    } else if (entity_type === "site_log_delete") {
+      endpoint = `/api/site-logs/${payload.id}`;
+      method = "DELETE";
+      body = undefined;
+
+    // ── Chiller reading operations ────────────────────────────────────────
+    } else if (entity_type === "chiller_reading_create") {
+      endpoint = "/api/chiller-readings";
+      method = "POST";
+    } else if (entity_type === "chiller_reading_update") {
+      endpoint = `/api/chiller-readings/${payload.id}`;
+      method = "PUT";
+    } else if (entity_type === "chiller_reading_delete") {
+      endpoint = `/api/chiller-readings/${payload.id}`;
+      method = "DELETE";
+      body = undefined;
+
+    // ── PM operations ─────────────────────────────────────────────────────
+    } else if (entity_type === "pm_response_upsert") {
+      endpoint = "/api/pm-response";
+      method = "POST";
+    } else if (entity_type === "pm_instance_update") {
+      endpoint = `/api/pm-instances/${payload.id}`;
+      method = "PUT";
+
+    // ── Ticket line item ──────────────────────────────────────────────────
+    } else if (entity_type === "ticket_line_item") {
+      endpoint = `/api/complaints/${payload.ticket_id}/line-items`;
+      method = "POST";
+
+    // ── Attachment upload (delegated to AttachmentQueueService) ────────────
+    } else if (entity_type === "attachment_upload") {
+      // Will be handled by AttachmentQueueService in Phase 3
+      const { AttachmentQueueService } = require("./AttachmentQueueService");
+      await AttachmentQueueService.processAttachment(payload.attachment_queue_id);
+      return;
+
+    } else {
+      // Unknown entity type — skip silently
+      logger.warn("SyncEngine: unknown entity_type in queue", {
+        module: "SYNC_ENGINE",
+        entity_type,
+      });
+      return;
+    }
+
+    const response = await apiFetch(endpoint, {
+      method,
+      ...(body ? { body } : {}),
+    });
+
+    if (!response.ok) {
+      const err: any = new Error(
+        `Queue item API error: ${response.status} ${response.statusText}`,
+      );
+      err.statusCode = response.status;
+      throw err;
+    }
+  }
+
+  // ── Event handlers ────────────────────────────────────────────────────────
+
+  private onNetworkChange(state: NetInfoState): void {
+    const isConnected = state.isConnected === true;
+    this.setStatus({ connected: isConnected });
+
+    // Offline → online transition: trigger sync within 5 seconds (Req 2.2)
+    if (!this.wasConnected && isConnected && this.userId) {
+      setTimeout(() => {
+        this.syncNow().catch((e) =>
+          logger.warn("SyncEngine: online-transition sync failed", {
+            module: "SYNC_ENGINE",
+            error: e,
+          }),
+        );
+      }, 1000); // 1 second debounce, well within the 5-second requirement
+    }
+
+    this.wasConnected = isConnected;
+  }
+
+  private onAppStateChange(nextState: AppStateStatus): void {
+    if (nextState === "active") {
+      // App came to foreground — trigger sync if online (Req 2.1)
+      if (this._status.connected && this.userId) {
+        this.syncNow().catch((e) =>
+          logger.warn("SyncEngine: foreground sync failed", {
+            module: "SYNC_ENGINE",
+            error: e,
+          }),
+        );
+      }
+    } else if (nextState === "background" || nextState === "inactive") {
+      // Pause interval when backgrounded (Req 2.9)
+      // The interval itself won't fire meaningful work since syncNow checks
+      // connectivity, but we clear and restart on next foreground for cleanliness.
+      if (this.intervalHandle !== null) {
+        clearInterval(this.intervalHandle);
+        this.intervalHandle = null;
+      }
+    }
+  }
+}
+
+// ─── Singleton export ─────────────────────────────────────────────────────────
+
+export const syncEngine = new SyncEngineImpl();
+
+/**
+ * Registers the background sync task with the OS.
+ * Should be called once during app startup (e.g. in _layout.tsx).
+ */
+export async function registerBackgroundSyncAsync(): Promise<void> {
+  try {
+    const isRegistered = await TaskManager.isTaskRegisteredAsync(BACKGROUND_SYNC_TASK);
+    if (isRegistered) {
+      logger.debug("BackgroundSync: task already registered", { module: "SYNC_ENGINE" });
+    }
+
+    await BackgroundFetch.registerTaskAsync(BACKGROUND_SYNC_TASK, {
+      minimumInterval: 15 * 60, // 15 minutes (OS minimum)
+      stopOnTerminate: false, // Continue running after app is killed
+      startOnBoot: true, // Start task after device reboot
+    });
+
+    logger.info("BackgroundSync: task registered successfully", {
+      module: "SYNC_ENGINE",
+    });
+  } catch (err) {
+    logger.error("BackgroundSync: failed to register task", {
+      module: "SYNC_ENGINE",
+      error: err,
+    });
+  }
+}
+
+export default syncEngine;

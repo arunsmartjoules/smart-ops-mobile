@@ -14,8 +14,8 @@ import {
 } from "../services/NotificationService";
 import logger from "../utils/logger";
 import { supabase } from "../services/supabase";
-import { syncManager } from "../services/SyncManager";
-import { powerSync } from "../database";
+import { syncEngine } from "../services/SyncEngine";
+import siteResolver from "../services/SiteResolver";
 import { API_BASE_URL } from "../constants/api";
 
 const BACKEND_URL = API_BASE_URL;
@@ -151,17 +151,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
             const cached = await AsyncStorage.getItem("auth_user");
             if (cached) setUser(JSON.parse(cached));
             
-            // Initialize PowerSync immediately (non-blocking)
-            // This works both online and offline — serves local data when offline
-            syncManager.initialize().catch((error: any) => {
-              logger.error("PowerSync initialization failed", {
-                module: "AUTH_CONTEXT",
-                error: error.message,
-              });
-            });
-
             // Fetch fresh profile in background (non-blocking)
             fetchAndSetProfile(session.user, session.access_token).then((userProfile) => {
+              // Initialize SyncEngine with resolved user_id (non-blocking)
+              if (userProfile?.user_id) {
+                syncEngine.initialize(userProfile.user_id).catch((error: any) => {
+                  logger.error("SyncEngine initialization failed", {
+                    module: "AUTH_CONTEXT",
+                    error: error.message,
+                  });
+                });
+                siteResolver.initialize(userProfile.user_id).catch((error: any) => {
+                  logger.warn("SiteResolver initialization failed", {
+                    module: "AUTH_CONTEXT",
+                    error: error.message,
+                  });
+                });
+              }
               // Register for push notifications on app startup if user is logged in
               if (userProfile?.user_id) {
                 registerForPushNotifications(userProfile.user_id, session.access_token)
@@ -186,17 +192,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         });
         const cached = await AsyncStorage.getItem("auth_user");
         if (cached) {
-          setUser(JSON.parse(cached));
+          const cachedUser = JSON.parse(cached);
+          setUser(cachedUser);
           const storedToken = await AsyncStorage.getItem("sb-token");
           if (storedToken) setToken(storedToken);
           
-          // Still initialize PowerSync to serve cached local data offline
-          syncManager.initialize().catch((err: any) => {
-            logger.warn("PowerSync offline init failed", {
-              module: "AUTH_CONTEXT",
-              error: err.message,
+          // Still initialize SyncEngine to serve cached local data offline
+          if (cachedUser?.user_id) {
+            syncEngine.initialize(cachedUser.user_id).catch((err: any) => {
+              logger.warn("SyncEngine offline init failed", {
+                module: "AUTH_CONTEXT",
+                error: err.message,
+              });
             });
-          });
+            siteResolver.initialize(cachedUser.user_id).catch((err: any) => {
+              logger.warn("SiteResolver offline init failed", {
+                module: "AUTH_CONTEXT",
+                error: err.message,
+              });
+            });
+          }
         }
       } finally {
         setIsLoading(false);
@@ -215,13 +230,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         setToken(session.access_token);
         const userProfile = await fetchAndSetProfile(session.user, session.access_token);
         
-        // Initialize PowerSync (non-blocking)
-        syncManager.initialize().catch((error: any) => {
-          logger.error("PowerSync initialization failed on auth state change", {
-            module: "AUTH_CONTEXT",
-            error: error.message,
+        // Initialize SyncEngine and SiteResolver with resolved user_id (non-blocking)
+        if (userProfile?.user_id) {
+          syncEngine.initialize(userProfile.user_id).catch((error: any) => {
+            logger.error("SyncEngine initialization failed on auth state change", {
+              module: "AUTH_CONTEXT",
+              error: error.message,
+            });
           });
-        });
+          siteResolver.initialize(userProfile.user_id).catch((error: any) => {
+            logger.warn("SiteResolver initialization failed on auth state change", {
+              module: "AUTH_CONTEXT",
+              error: error.message,
+            });
+          });
+        }
         
         // Register for push notifications after successful sign-in
         if (userProfile?.user_id) {
@@ -318,7 +341,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       });
     } finally {
       // Cleanup local data regardless of network result
-      syncManager.cleanup();
+      syncEngine.cleanup();
       try {
         const keysToRemove = [
           "auth_user",
@@ -330,7 +353,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
           "push_token",
         ];
         await AsyncStorage.multiRemove(keysToRemove);
-        await powerSync.disconnectAndClear();
         const allKeys = await AsyncStorage.getAllKeys();
         const cacheKeys = allKeys.filter(
           (key) => key.startsWith("@cache_") || key.startsWith("@offline_"),

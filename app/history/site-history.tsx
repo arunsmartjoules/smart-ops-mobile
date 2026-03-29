@@ -38,7 +38,7 @@ import LogFilterModal from "@/components/sitelogs/LogFilterModal";
 import AttendanceService, { type Site } from "@/services/AttendanceService";
 import { useAuth } from "@/contexts/AuthContext";
 import Skeleton from "@/components/Skeleton";
-import { syncManager } from "@/services/SyncManager";
+import { syncEngine } from "@/services/SyncEngine";
 import UserLookupService from "@/services/UserLookupService";
 
 // Memoized History Item Component
@@ -119,12 +119,12 @@ const HistoryItem = memo(
           </View>
           <View className="items-end">
             <View
-              className={`px-1.5 py-0.5 rounded ${item.isSynced ? "bg-green-50" : "bg-amber-50"}`}
+              className={`px-1.5 py-0.5 rounded ${item.isSynced !== false ? "bg-green-50" : "bg-amber-50"}`}
             >
               <Text
-                className={`text-[10px] font-bold uppercase tracking-wider ${item.isSynced ? "text-green-600" : "text-amber-600"}`}
+                className={`text-[10px] font-bold uppercase tracking-wider ${item.isSynced !== false ? "text-green-600" : "text-amber-600"}`}
               >
-                {item.isSynced ? "Synced" : "Pending"}
+                {item.isSynced !== false ? "Synced" : "Pending"}
               </Text>
             </View>
           </View>
@@ -290,7 +290,7 @@ export default function SiteHistory() {
   const [siteCode, setSiteCode] = useState<string>(params.siteCode || "");
   const [fromDate, setFromDate] = useState<Date | null>(null);
   const [toDate, setToDate] = useState<Date | null>(null);
-  const [selectedStatus, setSelectedStatus] = useState<string>(params.status || "all");
+  const [selectedStatus, setSelectedStatus] = useState<string>("all");
   const [resolvedNames, setResolvedNames] = useState<Map<string, string>>(
     new Map(),
   );
@@ -305,12 +305,35 @@ export default function SiteHistory() {
       const data = await SiteLogService.getLogsByType(
         siteCode,
         params.logName,
-        {
-          fromDate: fromDate?.getTime(),
-          toDate: toDate?.getTime(),
-        },
+        { fromDate: fromDate?.getTime(), toDate: toDate?.getTime() },
       );
-      setLogs(data);
+
+      if (data.length > 0) {
+        setLogs(data);
+        setLoading(false);
+        return;
+      }
+
+      // Cache empty — pull from API then re-query
+      const pullSite = siteCode || "all";
+      console.log("[SiteHistory] Cache empty, pulling from API", { pullSite, logName: params.logName });
+      try {
+        if (params.logName !== "Chiller Logs") {
+          await SiteLogService.pullSiteLogs(pullSite, { logName: params.logName });
+        } else {
+          await SiteLogService.pullChillerReadings(pullSite);
+        }
+      } catch (e) {
+        console.error("[SiteHistory] Pull failed:", e);
+      }
+
+      const fresh = await SiteLogService.getLogsByType(
+        siteCode,
+        params.logName,
+        { fromDate: fromDate?.getTime(), toDate: toDate?.getTime() },
+      );
+      console.log("[SiteHistory] After pull count:", fresh.length);
+      setLogs(fresh);
     } catch (error) {
       console.error("Fetch local logs error:", error);
     } finally {
@@ -361,19 +384,22 @@ export default function SiteHistory() {
   const loadHistory = async () => {
     try {
       setRefreshing(true);
-      await syncManager.triggerSync("manual");
+      // Reset TTL for site_logs and chiller_readings so SyncEngine re-fetches them
+      await syncEngine.syncNow();
+
       const requestedSite =
         siteCode === "all" && availableSites.length > 0
-          ? availableSites.map((s) => s.site_code).join(",")
+          ? availableSites[0].site_code
           : siteCode;
 
-      await SiteLogService.pullChillerReadings(requestedSite, {
-        fromDate: fromDate?.getTime(),
-        toDate: toDate?.getTime(),
-      });
       if (params.logName !== "Chiller Logs") {
         await SiteLogService.pullSiteLogs(requestedSite, {
           logName: params.logName,
+          fromDate: fromDate?.getTime(),
+          toDate: toDate?.getTime(),
+        });
+      } else {
+        await SiteLogService.pullChillerReadings(requestedSite, {
           fromDate: fromDate?.getTime(),
           toDate: toDate?.getTime(),
         });
@@ -412,7 +438,7 @@ export default function SiteHistory() {
         ).toLowerCase();
         const userStr = (log.executorId || "").toLowerCase();
         const remarksStr = (log.remarks || "").toLowerCase();
-        const taskStr = (log.taskName || "").toLowerCase();
+        const taskStr = (log.task_name || log.taskName || "").toLowerCase();
         const chillerStr = (log.chillerId || "").toLowerCase();
 
         return (

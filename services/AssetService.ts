@@ -39,18 +39,18 @@ export const AssetService = {
   async getAssetByQrId(
     qrId: string,
     siteCode: string,
-  ): Promise<{ asset_name: string; site_code: string } | null> {
+  ): Promise<{ asset_name: string; site_id: string } | null> {
     try {
       const { data, error } = await supabase
         .from("assets")
-        .select("asset_name, site_code")
+        .select("asset_name, site_id")
         .eq("qr_id", qrId)
         .maybeSingle();
 
       if (error) throw error;
       if (!data) return null;
 
-      return data as { asset_name: string; site_code: string };
+      return data as { asset_name: string; site_id: string };
     } catch (error: any) {
       logger.error("Error fetching asset by QR ID", {
         module: "ASSET_SERVICE",

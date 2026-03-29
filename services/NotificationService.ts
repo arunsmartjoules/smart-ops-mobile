@@ -21,6 +21,20 @@ Notifications.setNotificationHandler({
 });
 
 /**
+ * Configure Android notification channels (mandatory for Android 8.0+)
+ */
+export const setupAndroidChannels = async () => {
+  if (Platform.OS === "android") {
+    await Notifications.setNotificationChannelAsync("default", {
+      name: "Default",
+      importance: Notifications.AndroidImportance.MAX,
+      vibrationPattern: [0, 250, 250, 250],
+      lightColor: "#FF231F7C",
+    });
+  }
+};
+
+/**
  * Request notification permissions from user
  */
 export const requestPermissions = async (): Promise<boolean> => {
@@ -46,6 +60,9 @@ export const requestPermissions = async (): Promise<boolean> => {
     return false;
   }
 
+  // Ensure Android channels are configured
+  await setupAndroidChannels();
+
   return true;
 };
 
@@ -55,17 +72,32 @@ export const requestPermissions = async (): Promise<boolean> => {
 export const getPushToken = async (): Promise<string | null> => {
   try {
     const projectId =
-      Constants.expoConfig?.extra?.eas?.projectId || "your-project-id";
+      Constants.expoConfig?.extra?.eas?.projectId || 
+      Constants.expoConfig?.owner === "smartjoules-ops" ? "d1868472-0103-49d5-978e-ece327af4c3e" : "your-project-id";
+
+    if (projectId === "your-project-id") {
+      logger.warn("PushNotifications: No EAS project ID found in app.json configuration", {
+        module: "NOTIFICATION_SERVICE",
+      });
+    }
 
     const token = await Notifications.getExpoPushTokenAsync({
       projectId,
     });
+
+    if (token.data) {
+      logger.info("PushNotifications: Successfully generated Expo Push Token", {
+        module: "NOTIFICATION_SERVICE",
+        token: token.data,
+      });
+    }
 
     return token.data;
   } catch (error: any) {
     logger.error("Error getting push token", {
       module: "NOTIFICATION_SERVICE",
       error: error.message,
+      stack: error.stack,
     });
     return null;
   }

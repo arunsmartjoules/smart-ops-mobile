@@ -330,28 +330,34 @@ export default function PreventiveMaintenance() {
   const [allInstances, setAllInstances] = useState<PMInstanceRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [statusFilter, setStatusFilter] = useState("Pending");
+  const [statusFilter, setStatusFilter] = useState("All");
   const [showFiltersModal, setShowFiltersModal] = useState(false);
+  
+  // Pagination State
+  const [offset, setOffset] = useState(0);
+  const [hasMore, setHasMore] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const PAGE_SIZE = 50;
 
   // ── Clean sites hook ──────────────────────────────────────────────────────
   const userId = user?.user_id || user?.id;
   const { sites, selectedSite, selectSite } = useSites(userId);
   const siteCode = selectedSite?.site_code ?? "";
-  const siteName = selectedSite?.name ?? selectedSite?.site_code ?? "Select Site";
+  const siteName = selectedSite?.site_name ?? selectedSite?.site_code ?? "Select Site";
 
-  // Date handling (using strings for consistency and to avoid stale closures)
+  // Date handling — default to a wide range (past 30 days → next 30 days)
   const [currentDate, setCurrentDate] = useState(
-    format(new Date(), "yyyy-MM-dd"),
+    format(addDays(new Date(), -30), "yyyy-MM-dd"),
   );
-  const [toDate, setToDate] = useState(format(new Date(), "yyyy-MM-dd"));
+  const [toDate, setToDate] = useState(format(addDays(new Date(), 30), "yyyy-MM-dd"));
 
   const [tempSearch, setTempSearch] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [tempFromDate, setTempFromDate] = useState<string | null>(
-    format(new Date(), "yyyy-MM-dd"),
+    format(addDays(new Date(), -30), "yyyy-MM-dd"),
   );
   const [tempToDate, setTempToDate] = useState<string | null>(
-    format(new Date(), "yyyy-MM-dd"),
+    format(addDays(new Date(), 30), "yyyy-MM-dd"),
   );
 
   // QR filter state
@@ -370,114 +376,108 @@ export default function PreventiveMaintenance() {
     }
   }, [showFiltersModal, currentDate, toDate]);
 
-  // ── Load Local Data (paginated) ─────────────────────────────────────────────
-  const loadLocalData = useCallback(
-    async (resetPage = true) => {
+  // ── High-Performance Data Loader ──────────────────────────────────────────
+  const loadPMData = useCallback(
+    async (isInitial = false, currentOffset = 0) => {
       if (!siteCode) return;
-      if (resetPage && allInstances.length === 0) setLoading(true);
+      if (isInitial && currentOffset === 0) {
+        setLoading(true);
+        setOffset(0);
+        setHasMore(true);
+      }
+
+      const fromDateObj = parseISO(currentDate);
+      const toDateObj = parseISO(toDate);
+      if (!isValid(fromDateObj) || !isValid(toDateObj)) return;
+      
       try {
-        // Fetch for date range
-        const fromDateObj = parseISO(currentDate);
-        const toDateObj = parseISO(toDate);
-        if (!isValid(fromDateObj) || !isValid(toDateObj)) return;
-        const fromTs = startOfDay(fromDateObj).getTime();
-        const toTs = endOfDay(toDateObj).getTime();
-
-        logger.debug("Loading PM instances", {
-          module: "PM",
-          siteCode,
-          fromDate: currentDate,
-          toDate,
-          fromTs,
-          toTs,
-        });
-
-        const data = await PMService.getLocalInstances(
+        // 1. FAST PATH: Load from local SQLite immediately
+        // We read EVERYTHING from the local DB for this site so offline works perfectly.
+        let localData = await PMService.getLocalInstances(
           siteCode,
           undefined,
           undefined,
           undefined,
-          fromTs,
-          toTs,
+          0, // Ignore date filters (broad fetch)
+          0,
         );
         
-        logger.info("Loaded PM instances from local DB", {
-          module: "PM",
-          count: data.length,
-          siteCode,
-        });
-        
-        // If no local data and we're online, try fetching from API
-        if (data.length === 0 && isConnected) {
-          logger.info("No local PM data, fetching from API", {
-            module: "PM",
-            siteCode,
-          });
+        setAllInstances(localData);
+        setLoading(false);
 
-          const apiData = await PMService.fetchFromAPI(siteCode, fromDateObj, toDateObj);
-
-          // Try reading back from local DB (populated by fetchFromAPI cache)
-          const cached = await PMService.getLocalInstances(
-            siteCode,
-            undefined,
-            undefined,
-            undefined,
-            fromTs,
-            toTs,
-          );
-
-          // Use cached if available, otherwise fall back to raw API data
-          setAllInstances(cached.length > 0 ? cached : apiData);
-        } else {
-          setAllInstances(data);
+        // 2. BACKGROUND PATH: Refresh from API if online
+        const netState = await NetInfo.fetch();
+        if (netState.isConnected && !isFetchingRef.current) {
+          isFetchingRef.current = true;
+          if (currentOffset > 0) setLoadingMore(true);
+          
+          try {
+            // Fetch next batch from API
+            const tasks = await PMService.fetchFromAPI(
+              siteCode, 
+              addDays(new Date(), -30), 
+              addDays(new Date(), 60),
+              PAGE_SIZE,
+              currentOffset,
+              statusFilter === "All" ? undefined : statusFilter
+            );
+            
+            // Re-read local DB to get newly cached items
+            const freshData = await PMService.getLocalInstances(siteCode, undefined, undefined, undefined, 0, 0);
+            setAllInstances(freshData);
+            
+            // If we got exactly PAGE_SIZE, there's likely more on server
+            setHasMore(tasks.length === PAGE_SIZE);
+          } catch (apiErr) {
+            logger.debug("PM: Fetch failed", { error: apiErr });
+          } finally {
+            isFetchingRef.current = false;
+            setLoadingMore(false);
+            setRefreshing(false);
+            setSyncing(false);
+          }
         }
       } catch (err) {
-        logger.error("Error loading PM instances", { error: err });
-      } finally {
+        logger.error("PM: Data loading error", { error: err });
         setLoading(false);
+        setRefreshing(false);
       }
     },
-    [siteCode, currentDate, toDate, isConnected],
+    [siteCode, currentDate, toDate, statusFilter],
   );
 
-  // ── Reload local data when date or site changes ─────────────────────────────
+  const handleLoadMore = useCallback(() => {
+    if (!hasMore || loadingMore || isFetchingRef.current || !isConnected) return;
+    const nextOffset = offset + PAGE_SIZE;
+    setOffset(nextOffset);
+    loadPMData(false, nextOffset);
+  }, [hasMore, loadingMore, offset, loadPMData, isConnected]);
+
+  // Reload when site or filters change
   useEffect(() => {
     if (siteCode) {
-      loadLocalData(true);
+      loadPMData(true);
+    } else {
+      setLoading(false);
+      setAllInstances([]);
     }
-  }, [currentDate, toDate, siteCode, loadLocalData]);
+  }, [siteCode, currentDate, toDate, loadPMData]);
 
-  // ── Focus effect: background pull ───────────────────
+  // Refresh on focus
   useFocusEffect(
     useCallback(() => {
-      if (!siteCode) return;
-      loadLocalData(true);
-
-      // PowerSync handles syncing automatically in the background
-      // Just reload local data which will show synced data
-      if (isConnected && !isFetchingRef.current) {
-        isFetchingRef.current = true;
-        setSyncing(true);
-        // Wait a moment for PowerSync to sync, then reload
-        setTimeout(() => {
-          loadLocalData(true);
-          isFetchingRef.current = false;
-          setSyncing(false);
-        }, 1000);
+      if (siteCode) {
+        loadPMData(false);
       }
-    }, [loadLocalData, isConnected, siteCode]),
+    }, [siteCode, loadPMData]),
   );
 
-  // ── Pull-to-refresh ─────────────────────────────────────────────────────────
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    // PowerSync handles syncing automatically
-    // Just reload local data which will show synced data
-    await loadLocalData(true);
+    await loadPMData(true);
     setRefreshing(false);
-  }, [loadLocalData]);
+  }, [loadPMData]);
 
-  // ── Filtered Data for List ────────────────────────────────────────────────
   const filteredInstances = useMemo(() => {
     let list = allInstances;
     if (statusFilter !== "All") {
@@ -500,7 +500,6 @@ export default function PreventiveMaintenance() {
     return list;
   }, [allInstances, statusFilter, searchQuery, qrAssetFilter]);
 
-  // ── Statistics ──────────────────────────────────────────────────────────────
   const stats = useMemo(() => {
     return {
       total: allInstances.length,
@@ -510,10 +509,8 @@ export default function PreventiveMaintenance() {
     };
   }, [allInstances]);
 
-  // ── Handlers ────────────────────────────────────────────────────────────────
   const handlePMCardPress = useCallback(
     (instance: PMInstanceRow) => {
-      // PowerSync automatically syncs checklist items — no manual pull needed
       router.push({
         pathname: "/pm-execution",
         params: { instanceId: instance.id },
@@ -524,27 +521,16 @@ export default function PreventiveMaintenance() {
 
   const applyAdvancedFilters = useCallback(() => {
     setSearchQuery(tempSearch);
-    if (tempFromDate) {
-      setCurrentDate(tempFromDate);
-    }
-    if (tempToDate) {
-      setToDate(tempToDate);
-    }
+    if (tempFromDate) setCurrentDate(tempFromDate);
+    if (tempToDate) setToDate(tempToDate);
     setShowFiltersModal(false);
   }, [tempSearch, tempFromDate, tempToDate]);
 
   const handleQRAssetFound = useCallback(
     (assetName: string) => {
-      // Set date range to current month for QR filter
       const now = new Date();
-      const monthStart = format(
-        new Date(now.getFullYear(), now.getMonth(), 1),
-        "yyyy-MM-dd",
-      );
-      const monthEnd = format(
-        new Date(now.getFullYear(), now.getMonth() + 1, 0),
-        "yyyy-MM-dd",
-      );
+      const monthStart = format(new Date(now.getFullYear(), now.getMonth(), 1), "yyyy-MM-dd");
+      const monthEnd = format(new Date(now.getFullYear(), now.getMonth() + 1, 0), "yyyy-MM-dd");
       setCurrentDate(monthStart);
       setToDate(monthEnd);
       setQrAssetFilter(assetName);
@@ -555,13 +541,11 @@ export default function PreventiveMaintenance() {
 
   const clearQRFilter = useCallback(() => {
     setQrAssetFilter(null);
-    // Reset to today
     const today = format(new Date(), "yyyy-MM-dd");
-    setCurrentDate(today);
-    setToDate(today);
+    setCurrentDate(addDays(new Date(), -30).toISOString().split('T')[0]);
+    setToDate(addDays(new Date(), 30).toISOString().split('T')[0]);
   }, []);
 
-  // ── FlatList Render ──────────────────────────────────────────────────────────
   const renderItem: ListRenderItem<PMInstanceRow> = useCallback(
     ({ item }) => (
       <PMCard instance={item} onPress={() => handlePMCardPress(item)} />
@@ -577,19 +561,41 @@ export default function PreventiveMaintenance() {
         <View style={styles.emptyIcon}>
           <Wrench size={32} color="#cbd5e1" />
         </View>
-        <Text style={styles.emptyTitle}>No PM tasks found</Text>
-        <Text style={styles.emptyBody}>
-          No tasks scheduled for the selected date range.
+        <Text style={styles.emptyTitle}>
+          {allInstances.length > 0 
+            ? `Hidden by Filters (${allInstances.length} Tasks)` 
+            : "No PM tasks found"}
         </Text>
+        <Text style={styles.emptyBody}>
+          {allInstances.length > 0 
+            ? "Your tasks are on the phone, but hidden by the current Status/Date filter. Try setting Status to 'All'."
+            : "No tasks scheduled for the selected date range."}
+        </Text>
+        {allInstances.length > 0 && (
+          <TouchableOpacity 
+            onPress={() => setStatusFilter("All")}
+            className="mt-4 bg-red-600 px-6 py-2 rounded-full"
+          >
+            <Text className="text-white font-bold">Show All {allInstances.length} Tasks</Text>
+          </TouchableOpacity>
+        )}
       </View>
     ),
-    [],
+    [allInstances.length],
   );
+
+  const renderFooter = useCallback(() => {
+    if (!loadingMore) return null;
+    return (
+      <View style={styles.footerLoader}>
+        <ActivityIndicator size="small" color="#dc2626" />
+      </View>
+    );
+  }, [loadingMore]);
 
   return (
     <View className="flex-1 bg-slate-50 dark:bg-slate-950">
       <SafeAreaView style={styles.flex} edges={["top"]}>
-        {/* Fixed Header & Navigation */}
         <View className="px-5 pt-2 pb-3 bg-slate-50 dark:bg-slate-950">
           <View className="flex-row items-center justify-between mb-4">
             <View className="flex-1">
@@ -651,7 +657,6 @@ export default function PreventiveMaintenance() {
             </TouchableOpacity>
           </View>
 
-          {/* Stats Row */}
           <View className="flex-row gap-2 mb-3">
             <StatCard
               icon={<AlertCircle size={14} color="#f97316" />}
@@ -682,7 +687,6 @@ export default function PreventiveMaintenance() {
             />
           </View>
 
-          {/* Search Row - Moved Down */}
           <View
             style={styles.searchBarContainer}
             className="bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800"
@@ -708,7 +712,6 @@ export default function PreventiveMaintenance() {
             </TouchableOpacity>
           </View>
 
-          {/* QR Active Filter Chip */}
           {qrAssetFilter ? (
             <View style={styles.qrChip}>
               <QrCode size={12} color="#dc2626" />
@@ -724,14 +727,21 @@ export default function PreventiveMaintenance() {
 
         <View style={styles.listHeader}>
           <View style={styles.sectionRow}>
-            <Text style={styles.sectionTitle}>Maintenance Tasks</Text>
+            <View className="flex-row items-center gap-2">
+              <Text style={styles.sectionTitle}>Maintenance Tasks</Text>
+              <View className="bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded-full">
+                <Text className="text-slate-500 dark:text-slate-400 text-[10px] font-bold">
+                  {allInstances.length} TOTAL ({siteCode})
+                </Text>
+              </View>
+            </View>
             <Text style={styles.sectionCount}>
-              {filteredInstances.length} Tasks
+              {filteredInstances.length} Shown
             </Text>
           </View>
         </View>
 
-        {loading || syncing ? (
+        {loading && allInstances.length === 0 ? (
           <PMSkeleton />
         ) : (
           <FlashList
@@ -742,9 +752,12 @@ export default function PreventiveMaintenance() {
             ListEmptyComponent={ListEmpty}
             // @ts-ignore
             estimatedItemSize={160}
+            onEndReached={handleLoadMore}
+            onEndReachedThreshold={0.5}
+            ListFooterComponent={renderFooter}
             refreshControl={
               <RefreshControl
-                refreshing={refreshing}
+                refreshing={refreshing || (syncing && allInstances.length > 0)}
                 onRefresh={onRefresh}
                 tintColor="#dc2626"
               />
