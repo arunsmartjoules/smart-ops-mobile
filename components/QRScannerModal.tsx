@@ -7,8 +7,8 @@ import {
   ActivityIndicator,
   Alert,
   TouchableOpacity,
-  useColorScheme,
 } from "react-native";
+import { useTheme } from "@/contexts/ThemeContext";
 import { X } from "lucide-react-native";
 import { AssetService } from "@/services/AssetService";
 
@@ -36,7 +36,7 @@ interface QRScannerModalProps {
 
 const QRScannerModal = React.forwardRef<QRScannerRef, QRScannerModalProps>(
   ({ siteCode, onClose, onAssetFound }, ref) => {
-    const isDark = useColorScheme() === "dark";
+    const { isDark } = useTheme();
     const [visible, setVisible] = useState(false);
     const [validating, setValidating] = useState(false);
     const scannedRef = useRef(false);

@@ -71,15 +71,19 @@ export const requestPermissions = async (): Promise<boolean> => {
  */
 export const getPushToken = async (): Promise<string | null> => {
   try {
+    // Robust Project ID detection for standalone builds
     const projectId =
-      Constants.expoConfig?.extra?.eas?.projectId || 
-      Constants.expoConfig?.owner === "smartjoules-ops" ? "d1868472-0103-49d5-978e-ece327af4c3e" : "your-project-id";
+      Constants.expoConfig?.extra?.eas?.projectId ||
+      Constants.projectId ||
+      "d1868472-0103-49d5-978e-ece327af4c3e";
 
-    if (projectId === "your-project-id") {
-      logger.warn("PushNotifications: No EAS project ID found in app.json configuration", {
-        module: "NOTIFICATION_SERVICE",
-      });
-    }
+    logger.info("PushNotifications: Attempting to get Expo Push Token", {
+      module: "NOTIFICATION_SERVICE",
+      projectId,
+      isDevice: Device.isDevice,
+      deviceName: Device.deviceName,
+      expoVersion: Constants.expoVersion,
+    });
 
     const token = await Notifications.getExpoPushTokenAsync({
       projectId,
@@ -278,7 +282,10 @@ export const getNotificationPreferences = async (authToken: string) => {
  */
 export const updateNotificationPreferences = async (
   authToken: string,
-  preferences: { attendance_notifications_enabled?: boolean; ticket_notifications_enabled?: boolean },
+  preferences: {
+    attendance_notifications_enabled?: boolean;
+    ticket_notifications_enabled?: boolean;
+  },
 ) => {
   try {
     const response = await fetchWithTimeout(

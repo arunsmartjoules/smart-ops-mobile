@@ -7,8 +7,8 @@ import {
   ScrollView,
   TextInput,
   Platform,
-  useColorScheme,
 } from "react-native";
+import { useTheme } from "@/contexts/ThemeContext";
 import { X, Search as SearchIcon, Calendar } from "lucide-react-native";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import {
@@ -130,8 +130,7 @@ const AdvancedFilterModal = ({
   applyAdvancedFilters,
   dateMode = "date-range",
 }: AdvancedFilterModalProps) => {
-  const colorScheme = useColorScheme();
-  const isDark = colorScheme === "dark";
+  const { isDark } = useTheme();
 
   const [showStartPicker, setShowStartPicker] = React.useState(false);
   const [showEndPicker, setShowEndPicker] = React.useState(false);

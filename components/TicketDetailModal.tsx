@@ -78,8 +78,7 @@ const TicketDetailModal = React.memo(
     }, [ticket, updateStatus, updateRemarks, updateArea, updateCategory]);
 
     const { height: windowHeight } = useWindowDimensions();
-    const { theme } = useTheme();
-    const isDark = theme === "dark";
+    const { isDark } = useTheme();
 
     if (!ticket || !visible) return null;
 
