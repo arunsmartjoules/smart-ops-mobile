@@ -1,5 +1,5 @@
 import "react-native-gesture-handler";
-import { Stack, useRouter, useSegments } from "expo-router";
+import { Stack, useRouter, useSegments, router } from "expo-router";
 import "react-native-reanimated";
 import "./global.css";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
@@ -19,6 +19,7 @@ import * as Notifications from "expo-notifications";
 import * as ImagePicker from "expo-image-picker";
 import * as Crypto from "expo-crypto";
 import { setupNotificationHandlers, setupAndroidChannels } from "@/services/NotificationService";
+import logger from "@/utils/logger";
 
 // Fix: crypto.getRandomValues() not supported — required for uuid library in React Native
 if (!global.crypto) {
@@ -109,12 +110,23 @@ export default function RootLayout() {
         console.log("Notification received:", notification);
       },
       (response) => {
-        console.log("Notification tapped:", response);
-        // Handle navigation based on notification data
-        const data = response.notification.request.content.data;
-        if (data?.screen) {
-          // You can add navigation logic here based on data.screen
-          console.log("Navigate to:", data.screen);
+        const data = response.notification.request.content.data as any;
+        logger.info("Notification tapped", { data });
+
+        if (data?.ticket_no) {
+          // Navigate to tickets screen with ticketId param
+          // Note: Using push/navigate with search params
+          router.push({
+            pathname: "/(tabs)/tickets",
+            params: { 
+              ticketId: data.ticket_no,
+              siteCode: data.site_code
+            }
+          });
+        } else if (data?.screen === "attendance" || String(data?.type || "").includes("attendance")) {
+          router.push("/attendance");
+        } else if (data?.screen) {
+          router.push(data.screen as any);
         }
       }
     );

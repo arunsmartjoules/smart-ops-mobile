@@ -75,7 +75,6 @@ export default function NotificationSettingsPage() {
   const handleToggleAttendanceNotifications = useCallback(
     async (value: boolean) => {
       if (!hasSystemPermission && value) {
-        // User is trying to enable, but no system permission
         Alert.alert(
           "Permission Required",
           "Please enable notifications in your device settings first.",
@@ -84,35 +83,28 @@ export default function NotificationSettingsPage() {
         return;
       }
 
-      // If no token, only update local state
-      if (!token) {
-        setAttendanceNotificationsEnabled(value);
-        return;
-      }
+      setAttendanceNotificationsEnabled(value);
+
+      if (!token) return;
 
       try {
         setSaving(true);
-        setAttendanceNotificationsEnabled(value);
-
         const result = await updateNotificationPreferences(token, {
           attendance_notifications_enabled: value,
         });
 
         if (!result.success) {
-          logger.warn("Update notification preferences failed on server", {
+          logger.warn("Server update failed, setting kept locally", {
             module: "NOTIFICATION_SETTINGS",
-            token: token.substring(0, 10),
           });
-          // Revert on failure
-          setAttendanceNotificationsEnabled(!value);
-          Alert.alert("Info", "Preference saved locally (backend offline)");
+          // Alert user that it's only local for now (backend issue)
+          Alert.alert("Info", "Preference updated locally. We will sync with the server soon.");
         }
       } catch (error: any) {
         logger.error("Update notification preferences error", {
           module: "NOTIFICATION_SETTINGS",
           error: error.message,
         });
-        // Don't revert - keep the toggle state the user selected
       } finally {
         setSaving(false);
       }
@@ -130,16 +122,22 @@ export default function NotificationSettingsPage() {
         );
         return;
       }
-      if (!token) {
-        setTicketNotificationsEnabled(value);
-        return;
-      }
+
+      setTicketNotificationsEnabled(value);
+
+      if (!token) return;
+
       try {
         setSaving(true);
-        setTicketNotificationsEnabled(value);
-        await updateNotificationPreferences(token, {
+        const result = await updateNotificationPreferences(token, {
           ticket_notifications_enabled: value,
         });
+
+        if (!result.success) {
+          logger.warn("Server update failed, setting kept locally", {
+            module: "NOTIFICATION_SETTINGS",
+          });
+        }
       } catch (error: any) {
         logger.error("Update ticket notification preferences error", {
           module: "NOTIFICATION_SETTINGS",

@@ -10,6 +10,7 @@ import {
 import {
   MessageSquare,
   Image as ImageIcon,
+  Camera,
   Video,
   Send,
   MessageCircle,
@@ -85,26 +86,60 @@ const TicketLineItems = ({ ticketId }: TicketLineItemsProps) => {
       });
 
       if (!result.canceled && result.assets && result.assets.length > 0) {
-        setSubmitting(true);
-        const uploadRes = await TicketsService.uploadImage(result.assets[0].uri);
-
-        if (uploadRes.success && uploadRes.url) {
-          const res = await TicketsService.addLineItem(ticketId, {
-            image_url: uploadRes.url,
-          });
-
-          if (res.success) {
-            fetchItems();
-          } else {
-            alert("Failed to save image attachment: " + (res.error || "Unknown error"));
-          }
-        } else {
-          alert("Upload failed: " + (uploadRes.error || "Failed to upload image"));
-        }
+        handleUpload(result.assets[0].uri);
       }
     } catch (error) {
       console.error("Pick image error:", error);
       alert("An error occurred while picking the image.");
+    }
+  };
+
+  const takePhoto = async () => {
+    try {
+      const { status } = await ImagePicker.requestCameraPermissionsAsync();
+      if (status !== "granted") {
+        alert("Camera permission is required to take photos.");
+        return;
+      }
+
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ["images"],
+        allowsEditing: true,
+        quality: 0.6,
+      });
+
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        handleUpload(result.assets[0].uri);
+      }
+    } catch (error) {
+      console.error("Take photo error:", error);
+      alert("An error occurred while taking the photo.");
+    }
+  };
+
+  const handleUpload = async (uri: string) => {
+    setSubmitting(true);
+    try {
+      const uploadRes = await TicketsService.uploadImage(uri);
+
+      if (uploadRes.success && uploadRes.url) {
+        const res = await TicketsService.addLineItem(ticketId, {
+          image_url: uploadRes.url,
+        });
+
+        if (res.success) {
+          fetchItems();
+        } else {
+          alert(
+            "Failed to save image attachment: " + (res.error || "Unknown error")
+          );
+        }
+      } else {
+        alert("Upload failed: " + (uploadRes.error || "Failed to upload image"));
+      }
+    } catch (error) {
+      console.error("Upload error:", error);
+      alert("An error occurred while uploading the image.");
     } finally {
       setSubmitting(false);
     }
@@ -340,6 +375,25 @@ const TicketLineItems = ({ ticketId }: TicketLineItemsProps) => {
         }}
       >
         <TouchableOpacity
+          onPress={takePhoto}
+          className="bg-slate-100 dark:bg-slate-800 border-slate-200 dark:border-slate-700"
+          style={{
+            width: 40,
+            height: 40,
+            borderRadius: 12,
+            justifyContent: "center",
+            alignItems: "center",
+            borderWidth: 1,
+          }}
+        >
+          <Camera
+            size={18}
+            className="text-slate-500 dark:text-slate-400"
+            color="#64748b"
+          />
+        </TouchableOpacity>
+
+        <TouchableOpacity
           onPress={pickImage}
           className="bg-slate-100 dark:bg-slate-800 border-slate-200 dark:border-slate-700"
           style={{
@@ -351,7 +405,11 @@ const TicketLineItems = ({ ticketId }: TicketLineItemsProps) => {
             borderWidth: 1,
           }}
         >
-          <ImageIcon size={18} className="text-slate-500 dark:text-slate-400" color="#64748b" />
+          <ImageIcon
+            size={18}
+            className="text-slate-500 dark:text-slate-400"
+            color="#64748b"
+          />
         </TouchableOpacity>
 
         <View

@@ -211,6 +211,8 @@ export default function Tickets() {
     if (!selectedSiteCode) return;
 
     setAreasLoading(true);
+    setAreaOptions([]);
+
     try {
       const [localAreas, cachedCategories] = await Promise.all([
         db.select().from(areas).where(eq(areas.site_code, selectedSiteCode)).catch(() => []),
@@ -499,15 +501,46 @@ export default function Tickets() {
     setIsDetailVisible(true);
   }, []);
 
-  const params = useLocalSearchParams<{ ticketId: string }>();
-  const { ticketId } = params;
+  const params = useLocalSearchParams<{ ticketId: string; siteCode: string }>();
+  const { ticketId, siteCode } = params;
 
   useEffect(() => {
-    if (ticketId && tickets.length > 0) {
-      const ticket = tickets.find((t) => t.id.toString() === ticketId.toString());
-      if (ticket) handleTicketPress(ticket);
+    // 1. If siteCode is provided and different from current, switch site
+    if (siteCode && selectedSiteCode !== siteCode && sites.length > 0) {
+      const targetSite = sites.find(s => s.site_code === siteCode);
+      if (targetSite) {
+        selectSite(targetSite);
+        return; // Wait for next effect run after site selection
+      }
     }
-  }, [ticketId, tickets, handleTicketPress]);
+    if (ticketId) {
+      // 1. Try to find in already loaded tickets
+      const ticket = tickets.find(
+        (t) =>
+          t.id?.toString() === ticketId.toString() ||
+          t.ticket_no === ticketId.toString()
+      );
+
+      if (ticket) {
+        handleTicketPress(ticket);
+      } else if (selectedSiteCode && !loading) {
+        // 2. If not found and we're not already loading, try to fetch this specific ticket
+        // This handles cases where the notification is for a ticket not in the current view
+        TicketsService.getTickets(selectedSiteCode, { search: ticketId })
+          .then((res) => {
+            if (res.success && res.data?.length > 0) {
+              const matched = res.data.find(
+                (t: Ticket) =>
+                  t.id?.toString() === ticketId.toString() ||
+                  t.ticket_no === ticketId.toString()
+              );
+              if (matched) handleTicketPress(matched);
+            }
+          })
+          .catch((err) => logger.warn("Failed to fetch specific ticket", { err }));
+      }
+    }
+  }, [ticketId, tickets, handleTicketPress, selectedSiteCode, loading]);
 
   const handleTicketLongPress = useCallback((ticket: Ticket) => {
     if (ticket.status !== "Open") return;

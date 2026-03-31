@@ -1,6 +1,5 @@
 import { storage } from "./firebase";
-import { ref, uploadString, getDownloadURL } from "firebase/storage";
-import * as FileSystem from "expo-file-system/legacy";
+import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import logger from "@/utils/logger";
 
 export const StorageService = {
@@ -13,25 +12,41 @@ export const StorageService = {
     filePath: string,
     fileUri: string,
   ): Promise<string | null> {
+    let blob: any = null;
     try {
       logger.info(`Uploading file to Firebase Storage: ${filePath}`, {
         module: "STORAGE_SERVICE",
       });
 
-      // Read file as base64
-      const base64 = await FileSystem.readAsStringAsync(fileUri, {
-        encoding: "base64",
+      // 1. Create a blob from the local URI using XHR
+      // React Native's JS environment doesn't support the Blob constructor from ArrayBuffer reliably.
+      // Fetching the local file as a "blob" response is the standard workaround for Firebase.
+      blob = await new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.onload = function () {
+          resolve(xhr.response);
+        };
+        xhr.onerror = function (e) {
+          logger.error("Network request failed for local file access", {
+            module: "STORAGE_SERVICE",
+            error: e,
+          });
+          reject(new TypeError("Network request failed"));
+        };
+        xhr.responseType = "blob";
+        xhr.open("GET", fileUri, true);
+        xhr.send(null);
       });
 
-      // Create storage reference
+      // 2. Create storage reference
       const storageRef = ref(storage, filePath);
 
-      // Upload base64 string
-      await uploadString(storageRef, base64, "base64", {
+      // 3. Upload the blob directly using uploadBytes
+      await uploadBytes(storageRef, blob, {
         contentType: "image/jpeg",
       });
 
-      // Get Download URL
+      // 4. Get Download URL
       const publicUrl = await getDownloadURL(storageRef);
 
       return publicUrl;
@@ -41,6 +56,11 @@ export const StorageService = {
         error: error.message,
       });
       return null;
+    } finally {
+      // 5. Release the blob to prevent memory leaks
+      if (blob && typeof blob.close === "function") {
+        blob.close();
+      }
     }
   },
 

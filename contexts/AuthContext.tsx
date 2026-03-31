@@ -157,12 +157,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         const userProfile = await fetchAndSetProfile(firebaseUser, idToken);
         
         if (userProfile?.user_id) {
+          logger.activity("LOGIN_SUCCESS", "AUTH", `User ${userProfile.email} logged in successfully`, { 
+            user_id: userProfile.user_id,
+            email: userProfile.email 
+          });
           syncEngine.initialize(userProfile.user_id).catch(() => {});
           siteResolver.initialize(userProfile.user_id).catch(() => {});
           registerForPushNotifications(userProfile.user_id, idToken).catch(() => {});
         }
         setIsLoading(false);
       } else {
+        if (token) {
+          logger.activity("LOGOUT", "AUTH", "User logged out");
+        }
         setToken(null);
         setUser(null);
         await AsyncStorage.removeItem("firebase-token");
@@ -185,25 +192,32 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   }, []);
 
   const signIn = useCallback(async (email: string, password: string) => {
+    logger.activity("LOGIN_ATTEMPT", "AUTH", `Login attempt for ${email}`, { email });
     try {
       await signInWithEmailAndPassword(auth, email, password);
       return { error: null };
     } catch (error: any) {
       let msg = error.message || "Sign in failed";
+      let logAction = "LOGIN_FAILURE";
+      
       if (msg.includes("auth/invalid-credential") || msg.includes("auth/user-not-found") || msg.includes("auth/wrong-password")) {
         msg = "Invalid email or password. Please try again.";
+        logAction = "WRONG_PASSWORD";
       } else if (msg.includes("auth/too-many-requests")) {
         msg = "Too many failed login attempts. Please try again later.";
       } else if (msg.includes("Firebase: Error")) {
         msg = msg.replace("Firebase: Error (", "").replace(").", "").trim();
       }
+      
       logger.warn("Sign in failed", { module: "AUTH_CONTEXT", error: msg });
+      logger.activity(logAction, "AUTH", `Login failed for ${email}: ${msg}`, { email, error: msg });
       return { error: msg };
     }
   }, []);
 
   const signUp = useCallback(
     async (email: string, password: string, name: string) => {
+      logger.activity("SIGNUP_ATTEMPT", "AUTH", `Signup attempt for ${email}`, { email, name });
       try {
         const res = await fetch(`${BACKEND_URL}/api/auth/signup`, {
           method: "POST",
@@ -211,18 +225,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
           body: JSON.stringify({ email, password, name }),
         });
         const result = await res.json();
-        if (!res.ok) return { error: result.error || "Signup failed" };
+        if (!res.ok) {
+          const errorMsg = result.error || "Signup failed";
+          logger.activity("SIGNUP_FAILURE", "AUTH", `Signup failed for ${email}: ${errorMsg}`, { email, error: errorMsg });
+          return { error: errorMsg };
+        }
         
-        // The backend signup creates the user in both DB and Firebase (via custom token).
-        // Since Firebase SDK's createUserWithEmailAndPassword would conflict or redundancy,
-        // we just call our backend and let the user signed in later or here if we have a token.
-        // For now, signup succeeds and tells user to verify.
+        logger.activity("SIGNUP_SUCCESS", "AUTH", `Signup successful for ${email}`, { email });
         return { error: null };
       } catch (error: any) {
         logger.warn("Sign up failed", {
           module: "AUTH_CONTEXT",
           error: error.message,
         });
+        logger.activity("SIGNUP_FAILURE", "AUTH", `Signup failed for ${email}: ${error.message}`, { email, error: error.message });
         return { error: error.message };
       }
     },
@@ -275,12 +291,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   const sendPasswordResetCode = useCallback(async (email: string) => {
     try {
       await sendPasswordResetEmail(auth, email);
+      logger.activity("PASSWORD_RESET_REQUEST", "AUTH", `Password reset email sent to ${email}`, { email });
       return { error: null };
     } catch (e: any) {
       logger.error("Password reset error", {
         module: "AUTH_CONTEXT",
         error: e.message,
       });
+      logger.activity("PASSWORD_RESET_FAILURE", "AUTH", `Failed to send reset email to ${email}: ${e.message}`, { email, error: e.message });
       return { error: e.message || "Error sending reset email" };
     }
   }, []);
@@ -294,9 +312,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
           body: JSON.stringify({ email, code, newPassword }),
         });
         const result = await res.json();
-        if (!res.ok) return { error: result.error || "Failed to reset password" };
+        if (!res.ok) {
+          const errorMsg = result.error || "Failed to reset password";
+          logger.activity("PASSWORD_RESET_CODE_FAILURE", "AUTH", `Password reset with code failed for ${email}: ${errorMsg}`, { email, error: errorMsg });
+          return { error: errorMsg };
+        }
+        logger.activity("PASSWORD_RESET_CODE_SUCCESS", "AUTH", `Password reset with code successful for ${email}`, { email });
         return { error: null };
       } catch (e: any) {
+        logger.activity("PASSWORD_RESET_CODE_FAILURE", "AUTH", `Network error during password reset for ${email}`, { email, error: e.message });
         return { error: e.message || "Network error" };
       }
     },
@@ -324,9 +348,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         body: JSON.stringify({ newPassword: password }),
       });
       const result = await res.json();
-      if (!res.ok) return { error: result.error || "Failed to change password" };
+      if (!res.ok) {
+        const errorMsg = result.error || "Failed to change password";
+        logger.activity("PASSWORD_CHANGE_FAILURE", "AUTH", `Password change failed: ${errorMsg}`, { error: errorMsg });
+        return { error: errorMsg };
+      }
+      logger.activity("PASSWORD_CHANGE_SUCCESS", "AUTH", "Password changed successfully");
       return { error: null };
     } catch (e: any) {
+      logger.activity("PASSWORD_CHANGE_FAILURE", "AUTH", `Network error during password change: ${e.message}`, { error: e.message });
       return { error: e.message || "Network error" };
     }
   }, []);
@@ -339,9 +369,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         body: JSON.stringify({ email }),
       });
       const result = await res.json();
-      if (!res.ok) return { error: result.error || "Failed to send code" };
+      if (!res.ok) {
+        const errorMsg = result.error || "Failed to send code";
+        logger.activity("VERIFICATION_CODE_FAILURE", "AUTH", `Failed to send verification code to ${email}: ${errorMsg}`, { email, error: errorMsg });
+        return { error: errorMsg };
+      }
+      logger.activity("VERIFICATION_CODE_REQUEST", "AUTH", `Verification code requested for ${email}`, { email });
       return { error: null };
     } catch (e: any) {
+      logger.activity("VERIFICATION_CODE_FAILURE", "AUTH", `Network error sending verification code to ${email}`, { email, error: e.message });
       return { error: e.message || "Network error" };
     }
   }, []);
@@ -354,9 +390,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         body: JSON.stringify({ email, code }),
       });
       const result = await res.json();
-      if (!res.ok) return { error: result.error || "Invalid code" };
+      if (!res.ok) {
+        const errorMsg = result.error || "Invalid code";
+        logger.activity("EMAIL_VERIFICATION_FAILURE", "AUTH", `Email verification failed for ${email}: ${errorMsg}`, { email, code, error: errorMsg });
+        return { error: errorMsg };
+      }
+      logger.activity("EMAIL_VERIFICATION_SUCCESS", "AUTH", `Email verified successfully for ${email}`, { email });
       return { error: null };
     } catch (e: any) {
+      logger.activity("EMAIL_VERIFICATION_FAILURE", "AUTH", `Network error during email verification for ${email}`, { email, error: e.message });
       return { error: e.message || "Network error" };
     }
   }, []);

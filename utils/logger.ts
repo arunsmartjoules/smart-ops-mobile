@@ -154,7 +154,8 @@ export const logger = {
     void (async () => {
       try {
       const token = await AsyncStorage.getItem("firebase-token");
-        if (!token) return;
+        // If no token AND not an auth-related activity, skip
+        if (!token && module !== "AUTH") return;
 
         const context = await this.getContext();
         const payload = {
@@ -169,13 +170,17 @@ export const logger = {
           },
         };
 
+        const headers: Record<string, string> = {
+          "Content-Type": "application/json",
+        };
+        if (token) {
+          headers["Authorization"] = `Bearer ${token}`;
+        }
+
         // Try to send immediately
         fetch(`${BACKEND_URL}/api/logs`, {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
+          headers,
           body: JSON.stringify(payload),
         }).catch(async () => {
           // If network fails, queue for later
@@ -243,13 +248,18 @@ export const logger = {
   ): Promise<void> {
     try {
       const token = await AsyncStorage.getItem("firebase-token");
-      if (!token) return;
+      if (!token && module !== "AUTH") return;
+      
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+      };
+      if (token) {
+        headers["Authorization"] = `Bearer ${token}`;
+      }
+
       fetch(`${BACKEND_URL}/api/logs`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
+        headers,
         body: JSON.stringify({ action, module, description, device_info: deviceInfo, metadata }),
       }).catch((err) =>
         console.log("Failed to send log to backend", err?.message || String(err))

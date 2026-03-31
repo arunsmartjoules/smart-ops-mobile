@@ -398,7 +398,7 @@ export const TicketsService = {
    * Get assets for a site
    */
   async getAssets(siteCode: string) {
-    const result = await apiFetch(`/api/assets/site/${siteCode}`);
+    const result = await apiFetch(`/api/assets/site/${siteCode}?limit=1000`);
     if (result.success) {
       return result;
     }

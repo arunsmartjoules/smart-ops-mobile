@@ -84,7 +84,7 @@ export default function Profile() {
       } else {
         Alert.alert(
           "Up to Date",
-          "You are using the latest version of SmartOps.",
+          "You are using the latest version of JouleOps.",
         );
       }
     } catch (e: any) {

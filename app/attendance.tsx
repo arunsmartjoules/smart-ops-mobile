@@ -111,8 +111,13 @@ const HistoryItem = React.memo(
           <View className="flex-row items-center bg-slate-50 dark:bg-slate-800 rounded-xl px-3 py-2.5">
             {/* Check In */}
             <View className="flex-1 flex-row items-center">
-              <View className={`w-7 h-7 rounded-md ${log.check_in_time ? "bg-green-100 dark:bg-green-900" : "bg-slate-200 dark:bg-slate-700"} items-center justify-center mr-2`}>
-                <LogIn size={14} color={log.check_in_time ? "#22c55e" : "#94a3b8"} />
+              <View
+                className={`w-7 h-7 rounded-md ${log.check_in_time ? "bg-green-100 dark:bg-green-900" : "bg-slate-200 dark:bg-slate-700"} items-center justify-center mr-2`}
+              >
+                <LogIn
+                  size={14}
+                  color={log.check_in_time ? "#22c55e" : "#94a3b8"}
+                />
               </View>
               <View>
                 <Text className="text-slate-500 dark:text-slate-400 text-[10px] font-medium uppercase">
@@ -236,7 +241,9 @@ const SiteItem = React.memo(
           <Text className="font-bold text-slate-900 dark:text-slate-100">
             {site.name}
           </Text>
-          <Text className="text-slate-500 dark:text-slate-400 text-xs">{site.address}</Text>
+          <Text className="text-slate-500 dark:text-slate-400 text-xs">
+            {site.address}
+          </Text>
         </View>
         {site.distance !== undefined && (
           <View className="bg-green-100 px-2 py-1 rounded">
@@ -278,8 +285,11 @@ export default function AttendancePage() {
   // Safety timer to clear loading no matter what
   useEffect(() => {
     const timer = setTimeout(() => {
-      setLoading(prev => {
-        if (prev) logger.debug("Attendance safety timeout triggered", { module: "ATTENDANCE_SCREEN" });
+      setLoading((prev) => {
+        if (prev)
+          logger.debug("Attendance safety timeout triggered", {
+            module: "ATTENDANCE_SCREEN",
+          });
         return false;
       });
     }, 10000);
@@ -291,16 +301,20 @@ export default function AttendancePage() {
       setLoading(false);
       return;
     }
-    
+
     try {
       // 1. Show cached data immediately (SWR)
       const [cachedToday, cachedHistory] = await Promise.all([
         AttendanceService.getTodayAttendance(user.id).catch(() => null),
-        AttendanceService.getAttendanceHistory(user.id, 1, 30).catch(() => ({ data: [], pagination: {} }))
+        AttendanceService.getAttendanceHistory(user.id, 1, 30).catch(() => ({
+          data: [],
+          pagination: {},
+        })),
       ]);
 
       if (cachedToday) setTodayAttendance(cachedToday);
-      if (cachedHistory.data.length > 0) setAttendanceHistory(cachedHistory.data);
+      if (cachedHistory.data.length > 0)
+        setAttendanceHistory(cachedHistory.data);
 
       if (cachedToday || cachedHistory.data.length > 0) {
         setLoading(false);
@@ -335,8 +349,8 @@ export default function AttendancePage() {
   const LOCATION_FRESHNESS_MS = 5 * 60 * 1000; // 5 minutes
 
   // Robust location getter — optimized for speed
-  const ensureLocation =
-    useCallback(async (forceRefresh = false): Promise<Location.LocationObject | null> => {
+  const ensureLocation = useCallback(
+    async (forceRefresh = false): Promise<Location.LocationObject | null> => {
       // Reuse cached location if fresh (< 5 min old)
       if (
         !forceRefresh &&
@@ -416,7 +430,9 @@ export default function AttendancePage() {
         setLocationError("Could not fetch location");
         return null;
       }
-    }, [location, user?.work_location_type]);
+    },
+    [location, user?.work_location_type],
+  );
 
   useFocusEffect(
     useCallback(() => {
@@ -616,12 +632,13 @@ export default function AttendancePage() {
         } else {
           // Revert optimistic update on failure
           setTodayAttendance(null);
-          
+
           // Handle requiresCheckout case
           if ((res as any).requiresCheckout) {
             Alert.alert(
               "Checkout Required",
-              res.error || "Please check out from your current session before checking in again.",
+              res.error ||
+                "Please check out from your current session before checking in again.",
               [
                 { text: "Cancel", style: "cancel" },
                 {
@@ -634,7 +651,7 @@ export default function AttendancePage() {
                     }
                   },
                 },
-              ]
+              ],
             );
           } else {
             Alert.alert("Failed", res.error || "Check-in failed");
@@ -656,7 +673,11 @@ export default function AttendancePage() {
 
     // Offline path — skip location validation, read directly from cache
     if (!isConnected) {
-      const localSiteRows = await db.select().from(userSites).where(eq(userSites.user_id, user.id)).catch(() => []);
+      const localSiteRows = await db
+        .select()
+        .from(userSites)
+        .where(eq(userSites.user_id, user.id))
+        .catch(() => []);
       const cached = localSiteRows.map((r: any) => ({
         site_code: r.site_code,
         name: r.site_name || r.site_code,
@@ -798,130 +819,236 @@ export default function AttendancePage() {
           </View>
         </View>
 
-        {/* Today's Status Card - Fixed at top */}
+        {/* Today's Status Card - Redesigned as Smart Card */}
         <View
-          className="mx-5 mb-4 rounded-2xl overflow-hidden"
+          className="mx-5 mb-6"
           style={{
-            shadowColor: todayAttendance?.check_out_time
-              ? "#16a34a"
-              : todayAttendance
-                ? "#dc2626"
-                : "#1e40af",
-            shadowOffset: { width: 0, height: 4 },
-            shadowOpacity: 0.2,
-            shadowRadius: 12,
-            elevation: 8,
+            shadowColor: "#000",
+            shadowOffset: { width: 0, height: 10 },
+            shadowOpacity: 0.15,
+            shadowRadius: 20,
+            elevation: 10,
           }}
         >
           <LinearGradient
             colors={
               todayAttendance?.check_out_time
-                ? ["#16a34a", "#15803d"] // Green for completed
+                ? ["#059669", "#064e3b"] // Emerald/Dark Green
                 : todayAttendance
-                  ? ["#dc2626", "#991b1b"] // Red for checked in
-                  : ["#1e40af", "#1e3a8a"] // Blue for not started
+                  ? ["#dc2626", "#7f1d1d"] // Red/Dark Red
+                  : ["#2563eb", "#1e3a8a"] // Blue/Dark Blue
             }
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 1 }}
-            style={{ padding: 20 }}
+            style={{ borderRadius: 24, padding: 24, minHeight: 220 }}
           >
-            <Text className="text-white/70 text-xs mb-1 font-bold tracking-wider">
-              TODAY'S STATUS
-            </Text>
-            <View className="flex-row items-center justify-between mb-4">
-              <Text className="text-white text-2xl font-bold">
-                {todayAttendance?.check_out_time
-                  ? "Checked Out"
-                  : todayAttendance
-                    ? "Checked In"
-                    : "Not Checked In"}
-              </Text>
+            {/* Design Elements */}
+            <View
+              style={{
+                position: "absolute",
+                top: -20,
+                right: -20,
+                width: 100,
+                height: 100,
+                borderRadius: 50,
+                backgroundColor: "rgba(255,255,255,0.1)",
+              }}
+            />
+            <View
+              style={{
+                position: "absolute",
+                bottom: 20,
+                left: -30,
+                width: 120,
+                height: 120,
+                borderRadius: 60,
+                backgroundColor: "rgba(255,255,255,0.05)",
+              }}
+            />
+
+            {/* Top Row: Brand/Type and Date */}
+            <View className="flex-row justify-between items-start mb-6">
+              <View>
+                <Text className="text-white/60 text-[10px] font-black tracking-[2px] uppercase">
+                  SmartOps Identity
+                </Text>
+                <View className="flex-row items-center mt-1">
+                  <View className="w-2 h-2 rounded-full bg-white mr-2" />
+                  <Text className="text-white text-lg font-bold">
+                    Attendance Card
+                  </Text>
+                </View>
+              </View>
+              <View className="items-end">
+                <Text className="text-white/70 text-[10px] font-bold uppercase">
+                  {format(new Date(), "EEEE")}
+                </Text>
+                <Text className="text-white text-sm font-black">
+                  {format(new Date(), "dd MMM yyyy")}
+                </Text>
+              </View>
+            </View>
+
+            {/* Profile Section */}
+            <View className="flex-row items-center mb-6">
+              <View className="w-14 h-14 rounded-2xl bg-white/20 items-center justify-center border border-white/30 mr-4">
+                <Text className="text-white text-2xl font-black">
+                  {user?.name?.charAt(0) || user?.email?.charAt(0) || "U"}
+                </Text>
+              </View>
+              <View className="flex-1">
+                <Text
+                  className="text-white text-xl font-black"
+                  numberOfLines={1}
+                >
+                  {user?.name || "User"}
+                </Text>
+                <Text
+                  className="text-white/70 text-xs font-medium"
+                  numberOfLines={1}
+                >
+                  {user?.email || ""}
+                </Text>
+              </View>
               {todayAttendance && (
-                <View className="bg-white/20 px-3 py-1 rounded-full">
-                  <Text className="text-white text-xs font-bold">
+                <View className="bg-white/20 px-3 py-1.5 rounded-xl border border-white/20">
+                  <Text className="text-white text-[11px] font-black">
                     {getDuration(todayAttendance)}
                   </Text>
                 </View>
               )}
             </View>
 
-             <View className="flex-row gap-4">
-               {todayAttendance && (
-                 <View className="flex-1 bg-white/10 dark:bg-black/10 rounded-xl p-3">
-                  <View className="flex-row items-center mb-1">
-                    <LogIn size={14} color="white" style={{ marginRight: 8 }} />
-                    <Text className="text-white/80 text-xs">Checked In</Text>
-                  </View>
-                  <Text className="text-white font-mono font-bold">
-                    {format(new Date(todayAttendance.check_in_time!), "h:mm a")}
+            {/* Stats Row */}
+            <View className="flex-row gap-3">
+              <View className="flex-1 bg-black/20 rounded-2xl p-3 border border-white/10">
+                <View className="flex-row items-center mb-1">
+                  <LogIn size={11} color="#4ade80" />
+                  <Text className="text-white/60 text-[9px] font-bold uppercase ml-1.5">
+                    Check In
                   </Text>
                 </View>
-              )}
-               {todayAttendance?.check_out_time && (
-                 <View className="flex-1 bg-white/10 dark:bg-black/10 rounded-xl p-3">
-                  <View className="flex-row items-center mb-1">
-                    <LogOut
-                      size={14}
-                      color="white"
-                      style={{ marginRight: 8 }}
-                    />
-                    <Text className="text-white/80 text-xs">Checked Out</Text>
-                  </View>
-                  <Text className="text-white font-mono font-bold">
-                    {format(new Date(todayAttendance.check_out_time), "h:mm a")}
+                <Text className="text-white text-sm font-black">
+                  {todayAttendance?.check_in_time
+                    ? format(new Date(todayAttendance.check_in_time), "HH:mm")
+                    : "--:--"}
+                </Text>
+              </View>
+
+              <View className="flex-1 bg-black/20 rounded-2xl p-3 border border-white/10">
+                <View className="flex-row items-center mb-1">
+                  <LogOut size={11} color="#fb923c" />
+                  <Text className="text-white/60 text-[9px] font-bold uppercase ml-1.5">
+                    Check Out
                   </Text>
                 </View>
-              )}
+                <Text className="text-white text-sm font-black">
+                  {todayAttendance?.check_out_time
+                    ? format(new Date(todayAttendance.check_out_time), "HH:mm")
+                    : "--:--"}
+                </Text>
+              </View>
+
+              <View className="flex-1 bg-black/20 rounded-2xl p-3 border border-white/10">
+                <View className="flex-row items-center mb-1">
+                  <Clock size={11} color="#60a5fa" />
+                  <Text className="text-white/60 text-[9px] font-bold uppercase ml-1.5">
+                    Status
+                  </Text>
+                </View>
+                <Text
+                  className="text-white text-[10px] font-black uppercase"
+                  numberOfLines={1}
+                >
+                  {todayAttendance?.check_out_time
+                    ? "Complete"
+                    : todayAttendance
+                      ? "Active"
+                      : "Pending"}
+                </Text>
+              </View>
             </View>
 
-            {/* Action Button */}
-            {!todayAttendance ? (
-              <TouchableOpacity
-                onPress={handleCheckInPress}
-                disabled={validatingLocation}
-                className="mt-6 bg-white/10 dark:bg-black/10 rounded-xl py-3 items-center flex-row justify-center"
-              >
-                {validatingLocation ? (
-                  <ActivityIndicator color="white" size="small" />
-                ) : (
-                  <>
-                    <MapPin
-                      size={18}
-                      color="white"
-                      style={{ marginRight: 8 }}
-                    />
-                    <Text className="text-white font-bold">CHECK IN NOW</Text>
-                  </>
-                )}
-              </TouchableOpacity>
-            ) : !todayAttendance.check_out_time ? (
-              <TouchableOpacity
-                onPress={handleCheckOutPress}
-                className="mt-6 bg-white/20 border border-white/40 rounded-xl py-3 items-center flex-row justify-center"
-              >
-                <LogOut size={18} color="white" style={{ marginRight: 8 }} />
-                <Text className="text-white font-bold">CHECK OUT</Text>
-              </TouchableOpacity>
-            ) : (
-              <TouchableOpacity
-                onPress={handleCheckInPress}
-                disabled={validatingLocation}
-                className="mt-6 bg-white/10 dark:bg-black/10 rounded-xl py-3 items-center flex-row justify-center"
-              >
-                {validatingLocation ? (
-                  <ActivityIndicator color="white" size="small" />
-                ) : (
-                  <>
-                    <MapPin
-                      size={18}
-                      color="white"
-                      style={{ marginRight: 8 }}
-                    />
-                    <Text className="text-white font-bold">CHECK IN AGAIN</Text>
-                  </>
-                )}
-              </TouchableOpacity>
-            )}
+            {/* Action Area */}
+            <View className="mt-6">
+              {!todayAttendance ? (
+                <TouchableOpacity
+                  onPress={handleCheckInPress}
+                  disabled={validatingLocation}
+                  activeOpacity={0.8}
+                  style={{
+                    backgroundColor: "white",
+                    borderRadius: 16,
+                    height: 50,
+                    flexDirection: "row",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    shadowColor: "#000",
+                    shadowOffset: { width: 0, height: 4 },
+                    shadowOpacity: 0.1,
+                    shadowRadius: 8,
+                  }}
+                >
+                  {validatingLocation ? (
+                    <ActivityIndicator color="#2563eb" size="small" />
+                  ) : (
+                    <>
+                      <MapPin size={18} color="#2563eb" strokeWidth={2.5} />
+                      <Text className="text-blue-700 font-black ml-2 tracking-tight">
+                        PUNCH IN NOW
+                      </Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+              ) : !todayAttendance.check_out_time ? (
+                <TouchableOpacity
+                  onPress={handleCheckOutPress}
+                  activeOpacity={0.8}
+                  style={{
+                    backgroundColor: "rgba(255,255,255,0.15)",
+                    borderRadius: 16,
+                    height: 50,
+                    flexDirection: "row",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    borderWidth: 1.5,
+                    borderColor: "rgba(255,255,255,0.4)",
+                  }}
+                >
+                  <LogOut size={18} color="white" strokeWidth={2.5} />
+                  <Text className="text-white font-black ml-2 tracking-tight">
+                    PUNCH OUT
+                  </Text>
+                </TouchableOpacity>
+              ) : (
+                <TouchableOpacity
+                  onPress={handleCheckInPress}
+                  disabled={validatingLocation}
+                  activeOpacity={0.8}
+                  style={{
+                    backgroundColor: "rgba(255,255,255,0.2)",
+                    borderRadius: 16,
+                    height: 50,
+                    flexDirection: "row",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    borderWidth: 1,
+                    borderColor: "rgba(255,255,255,0.3)",
+                  }}
+                >
+                  {validatingLocation ? (
+                    <ActivityIndicator color="white" size="small" />
+                  ) : (
+                    <>
+                      <MapPin size={18} color="white" strokeWidth={2.5} />
+                      <Text className="text-white font-black ml-2 tracking-tight">
+                        NEW PUNCH IN
+                      </Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+              )}
+            </View>
           </LinearGradient>
         </View>
 
@@ -1003,7 +1130,9 @@ export default function AttendancePage() {
                     onPress={() => setIsCheckoutModalVisible(false)}
                     className="flex-1 py-3 items-center"
                   >
-                    <Text className="text-slate-500 dark:text-slate-400 font-bold">Cancel</Text>
+                    <Text className="text-slate-500 dark:text-slate-400 font-bold">
+                      Cancel
+                    </Text>
                   </TouchableOpacity>
                   <TouchableOpacity
                     onPress={submitEarlyCheckout}
