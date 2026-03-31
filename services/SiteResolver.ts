@@ -17,8 +17,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { eq } from "drizzle-orm";
 import { db, userSites, tickets, pmInstances, siteLogs } from "@/database";
-import { supabase } from "./supabase";
-import { fetchWithTimeout } from "../utils/apiHelper";
+import { apiFetch as centralApiFetch } from "../utils/apiHelper";
 import { API_BASE_URL } from "../constants/api";
 import logger from "../utils/logger";
 
@@ -47,19 +46,7 @@ const SITE_CACHE_KEY = "@user_sites_cache_";
 // ─── Shared apiFetch helper ───────────────────────────────────────────────────
 
 async function apiFetch(endpoint: string, options: RequestInit = {}) {
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
-  const token = session?.access_token ?? null;
-
-  return fetchWithTimeout(`${API_BASE_URL}${endpoint}`, {
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...options.headers,
-    },
-  });
+  return centralApiFetch(`${API_BASE_URL}${endpoint}`, options);
 }
 
 // ─── SiteResolver implementation ─────────────────────────────────────────────

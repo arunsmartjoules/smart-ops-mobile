@@ -9,7 +9,7 @@ import {
   Platform,
   ActivityIndicator,
 } from "react-native";
-import { Mail, Zap, ArrowLeft, Lock, Eye, EyeOff } from "lucide-react-native";
+import { Mail, Zap, ArrowLeft, Lock, Eye, EyeOff, Hash } from "lucide-react-native";
 import { router } from "expo-router";
 import { showAlert } from "@/utils/alert";
 import { useAuth } from "@/contexts/AuthContext";
@@ -26,7 +26,7 @@ export default function ForgotPassword() {
   const [showConfirm, setShowConfirm] = useState(false);
   const [loading, setLoading] = useState(false);
 
-  const { sendPasswordResetCode, resetPasswordWithCode } = useAuth();
+  const { sendPasswordResetCode } = useAuth();
 
   const handleSendCode = async () => {
     if (!email) {
@@ -39,17 +39,23 @@ export default function ForgotPassword() {
     if (error) {
       showAlert("Error", error);
     } else {
-      setStep("code");
+      showAlert("Success", "A password reset link has been sent to your email", [
+        { text: "OK", onPress: () => router.replace("/sign-in") }
+      ]);
     }
   };
 
-  const handleVerifyCode = () => {
-    if (!code || code.length !== 6) {
-      showAlert("Error", "Please enter the 6-digit code");
+  const handleVerifyCode = async () => {
+    if (!code || code.length < 6) {
+      showAlert("Error", "Please enter the 6-digit code sent to your email");
       return;
     }
+    // With our backend flow, we don't verify the code separately; 
+    // we submit it along with the new password in the final step.
     setStep("password");
   };
+
+  const { resetPasswordWithCode } = useAuth();
 
   const handleResetPassword = async () => {
     if (!newPassword || !confirmPassword) {
@@ -64,16 +70,18 @@ export default function ForgotPassword() {
       showAlert("Error", "Passwords do not match");
       return;
     }
+    
     setLoading(true);
     const { error } = await resetPasswordWithCode(email, code, newPassword);
     setLoading(false);
+    
     if (error) {
-      showAlert("Error", error);
+      showAlert("Update Failed", error);
     } else {
       showAlert(
         "Password Updated",
-        "Your password has been changed. Please sign in.",
-        [{ text: "Sign In", onPress: () => router.replace("/sign-in") }],
+        "Your password has been changed successfully. Please sign in.",
+        [{ text: "Sign In", onPress: () => router.replace("/sign-in") }]
       );
     }
   };
@@ -122,7 +130,7 @@ export default function ForgotPassword() {
                     Reset Password
                   </Text>
                   <Text className="text-gray-600 dark:text-slate-400 text-center mb-6">
-                    Enter your email and we'll send you a verification code
+                    Enter your email and we'll send you a password reset link
                   </Text>
 
                   <View className="mb-6">
@@ -149,7 +157,7 @@ export default function ForgotPassword() {
                       <ActivityIndicator color="white" />
                     ) : (
                       <Text className="text-center text-white font-semibold">
-                        Send Verification Code
+                        Send Reset Link
                       </Text>
                     )}
                   </TouchableOpacity>
@@ -159,24 +167,27 @@ export default function ForgotPassword() {
               {step === "code" && (
                 <>
                   <Text className="text-2xl font-bold text-gray-800 dark:text-slate-50 text-center mb-2">
-                    Enter Code
+                    Verify Code
                   </Text>
-                  <Text className="text-gray-600 dark:text-slate-400 text-center mb-6">
-                    We sent a 6-digit code to{"\n"}
+                  <Text className="text-gray-600 dark:text-slate-400 text-center mb-6 leading-5 px-4">
+                    We've sent a code to {"\n"}
                     <Text className="font-semibold text-gray-800 dark:text-slate-200">
                       {email}
                     </Text>
                   </Text>
 
                   <View className="mb-6">
+                    <View className="absolute left-3 top-1/2 -translate-y-1/2 z-10">
+                      <Hash size={20} color="#dc2626" />
+                    </View>
                     <TextInput
-                      placeholder="6-digit code"
+                      placeholder="6-digit verification code"
                       value={code}
-                      onChangeText={(v) => setCode(v.replace(/\D/g, "").slice(0, 6))}
+                      onChangeText={(val) => setCode(val.replace(/[^0-9]/g, ""))}
                       keyboardType="number-pad"
                       maxLength={6}
                       editable={!loading}
-                      className="px-4 py-3 border border-gray-300 dark:border-slate-700 rounded-lg text-gray-800 dark:text-slate-50 dark:bg-slate-800 text-center text-2xl tracking-widest"
+                      className="pl-12 pr-4 py-3 border border-gray-300 dark:border-slate-700 rounded-lg text-gray-800 dark:text-slate-50 dark:bg-slate-800 text-center text-xl font-bold tracking-widest"
                     />
                   </View>
 
@@ -185,9 +196,13 @@ export default function ForgotPassword() {
                     disabled={loading}
                     className="bg-red-700 py-3 rounded-lg shadow-md active:scale-95 mb-4"
                   >
-                    <Text className="text-center text-white font-semibold">
-                      Continue
-                    </Text>
+                    {loading ? (
+                      <ActivityIndicator color="white" />
+                    ) : (
+                      <Text className="text-center text-white font-semibold">
+                        Verify Code
+                      </Text>
+                    )}
                   </TouchableOpacity>
 
                   <TouchableOpacity
@@ -196,7 +211,7 @@ export default function ForgotPassword() {
                     className="py-2"
                   >
                     <Text className="text-center text-red-600 font-medium">
-                      Resend code
+                      Didn't receive email? Resend
                     </Text>
                   </TouchableOpacity>
                 </>

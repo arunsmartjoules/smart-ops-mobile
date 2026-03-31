@@ -1,8 +1,8 @@
 /**
- * Database Service — Drizzle + PowerSync Edition
+ * Database Service — Drizzle + SQLite
  *
  * Provides typed CRUD helpers over the Drizzle schema. Write operations
- * go through PowerSync's tracked mutations and are automatically queued
+ * go through the offline queue and are automatically or manually synced
  * for upload via the SmartOpsConnector.
  */
 
@@ -38,6 +38,8 @@ export const TicketDB = {
     updateType: string,
     updateData: any,
   ): Promise<void> {
+    // 1. Update the local ticket in Drizzle/SQLite immediately for offline persistence
+    // Updates both the offline queue AND the local ticket via Drizzle/SQLite
     await db.insert(ticketUpdates).values({
       id: uuidv4(),
       ticket_id: ticketId,
@@ -52,6 +54,7 @@ export const TicketDB = {
 
 export const AreaDB = {
   async getBySiteId(siteCode: string) {
+    // Fallback to local Drizzle-synced areas table
     return db.select().from(areas).where(eq(areas.site_code, siteCode));
   },
 };

@@ -9,14 +9,14 @@ import {
   useColorScheme,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { router } from "expo-router";
+import { router, useFocusEffect } from "expo-router";
 import { useAuth } from "@/contexts/AuthContext";
+import { useAutoSync } from "@/hooks/useAutoSync";
 import NetInfo from "@react-native-community/netinfo";
 import SiteLogService from "@/services/SiteLogService";
 import { SiteConfigService } from "@/services/SiteConfigService";
 import LogFilterModal from "@/components/sitelogs/LogFilterModal";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useFocusEffect } from "@react-navigation/native";
 import {
   Filter,
   MapPin,
@@ -133,20 +133,11 @@ export default function SiteLogs() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [siteCode, fromDate, toDate]);
 
-  useFocusEffect(
-    useCallback(() => {
-      // Don't re-fetch on focus if we synced within the last 30 seconds
-      // This prevents count flickering when returning from a log entry screen
-      if (siteCode) {
-        const lastSync = lastSyncRef.current[siteCode] || 0;
-        const age = Date.now() - lastSync;
-        if (age > 30_000) {
-          fetchLogsRef.current?.(siteCode);
-        }
-        // Within 30s: keep existing counts — no refresh to avoid flicker from auto-syncs
-      }
-    }, [siteCode]),
-  );
+  // Auto-sync for Site Logs (Handles Focus, AppState, and 60s Polling)
+  useAutoSync(() => {
+    if (siteCode) fetchLogs(siteCode);
+  }, [siteCode, fromDate, toDate]);
+
 
   const onRefresh = () => {
     refreshingRef.current = true;

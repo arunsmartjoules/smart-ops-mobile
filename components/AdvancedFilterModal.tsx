@@ -16,6 +16,7 @@ import {
   isValid,
   parseISO,
   startOfWeek,
+  endOfWeek,
   startOfMonth,
   startOfYear,
   subMonths,
@@ -63,7 +64,7 @@ const getQuickRangeDates = (
     case "today":
       return { from: fmt(today), to: fmt(today) };
     case "this_week":
-      return { from: fmt(startOfWeek(today, { weekStartsOn: 1 })), to: fmt(today) };
+      return { from: fmt(startOfWeek(today, { weekStartsOn: 1 })), to: fmt(endOfWeek(today, { weekStartsOn: 1 })) };
     case "this_month":
       return { from: fmt(startOfMonth(today)), to: fmt(today) };
     case "last_month": {
@@ -137,6 +138,20 @@ const AdvancedFilterModal = ({
   const [selectedQuickRange, setSelectedQuickRange] = React.useState<
     string | null
   >(null);
+  
+  // Infer selected range from dates
+  React.useEffect(() => {
+    if (tempFromDate && tempToDate) {
+      for (const range of QUICK_RANGES) {
+        const dates = getQuickRangeDates(range.key);
+        if (dates && dates.from === tempFromDate && dates.to === tempToDate) {
+          setSelectedQuickRange(range.key);
+          return;
+        }
+      }
+    }
+    setSelectedQuickRange(null);
+  }, [tempFromDate, tempToDate]);
 
   // --- Colors based on theme ---
   const bg = isDark ? "#0f172a" : "#ffffff";

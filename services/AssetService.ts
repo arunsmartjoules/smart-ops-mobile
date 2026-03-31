@@ -1,5 +1,4 @@
-import { supabase } from "./supabase";
-import { fetchWithTimeout } from "../utils/apiHelper";
+import { apiFetch as centralApiFetch } from "../utils/apiHelper";
 import { API_BASE_URL } from "../constants/api";
 import logger from "../utils/logger";
 
@@ -7,28 +6,7 @@ const BACKEND_URL = API_BASE_URL;
 
 // Helper for API requests with auth
 const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
-  const { data: { session } } = await supabase.auth.getSession();
-  const token = session?.access_token ?? null;
-
-  const headers = {
-    "Content-Type": "application/json",
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    ...options.headers,
-  };
-
-  try {
-    const response = await fetchWithTimeout(`${BACKEND_URL}${endpoint}`, {
-      ...options,
-      headers,
-    });
-    return response;
-  } catch (error) {
-    logger.error(`Asset API Fetch Error: ${endpoint}`, {
-      module: "ASSET_SERVICE",
-      error: error instanceof Error ? error.message : String(error),
-    });
-    throw error;
-  }
+  return centralApiFetch(`${BACKEND_URL}${endpoint}`, options);
 };
 
 export const AssetService = {
@@ -38,19 +16,18 @@ export const AssetService = {
    */
   async getAssetByQrId(
     qrId: string,
-    siteCode: string,
+    _siteCode: string, // Kept for parameter parity
   ): Promise<{ asset_name: string; site_id: string } | null> {
     try {
-      const { data, error } = await supabase
-        .from("assets")
-        .select("asset_name, site_id")
-        .eq("qr_id", qrId)
-        .maybeSingle();
+      const response = await apiFetch(`/api/assets/qr/${encodeURIComponent(qrId)}`);
+      
+      if (!response.ok) {
+        if (response.status === 404) return null;
+        throw new Error(`Asset lookup failed with status: ${response.status}`);
+      }
 
-      if (error) throw error;
-      if (!data) return null;
-
-      return data as { asset_name: string; site_id: string };
+      const result = await response.json();
+      return result.success ? result.data : null;
     } catch (error: any) {
       logger.error("Error fetching asset by QR ID", {
         module: "ASSET_SERVICE",

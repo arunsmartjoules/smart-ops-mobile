@@ -3,28 +3,15 @@ import { v4 as uuidv4 } from "uuid";
 import { db, pmInstances } from "@/database";
 import logger from "../utils/logger";
 import { authEvents } from "../utils/authEvents";
-import { supabase } from "./supabase";
-import { fetchWithTimeout } from "../utils/apiHelper";
+import { apiFetch as centralApiFetch } from "../utils/apiHelper";
 import { API_BASE_URL } from "../constants/api";
 
 const BACKEND_URL = API_BASE_URL;
 
 // Helper for API requests with auth and retry logic
 const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
-  const { data: { session } } = await supabase.auth.getSession();
-  let token = session?.access_token ?? null;
-
-  const getHeaders = (t: string | null) => ({
-    "Content-Type": "application/json",
-    ...(t ? { Authorization: `Bearer ${t}` } : {}),
-    ...options.headers,
-  });
-
   try {
-    let response = await fetchWithTimeout(`${BACKEND_URL}${endpoint}`, {
-      ...options,
-      headers: getHeaders(token),
-    });
+    let response = await centralApiFetch(`${BACKEND_URL}${endpoint}`, options);
 
     if (response.status === 401) {
       // Silent sign-out: avoid intrusive alerts for token issues

@@ -3,19 +3,11 @@ import { db, areas, siteLogs, chillerReadings, logMaster } from "../database";
 import logger from "../utils/logger";
 import { startOfDay, endOfDay, format, addDays } from "date-fns";
 import NetInfo from "@react-native-community/netinfo";
-import { supabase } from "./supabase";
-import { fetchWithTimeout } from "../utils/apiHelper";
+import { apiFetch as centralApiFetch } from "../utils/apiHelper";
 import { API_BASE_URL } from "../constants/api";
 
 const _apiFetch = async (endpoint: string) => {
-  const { data: { session } } = await supabase.auth.getSession();
-  const token = session?.access_token ?? null;
-  return fetchWithTimeout(`${API_BASE_URL}${endpoint}`, {
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-  });
+  return centralApiFetch(`${API_BASE_URL}${endpoint}`);
 };
 
 export interface TaskItem {

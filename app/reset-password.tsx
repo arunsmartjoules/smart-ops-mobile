@@ -12,7 +12,7 @@ import {
 import { Lock, Zap, Eye, EyeOff } from "lucide-react-native";
 import { router } from "expo-router";
 import { showAlert } from "@/utils/alert";
-import { supabase } from "@/services/supabase";
+import { useAuth } from "@/contexts/AuthContext";
 
 export default function ResetPassword() {
   const [newPassword, setNewPassword] = useState("");
@@ -21,6 +21,7 @@ export default function ResetPassword() {
   const [showConfirm, setShowConfirm] = useState(false);
   const [loading, setLoading] = useState(false);
 
+  const { changePassword } = useAuth();
   const handleReset = async () => {
     if (!newPassword || !confirmPassword) {
       showAlert("Error", "Please fill in all fields");
@@ -36,11 +37,11 @@ export default function ResetPassword() {
     }
 
     setLoading(true);
-    const { error } = await supabase.auth.updateUser({ password: newPassword });
+    const { error } = await changePassword(newPassword);
     setLoading(false);
 
     if (error) {
-      showAlert("Error", error.message);
+      showAlert("Error", error);
     } else {
       showAlert(
         "✅ Password Updated",

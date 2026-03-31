@@ -2,7 +2,7 @@
  * SyncManager — Simple Cache Manager
  *
  * No sync engine. Data is cached locally via API fetches.
- * This is a lightweight replacement for the PowerSync-based SyncManager.
+ * This is a lightweight replacement for the SQLite-based SyncManager.
  */
 
 import NetInfo from "@react-native-community/netinfo";

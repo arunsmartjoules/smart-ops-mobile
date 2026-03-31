@@ -1,3 +1,4 @@
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import logger from "./logger";
 
 /**
@@ -27,6 +28,32 @@ export const fetchWithTimeout = async (
     throw error;
   } finally {
     clearTimeout(id);
+  }
+};
+
+/**
+ * Centralized API fetch helper that handles Firebase authentication.
+ * Automatically attaches the 'firebase-token' from AsyncStorage.
+ */
+export const apiFetch = async (
+  url: string,
+  options: RequestInit = {},
+  customTimeout?: number
+): Promise<Response> => {
+  try {
+    const token = await AsyncStorage.getItem("firebase-token");
+    
+    return fetchWithTimeout(url, {
+      ...options,
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...options.headers,
+      },
+    }, customTimeout);
+  } catch (error) {
+    logger.error(`apiFetch failure: ${url}`, { error });
+    throw error;
   }
 };
 

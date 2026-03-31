@@ -45,6 +45,7 @@ import {
 } from "lucide-react-native";
 import { router, useFocusEffect } from "expo-router";
 import { useAuth } from "@/contexts/AuthContext";
+import { useAutoSync } from "@/hooks/useAutoSync";
 import AttendanceService, {
   type AttendanceLog,
   getISTDateString,
@@ -961,16 +962,8 @@ export default function Dashboard() {
 
   const lastFetchRef = useRef<number>(0);
 
-  useFocusEffect(
-    useCallback(() => {
-      const now = Date.now();
-      // Only refetch if data is older than 2 minutes
-      if (now - lastFetchRef.current > 2 * 60 * 1000) {
-        lastFetchRef.current = now;
-        fetchData();
-      }
-    }, [fetchData]),
-  );
+  // Unified Auto-Sync for Dashboard (Handles Focus, AppState, and 60s Polling)
+  useAutoSync(fetchData, [user?.id]);
 
   const onRefresh = React.useCallback(async () => {
     setRefreshing(true);

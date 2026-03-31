@@ -1,5 +1,7 @@
 import React, { useState, useCallback, useRef, useEffect } from "react";
 import logger from "@/utils/logger";
+import { auth } from "@/services/firebase";
+import { EmailAuthProvider, reauthenticateWithCredential, updatePassword } from "firebase/auth";
 
 import {
   View,
@@ -69,6 +71,20 @@ export default function PrivacySecurity() {
 
     setIsLoading(true);
     try {
+      // 1. First explicitly change password in Firebase Auth natively
+      // This is crucial because mobile uses Firebase strictly, and backend is out-of-sync
+      const user = auth.currentUser;
+      if (user && user.email) {
+        try {
+          const credential = EmailAuthProvider.credential(user.email, currentPassword);
+          await reauthenticateWithCredential(user, credential);
+          await updatePassword(user, newPassword);
+        } catch (firebaseErr: any) {
+          throw new Error("Firebase Authentication failed: " + (firebaseErr.message || "Incorrect current password"));
+        }
+      }
+
+      // 2. Sync new hashed password to Postgres backend
       const response = await fetch(`${API_URL}/api/auth/change-password`, {
         method: "POST",
         headers: {
@@ -144,7 +160,7 @@ export default function PrivacySecurity() {
             <ArrowLeft size={18} color="#64748b" />
           </TouchableOpacity>
           <Text className="text-slate-900 dark:text-slate-50 text-xl font-bold">
-            Privacy & Security
+            Change Password
           </Text>
         </View>
 

@@ -108,7 +108,7 @@ jest.mock("../services/SyncManager", () => ({
   syncManager: { triggerSync: jest.fn().mockResolvedValue(undefined) },
 }));
 
-// Minimal database collection stub (PowerSync/Drizzle)
+// Minimal database collection stub (SQLite/Drizzle)
 const makeCollection = () => ({
   query: jest.fn(() => ({
     fetch: jest.fn().mockResolvedValue([]),

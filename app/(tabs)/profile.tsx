@@ -102,7 +102,7 @@ export default function Profile() {
 
   const menuItems = [
     { icon: Bell, label: "Notifications", color: "#3b82f6" },
-    { icon: Shield, label: "Privacy & Security", color: "#22c55e" },
+    { icon: Shield, label: "Change Password", color: "#22c55e" },
     { icon: Settings, label: "Offline & Sync", color: "#64748b" },
     {
       icon: theme === "light" ? Sun : theme === "dark" ? Moon : Monitor,
@@ -114,7 +114,7 @@ export default function Profile() {
       icon: Info,
       label: "App Version",
       color: "#8b5cf6",
-      value: "1.0.27 (Beta)",
+      value: "1.0.3 (Beta)",
     },
     {
       icon: ArrowUpCircle,
@@ -246,7 +246,7 @@ export default function Profile() {
                 onPress={() => {
                   if (item.label === "Notifications") {
                     router.push("/notification-settings");
-                  } else if (item.label === "Privacy & Security") {
+                  } else if (item.label === "Change Password") {
                     router.push("/privacy-security");
                   } else if (item.label === "Offline & Sync") {
                     router.push("/app-settings");

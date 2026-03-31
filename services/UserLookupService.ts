@@ -5,8 +5,7 @@
  * Caches results in memory to avoid repeated lookups.
  */
 
-import { supabase } from "./supabase";
-import { fetchWithTimeout } from "../utils/apiHelper";
+import { apiFetch as centralApiFetch } from "../utils/apiHelper";
 import { API_BASE_URL } from "../constants/api";
 
 const nameCache = new Map<string, string>();
@@ -25,18 +24,9 @@ const UserLookupService = {
     }
 
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      const token = session?.access_token ?? null;
-      if (!token) return employeeCode;
-
-      const res = await fetchWithTimeout(
+      const res = await centralApiFetch(
         `${API_BASE_URL}/api/users?search=${encodeURIComponent(employeeCode)}&limit=1`,
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-            "Content-Type": "application/json",
-          },
-        },
+        {},
         10000,
       );
 

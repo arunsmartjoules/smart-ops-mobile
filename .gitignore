@@ -44,8 +44,6 @@ app-example
 /android
 
 # Native sensitive configurational files
-google-services.json
-GoogleService-Info.plist
 
 # Log files
 *.log

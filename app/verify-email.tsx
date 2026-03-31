@@ -11,13 +11,16 @@ import {
 } from "react-native";
 import { Zap, Mail } from "lucide-react-native";
 import { router, useLocalSearchParams } from "expo-router";
-import { supabase } from "@/services/supabase";
+import { useAuth } from "@/contexts/AuthContext";
 import { showAlert } from "@/utils/alert";
 
 export default function VerifyEmail() {
-  const { email } = useLocalSearchParams<{ email: string }>();
   const [otp, setOtp] = useState("");
   const [loading, setLoading] = useState(false);
+
+  const { verifySignupCode, signIn } = useAuth();
+  const params = useLocalSearchParams<{ email: string, password?: string }>();
+  const email = params.email;
 
   const handleVerify = async () => {
     if (!otp || otp.length < 6) {
@@ -26,27 +29,33 @@ export default function VerifyEmail() {
     }
 
     setLoading(true);
-    const { error } = await supabase.auth.verifyOtp({
-      email,
-      token: otp,
-      type: "signup",
-    });
+    const { error } = await verifySignupCode(email, otp);
     setLoading(false);
 
     if (error) {
-      showAlert("Verification Failed", error.message || "Invalid or expired code. Please try again.");
+      showAlert("Verification Failed", error || "Invalid or expired code.");
+    } else {
+      // If the parent screen passed a password, we can auto-login
+      if (params.password) {
+        setLoading(true);
+        await signIn(email, params.password);
+        setLoading(false);
+      } else {
+        showAlert("Success", "Email verified! Please sign in.", [
+          { text: "Sign In", onPress: () => router.replace("/sign-in") }
+        ]);
+      }
     }
-    // On success, onAuthStateChange in AuthContext fires and AuthGuard
-    // redirects to dashboard automatically
   };
 
+  const { sendVerificationCode } = useAuth();
   const handleResend = async () => {
     setLoading(true);
-    const { error } = await supabase.auth.resend({ type: "signup", email });
+    const { error } = await sendVerificationCode(email);
     setLoading(false);
 
     if (error) {
-      showAlert("Resend Failed", error.message || "Could not resend code. Please try again.");
+      showAlert("Resend Failed", error || "Could not resend code.");
     } else {
       showAlert("Code Sent", "A new verification code has been sent to your email.");
     }

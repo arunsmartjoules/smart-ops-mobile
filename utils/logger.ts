@@ -153,7 +153,7 @@ export const logger = {
   ) {
     void (async () => {
       try {
-        const token = await AsyncStorage.getItem("auth_token");
+      const token = await AsyncStorage.getItem("firebase-token");
         if (!token) return;
 
         const context = await this.getContext();
@@ -201,7 +201,7 @@ export const logger = {
    */
   async flushActivityQueue(): Promise<void> {
     try {
-      const token = await AsyncStorage.getItem("auth_token");
+      const token = await AsyncStorage.getItem("firebase-token");
       if (!token) return;
 
       const queueRaw = await AsyncStorage.getItem("@activity_log_queue");
@@ -242,7 +242,7 @@ export const logger = {
     metadata: any,
   ): Promise<void> {
     try {
-      const token = await AsyncStorage.getItem("auth_token");
+      const token = await AsyncStorage.getItem("firebase-token");
       if (!token) return;
       fetch(`${BACKEND_URL}/api/logs`, {
         method: "POST",

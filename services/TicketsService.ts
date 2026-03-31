@@ -1,8 +1,7 @@
 import logger from "../utils/logger";
 import { authEvents } from "../utils/authEvents";
 import { areas, categories as categoriesTable } from "../database";
-import { supabase } from "./supabase";
-import { fetchWithTimeout } from "../utils/apiHelper";
+import { apiFetch as centralApiFetch } from "../utils/apiHelper";
 import { db, tickets } from "../database";
 import { eq } from "drizzle-orm";
 import { StorageService } from "./StorageService";
@@ -44,49 +43,36 @@ const toBoundaryMs = (value: string | undefined, endOfDay = false) => {
 
 // Helper for API requests with auth and retry logic
 const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
-  // Get valid token from Supabase session (auto-refreshed by SDK)
-  const { data: { session } } = await supabase.auth.getSession();
-  let token = session?.access_token ?? null;
-
-  const getHeaders = (t: string | null) => ({
-    "Content-Type": "application/json",
-    ...(t ? { Authorization: `Bearer ${t}` } : {}),
-    ...options.headers,
-  });
-
   try {
-    let response = await fetchWithTimeout(`${BACKEND_URL}${endpoint}`, {
-      ...options,
-      headers: getHeaders(token),
-    });
+    const result = await centralApiFetch(`${BACKEND_URL}${endpoint}`, options);
 
-    const result = await response.json();
+    const data = await result.json();
 
-    if (!response.ok) {
-      if (response.status >= 500) {
-        logger.error(`API Error (${response.status}) on ${endpoint}`, {
+    if (!result.ok) {
+      if (result.status >= 500) {
+        logger.error(`API Error (${result.status}) on ${endpoint}`, {
           module: "TICKETS_SERVICE",
-          error: result.error,
-          status: response.status,
+          error: data.error,
+          status: result.status,
           endpoint,
         });
       } else {
-        logger.warn(`API Warning (${response.status}) on ${endpoint}`, {
+        logger.warn(`API Warning (${result.status}) on ${endpoint}`, {
           module: "TICKETS_SERVICE",
-          error: result.error,
-          status: response.status,
+          error: data.error,
+          status: result.status,
           endpoint,
         });
       }
 
-      if (response.status === 401) {
+      if (result.status === 401) {
         // Silent sign-out: avoid intrusive alerts for token issues
-        result.error = "No token provided";
+        data.error = "No token provided";
         authEvents.emitUnauthorized();
       }
     }
 
-    return result;
+    return data;
   } catch (error: any) {
     logger.warn(`Network Error on ${endpoint}`, {
       module: "TICKETS_SERVICE",
@@ -280,13 +266,13 @@ export const TicketsService = {
 
   /**
    * Update ticket status and remarks
-   * Updates both the offline queue AND the local ticket via Drizzle/PowerSync
+   * Updates both the offline queue AND the local ticket via Drizzle/SQLite
    */
   async updateStatus(id: string, status: string, remarks?: string) {
     try {
       let serverId = id;
 
-      // 1. Update the local ticket in Drizzle/PowerSync immediately for offline persistence
+      // 1. Update the local ticket in Drizzle/SQLite immediately for offline persistence
       // Try to find ticket by id
       let localRows = await db
         .select()
@@ -343,13 +329,13 @@ export const TicketsService = {
 
   /**
    * Update ticket details (Area/Asset, Category, Status)
-   * Updates both the offline queue AND the local ticket via Drizzle/PowerSync
+   * Updates both the offline queue AND the local ticket via Drizzle/SQLite
    */
   async updateTicket(id: string, data: any) {
     try {
       let serverId = id;
 
-      // 1. Update the local ticket in Drizzle/PowerSync immediately for offline persistence
+      // 1. Update the local ticket in Drizzle/SQLite immediately for offline persistence
       let localRows = await db
         .select()
         .from(tickets)
@@ -417,7 +403,7 @@ export const TicketsService = {
       return result;
     }
     if (result.isNetworkError) {
-      // Fallback to local PowerSync-synced areas table
+      // Fallback to local SQLite-synced areas table
       const cached = await db.select().from(areas).where(eq(areas.site_code, siteCode)).catch(() => []);
       if (cached.length > 0) {
         return { success: true, data: cached, isFromCache: true };
@@ -447,7 +433,7 @@ export const TicketsService = {
       return result;
     }
     if (result.isNetworkError) {
-      // Fallback to local PowerSync-synced categories table
+      // Fallback to local SQLite-synced categories table
       const cached = await db.select().from(categoriesTable).catch(() => []);
       if (cached.length > 0) {
         return { success: true, data: cached, isFromCache: true };

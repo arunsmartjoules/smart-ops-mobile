@@ -1,10 +1,24 @@
 import React, { useRef, useState } from "react";
-import { View, Modal, Text, TouchableOpacity, StyleSheet, useColorScheme, Alert } from "react-native";
-import SignatureScreen from "react-native-signature-canvas";
+import {
+  View,
+  Modal,
+  Text,
+  TouchableOpacity,
+  StyleSheet,
+  useColorScheme,
+  Alert,
+} from "react-native";
 import { X, Check } from "lucide-react-native";
+import Svg, { Path } from "react-native-svg";
+import {
+  PanGestureHandler,
+  GestureHandlerRootView,
+  State,
+} from "react-native-gesture-handler";
+import ViewShot from "react-native-view-shot";
 
 interface SignaturePadProps {
-  onOK: (signature: string) => void;
+  onOK: (signatureUri: string) => void;
   onClear?: () => void;
   description?: string;
   trigger?: (open: () => void) => React.ReactNode;
@@ -20,33 +34,62 @@ export default function SignaturePad({
   standalone = false,
   okText = "Save Signature",
 }: SignaturePadProps) {
-  const ref = useRef<any>(null);
-  const [visible, setVisible] = useState(false);
-  const [signature, setSignature] = useState<string | null>(null);
   const isDark = useColorScheme() === "dark";
+  const [visible, setVisible] = useState(false);
+  const [signatureDone, setSignatureDone] = useState(false);
 
-  const handleOK = (signature: string) => {
-    onOK(signature);
-    setSignature(signature);
-    if (!standalone) {
-      setVisible(false);
-    }
-  };
+  // SVG drawing state
+  const [paths, setPaths] = useState<string[]>([]);
+  const [currentPath, setCurrentPath] = useState<string>("");
+
+  const viewShotRef = useRef<ViewShot>(null);
 
   const handleClear = () => {
-    if (ref.current) {
-      ref.current.clearSignature();
-    }
+    setPaths([]);
+    setCurrentPath("");
+    setSignatureDone(false);
     if (onClear) onClear();
-    setSignature(null);
   };
 
-  const handleEmpty = () => {
-    Alert.alert("Signature Required", "Please provide a signature before saving.");
+  const handleEnd = async () => {
+    if (paths.length === 0 && !currentPath) {
+      Alert.alert("Signature Required", "Please provide a signature before saving.");
+      return;
+    }
+
+    try {
+      if (viewShotRef.current && viewShotRef.current.capture) {
+        // Capture the SVG view into a temporary JPG file
+        const uri = await viewShotRef.current.capture();
+        setSignatureDone(true);
+        onOK(uri);
+
+        if (!standalone) {
+          setVisible(false);
+        }
+      }
+    } catch (error) {
+      console.error("Signature capture failed", error);
+      Alert.alert("Error", "Failed to capture signature image.");
+    }
   };
 
-  const handleEnd = () => {
-    ref.current.readSignature();
+  const onGestureEvent = (event: any) => {
+    const { x, y } = event.nativeEvent;
+    if (currentPath === "") {
+      setCurrentPath(`M${x},${y}`);
+    } else {
+      setCurrentPath(`${currentPath} L${x},${y}`);
+    }
+  };
+
+  const onHandlerStateChange = (event: any) => {
+    if (event.nativeEvent.state === State.END) {
+      if (currentPath) {
+        setPaths([...paths, currentPath]);
+        setCurrentPath("");
+      }
+    }
   };
 
   const renderContent = () => (
@@ -68,24 +111,54 @@ export default function SignaturePad({
         </View>
       )}
 
+      {/* Warning Text */}
+      <View className="px-5 py-2">
+        <Text className="text-slate-500 dark:text-slate-400 text-sm">
+          {description}
+        </Text>
+      </View>
+
       {/* Canvas */}
-      <View className={`flex-1 ${isDark ? "bg-slate-900" : "bg-white"}`}>
-        <SignatureScreen
-          ref={ref}
-          onOK={handleOK}
-          onEmpty={handleEmpty}
-          onClear={handleClear}
-          autoClear={false}
-          descriptionText={description}
-          backgroundColor={isDark ? "#1e293b" : "#ffffff"}
-          penColor={isDark ? "#ffffff" : "black"}
-          androidHardwareAccelerationDisabled={true}
-          webStyle={`
-              .m-signature-pad--footer {display: none; margin: 0px;}
-              .m-signature-pad {box-shadow: none; border: none; margin-left: 0px; margin-top: 0px;}
-              body,html {width: 100%; height: 100%;}
-          `}
-        />
+      <View className={`flex-1 m-4 rounded-xl overflow-hidden border ${isDark ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-white"}`}>
+        <GestureHandlerRootView style={styles.gestureRoot}>
+          <PanGestureHandler
+            onGestureEvent={onGestureEvent}
+            onHandlerStateChange={onHandlerStateChange}
+            minDist={0} // Important to catch immediate taps
+          >
+            <View style={styles.flexView}>
+              <ViewShot 
+                ref={viewShotRef} 
+                options={{ format: "jpg", quality: 0.8 }} 
+                style={[styles.flexView, { backgroundColor: isDark ? "#1e293b" : "#ffffff" }]}
+              >
+                <Svg style={StyleSheet.absoluteFill}>
+                  {paths.map((p, i) => (
+                    <Path
+                      key={i}
+                      d={p}
+                      stroke={isDark ? "#ffffff" : "#000000"}
+                      strokeWidth={3}
+                      fill="none"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  ))}
+                  {currentPath ? (
+                    <Path
+                      d={currentPath}
+                      stroke={isDark ? "#ffffff" : "#000000"}
+                      strokeWidth={3}
+                      fill="none"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  ) : null}
+                </Svg>
+              </ViewShot>
+            </View>
+          </PanGestureHandler>
+        </GestureHandlerRootView>
       </View>
 
       {/* Footer */}
@@ -122,7 +195,7 @@ export default function SignaturePad({
           className="bg-slate-100 dark:bg-slate-800 p-4 rounded-lg flex-row items-center justify-between border border-slate-200 dark:border-slate-700"
         >
           <Text className="text-slate-500 font-bold">{description}</Text>
-          {signature && <Check size={16} color="#16a34a" />}
+          {signatureDone && <Check size={16} color="#16a34a" />}
         </TouchableOpacity>
       )}
 
@@ -139,3 +212,12 @@ export default function SignaturePad({
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  gestureRoot: {
+    flex: 1,
+  },
+  flexView: {
+    flex: 1,
+  },
+});

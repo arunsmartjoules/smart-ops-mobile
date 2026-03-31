@@ -1,8 +1,7 @@
 import NetInfo from "@react-native-community/netinfo";
 import logger from "../utils/logger";
 import { authEvents } from "../utils/authEvents";
-import { supabase } from "./supabase";
-import { fetchWithTimeout } from "../utils/apiHelper";
+import { apiFetch as centralApiFetch } from "../utils/apiHelper";
 import { API_BASE_URL } from "../constants/api";
 import { cacheManager } from "./CacheManager";
 import { siteResolver } from "./SiteResolver";
@@ -50,23 +49,10 @@ const isAttendanceForToday = (log: AttendanceLog | null | undefined) => {
 
 // Helper for API requests with auth and retry logic
 const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
-  // Get valid token from Supabase session (auto-refreshed by SDK)
-  const { data: { session } } = await supabase.auth.getSession();
-  let token = session?.access_token ?? null;
-
-  const getHeaders = (t: string | null) => ({
-    "Content-Type": "application/json",
-    ...(t ? { Authorization: `Bearer ${t}` } : {}),
-    ...options.headers,
-  });
-
   const fullUrl = `${BACKEND_URL}${endpoint}`;
   try {
     logger.debug(`API Request: ${fullUrl}`, { module: "ATTENDANCE_SERVICE" });
-    let response = await fetchWithTimeout(fullUrl, {
-      ...options,
-      headers: getHeaders(token),
-    });
+    const response = await centralApiFetch(fullUrl, options);
 
     const result = await response.json();
 

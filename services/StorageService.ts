@@ -1,16 +1,20 @@
-import { supabase } from "./supabase";
+import { storage } from "./firebase";
+import { ref, uploadString, getDownloadURL } from "firebase/storage";
 import * as FileSystem from "expo-file-system/legacy";
-import { decode } from "base64-arraybuffer";
 import logger from "@/utils/logger";
 
 export const StorageService = {
+  /**
+   * Upload a file to Firebase Storage.
+   * Returns the public download URL or null on failure.
+   */
   async uploadFile(
-    bucketName: string,
+    bucketName: string, // Kept for compatibility, Firebase uses the initialized bucket.
     filePath: string,
     fileUri: string,
   ): Promise<string | null> {
     try {
-      logger.info(`Uploading file to ${bucketName}/${filePath}`, {
+      logger.info(`Uploading file to Firebase Storage: ${filePath}`, {
         module: "STORAGE_SERVICE",
       });
 
@@ -19,26 +23,20 @@ export const StorageService = {
         encoding: "base64",
       });
 
-      // Upload to Supabase
-      const { data, error } = await supabase.storage
-        .from(bucketName)
-        .upload(filePath, decode(base64), {
-          contentType: "image/jpeg",
-          upsert: true,
-        });
+      // Create storage reference
+      const storageRef = ref(storage, filePath);
 
-      if (error) {
-        throw error;
-      }
+      // Upload base64 string
+      await uploadString(storageRef, base64, "base64", {
+        contentType: "image/jpeg",
+      });
 
-      // Get Public URL
-      const {
-        data: { publicUrl },
-      } = supabase.storage.from(bucketName).getPublicUrl(filePath);
+      // Get Download URL
+      const publicUrl = await getDownloadURL(storageRef);
 
       return publicUrl;
     } catch (error: any) {
-      logger.error("File upload failed", {
+      logger.error("Firebase Storage upload failed", {
         module: "STORAGE_SERVICE",
         error: error.message,
       });
@@ -58,3 +56,5 @@ export const StorageService = {
     return this.uploadFile(bucketName, remotePath, localUri);
   },
 };
+
+export default StorageService;

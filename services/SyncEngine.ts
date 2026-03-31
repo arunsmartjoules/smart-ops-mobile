@@ -15,9 +15,9 @@ import { startOfDay, endOfDay, addDays } from "date-fns";
 import { AppState, AppStateStatus } from "react-native";
 import * as TaskManager from "expo-task-manager";
 import * as BackgroundFetch from "expo-background-fetch";
-import { supabase } from "./supabase";
-import { fetchWithTimeout } from "../utils/apiHelper";
+import { apiFetch as centralApiFetch } from "../utils/apiHelper";
 import { API_BASE_URL } from "../constants/api";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import cacheManager, { DataDomain } from "./CacheManager";
 import { SiteLogService } from "./SiteLogService";
 import PMService from "./PMService";
@@ -33,18 +33,18 @@ export const BACKGROUND_SYNC_TASK = "BACKGROUND_SYNC_TASK";
  */
 TaskManager.defineTask(BACKGROUND_SYNC_TASK, async () => {
   try {
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
+    const token = await AsyncStorage.getItem("firebase-token");
+    const userJson = await AsyncStorage.getItem("auth_user");
+    const user = userJson ? JSON.parse(userJson) : null;
 
-    if (!session?.user?.id) {
-      logger.debug("BackgroundSync: skipping task — no active session", {
+    if (!token || !user?.user_id) {
+      logger.debug("BackgroundSync: skipping task — no active session or token", {
         module: "SYNC_ENGINE",
       });
       return BackgroundFetch.BackgroundFetchResult.NoData;
     }
 
-    const userId = session.user.id;
+    const userId = user.user_id;
     logger.info("BackgroundSync: task triggered", {
       module: "SYNC_ENGINE",
       userId,
@@ -110,20 +110,7 @@ const TTL = {
 // ─── Shared apiFetch helper ───────────────────────────────────────────────────
 
 const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
-  const token = session?.access_token ?? null;
-
-  const response = await fetchWithTimeout(`${API_BASE_URL}${endpoint}`, {
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...options.headers,
-    },
-  });
-  return response;
+  return centralApiFetch(`${API_BASE_URL}${endpoint}`, options);
 };
 
 // ─── SyncEngine implementation ────────────────────────────────────────────────
@@ -253,7 +240,7 @@ class SyncEngineImpl implements SyncEngine {
         toDate.setDate(toDate.getDate() + 60);
 
         for (const siteCode of siteCodes) {
-          await PMService.fetchFromAPI(siteCode, fromDate, toDate, 500);
+          await PMService.fetchFromAPI(siteCode, 500, 0, fromDate, toDate);
         }
       },
     },

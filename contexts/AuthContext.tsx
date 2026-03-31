@@ -13,7 +13,16 @@ import {
   unregisterPushToken,
 } from "../services/NotificationService";
 import logger from "../utils/logger";
-import { supabase } from "../services/supabase";
+import { auth } from "../services/firebase";
+import { 
+  signInWithEmailAndPassword, 
+  createUserWithEmailAndPassword, 
+  signOut as firebaseSignOut, 
+  sendPasswordResetEmail,
+  onIdTokenChanged,
+  updateProfile,
+  User as FirebaseUser
+} from "firebase/auth";
 import { syncEngine } from "../services/SyncEngine";
 import siteResolver from "../services/SiteResolver";
 import { API_BASE_URL } from "../constants/api";
@@ -46,6 +55,9 @@ interface AuthContextType {
   sendPasswordResetCode: (email: string) => Promise<{ error: any }>;
   resetPasswordWithCode: (email: string, code: string, newPassword: string) => Promise<{ error: any }>;
   refreshProfile: () => Promise<void>;
+  changePassword: (password: string) => Promise<{ error: any }>;
+  sendVerificationCode: (email: string) => Promise<{ error: any }>;
+  verifySignupCode: (email: string, code: string) => Promise<{ error: any }>;
 }
 
 const AuthContext = createContext<AuthContextType>({
@@ -58,6 +70,9 @@ const AuthContext = createContext<AuthContextType>({
   sendPasswordResetCode: async () => ({ error: null }),
   resetPasswordWithCode: async () => ({ error: null }),
   refreshProfile: async () => {},
+  changePassword: async () => ({ error: null }),
+  sendVerificationCode: async () => ({ error: null }),
+  verifySignupCode: async () => ({ error: null }),
 });
 
 export const useAuth = () => {
@@ -68,24 +83,23 @@ export const useAuth = () => {
   return context;
 };
 
-/** Map a Supabase session user + optional profile data into our AuthUser shape */
-function mapSupabaseUser(
-  supabaseUser: any,
+/** Map a Firebase user + optional profile data into our AuthUser shape */
+function mapFirebaseUser(
+  firebaseUser: FirebaseUser,
   profile?: Partial<AuthUser>,
 ): AuthUser {
-  const meta = supabaseUser.user_metadata || {};
-  // Prefer the DB user_id from profile (may differ from Supabase sub)
-  const dbUserId = profile?.user_id ?? profile?.id ?? supabaseUser.id;
+  // Prefer the DB user_id from profile (may differ from Firebase UID)
+  const dbUserId = profile?.user_id ?? profile?.id ?? firebaseUser.uid;
   return {
     id: dbUserId,
     user_id: dbUserId,
-    email: supabaseUser.email ?? "",
-    name: profile?.name ?? meta.full_name ?? meta.name ?? "",
-    full_name: profile?.full_name ?? meta.full_name ?? meta.name ?? "",
-    role: profile?.role ?? meta.role ?? "",
+    email: firebaseUser.email ?? "",
+    name: profile?.name ?? firebaseUser.displayName ?? "",
+    full_name: profile?.full_name ?? firebaseUser.displayName ?? "",
+    role: profile?.role ?? "",
     work_location_type: profile?.work_location_type ?? null,
-    department: profile?.department ?? meta.department ?? "",
-    designation: profile?.designation ?? meta.designation ?? "",
+    department: profile?.department ?? "",
+    designation: profile?.designation ?? "",
   };
 }
 
@@ -98,14 +112,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
 
   // Fetch extended profile from backend and merge into user state
   const fetchAndSetProfile = useCallback(
-    async (supabaseUser: any, accessToken: string) => {
+    async (firebaseUser: FirebaseUser, idToken: string) => {
       try {
         const response = await fetch(`${BACKEND_URL}/api/auth/profile`, {
-          headers: { Authorization: `Bearer ${accessToken}` },
+          headers: { Authorization: `Bearer ${idToken}` },
         });
         const result = await response.json();
         if (result.success && result.data) {
-          const mapped = mapSupabaseUser(supabaseUser, result.data);
+          const mapped = mapFirebaseUser(firebaseUser, result.data);
           await AsyncStorage.setItem("auth_user", JSON.stringify(mapped));
           setUser(mapped);
           return mapped;
@@ -117,7 +131,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         });
       }
       
-      // Fallback: Use fully cached profile if available, otherwise construct from session
       const cached = await AsyncStorage.getItem("auth_user");
       if (cached) {
         const parsed = JSON.parse(cached);
@@ -125,7 +138,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         return parsed;
       }
 
-      const mapped = mapSupabaseUser(supabaseUser);
+      const mapped = mapFirebaseUser(firebaseUser);
       setUser(mapped);
       return mapped;
     },
@@ -133,148 +146,31 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   );
 
   useEffect(() => {
-    const initSession = async () => {
-      try {
-        // Bootstrap: get current session with timeout for offline resilience
-        const sessionPromise = supabase.auth.getSession();
-        const timeoutPromise = new Promise<null>((resolve) =>
-          setTimeout(() => resolve(null), 5000),
-        );
+    const unsubscribe = onIdTokenChanged(auth, async (firebaseUser) => {
+      logger.debug(`Firebase auth state change: ${!!firebaseUser}`, { module: "AUTH_CONTEXT" });
 
-        const result = await Promise.race([sessionPromise, timeoutPromise]);
-
-        if (result && "data" in result) {
-          const session = result.data.session;
-          if (session) {
-            setToken(session.access_token);
-            // Try cached profile first for instant render
-            const cached = await AsyncStorage.getItem("auth_user");
-            if (cached) setUser(JSON.parse(cached));
-            
-            // Fetch fresh profile in background (non-blocking)
-            fetchAndSetProfile(session.user, session.access_token).then((userProfile) => {
-              // Initialize SyncEngine with resolved user_id (non-blocking)
-              if (userProfile?.user_id) {
-                syncEngine.initialize(userProfile.user_id).catch((error: any) => {
-                  logger.error("SyncEngine initialization failed", {
-                    module: "AUTH_CONTEXT",
-                    error: error.message,
-                  });
-                });
-                siteResolver.initialize(userProfile.user_id).catch((error: any) => {
-                  logger.warn("SiteResolver initialization failed", {
-                    module: "AUTH_CONTEXT",
-                    error: error.message,
-                  });
-                });
-              }
-              // Register for push notifications on app startup if user is logged in
-              if (userProfile?.user_id) {
-                registerForPushNotifications(userProfile.user_id, session.access_token)
-                  .catch((error) => {
-                    logger.warn("Push notification registration failed on startup", {
-                      module: "AUTH_CONTEXT",
-                      error: error.message,
-                    });
-                  });
-              }
-            });
-          }
-        } else {
-          // Timeout — try cached profile for offline support
-          throw new Error("Session fetch timed out");
+      if (firebaseUser) {
+        const idToken = await firebaseUser.getIdToken();
+        setToken(idToken);
+        await AsyncStorage.setItem("firebase-token", idToken);
+        
+        const userProfile = await fetchAndSetProfile(firebaseUser, idToken);
+        
+        if (userProfile?.user_id) {
+          syncEngine.initialize(userProfile.user_id).catch(() => {});
+          siteResolver.initialize(userProfile.user_id).catch(() => {});
+          registerForPushNotifications(userProfile.user_id, idToken).catch(() => {});
         }
-      } catch (error: any) {
-        // Timeout or offline network error: fall back to cached user profile
-        logger.warn("getSession failed (offline/error) — using cached profile", {
-          module: "AUTH_CONTEXT",
-          error: error.message,
-        });
-        const cached = await AsyncStorage.getItem("auth_user");
-        if (cached) {
-          const cachedUser = JSON.parse(cached);
-          setUser(cachedUser);
-          const storedToken = await AsyncStorage.getItem("sb-token");
-          if (storedToken) setToken(storedToken);
-          
-          // Still initialize SyncEngine to serve cached local data offline
-          if (cachedUser?.user_id) {
-            syncEngine.initialize(cachedUser.user_id).catch((err: any) => {
-              logger.warn("SyncEngine offline init failed", {
-                module: "AUTH_CONTEXT",
-                error: err.message,
-              });
-            });
-            siteResolver.initialize(cachedUser.user_id).catch((err: any) => {
-              logger.warn("SiteResolver offline init failed", {
-                module: "AUTH_CONTEXT",
-                error: err.message,
-              });
-            });
-          }
-        }
-      } finally {
         setIsLoading(false);
-      }
-    };
-
-    initSession();
-
-    // Subscribe to auth state changes (sign-in, sign-out, token refresh, password recovery)
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (event, session) => {
-      logger.debug(`Auth state change: ${event}`, { module: "AUTH_CONTEXT" });
-
-      if (session) {
-        setToken(session.access_token);
-        const userProfile = await fetchAndSetProfile(session.user, session.access_token);
-        
-        // Initialize SyncEngine and SiteResolver with resolved user_id (non-blocking)
-        if (userProfile?.user_id) {
-          syncEngine.initialize(userProfile.user_id).catch((error: any) => {
-            logger.error("SyncEngine initialization failed on auth state change", {
-              module: "AUTH_CONTEXT",
-              error: error.message,
-            });
-          });
-          siteResolver.initialize(userProfile.user_id).catch((error: any) => {
-            logger.warn("SiteResolver initialization failed on auth state change", {
-              module: "AUTH_CONTEXT",
-              error: error.message,
-            });
-          });
-        }
-        
-        // Register for push notifications after successful sign-in
-        if (userProfile?.user_id) {
-          registerForPushNotifications(userProfile.user_id, session.access_token)
-            .then((result) => {
-              if (result.success) {
-                logger.info("Push notifications registered successfully", {
-                  module: "AUTH_CONTEXT",
-                });
-              } else {
-                logger.warn("Push notification registration failed", {
-                  module: "AUTH_CONTEXT",
-                  error: result.error,
-                });
-              }
-            })
-            .catch((error) => {
-              logger.error("Push notification registration error", {
-                module: "AUTH_CONTEXT",
-                error: error.message,
-              });
-            });
-        }
       } else {
         setToken(null);
         setUser(null);
+        await AsyncStorage.removeItem("firebase-token");
+        setIsLoading(false);
       }
     });
 
-    return () => subscription.unsubscribe();
+    return () => unsubscribe();
   }, [fetchAndSetProfile]);
 
   // Listen for global 401 events from API calls
@@ -289,51 +185,56 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   }, []);
 
   const signIn = useCallback(async (email: string, password: string) => {
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
-    if (error) {
-      logger.warn("Sign in failed", { module: "AUTH_CONTEXT", error: error.message });
-      return { error: error.message };
+    try {
+      await signInWithEmailAndPassword(auth, email, password);
+      return { error: null };
+    } catch (error: any) {
+      let msg = error.message || "Sign in failed";
+      if (msg.includes("auth/invalid-credential") || msg.includes("auth/user-not-found") || msg.includes("auth/wrong-password")) {
+        msg = "Invalid email or password. Please try again.";
+      } else if (msg.includes("auth/too-many-requests")) {
+        msg = "Too many failed login attempts. Please try again later.";
+      } else if (msg.includes("Firebase: Error")) {
+        msg = msg.replace("Firebase: Error (", "").replace(").", "").trim();
+      }
+      logger.warn("Sign in failed", { module: "AUTH_CONTEXT", error: msg });
+      return { error: msg };
     }
-    return { error: null };
   }, []);
 
   const signUp = useCallback(
     async (email: string, password: string, name: string) => {
-      const { error } = await supabase.auth.signUp({
-        email,
-        password,
-        options: { data: { full_name: name } },
-      });
-      if (error) {
+      try {
+        const res = await fetch(`${BACKEND_URL}/api/auth/signup`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email, password, name }),
+        });
+        const result = await res.json();
+        if (!res.ok) return { error: result.error || "Signup failed" };
+        
+        // The backend signup creates the user in both DB and Firebase (via custom token).
+        // Since Firebase SDK's createUserWithEmailAndPassword would conflict or redundancy,
+        // we just call our backend and let the user signed in later or here if we have a token.
+        // For now, signup succeeds and tells user to verify.
+        return { error: null };
+      } catch (error: any) {
         logger.warn("Sign up failed", {
           module: "AUTH_CONTEXT",
           error: error.message,
         });
         return { error: error.message };
       }
-      return { error: null };
     },
     [],
   );
 
   const signOut = useCallback(async () => {
     try {
-      const session = await supabase.auth.getSession();
-      const accessToken = session.data.session?.access_token;
-
-      if (accessToken) {
-        await unregisterPushToken(accessToken).catch((e) =>
-          logger.warn("Push unregistration failure", {
-            module: "AUTH_CONTEXT",
-            error: e.message,
-          }),
-        );
+      if (token) {
+        await unregisterPushToken(token).catch(() => {});
       }
-
-      await supabase.auth.signOut();
+      await firebaseSignOut(auth);
     } catch (error: any) {
       logger.error("Sign out error", {
         module: "AUTH_CONTEXT",
@@ -373,16 +274,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const sendPasswordResetCode = useCallback(async (email: string) => {
     try {
-      const res = await fetch(`${BACKEND_URL}/api/auth/forgot-password`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email }),
-      });
-      const result = await res.json();
-      if (!res.ok) return { error: result.error || "Failed to send code" };
+      await sendPasswordResetEmail(auth, email);
       return { error: null };
     } catch (e: any) {
-      return { error: e.message || "Network error" };
+      logger.error("Password reset error", {
+        module: "AUTH_CONTEXT",
+        error: e.message,
+      });
+      return { error: e.message || "Error sending reset email" };
     }
   }, []);
 
@@ -405,10 +304,62 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   );
 
   const refreshProfile = useCallback(async () => {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) return;
-    await fetchAndSetProfile(session.user, session.access_token);
+    if (!auth.currentUser) return;
+    const idToken = await auth.currentUser.getIdToken(true);
+    setToken(idToken);
+    await fetchAndSetProfile(auth.currentUser, idToken);
   }, [fetchAndSetProfile]);
+
+  const changePassword = useCallback(async (password: string) => {
+    try {
+      const idToken = await AsyncStorage.getItem("firebase-token");
+      if (!idToken) return { error: "Not authenticated" };
+
+      const res = await fetch(`${BACKEND_URL}/api/auth/change-password`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({ newPassword: password }),
+      });
+      const result = await res.json();
+      if (!res.ok) return { error: result.error || "Failed to change password" };
+      return { error: null };
+    } catch (e: any) {
+      return { error: e.message || "Network error" };
+    }
+  }, []);
+
+  const sendVerificationCode = useCallback(async (email: string) => {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/auth/send-verification`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+      });
+      const result = await res.json();
+      if (!res.ok) return { error: result.error || "Failed to send code" };
+      return { error: null };
+    } catch (e: any) {
+      return { error: e.message || "Network error" };
+    }
+  }, []);
+
+  const verifySignupCode = useCallback(async (email: string, code: string) => {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/auth/verify-code`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, code }),
+      });
+      const result = await res.json();
+      if (!res.ok) return { error: result.error || "Invalid code" };
+      return { error: null };
+    } catch (e: any) {
+      return { error: e.message || "Network error" };
+    }
+  }, []);
 
   const value = useMemo(
     () => ({
@@ -421,6 +372,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       sendPasswordResetCode,
       resetPasswordWithCode,
       refreshProfile,
+      changePassword,
+      sendVerificationCode,
+      verifySignupCode,
     }),
     [
       user,
@@ -432,6 +386,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       sendPasswordResetCode,
       resetPasswordWithCode,
       refreshProfile,
+      changePassword,
+      sendVerificationCode,
+      verifySignupCode,
     ],
   );
 

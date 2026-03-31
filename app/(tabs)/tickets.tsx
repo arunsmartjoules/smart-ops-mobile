@@ -17,8 +17,9 @@ import {
   MapPin,
   ChevronDown,
 } from "lucide-react-native";
-import { useLocalSearchParams } from "expo-router";
+import { useLocalSearchParams, useFocusEffect } from "expo-router";
 import { useAuth } from "@/contexts/AuthContext";
+import { useAutoSync } from "@/hooks/useAutoSync";
 import { useNetworkStatus } from "@/hooks/useNetworkStatus";
 import NetInfo from "@react-native-community/netinfo";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -131,20 +132,17 @@ export default function Tickets() {
     setIsDetailVisible(false);
   }, []);
 
-  // Memoized callback for closing filters modal
   const handleCloseFilters = useCallback(() => {
     setShowFiltersModal(false);
   }, []);
 
-  // Memoized keyExtractor for FlatList
   const keyExtractor = useCallback((item: Ticket) => {
     return item.id?.toString() || item.ticket_no || Math.random().toString();
   }, []);
 
-  // Track the last requested page to prevent duplicate requests
   const lastRequestedPageRef = React.useRef(0);
 
-  // Enrich tickets with site name and code from the sites array (useful for cached data)
+  // Enrich tickets with site name and code
   const enrichedTickets = useMemo(() => {
     return tickets.map((t) => {
       if (t.site_name && t.site_name !== "N/A") return t;
@@ -183,94 +181,7 @@ export default function Tickets() {
     });
   }, [isDetailVisible, selectedTicket]);
 
-  // Trigger fetch when site or filters change
-  useEffect(() => {
-    if (selectedSiteCode) {
-      resetAndFetch();
-      fetchStats();
-      loadAreasAndCategories();
-    }
-  }, [
-    selectedSiteCode,
-    statusFilter,
-    priorityFilter,
-    searchQuery,
-    fromDate,
-    toDate,
-  ]);
-
-  // Load areas (from assets table) and categories for the dropdown
-  // Uses cache-first strategy with 24-hour expiration
-  const loadAreasAndCategories = useCallback(async () => {
-    if (!selectedSiteCode) return;
-
-    setAreasLoading(true);
-    try {
-      // Always load from local DB first for instant UI
-      const [localAreas, cachedCategories] = await Promise.all([
-        db.select().from(areas).where(eq(areas.site_code, selectedSiteCode)).catch(() => []),
-        TicketsService.getComplaintCategories(),
-      ]);
-      const cachedAreas = localAreas;
-
-      // Set cached areas immediately
-      if (cachedAreas.length > 0) {
-        setAreaOptions(
-          cachedAreas.map((a: any) => ({
-            value: a.asset_name || a.asset_id,
-            label: a.asset_name,
-            description:
-              `${a.asset_type || ""} ${a.location ? `- ${a.location}` : ""}`.trim(),
-          })),
-        );
-      }
-
-      // Set cached categories immediately
-      if (cachedCategories?.data && cachedCategories.data.length > 0) {
-        const categories = cachedCategories.data.map((cat: any) => ({
-          value: cat.category,
-          label: cat.category,
-          description: cat.description || "",
-        }));
-        setCategoryOptions(categories);
-      }
-
-      // Check if we need to refresh from API (only if online)
-      const netState = await NetInfo.fetch();
-      const isActuallyOnline = netState.isConnected === true;
-
-      if (isActuallyOnline) {
-        // Fetch fresh assets in background (will update cache automatically via TicketsService)
-        TicketsService.getAssets(selectedSiteCode)
-          .then((assetsResult) => {
-            if (assetsResult?.data && assetsResult.data.length > 0) {
-              const areas = assetsResult.data.map((asset: any) => ({
-                value: asset.asset_name || asset.asset_id,
-                label: asset.asset_name,
-                description:
-                  `${asset.asset_type || ""} ${asset.location ? `- ${asset.location}` : ""}`.trim(),
-              }));
-              setAreaOptions(areas);
-            }
-          })
-          .catch((error) => {
-            logger.warn("Background assets refresh failed", {
-              module: "TICKETS",
-              error,
-            });
-          });
-
-        // Categories are already fetched above and cached automatically
-      }
-    } catch (error) {
-      logger.warn("Error loading areas/categories", {
-        module: "TICKETS",
-        error,
-      });
-    } finally {
-      setAreasLoading(false);
-    }
-  }, [selectedSiteCode]);
+  // ── Data Fetching Logic ──────────────────────────────────────────────────
 
   const fetchStats = useCallback(async () => {
     if (!selectedSiteCode) return;
@@ -294,6 +205,68 @@ export default function Tickets() {
         );
       }
     } catch (e) {}
+  }, [selectedSiteCode]);
+
+  const loadAreasAndCategories = useCallback(async () => {
+    if (!selectedSiteCode) return;
+
+    setAreasLoading(true);
+    try {
+      const [localAreas, cachedCategories] = await Promise.all([
+        db.select().from(areas).where(eq(areas.site_code, selectedSiteCode)).catch(() => []),
+        TicketsService.getComplaintCategories(),
+      ]);
+      const cachedAreas = localAreas;
+
+      if (cachedAreas.length > 0) {
+        setAreaOptions(
+          cachedAreas.map((a: any) => ({
+            value: a.asset_name || a.asset_id,
+            label: a.asset_name,
+            description:
+              `${a.asset_type || ""} ${a.location ? `- ${a.location}` : ""}`.trim(),
+          })),
+        );
+      }
+
+      if (cachedCategories?.data && cachedCategories.data.length > 0) {
+        const categories = cachedCategories.data.map((cat: any) => ({
+          value: cat.category,
+          label: cat.category,
+          description: cat.description || "",
+        }));
+        setCategoryOptions(categories);
+      }
+
+      const netState = await NetInfo.fetch();
+      if (netState.isConnected) {
+        TicketsService.getAssets(selectedSiteCode)
+          .then((assetsResult) => {
+            if (assetsResult?.data && assetsResult.data.length > 0) {
+              const areas = assetsResult.data.map((asset: any) => ({
+                value: asset.asset_name || asset.asset_id,
+                label: asset.asset_name,
+                description:
+                  `${asset.asset_type || ""} ${asset.location ? `- ${asset.location}` : ""}`.trim(),
+              }));
+              setAreaOptions(areas);
+            }
+          })
+          .catch((error) => {
+            logger.warn("Background assets refresh failed", {
+              module: "TICKETS",
+              error,
+            });
+          });
+      }
+    } catch (error) {
+      logger.warn("Error loading areas/categories", {
+        module: "TICKETS",
+        error,
+      });
+    } finally {
+      setAreasLoading(false);
+    }
   }, [selectedSiteCode]);
 
   const fetchTickets = useCallback(
@@ -325,31 +298,16 @@ export default function Tickets() {
               return false;
             }
 
-            if (
-              priorityFilter &&
-              priorityFilter !== "All" &&
-              t.priority !== priorityFilter
-            ) {
+            if (priorityFilter && priorityFilter !== "All" && t.priority !== priorityFilter) {
               return false;
             }
 
             const createdAtMs = parseCreatedAtMs(t.created_at);
+            if ((fromDateMs != null || toDateMs != null) && createdAtMs == null) return false;
+            if (fromDateMs != null && createdAtMs != null && createdAtMs < fromDateMs) return false;
+            if (toDateMs != null && createdAtMs != null && createdAtMs > toDateMs) return false;
 
-            if ((fromDateMs != null || toDateMs != null) && createdAtMs == null) {
-              return false;
-            }
-
-            if (fromDateMs != null && createdAtMs != null && createdAtMs < fromDateMs) {
-              return false;
-            }
-
-            if (toDateMs != null && createdAtMs != null && createdAtMs > toDateMs) {
-              return false;
-            }
-
-            if (!normalizedSearch) {
-              return true;
-            }
+            if (!normalizedSearch) return true;
 
             const searchHaystack = [
               t.ticket_number,
@@ -361,10 +319,7 @@ export default function Tickets() {
               t.priority,
               t.assigned_to,
               t.created_by,
-            ]
-              .filter(Boolean)
-              .join(" ")
-              .toLowerCase();
+            ].filter(Boolean).join(" ").toLowerCase();
 
             return searchHaystack.includes(normalizedSearch);
           });
@@ -372,14 +327,11 @@ export default function Tickets() {
           if (filteredLocalTickets.length > 0) {
             hasLocalData = true;
             const formattedTickets = filteredLocalTickets.map((t) => {
-              // Safe date conversion to prevent .toISOString() crashes on invalid data
               let isoDate = new Date().toISOString();
               try {
                 if (t.created_at) {
                   const d = new Date(Number(t.created_at));
-                  if (!isNaN(d.getTime())) {
-                    isoDate = d.toISOString();
-                  }
+                  if (!isNaN(d.getTime())) isoDate = d.toISOString();
                 }
               } catch {}
 
@@ -411,7 +363,6 @@ export default function Tickets() {
           });
         }
 
-        // Show skeleton only if we don't have local data and not refreshing
         if (!hasLocalData && !refreshing) {
           setLoading(true);
         }
@@ -419,22 +370,15 @@ export default function Tickets() {
         setIsFetchingMore(true);
       }
 
-      // Only call API if online
       const netState = await NetInfo.fetch();
       if (!netState.isConnected) {
-        // Offline - keep local data, don't overwrite
         setLoading(false);
         setIsFetchingMore(false);
         setRefreshing(false);
-        setHasMore(false); // No pagination when offline
-        logger.info("Offline mode - using cached tickets", {
-          module: "TICKETS",
-          count: tickets.length,
-        });
+        setHasMore(false);
         return;
       }
 
-      // Online - fetch from API
       try {
         const options: any = {
           page: p,
@@ -451,16 +395,13 @@ export default function Tickets() {
         if (res.success) {
           const newTickets = res.data || [];
           if (reset) {
-            // Only update if we got data from API
             if (newTickets.length > 0 || !hasLocalData) {
               setTickets(newTickets);
             }
           } else {
             setTickets((prev) => {
               const existingIds = new Set(prev.map((t) => t.id));
-              const uniqueNew = newTickets.filter(
-                (t: Ticket) => !existingIds.has(t.id),
-              );
+              const uniqueNew = newTickets.filter((t: Ticket) => !existingIds.has(t.id));
               return [...prev, ...uniqueNew];
             });
           }
@@ -496,6 +437,29 @@ export default function Tickets() {
     fetchTickets(1, true);
   }, [fetchTickets]);
 
+  // Sync Logic - triggered on filter changes
+  useEffect(() => {
+    if (selectedSiteCode) {
+      resetAndFetch();
+      fetchStats();
+      loadAreasAndCategories();
+    }
+  }, [
+    selectedSiteCode,
+    statusFilter,
+    priorityFilter,
+    searchQuery,
+    fromDate,
+    toDate,
+    resetAndFetch,
+    fetchStats,
+    loadAreasAndCategories,
+  ]);
+
+  // Auto-sync for tickets (Handles Focus, AppState, and 60s Polling)
+  // This ensures data is fresh when returning to focus or every 60s
+  useAutoSync(resetAndFetch, [selectedSiteCode]);
+
   const clearFilters = useCallback(() => {
     setSearchQuery("");
     setTempSearch("");
@@ -508,26 +472,11 @@ export default function Tickets() {
   }, []);
 
   const handleLoadMore = useCallback(() => {
-    // Only proceed if we're not already fetching and there's more data
-    if (!hasMore || isFetchingMore || loading) {
-      return;
-    }
+    if (!hasMore || isFetchingMore || loading) return;
 
     const nextPage = page + 1;
+    if (nextPage <= lastRequestedPageRef.current) return;
 
-    // Additional safeguard: check if we've already requested this page
-    if (nextPage <= lastRequestedPageRef.current) {
-      logger.debug("Skipping duplicate request for page", {
-        module: "TICKETS",
-        nextPage,
-      });
-      return;
-    }
-
-    logger.debug("handleLoadMore triggered", {
-      module: "TICKETS",
-      page: nextPage,
-    });
     lastRequestedPageRef.current = nextPage;
     setPage(nextPage);
     fetchTickets(nextPage);
@@ -540,12 +489,6 @@ export default function Tickets() {
   };
 
   const handleTicketPress = useCallback((ticket: Ticket) => {
-    logger.debug("Ticket pressed", {
-      module: "TICKETS",
-      ticketId: ticket.id,
-      status: ticket.status,
-    });
-
     setSelectedTicket(ticket);
     setUpdateStatus(ticket.status);
     setUpdateRemarks(ticket.internal_remarks || "");
@@ -559,19 +502,10 @@ export default function Tickets() {
   const params = useLocalSearchParams<{ ticketId: string }>();
   const { ticketId } = params;
 
-  // Handle opening ticket from dashboard/params
   useEffect(() => {
     if (ticketId && tickets.length > 0) {
-      const ticket = tickets.find(
-        (t) => t.id.toString() === ticketId.toString(),
-      );
-      if (ticket) {
-        logger.debug("Opening ticket from params", {
-          module: "TICKETS",
-          ticketId,
-        });
-        handleTicketPress(ticket);
-      }
+      const ticket = tickets.find((t) => t.id.toString() === ticketId.toString());
+      if (ticket) handleTicketPress(ticket);
     }
   }, [ticketId, tickets, handleTicketPress]);
 
@@ -579,14 +513,9 @@ export default function Tickets() {
     if (ticket.status !== "Open") return;
 
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    logger.debug("Ticket long pressed", {
-      module: "TICKETS",
-      ticketId: ticket.id,
-    });
-
     setSelectedTicket(ticket);
     setUpdateStatus("Cancelled");
-    setUpdateRemarks(""); // Clear remarks to force user input
+    setUpdateRemarks("");
     setIsDetailVisible(true);
   }, []);
 
@@ -604,19 +533,10 @@ export default function Tickets() {
 
   const enrichedSelectedTicket = useMemo(() => {
     if (!selectedTicket) return null;
-    if (selectedTicket.site_name && selectedTicket.site_name !== "N/A")
-      return selectedTicket;
+    if (selectedTicket.site_name && selectedTicket.site_name !== "N/A") return selectedTicket;
 
-    const siteId = String(selectedTicket.site_code || "")
-      .trim()
-      .toLowerCase();
-    const site = sites.find((s) => {
-      const sCode = String(s.site_code || "")
-        .trim()
-        .toLowerCase();
-
-      return sCode === siteId;
-    });
+    const siteId = String(selectedTicket.site_code || "").trim().toLowerCase();
+    const site = sites.find((s) => String(s.site_code || "").trim().toLowerCase() === siteId);
 
     if (site) {
       return {
@@ -635,9 +555,7 @@ export default function Tickets() {
   const handleUpdateStatus = async () => {
     if (!selectedTicket) return;
 
-    const needsRemarks = ["Hold", "Cancelled", "Waiting", "Resolved"].includes(
-      updateStatus,
-    );
+    const needsRemarks = ["Hold", "Cancelled", "Waiting", "Resolved"].includes(updateStatus);
     if (needsRemarks && !updateRemarks.trim()) {
       Alert.alert("Required", "Please provide remarks for this status update.");
       return;
@@ -650,15 +568,9 @@ export default function Tickets() {
       category: updateCategory || selectedTicket.category,
     };
 
-    // Include temp readings if provided
-    if (beforeTemp.trim() !== "") {
-      payload.before_temp = parseFloat(beforeTemp);
-    }
-    if (afterTemp.trim() !== "") {
-      payload.after_temp = parseFloat(afterTemp);
-    }
+    if (beforeTemp.trim() !== "") payload.before_temp = parseFloat(beforeTemp);
+    if (afterTemp.trim() !== "") payload.after_temp = parseFloat(afterTemp);
 
-    // If status is Inprogress or Cancelled, assign to current user
     if (updateStatus === "Inprogress" || updateStatus === "Cancelled") {
       payload.assigned_to = user?.full_name || user?.name || "";
     }
@@ -666,66 +578,34 @@ export default function Tickets() {
     setIsUpdating(true);
     try {
       const netState = await NetInfo.fetch();
-      const isActuallyOnline = netState.isConnected === true;
-
-      if (isActuallyOnline) {
-        // Online: Update directly
-        const res = await TicketsService.updateTicket(
-          selectedTicket.id || selectedTicket.ticket_no,
-          payload,
-        );
+      if (netState.isConnected) {
+        const res = await TicketsService.updateTicket(selectedTicket.id || selectedTicket.ticket_no, payload);
         if (res.success) {
-          logger.activity("TICKET_UPDATE", "TICKETS", "Ticket updated", {
-            ticketId: selectedTicket.id,
-            ticketNo: selectedTicket.ticket_no,
-            ...payload,
-            offline: false,
-          });
-          // Trigger WhatsApp template resolution and sending
-          // Use updated ticket data for notification
-          const updatedTicketForWA = {
-            ...selectedTicket,
-            ...payload,
-          };
-          WhatsAppService.sendStatusUpdate(
-            updatedTicketForWA,
-            updateStatus,
-            updateRemarks,
-          ).catch((e: any) =>
-            logger.warn("Failed WhatsApp notification in background", {
-              error: e,
-            }),
+          const updatedTicketForWA = { ...selectedTicket, ...payload };
+          WhatsAppService.sendStatusUpdate(updatedTicketForWA, updateStatus, updateRemarks).catch((e: any) =>
+            logger.warn("Failed WhatsApp notification", { error: e })
           );
 
           Alert.alert("Success", "Ticket updated successfully");
-          setIsDetailVisible(false);
+          if (updateStatus === "Resolved") setIsDetailVisible(false);
+          
+          setSelectedTicket({ ...selectedTicket, ...payload });
+          setUpdateRemarks("");
+          setBeforeTemp("");
+          setAfterTemp("");
           fetchStats();
           resetAndFetch();
         } else {
           Alert.alert("Error", res.error || "Failed to update ticket");
         }
       } else {
-        // Offline: Update via service (which updates local DB)
-        const res = await TicketsService.updateTicket(
-          selectedTicket.id || selectedTicket.ticket_no,
-          payload,
-        );
-        
-        logger.activity("TICKET_UPDATE", "TICKETS", "Ticket updated offline", {
-          ticketId: selectedTicket.id,
-          ticketNo: selectedTicket.ticket_no,
-          ...payload,
-          offline: true,
-        });
-        
-        Alert.alert(
-          "Saved Offline",
-          "Your update has been saved and will sync when you're back online.",
-          [{ text: "OK" }],
-        );
-        setIsDetailVisible(false);
-
-        // Reload tickets from local DB to reflect the persisted change
+        await TicketsService.updateTicket(selectedTicket.id || selectedTicket.ticket_no, payload);
+        Alert.alert("Saved Offline", "Update saved and will sync when online.");
+        if (updateStatus === "Resolved") setIsDetailVisible(false);
+        setSelectedTicket({ ...selectedTicket, ...payload });
+        setUpdateRemarks("");
+        setBeforeTemp("");
+        setAfterTemp("");
         resetAndFetch();
       }
     } catch (error: any) {
@@ -745,108 +625,50 @@ export default function Tickets() {
   return (
     <View className="flex-1 bg-slate-50 dark:bg-slate-950">
       <SafeAreaView className="flex-1">
-        {/* Header - matching dashboard/logs screen */}
         <View className="px-5 pt-2 pb-3">
           <View className="flex-row items-center justify-between mb-4">
             <View className="flex-1">
               <Text className="text-slate-400 dark:text-slate-500 text-sm font-medium mb-1">
                 Site Operations
               </Text>
-              <TouchableOpacity
-                onPress={() => setShowFiltersModal(true)}
-                className="flex-row items-center"
-              >
+              <TouchableOpacity onPress={() => setShowFiltersModal(true)} className="flex-row items-center">
                 <MapPin size={20} color="#dc2626" />
-                <Text
-                  className="text-slate-900 dark:text-slate-50 text-xl font-bold ml-2 mr-1 flex-shrink"
-                  numberOfLines={1}
-                  adjustsFontSizeToFit
-                  minimumFontScale={0.8}
-                >
+                <Text className="text-slate-900 dark:text-slate-50 text-xl font-bold ml-2 mr-1 flex-shrink" numberOfLines={1}>
                   {siteName}
                 </Text>
                 <ChevronDown size={20} color="#94a3b8" />
               </TouchableOpacity>
             </View>
-
-            <TouchableOpacity
-              onPress={() => setShowFiltersModal(true)}
-              className="w-11 h-11 rounded-xl bg-white dark:bg-slate-900 items-center justify-center"
-              style={{
-                shadowColor: "#000",
-                shadowOffset: { width: 0, height: 2 },
-                shadowOpacity: 0.08,
-                shadowRadius: 8,
-                elevation: 3,
-              }}
-            >
-              <Filter size={20} color={fromDate ? "#dc2626" : isDark ? "#dc2626" : "#64748b"} />
+            <TouchableOpacity onPress={() => setShowFiltersModal(true)} className="w-11 h-11 rounded-xl bg-white dark:bg-slate-900 items-center justify-center">
+              <Filter size={20} color={fromDate ? "#dc2626" : (isDark ? "#dc2626" : "#64748b")} />
             </TouchableOpacity>
           </View>
         </View>
 
-        <TicketStats
-          stats={stats}
-          loading={loading}
-          currentStatus={statusFilter}
-          onStatusChange={setStatusFilter}
-        />
+        <TicketStats stats={stats} loading={loading} currentStatus={statusFilter} onStatusChange={setStatusFilter} />
+        <TicketFilters statusFilter={statusFilter} setStatusFilter={setStatusFilter} />
 
-        <TicketFilters
-          statusFilter={statusFilter}
-          setStatusFilter={setStatusFilter}
-        />
-
-        {/* Tickets List */}
         <View className="flex-1">
           <FlatList
             data={enrichedTickets}
             renderItem={renderTicketItem}
-            keyExtractor={(item, index) =>
-              item.id || item.ticket_no || `ticket-${index}`
-            }
-            ListEmptyComponent={
-              loading ? (
-                <TicketSkeleton />
-              ) : (
-                <View className="py-20 items-center justify-center">
-                  <View className="w-20 h-20 bg-slate-100 rounded-full items-center justify-center mb-4">
-                    <TicketIcon size={36} color="#cbd5e1" />
-                  </View>
-                  <Text className="text-slate-900 dark:text-slate-50 font-bold text-lg">
-                    No tickets found
-                  </Text>
-                  <Text className="text-slate-400 dark:text-slate-500 text-sm mt-1 text-center px-10">
-                    Try adjusting your filters or search keywords.
-                  </Text>
+            keyExtractor={keyExtractor}
+            ListEmptyComponent={loading ? <TicketSkeleton /> : (
+              <View className="py-20 items-center justify-center">
+                <View className="w-20 h-20 bg-slate-100 rounded-full items-center justify-center mb-4">
+                  <TicketIcon size={36} color="#cbd5e1" />
                 </View>
-              )
-            }
-            ListFooterComponent={
-              isFetchingMore ? (
-                <View className="pb-6">
-                  <TicketSkeletonItem />
-                </View>
-              ) : null
-            }
+                <Text className="text-slate-900 dark:text-slate-50 font-bold text-lg">No tickets found</Text>
+              </View>
+            )}
+            ListFooterComponent={isFetchingMore ? <TicketSkeletonItem /> : null}
             onEndReached={handleLoadMore}
             onEndReachedThreshold={0.1}
-            refreshControl={
-              <RefreshControl
-                refreshing={refreshing}
-                onRefresh={onRefresh}
-                tintColor="#dc2626"
-              />
-            }
+            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#dc2626" />}
             showsVerticalScrollIndicator={false}
-            contentContainerStyle={{
-              paddingHorizontal: 20,
-              paddingBottom: 100,
-            }}
+            contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 100 }}
           />
         </View>
-
-        {/* Skeletons render via ListEmptyComponent + stats placeholders */}
 
         {showFiltersModal && (
           <AdvancedFilterModal
@@ -870,15 +692,7 @@ export default function Tickets() {
             setStatusFilter={setStatusFilter}
             priorityFilter={priorityFilter}
             setPriorityFilter={setPriorityFilter}
-            statusOptions={[
-              "All",
-              "Open",
-              "Inprogress",
-              "Resolved",
-              "Hold",
-              "Waiting",
-              "Cancelled",
-            ]}
+            statusOptions={["All", "Open", "Inprogress", "Resolved", "Hold", "Waiting", "Cancelled"]}
             applyAdvancedFilters={applyAdvancedFilters}
           />
         )}

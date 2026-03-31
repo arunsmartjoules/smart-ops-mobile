@@ -191,18 +191,26 @@ class CacheManagerImpl {
       // Instead of sequential awaits in a loop, we chunk the records and perform
       // bulk inserts. This is significantly faster (up to 50-100x for large sets).
       
-      const CHUNK_SIZE = 100; // Safe limit for SQLite parameters
+      const CHUNK_SIZE = 50; // Smaller chunk for stability
       for (let i = 0; i < records.length; i += CHUNK_SIZE) {
-        const chunk = records.slice(i, i + CHUNK_SIZE);
+        const chunk = records.slice(i, i + CHUNK_SIZE).map((r) => {
+          // Normalize: undefined -> null to ensure parameter count consistency
+          const normalized: Record<string, any> = {};
+          Object.keys(r).forEach((k) => {
+            normalized[k] = r[k] === undefined ? null : r[k];
+          });
+          return normalized;
+        });
         
         try {
-          // Identify columns to update (all keys from the first record except id)
+          // Identify columns to update (all keys from the first record except id and created_at)
           const firstRecord = chunk[0];
           const setObj: Record<string, any> = {};
           
           Object.keys(firstRecord).forEach((key) => {
-            if (key !== "id" && firstRecord[key] !== undefined) {
-              // Using excluded.[col] is standard for bulk UPSERT in SQLite/Postgres
+            // NEVER update the id column during a conflict; it's redundant and can trigger driver issues.
+            // Also skip created_at as it should be immutable.
+            if (key !== "id" && key !== "created_at" && firstRecord[key] !== undefined) {
               setObj[key] = sql.raw(`excluded.${key}`);
             }
           });
@@ -212,26 +220,43 @@ class CacheManagerImpl {
             .values(chunk)
             .onConflictDoUpdate({
               target: (table as any).id,
-              set: Object.keys(setObj).length > 0 ? setObj : { id: sql.raw("excluded.id") },
+              // If no columns to update, just update 'updated_at' (always exists)
+              set: Object.keys(setObj).length > 0 ? setObj : { updated_at: Date.now() },
             });
         } catch (chunkError: any) {
-          logger.error("CacheManager.write: chunk upsert failed, falling back to sequential", {
+          logger.error("CacheManager.write: bulk upsert failed, falling back to manual", {
             module: "CACHE_MANAGER",
             domain,
             error: chunkError.message,
           });
 
-          // Emergency Fallback: If bulk fails (e.g. inconsistent schema in chunk), try one-by-one for this chunk
+          // Emergency Fallback: SELECT then INSERT or UPDATE
+          // This avoids the native onConflictDoUpdate which is failing with NPE
           for (const record of chunk) {
             try {
               if (!record?.id) continue;
-              const { id, ...setPart } = record;
-              await db.insert(table as any).values(record).onConflictDoUpdate({
-                target: (table as any).id,
-                set: setPart
+              const existing = await db
+                .select({ id: (table as any).id })
+                .from(table as any)
+                .where(eq((table as any).id, record.id))
+                .limit(1);
+
+              if (existing.length > 0) {
+                const { id, created_at, ...updatePart } = record;
+                await db
+                  .update(table as any)
+                  .set({ ...updatePart, updated_at: Date.now() })
+                  .where(eq((table as any).id, id));
+              } else {
+                await db.insert(table as any).values(record);
+              }
+            } catch (innerErr: any) {
+              logger.error("CacheManager.write: manual fallback item failed", {
+                module: "CACHE_MANAGER",
+                domain,
+                recordId: record?.id,
+                error: innerErr.message,
               });
-            } catch (innerErr) {
-              // Final fallback skip
             }
           }
         }

@@ -14,7 +14,6 @@ import { router } from "expo-router";
 import { useAuth } from "@/contexts/AuthContext";
 import { showAlert } from "@/utils/alert";
 
-const ALLOWED_DOMAIN = "@smartjoules.in";
 
 export default function SignUp() {
   const [name, setName] = useState("");
@@ -30,13 +29,6 @@ export default function SignUp() {
       return;
     }
 
-    if (!email.toLowerCase().endsWith(ALLOWED_DOMAIN)) {
-      showAlert(
-        "Invalid Email",
-        `Please use a SmartJoules email address (${ALLOWED_DOMAIN}) to sign up.`
-      );
-      return;
-    }
 
     if (password.length < 8) {
       showAlert("Weak Password", "Password must be at least 8 characters long.");
@@ -107,7 +99,7 @@ export default function SignUp() {
                   <Mail size={20} color="#dc2626" />
                 </View>
                 <TextInput
-                  placeholder={`Email (${ALLOWED_DOMAIN})`}
+                  placeholder="Email Address"
                   value={email}
                   onChangeText={setEmail}
                   keyboardType="email-address"

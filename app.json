@@ -2,7 +2,7 @@
   "expo": {
     "name": "Jouleops",
     "slug": "smart-ops",
-    "version": "1.0.27",
+    "version": "1.0.3",
     "orientation": "portrait",
     "icon": "./assets/images/jouleops-icon.png",
     "scheme": "jouleops",
@@ -91,7 +91,13 @@
       "router": {},
       "eas": {
         "projectId": "d1868472-0103-49d5-978e-ece327af4c3e"
-      }
+      },
+      "firebaseApiKey": "AIzaSyC2aHsudx0TvfTBj1aV-IZ0cA6b8ohG6Zk",
+      "firebaseAuthDomain": "jouleops.firebaseapp.com",
+      "firebaseProjectId": "jouleops",
+      "firebaseStorageBucket": "jouleops.firebasestorage.app",
+      "firebaseMessagingSenderId": "49892025677",
+      "firebaseAppId": "1:49892025677:web:7b18d1b734d0a07ce5c304"
     },
     "owner": "smartjoules-ops",
     "runtimeVersion": {

@@ -5,8 +5,7 @@ import { startOfDay, endOfDay } from "date-fns";
 import { db, siteLogs, chillerReadings, logMaster } from "../database";
 import logger from "../utils/logger";
 import { authEvents } from "../utils/authEvents";
-import { supabase } from "./supabase";
-import { fetchWithTimeout } from "../utils/apiHelper";
+import { apiFetch as centralApiFetch } from "../utils/apiHelper";
 import { SiteConfigService } from "./SiteConfigService";
 import type { TaskItem } from "./SiteConfigService";
 import cacheManager from "./CacheManager";
@@ -59,21 +58,8 @@ const queueAttachmentIfLocal = async (
 
 // Helper for API requests with auth and retry logic
 const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
-  // Get valid token from Supabase session (auto-refreshed by SDK)
-  const { data: { session } } = await supabase.auth.getSession();
-  let token = session?.access_token ?? null;
-
-  const getHeaders = (t: string | null) => ({
-    "Content-Type": "application/json",
-    ...(t ? { Authorization: `Bearer ${t}` } : {}),
-    ...options.headers,
-  });
-
   try {
-    let response = await fetchWithTimeout(`${BACKEND_URL}${endpoint}`, {
-      ...options,
-      headers: getHeaders(token),
-    });
+    let response = await centralApiFetch(`${BACKEND_URL}${endpoint}`, options);
 
     if (!response.ok) {
       if (response.status === 401) {
@@ -259,6 +245,10 @@ export const SiteLogService: ISiteLogService = {
           data.attachment, "site-logs", "site_log", id, "attachment"
         );
 
+        const signature = await queueAttachmentIfLocal(
+          data.signature, "site-signatures", "site_log", id, "signature"
+        );
+
         return {
           id,
           site_code: data.site_code || data.siteCode,
@@ -273,7 +263,7 @@ export const SiteLogService: ISiteLogService = {
           hardness: data.hardness || null,
           chemical_dosing: data.chemical_dosing || data.chemicalDosing || null,
           remarks: data.remarks || null,
-          signature: data.signature || null,
+          signature: signature || null,
           attachment,
           status: data.status || "Completed",
           scheduled_date: scheduledDate,
@@ -346,6 +336,10 @@ export const SiteLogService: ISiteLogService = {
       data.attachment, "site-logs", "site_log", id, "attachment",
     );
 
+    const signature = await queueAttachmentIfLocal(
+      data.signature, "site-signatures", "site_log", id, "signature",
+    );
+
     await db.insert(siteLogs).values({
       id,
       site_code: data.siteCode,
@@ -362,7 +356,7 @@ export const SiteLogService: ISiteLogService = {
       remarks: data.remarks || null,
       entry_time: data.entryTime || null,
       end_time: data.endTime || null,
-      signature: data.signature || null,
+      signature: signature || null,
       attachment: attachment,
       status: data.status || null,
       scheduled_date: scheduledDate,
@@ -456,6 +450,10 @@ export const SiteLogService: ISiteLogService = {
       data.attachments, "chiller-readings", "chiller_reading", id, "attachments",
     );
 
+    const signatureText = await queueAttachmentIfLocal(
+      data.signature, "site-signatures", "chiller_reading", id, "signature_text",
+    );
+
     await db.insert(chillerReadings).values({
       id,
       log_id: data.logId || id,
@@ -490,7 +488,7 @@ export const SiteLogService: ISiteLogService = {
       compressor_load_percentage: data.compressorLoadPercentage || null,
       inline_btu_meter: data.inlineBtuMeter || null,
       remarks: data.remarks || null,
-      signature_text: data.signature || null,
+      signature_text: signatureText || null,
       attachments: attachments,
       status: data.status || "Completed",
       created_at: now,
@@ -569,9 +567,19 @@ export const SiteLogService: ISiteLogService = {
     if (data.compressorLoadPercentage !== undefined) updateFields.compressor_load_percentage = data.compressorLoadPercentage;
     if (data.inlineBtuMeter !== undefined) updateFields.inline_btu_meter = data.inlineBtuMeter;
     if (data.remarks !== undefined) updateFields.remarks = data.remarks;
-    if (data.signatureText !== undefined) updateFields.signature_text = data.signatureText;
-    if (data.attachments !== undefined) updateFields.attachments = data.attachments;
     if (data.status !== undefined) updateFields.status = data.status;
+
+    if (data.signatureText !== undefined) {
+      updateFields.signature_text = await queueAttachmentIfLocal(
+        data.signatureText, "site-signatures", "chiller_reading", id, "signature_text"
+      );
+    }
+    
+    if (data.attachments !== undefined) {
+      updateFields.attachments = await queueAttachmentIfLocal(
+        data.attachments, "chiller-readings", "chiller_reading", id, "attachments"
+      );
+    }
 
     await db
       .update(chillerReadings)
@@ -714,12 +722,22 @@ export const SiteLogService: ISiteLogService = {
       if (data.hardness !== undefined) updateFields.hardness = data.hardness;
       if (data.chemicalDosing !== undefined) updateFields.chemical_dosing = data.chemicalDosing;
       if (data.remarks !== undefined) updateFields.remarks = data.remarks;
-      if (data.signature !== undefined) updateFields.signature = data.signature;
-      if (data.attachment !== undefined) updateFields.attachment = data.attachment;
       if (data.status !== undefined) updateFields.status = data.status;
       if (data.assignedTo !== undefined) updateFields.assigned_to = data.assignedTo;
       if (data.endTime !== undefined) updateFields.end_time = data.endTime;
       if (data.scheduledDate !== undefined) updateFields.scheduled_date = data.scheduledDate;
+
+      if (data.signature !== undefined) {
+        updateFields.signature = await queueAttachmentIfLocal(
+          data.signature, "site-signatures", "site_log", id, "signature"
+        );
+      }
+      
+      if (data.attachment !== undefined) {
+        updateFields.attachment = await queueAttachmentIfLocal(
+          data.attachment, "site-logs", "site_log", id, "attachment"
+        );
+      }
 
       await db
         .update(siteLogs)

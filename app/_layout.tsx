@@ -13,7 +13,6 @@ import { initDatabase } from "@/database";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import UpdateService from "@/services/UpdateService";
 import UpdateBanner from "@/components/UpdateBanner";
-import { supabase } from "@/services/supabase";
 import * as SplashScreen from "expo-splash-screen";
 import * as Location from "expo-location";
 import * as Notifications from "expo-notifications";
@@ -45,16 +44,21 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (isLoading) return;
 
-    const inAuthGroup =
+    const isAuthRelated =
       segments[0] === "sign-in" ||
       segments[0] === "sign-up" ||
       segments[0] === "verify-email" ||
       segments[0] === "forgot-password" ||
       segments[0] === "reset-password";
 
-    if (!token && !inAuthGroup) {
+    // Screens that should ONLY be seen by unauthenticated users
+    const isUnauthenticatedInternal =
+      segments[0] === "sign-in" ||
+      segments[0] === "sign-up";
+
+    if (!token && !isAuthRelated) {
       router.replace("/sign-in");
-    } else if (token && inAuthGroup) {
+    } else if (token && isUnauthenticatedInternal) {
       router.replace("/(tabs)/dashboard");
     }
   }, [token, isLoading, segments]);
@@ -63,17 +67,6 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
     if (isLoading) return;
   }, [token, isLoading]);
 
-  // Handle PASSWORD_RECOVERY deep link — navigate to reset-password screen
-  useEffect(() => {
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (event) => {
-        if (event === "PASSWORD_RECOVERY") {
-          router.push("/reset-password");
-        }
-      },
-    );
-    return () => subscription.unsubscribe();
-  }, [router]);
 
   // Show full-screen JS splash while auth is resolving
   if (isLoading) {
