@@ -24,6 +24,7 @@ import {
   logMaster,
   offlineQueue,
   syncMeta,
+  ensureDatabaseConnection,
 } from "@/database";
 import logger from "@/utils/logger";
 
@@ -118,6 +119,7 @@ class CacheManagerImpl {
     query?: CacheQuery,
   ): Promise<T[]> {
     try {
+      ensureDatabaseConnection();
       const table = getTable(domain);
       if (!table) {
         logger.warn("CacheManager.read: unsupported domain", {
@@ -142,26 +144,39 @@ class CacheManagerImpl {
         }
       }
 
-      let q = db.select().from(table as any);
-      if (whereClause) q = (q as any).where(whereClause);
+      const executeQuery = async () => {
+        let q = db.select().from(table as any);
+        if (whereClause) q = (q as any).where(whereClause);
 
-      // Apply orderBy
-      if (query?.orderBy) {
-        const col = tableColumns[query.orderBy.column];
-        if (col) {
-          q = (q as any).orderBy(
-            query.orderBy.direction === "desc" ? desc(col) : asc(col),
-          );
+        // Apply orderBy
+        if (query?.orderBy) {
+          const col = tableColumns[query.orderBy.column];
+          if (col) {
+            q = (q as any).orderBy(
+              query.orderBy.direction === "desc" ? desc(col) : asc(col),
+            );
+          }
         }
-      }
 
-      // Apply limit
-      if (query?.limit) {
-        q = (q as any).limit(query.limit);
-      }
+        // Apply limit
+        if (query?.limit) {
+          q = (q as any).limit(query.limit);
+        }
+        return await q;
+      };
 
-      const rows = await q;
-      return rows as T[];
+      try {
+        const rows = await executeQuery();
+        return rows as T[];
+      } catch (innerError: any) {
+        // Recovery attempt for native NPE
+        if (innerError.message?.includes("prepareSync") || innerError.message?.includes("NullPointerException")) {
+          ensureDatabaseConnection();
+          const rows = await executeQuery();
+          return rows as T[];
+        }
+        throw innerError;
+      }
     } catch (error) {
       logger.error("CacheManager.read failed", {
         module: "CACHE_MANAGER",
@@ -178,6 +193,7 @@ class CacheManagerImpl {
     if (!records || records.length === 0) return;
 
     try {
+      ensureDatabaseConnection();
       const table = getTable(domain);
       if (!table) {
         logger.warn("CacheManager.write: unsupported domain", {
@@ -188,13 +204,9 @@ class CacheManagerImpl {
       }
 
       // ─── Performance Optimization: Batch Upsert ───────────────────────────
-      // Instead of sequential awaits in a loop, we chunk the records and perform
-      // bulk inserts. This is significantly faster (up to 50-100x for large sets).
-      
-      const CHUNK_SIZE = 50; // Smaller chunk for stability
+      const CHUNK_SIZE = 50; 
       for (let i = 0; i < records.length; i += CHUNK_SIZE) {
         const chunk = records.slice(i, i + CHUNK_SIZE).map((r) => {
-          // Normalize: undefined -> null to ensure parameter count consistency
           const normalized: Record<string, any> = {};
           Object.keys(r).forEach((k) => {
             normalized[k] = r[k] === undefined ? null : r[k];
@@ -203,26 +215,36 @@ class CacheManagerImpl {
         });
         
         try {
-          // Identify columns to update (all keys from the first record except id and created_at)
           const firstRecord = chunk[0];
           const setObj: Record<string, any> = {};
           
           Object.keys(firstRecord).forEach((key) => {
-            // NEVER update the id column during a conflict; it's redundant and can trigger driver issues.
-            // Also skip created_at as it should be immutable.
             if (key !== "id" && key !== "created_at" && firstRecord[key] !== undefined) {
               setObj[key] = sql.raw(`excluded.${key}`);
             }
           });
 
-          await db
-            .insert(table as any)
-            .values(chunk)
-            .onConflictDoUpdate({
-              target: (table as any).id,
-              // If no columns to update, just update 'updated_at' (always exists)
-              set: Object.keys(setObj).length > 0 ? setObj : { updated_at: Date.now() },
-            });
+          const performUpsert = async () => {
+            await db
+              .insert(table as any)
+              .values(chunk)
+              .onConflictDoUpdate({
+                target: (table as any).id,
+                set: Object.keys(setObj).length > 0 ? setObj : { updated_at: Date.now() },
+              });
+          };
+
+          try {
+            await performUpsert();
+          } catch (innerError: any) {
+            // Recovery attempt for native NPE
+            if (innerError.message?.includes("prepareSync") || innerError.message?.includes("NullPointerException")) {
+              ensureDatabaseConnection();
+              await performUpsert();
+            } else {
+              throw innerError;
+            }
+          }
         } catch (chunkError: any) {
           logger.error("CacheManager.write: bulk upsert failed, falling back to manual", {
             module: "CACHE_MANAGER",
@@ -230,8 +252,6 @@ class CacheManagerImpl {
             error: chunkError.message,
           });
 
-          // Emergency Fallback: SELECT then INSERT or UPDATE
-          // This avoids the native onConflictDoUpdate which is failing with NPE
           for (const record of chunk) {
             try {
               if (!record?.id) continue;
@@ -270,7 +290,7 @@ class CacheManagerImpl {
       return;
     }
 
-    // Update sync_meta — best-effort, failure does not affect the write result
+    // Update sync_meta
     try {
       await db
         .insert(syncMeta)
@@ -322,12 +342,26 @@ class CacheManagerImpl {
 
   async getQueueCount(): Promise<number> {
     try {
+      ensureDatabaseConnection();
       if (!db) return 0;
-      const result = await db
-        .select({ value: count() })
-        .from(offlineQueue)
-        .where(eq(offlineQueue.status, "pending"));
-      return result[0]?.value ?? 0;
+      
+      const execute = async () => {
+        const result = await db
+          .select({ value: count() })
+          .from(offlineQueue)
+          .where(eq(offlineQueue.status, "pending"));
+        return result[0]?.value ?? 0;
+      };
+
+      try {
+        return await execute();
+      } catch (innerError: any) {
+        if (innerError.message?.includes("prepareSync") || innerError.message?.includes("NullPointerException")) {
+          ensureDatabaseConnection();
+          return await execute();
+        }
+        throw innerError;
+      }
     } catch (error) {
       logger.error("CacheManager.getQueueCount failed", {
         module: "CACHE_MANAGER",

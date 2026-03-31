@@ -112,11 +112,18 @@ const PMService = {
           status: inst.status || "",
           progress: inst.progress || "0/0",
           assigned_to_name: inst.assigned_to_name || null,
-          start_due_date: inst.start_due_date ? new Date(inst.start_due_date).getTime() : null,
+          start_due_date: (() => {
+            const d = new Date(inst.start_due_date);
+            return isNaN(d.getTime()) ? null : d.getTime();
+          })(),
           maintenance_id: inst.maintenance_id || inst.checklist_id || null,
           client_sign: inst.client_sign || null,
           before_image: inst.before_image || null,
           after_image: inst.after_image || null,
+          completed_on: (() => {
+            const d = new Date(inst.completed_on);
+            return isNaN(d.getTime()) ? null : d.getTime();
+          })(),
           created_at: inst.created_at ? new Date(inst.created_at).getTime() : Date.now(),
           updated_at: Date.now(),
         }));
@@ -220,11 +227,18 @@ const PMService = {
           status: inst.status || "",
           progress: inst.progress || "0/0",
           assigned_to_name: inst.assigned_to_name || null,
-          start_due_date: inst.start_due_date ? new Date(inst.start_due_date).getTime() : null,
+          start_due_date: (() => {
+            const d = new Date(inst.start_due_date);
+            return isNaN(d.getTime()) ? null : d.getTime();
+          })(),
           maintenance_id: inst.maintenance_id || inst.checklist_id || null,
           client_sign: inst.client_sign || null,
           before_image: inst.before_image || null,
           after_image: inst.after_image || null,
+          completed_on: (() => {
+            const d = new Date(inst.completed_on);
+            return isNaN(d.getTime()) ? null : d.getTime();
+          })(),
           created_at: inst.created_at ? new Date(inst.created_at).getTime() : Date.now(),
           updated_at: Date.now(),
         };
@@ -315,22 +329,86 @@ const PMService = {
     return db.select().from(pmResponses).where(eq(pmResponses.instance_id, instanceId));
   },
 
+  /**
+   * Fetches existing responses for a PM instance from the API and caches them.
+   */
+  async fetchInstanceResponses(instanceId: string): Promise<PMResponseRow[]> {
+    try {
+      const response = await apiFetch(`/api/pm-response/instance/${instanceId}`);
+      if (!response.ok) return [];
+      
+      const data = await response.json();
+      if (data.success && Array.isArray(data.data)) {
+        const records = data.data.map((r: any) => ({
+          id: r.id,
+          instance_id: instanceId,
+          checklist_item_id: r.checklist_id, // Server's checklist_id is mobile's checklist_item_id
+          response_value: r.response_value || null,
+          remarks: r.remarks || null,
+          image_url: r.image_url || null,
+          readings: r.readings || null,
+          created_at: r.created_at ? new Date(r.created_at).getTime() : Date.now(),
+          updated_at: r.updated_at ? new Date(r.updated_at).getTime() : Date.now(),
+        }));
+        
+        if (records.length > 0) {
+          await cacheManager.write("pm_responses", records);
+        }
+        return records;
+      }
+      return [];
+    } catch (error) {
+      logger.error("Failed to fetch instance responses", { module: "PM_SERVICE", instanceId, error });
+      return [];
+    }
+  },
+
   async saveExecutionProgress(
     instanceServerId: string,
     responses: PMResponseData[],
-    options?: { status?: string; beforeImage?: string | null; afterImage?: string | null; clientSign?: string | null }
+    options?: { status?: string; beforeImage?: string | null; afterImage?: string | null; clientSign?: string | null; completed_on?: number | null }
   ): Promise<void> {
     const localInstance = await this.getInstanceByServerId(instanceServerId);
     if (!localInstance) return;
 
     for (const data of responses) {
       if (data.response_value === undefined) continue;
+      
       const [existing] = await db.select().from(pmResponses).where(and(eq(pmResponses.instance_id, instanceServerId), eq(pmResponses.checklist_item_id, data.checklist_item_id)));
+      
+      let responseId = existing?.id;
       if (existing) {
         await db.update(pmResponses).set({ ...data, updated_at: Date.now() }).where(eq(pmResponses.id, existing.id));
       } else {
-        await db.insert(pmResponses).values({ id: uuidv4(), instance_id: instanceServerId, ...data, created_at: Date.now(), updated_at: Date.now() });
+        responseId = uuidv4();
+        await db.insert(pmResponses).values({ 
+          id: responseId, 
+          instance_id: instanceServerId, 
+          ...data, 
+          created_at: Date.now(), 
+          updated_at: Date.now() 
+        });
       }
+
+      // Enqueue response for synchronization
+      await db.insert(offlineQueue).values({
+        id: uuidv4(),
+        entity_type: "pm_response_upsert",
+        operation: "update", // We use 'update' as a general 'upsert' operation in SyncEngine
+        payload: JSON.stringify({
+          id: responseId,
+          instance_id: instanceServerId,
+          checklist_id: data.checklist_item_id, // Map checklist_item_id -> checklist_id for backend
+          response_value: data.response_value,
+          remarks: data.remarks,
+          image_url: data.image_url,
+          readings: data.readings,
+        }),
+        created_at: Date.now(),
+        retry_count: 0,
+        last_error: null,
+        status: "pending",
+      });
     }
 
     const checklistItems = await this.getChecklistItems(localInstance.maintenance_id!);
@@ -340,6 +418,7 @@ const PMService = {
 
     const updateData: any = { progress: progressStr, updated_at: Date.now() };
     if (options?.status) updateData.status = options.status;
+    if (options?.completed_on !== undefined) updateData.completed_on = options.completed_on;
 
     if (options?.beforeImage !== undefined) {
       updateData.before_image = await queueAttachmentIfLocal(
@@ -361,7 +440,7 @@ const PMService = {
 
     await db.update(pmInstances).set(updateData).where(eq(pmInstances.id, instanceServerId));
 
-    // 1. Lock to sync queue immediately to protect local status during background refreshes
+    // Enqueue instance metadata update
     const queueItemId = uuidv4();
     await db.insert(offlineQueue).values({
       id: queueItemId,
@@ -374,19 +453,18 @@ const PMService = {
       status: "pending",
     });
 
-    // 2. Try immediate synchronization if online
+    // Try immediate synchronization
     const netState = await NetInfo.fetch();
     if (netState.isConnected) {
       try {
-        const response = await apiFetch(`/api/pm-instances/${instanceServerId}`, {
+        await apiFetch(`/api/pm-instances/${instanceServerId}`, {
           method: "PUT",
           body: JSON.stringify(updateData),
         });
-        if (response.ok) {
-          logger.info("Immediate PM update successful, dequeueing", { module: "PM_SERVICE", instanceServerId });
-          await cacheManager.dequeue(queueItemId);
-          return;
-        }
+        // We don't dequeue here because the individual responses also need to sync,
+        // and we want to keep the queue sequence logic consistent.
+        // Actually, dequeuing only the instance update is fine.
+        await cacheManager.dequeue(queueItemId);
       } catch (err) {
         logger.warn("Immediate PM update failed, staying in queue", { module: "PM_SERVICE", error: err });
       }
@@ -456,6 +534,41 @@ const PMService = {
     } catch (error) {
       logger.error("Failed to fetch PM stats", { module: "PM_SERVICE", siteCode, error });
       return null;
+    }
+  },
+
+  /**
+   * Updates the assigned_to_name locally and sends to backend.
+   */
+  async updateAssignment(instanceId: string, userName: string): Promise<void> {
+    try {
+      const updateData = { assigned_to_name: userName, updated_at: Date.now() };
+      
+      // Update local DB
+      await db.update(pmInstances).set(updateData).where(eq(pmInstances.id, instanceId));
+      
+      // Enqueue sync
+      await db.insert(offlineQueue).values({
+        id: uuidv4(),
+        entity_type: "pm_instance_update",
+        operation: "update",
+        payload: JSON.stringify({ id: instanceId, ...updateData }),
+        created_at: Date.now(),
+        retry_count: 0,
+        last_error: null,
+        status: "pending",
+      });
+
+      // Try immediate sync if online
+      const netState = await NetInfo.fetch();
+      if (netState.isConnected) {
+        apiFetch(`/api/pm-instances/${instanceId}`, {
+          method: "PUT",
+          body: JSON.stringify(updateData),
+        }).catch(() => {});
+      }
+    } catch (error) {
+      logger.error("Failed to update PM assignment", { module: "PM_SERVICE", instanceId, error });
     }
   }
 };

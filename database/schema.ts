@@ -160,6 +160,7 @@ export const pmInstances = sqliteTable("pm_instances", {
   client_sign: text("client_sign"),
   before_image: text("before_image"),
   after_image: text("after_image"),
+  completed_on: real("completed_on"),
   created_at: real("created_at").notNull(),
   updated_at: real("updated_at").notNull(),
 });

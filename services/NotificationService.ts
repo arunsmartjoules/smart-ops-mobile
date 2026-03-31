@@ -12,7 +12,6 @@ import { authEvents } from "@/utils/authEvents";
 // Configure notification handler
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
-    shouldShowAlert: true,
     shouldPlaySound: true,
     shouldSetBadge: true,
     shouldShowBanner: true,
@@ -72,17 +71,22 @@ export const requestPermissions = async (): Promise<boolean> => {
 export const getPushToken = async (): Promise<string | null> => {
   try {
     // Robust Project ID detection for standalone builds
-    const projectId =
-      Constants.expoConfig?.extra?.eas?.projectId ||
-      Constants.projectId ||
-      "d1868472-0103-49d5-978e-ece327af4c3e";
+    const easProjectId = Constants.expoConfig?.extra?.eas?.projectId;
+    const legacyProjectId = Constants.projectId;
+    const fallbackProjectId = "d1868472-0103-49d5-978e-ece327af4c3e";
 
-    logger.info("PushNotifications: Attempting to get Expo Push Token", {
+    const projectId = easProjectId || legacyProjectId || fallbackProjectId;
+
+    logger.info("PushNotifications: Token Generation Attempt", {
       module: "NOTIFICATION_SERVICE",
       projectId,
+      hasEasProjectId: !!easProjectId,
+      hasLegacyProjectId: !!legacyProjectId,
+      isUsingFallback: !easProjectId && !legacyProjectId,
       isDevice: Device.isDevice,
       deviceName: Device.deviceName,
       expoVersion: Constants.expoVersion,
+      platform: Platform.OS,
     });
 
     const token = await Notifications.getExpoPushTokenAsync({
@@ -90,10 +94,12 @@ export const getPushToken = async (): Promise<string | null> => {
     });
 
     if (token.data) {
-      logger.info("PushNotifications: Successfully generated Expo Push Token", {
+      logger.info("PushNotifications: SUCCESS", {
         module: "NOTIFICATION_SERVICE",
         token: token.data,
       });
+      // Cache the token for diagnostic display
+      await AsyncStorage.setItem("last_expo_push_token", token.data);
     }
 
     return token.data;
@@ -162,13 +168,24 @@ export const registerForPushNotifications = async (
     const data = await response.json();
 
     if (data.success) {
-      // Store token locally
+      // Store token results locally for diagnostic view
       await AsyncStorage.setItem("pushToken", pushToken);
+      await AsyncStorage.setItem("last_push_registration_status", "success");
+      await AsyncStorage.setItem("last_push_registration_time", new Date().toISOString());
+      
+      logger.info("PushNotifications: Backend registration successful", {
+        module: "NOTIFICATION_SERVICE",
+        userId,
+      });
       return { success: true };
     } else {
+      await AsyncStorage.setItem("last_push_registration_status", "failed");
+      await AsyncStorage.setItem("last_push_registration_error", data.error || "Unknown error");
       return { success: false, error: data.error };
     }
   } catch (error: any) {
+    await AsyncStorage.setItem("last_push_registration_status", "error");
+    await AsyncStorage.setItem("last_push_registration_error", error.message);
     logger.error("Error registering for push notifications", {
       module: "NOTIFICATION_SERVICE",
       error: error.message,

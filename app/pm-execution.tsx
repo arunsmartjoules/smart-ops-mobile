@@ -469,6 +469,29 @@ export default function PMExecutionScreen() {
           };
         });
         setResponses(responseMap);
+
+        // Background sync: Fetch latest responses from server if online
+        if (isConnected) {
+          PMService.fetchInstanceResponses(instanceId as string).then((apiRes) => {
+            if (apiRes.length > 0) {
+              setResponses((prev) => {
+                const freshMap = { ...prev };
+                apiRes.forEach((r) => {
+                  // Only update if we don't have a local value yet (don't overwrite user's current session)
+                  if (!freshMap[r.checklist_item_id]) {
+                    freshMap[r.checklist_item_id] = {
+                      response_value: r.response_value,
+                      readings: r.readings,
+                      remarks: r.remarks,
+                      image_url: r.image_url,
+                    };
+                  }
+                });
+                return freshMap;
+              });
+            }
+          });
+        }
       } catch (err) {
         logger.error("Error loading PM execution data:", { error: err });
       } finally {
@@ -496,13 +519,17 @@ export default function PMExecutionScreen() {
           // - online: attempt upload
           // - offline/failure: keep local URI and let PM sync upload later
           if (!isConnected) {
-            setResponses((prev) => ({
-              ...prev,
-              [itemId]: {
-                ...prev[itemId],
-                image_url: pickedUri,
-              },
-            }));
+            setResponses((prev) => {
+              const next = {
+                ...prev,
+                [itemId]: {
+                  ...prev[itemId],
+                  image_url: pickedUri,
+                },
+              };
+              handleSave(true, undefined, next);
+              return next;
+            });
             Alert.alert(
               "Saved Offline",
               "Image saved locally and will upload when you are back online.",
@@ -520,13 +547,17 @@ export default function PMExecutionScreen() {
               pickedUri,
             );
 
-            setResponses((prev) => ({
-              ...prev,
-              [itemId]: {
-                ...prev[itemId],
-                image_url: publicUrl || pickedUri,
-              },
-            }));
+            setResponses((prev) => {
+              const next = {
+                ...prev,
+                [itemId]: {
+                  ...prev[itemId],
+                  image_url: publicUrl || pickedUri,
+                },
+              };
+              handleSave(true, undefined, next);
+              return next;
+            });
 
             if (!publicUrl) {
               Alert.alert(
@@ -536,13 +567,17 @@ export default function PMExecutionScreen() {
             }
           } catch (err) {
             logger.error("Error during PM image upload:", { error: err });
-            setResponses((prev) => ({
-              ...prev,
-              [itemId]: {
-                ...prev[itemId],
-                image_url: pickedUri,
-              },
-            }));
+            setResponses((prev) => {
+              const next = {
+                ...prev,
+                [itemId]: {
+                  ...prev[itemId],
+                  image_url: pickedUri,
+                },
+              };
+              handleSave(true, undefined, next);
+              return next;
+            });
             Alert.alert(
               "Saved Offline",
               "Image saved locally and upload will retry automatically.",
@@ -552,13 +587,17 @@ export default function PMExecutionScreen() {
           }
         }
       } else {
-        setResponses((prev) => ({
-          ...prev,
-          [itemId]: {
-            ...prev[itemId],
-            image_url: null,
-          },
-        }));
+        setResponses((prev) => {
+          const next = {
+            ...prev,
+            [itemId]: {
+              ...prev[itemId],
+              image_url: null,
+            },
+          };
+          handleSave(true, undefined, next);
+          return next;
+        });
       }
     },
     [instanceId, isConnected],
@@ -593,10 +632,12 @@ export default function PMExecutionScreen() {
           }
         }
 
-        setInstance((prev: any) => ({
-          ...prev,
+        const nextInstance = {
+          ...(instance || {}),
           [type]: finalUri,
-        }));
+        };
+        setInstance(nextInstance);
+        handleSave(true, undefined, undefined, nextInstance);
       }
     },
     [instanceId, isConnected],
@@ -608,24 +649,6 @@ export default function PMExecutionScreen() {
     }
   }, [instanceId, isConnected]);
 
-  // ── Response handler ──────────────────────────────────────────────────────
-  const handleResponseChange = useCallback(
-    (
-      itemId: string,
-      field: "response_value" | "remarks" | "readings",
-      value: string | null,
-    ) => {
-      setResponses((prev) => ({
-        ...prev,
-        [itemId]: {
-          ...prev[itemId],
-          [field]: value,
-        },
-      }));
-    },
-    [],
-  );
-
   // ── Progress derived value ────────────────────────────────────────────────
   const answered = Object.values(responses).filter(
     (r) => r.response_value,
@@ -635,10 +658,21 @@ export default function PMExecutionScreen() {
   const progressPercent = total > 0 ? (answered / total) * 100 : 0;
 
   const handleSave = useCallback(
-    async (quiet = false, executionOptions?: { status?: string; clientSign?: string }) => {
+    async (
+      quiet = false,
+      executionOptions?: { 
+        status?: string; 
+        clientSign?: string; 
+        completed_on?: number 
+      },
+      overridingResponses?: ResponseMap,
+      overridingInstance?: any
+    ) => {
       setSaving(true);
       try {
-        const responseData = Object.entries(responses)
+        const sourceResponses = overridingResponses || responses;
+        const sourceInstance = overridingInstance || instance;
+        const responseData = Object.entries(sourceResponses)
           .map(([itemId, resp]) => ({
             checklist_item_id: itemId,
             // Keep undefined so saveExecutionProgress ignores untouched rows
@@ -648,22 +682,28 @@ export default function PMExecutionScreen() {
             image_url: resp.image_url || null,
           }));
 
-        let nextStatus = instance?.status;
-        if (instance?.status === "Pending") nextStatus = "In-progress";
+        let nextStatus = sourceInstance?.status;
+        if (sourceInstance?.status === "Pending") nextStatus = "In-progress";
         if (executionOptions?.status) nextStatus = executionOptions.status;
+
+        // Optimistic UI update: Immediately reflect status transition
+        if (nextStatus !== sourceInstance?.status) {
+          setInstance({ ...sourceInstance, status: nextStatus });
+        }
 
         await PMService.saveExecutionProgress(
           instanceId as string,
           responseData,
           {
             status: nextStatus,
-            beforeImage: instance?.before_image || null,
-            afterImage: instance?.after_image || null,
+            beforeImage: sourceInstance?.before_image || null,
+            afterImage: sourceInstance?.after_image || null,
             clientSign: executionOptions?.clientSign,
           }
         );
 
-        if (nextStatus !== instance?.status) {
+        // Verification fetch (optional but keeps DB and State in perfect sync)
+        if (nextStatus !== sourceInstance?.status) {
           const updated = await PMService.getInstanceByServerId(instanceId as string);
           if (updated) setInstance(updated);
         }
@@ -691,6 +731,50 @@ export default function PMExecutionScreen() {
     ],
   );
 
+  // ── Response handler ──────────────────────────────────────────────────────
+  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleResponseChange = useCallback(
+    (
+      itemId: string,
+      field: "response_value" | "remarks" | "readings",
+      value: string | null,
+    ) => {
+      setResponses((prev) => {
+        const next = {
+          ...prev,
+          [itemId]: {
+            ...prev[itemId],
+            [field]: value,
+          },
+        };
+
+        // Auto-save logic
+        if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+
+        if (field === "response_value") {
+          // Immediate save for button toggles
+          handleSave(true, undefined, next);
+        } else {
+          // Debounced save for text input
+          autoSaveTimerRef.current = setTimeout(() => {
+            handleSave(true, undefined, next);
+          }, 1000);
+        }
+
+        return next;
+      });
+    },
+    [handleSave],
+  );
+
+  // Clean up timer on unmount
+  useEffect(() => {
+    return () => {
+      if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    };
+  }, []);
+
   const handleComplete = useCallback(
     async (signature: string) => {
       if (!signature) {
@@ -700,7 +784,12 @@ export default function PMExecutionScreen() {
 
       setSaving(true);
       try {
-        const saved = await handleSave(true, { status: "Completed", clientSign: signature });
+        const now = Date.now();
+        const saved = await handleSave(true, { 
+          status: "Completed", 
+          clientSign: signature, 
+          completed_on: now 
+        });
         if (!saved) throw new Error("Failed to complete instance.");
 
         setShowCompletionModal(false);
@@ -1066,22 +1155,6 @@ export default function PMExecutionScreen() {
             ]}
           >
             <View style={styles.footerBtns}>
-              <TouchableOpacity
-                onPress={() => handleSave()}
-                disabled={saving}
-                style={[
-                  styles.footerBtn,
-                  { backgroundColor: isDark ? "#1e1b4b" : "#dbeafe" },
-                ]}
-              >
-                {saving ? (
-                  <ActivityIndicator size="small" color="#3b82f6" />
-                ) : (
-                  <Text style={[styles.footerBtnText, { color: "#3b82f6" }]}>
-                    Save Progress
-                  </Text>
-                )}
-              </TouchableOpacity>
               <TouchableOpacity
                 onPress={() => setShowCompletionModal(true)}
                 disabled={!canComplete}

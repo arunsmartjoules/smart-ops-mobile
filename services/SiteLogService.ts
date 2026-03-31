@@ -1,4 +1,16 @@
-import { eq, and, desc, asc, ne, gte, lte, lt, inArray, count, sql } from "drizzle-orm";
+import {
+  eq,
+  and,
+  desc,
+  asc,
+  ne,
+  gte,
+  lte,
+  lt,
+  inArray,
+  count,
+  sql,
+} from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
 import NetInfo from "@react-native-community/netinfo";
 import { startOfDay, endOfDay } from "date-fns";
@@ -29,7 +41,12 @@ const normalizeLogName = (serverLogName: string): string => {
   return serverLogName;
 };
 
-const LOCAL_URI_PREFIXES = ["file://", "content://", "ph://", "asset-library://"];
+const LOCAL_URI_PREFIXES = [
+  "file://",
+  "content://",
+  "ph://",
+  "asset-library://",
+];
 const isLocalUri = (uri?: string | null) =>
   !!uri && LOCAL_URI_PREFIXES.some((p) => uri.startsWith(p));
 
@@ -162,10 +179,14 @@ const _fetchLogs = async (
     } else if (options.fromDate || options.toDate) {
       const toDateStr = (ms: number) => new Date(ms).toISOString().slice(0, 10);
       if (options.fromDate) {
-        conditions.push(gte(siteLogs.scheduled_date, toDateStr(options.fromDate)));
+        conditions.push(
+          gte(siteLogs.scheduled_date, toDateStr(options.fromDate)),
+        );
       }
       if (options.toDate) {
-        conditions.push(lte(siteLogs.scheduled_date, toDateStr(options.toDate)));
+        conditions.push(
+          lte(siteLogs.scheduled_date, toDateStr(options.toDate)),
+        );
       }
     }
 
@@ -181,7 +202,14 @@ const _fetchLogs = async (
           logType,
           conditionsCount: conditions.length,
           rowCount: rows.length,
-          firstRow: rows[0] ? { id: rows[0].id, log_name: (rows[0] as any).log_name, site_code: (rows[0] as any).site_code, scheduled_date: (rows[0] as any).scheduled_date } : null,
+          firstRow: rows[0]
+            ? {
+                id: rows[0].id,
+                log_name: (rows[0] as any).log_name,
+                site_code: (rows[0] as any).site_code,
+                scheduled_date: (rows[0] as any).scheduled_date,
+              }
+            : null,
         });
         return rows;
       });
@@ -223,8 +251,6 @@ export const SiteLogService: ISiteLogService = {
     return _fetchLogs(siteCode, logType, options);
   },
 
-
-
   /**
    * Save multiple logs at once
    */
@@ -236,59 +262,74 @@ export const SiteLogService: ISiteLogService = {
 
     try {
       // 1. Prepare records for batch insert
-      const recordsToInsert = await Promise.all(logs.map(async (data) => {
-        const id = data.id || uuidv4();
-        const scheduledDate = data.scheduled_date || data.scheduledDate || formattedToday;
+      const recordsToInsert = await Promise.all(
+        logs.map(async (data) => {
+          const id = data.id || uuidv4();
+          const scheduledDate =
+            data.scheduled_date || data.scheduledDate || formattedToday;
 
-        // Queue attachment if local
-        const attachment = await queueAttachmentIfLocal(
-          data.attachment, "site-logs", "site_log", id, "attachment"
-        );
+          // Queue attachment if local
+          const attachment = await queueAttachmentIfLocal(
+            data.attachment,
+            "site-logs",
+            "site_log",
+            id,
+            "attachment",
+          );
 
-        const signature = await queueAttachmentIfLocal(
-          data.signature, "site-signatures", "site_log", id, "signature"
-        );
+          const signature = await queueAttachmentIfLocal(
+            data.signature,
+            "site-signatures",
+            "site_log",
+            id,
+            "signature",
+          );
 
-        return {
-          id,
-          site_code: data.site_code || data.siteCode,
-          executor_id: data.executor_id || data.executorId,
-          assigned_to: data.assigned_to || data.assignedTo || null,
-          log_name: data.log_name || data.logName,
-          task_name: data.task_name || data.taskName || null,
-          temperature: data.temperature || null,
-          rh: data.rh || null,
-          tds: data.tds || null,
-          ph: data.ph || null,
-          hardness: data.hardness || null,
-          chemical_dosing: data.chemical_dosing || data.chemicalDosing || null,
-          remarks: data.remarks || null,
-          signature: signature || null,
-          attachment,
-          status: data.status || "Completed",
-          scheduled_date: scheduledDate,
-          created_at: now,
-          updated_at: now,
-        };
-      }));
+          return {
+            id,
+            site_code: data.site_code || data.siteCode,
+            executor_id: data.executor_id || data.executorId,
+            assigned_to: data.assigned_to || data.assignedTo || null,
+            log_name: data.log_name || data.logName,
+            task_name: data.task_name || data.taskName || null,
+            temperature: data.temperature || null,
+            rh: data.rh || null,
+            tds: data.tds || null,
+            ph: data.ph || null,
+            hardness: data.hardness || null,
+            chemical_dosing:
+              data.chemical_dosing || data.chemicalDosing || null,
+            remarks: data.remarks || null,
+            signature: signature || null,
+            attachment,
+            status: data.status || "Completed",
+            scheduled_date: scheduledDate,
+            created_at: now,
+            updated_at: now,
+          };
+        }),
+      );
 
       // 2. Batch Insert
-      await db.insert(siteLogs).values(recordsToInsert as any).onConflictDoUpdate({
-        target: [siteLogs.id],
-        set: {
-          temperature: sql`excluded.temperature`,
-          rh: sql`excluded.rh`,
-          tds: sql`excluded.tds`,
-          ph: sql`excluded.ph`,
-          hardness: sql`excluded.hardness`,
-          chemical_dosing: sql`excluded.chemical_dosing`,
-          remarks: sql`excluded.remarks`,
-          signature: sql`excluded.signature`,
-          attachment: sql`excluded.attachment`,
-          status: sql`excluded.status`,
-          updated_at: now,
-        }
-      });
+      await db
+        .insert(siteLogs)
+        .values(recordsToInsert as any)
+        .onConflictDoUpdate({
+          target: [siteLogs.id],
+          set: {
+            temperature: sql`excluded.temperature`,
+            rh: sql`excluded.rh`,
+            tds: sql`excluded.tds`,
+            ph: sql`excluded.ph`,
+            hardness: sql`excluded.hardness`,
+            chemical_dosing: sql`excluded.chemical_dosing`,
+            remarks: sql`excluded.remarks`,
+            signature: sql`excluded.signature`,
+            attachment: sql`excluded.attachment`,
+            status: sql`excluded.status`,
+            updated_at: now,
+          },
+        });
 
       // 3. Enqueue for Sync
       for (const record of recordsToInsert) {
@@ -297,20 +338,19 @@ export const SiteLogService: ISiteLogService = {
           operation: "create",
           payload: {
             ...record,
-            scheduled_date: record.scheduled_date
-          }
+            scheduled_date: record.scheduled_date,
+          },
         });
       }
 
-      logger.info(`Bulk saved ${recordsToInsert.length} logs`, { 
+      logger.info(`Bulk saved ${recordsToInsert.length} logs`, {
         module: "SITE_LOG_SERVICE",
-        siteCode: recordsToInsert[0]?.site_code 
+        siteCode: recordsToInsert[0]?.site_code,
       });
-
     } catch (e: any) {
       logger.error("saveBulkSiteLogs failed", {
         module: "SITE_LOG_SERVICE",
-        error: e.message
+        error: e.message,
       });
       throw e;
     }
@@ -325,19 +365,27 @@ export const SiteLogService: ISiteLogService = {
     // Default scheduled_date to today (YYYY-MM-DD) in local time if not provided
     const nowLocal = new Date();
     const year = nowLocal.getFullYear();
-    const month = String(nowLocal.getMonth() + 1).padStart(2, '0');
-    const day = String(nowLocal.getDate()).padStart(2, '0');
+    const month = String(nowLocal.getMonth() + 1).padStart(2, "0");
+    const day = String(nowLocal.getDate()).padStart(2, "0");
     const localToday = `${year}-${month}-${day}`;
 
     const scheduledDate = data.scheduledDate || localToday;
 
     // Queue attachment for deferred upload if it's a local file
     const attachment = await queueAttachmentIfLocal(
-      data.attachment, "site-logs", "site_log", id, "attachment",
+      data.attachment,
+      "site-logs",
+      "site_log",
+      id,
+      "attachment",
     );
 
     const signature = await queueAttachmentIfLocal(
-      data.signature, "site-signatures", "site_log", id, "signature",
+      data.signature,
+      "site-signatures",
+      "site_log",
+      id,
+      "signature",
     );
 
     await db.insert(siteLogs).values({
@@ -370,13 +418,18 @@ export const SiteLogService: ISiteLogService = {
       .where(eq(siteLogs.id, id))
       .limit(1);
 
-    logger.activity("CREATE", "SITE_LOG", `New ${data.logName} log created for ${data.siteCode}`, {
-      log_id: id,
-      log_name: data.logName,
-      site_code: data.siteCode,
-      task_name: data.taskName,
-      status: data.status,
-    });
+    logger.activity(
+      "CREATE",
+      "SITE_LOG",
+      `New ${data.logName} log created for ${data.siteCode}`,
+      {
+        log_id: id,
+        log_name: data.logName,
+        site_code: data.siteCode,
+        task_name: data.taskName,
+        status: data.status,
+      },
+    );
 
     // Enqueue for offline sync
     await cacheManager.enqueue({
@@ -432,7 +485,9 @@ export const SiteLogService: ISiteLogService = {
         }),
       });
     } catch {
-      logger.debug("saveSiteLog: API call failed, will sync later", { module: "SITE_LOG_SERVICE" });
+      logger.debug("saveSiteLog: API call failed, will sync later", {
+        module: "SITE_LOG_SERVICE",
+      });
     }
 
     return record;
@@ -447,11 +502,19 @@ export const SiteLogService: ISiteLogService = {
 
     // Queue attachment for deferred upload if it's a local file
     const attachments = await queueAttachmentIfLocal(
-      data.attachments, "chiller-readings", "chiller_reading", id, "attachments",
+      data.attachments,
+      "chiller-readings",
+      "chiller_reading",
+      id,
+      "attachments",
     );
 
     const signatureText = await queueAttachmentIfLocal(
-      data.signature, "site-signatures", "chiller_reading", id, "signature_text",
+      data.signature,
+      "site-signatures",
+      "chiller_reading",
+      id,
+      "signature_text",
     );
 
     await db.insert(chillerReadings).values({
@@ -501,13 +564,18 @@ export const SiteLogService: ISiteLogService = {
       .where(eq(chillerReadings.id, id))
       .limit(1);
 
-    logger.activity("CREATE", "CHILLER_READING", `New chiller reading created for ${data.siteCode}`, {
-      log_id: id,
-      site_code: data.siteCode,
-      asset_name: data.assetName,
-      chiller_id: data.chillerId,
-      status: data.status || "Completed",
-    });
+    logger.activity(
+      "CREATE",
+      "CHILLER_READING",
+      `New chiller reading created for ${data.siteCode}`,
+      {
+        log_id: id,
+        site_code: data.siteCode,
+        asset_name: data.assetName,
+        chiller_id: data.chillerId,
+        status: data.status || "Completed",
+      },
+    );
 
     // Enqueue for offline sync
     await cacheManager.enqueue({
@@ -523,7 +591,9 @@ export const SiteLogService: ISiteLogService = {
         body: JSON.stringify(record),
       });
     } catch {
-      logger.debug("saveChillerReading: API call failed, will sync later", { module: "SITE_LOG_SERVICE" });
+      logger.debug("saveChillerReading: API call failed, will sync later", {
+        module: "SITE_LOG_SERVICE",
+      });
     }
 
     return record;
@@ -532,52 +602,81 @@ export const SiteLogService: ISiteLogService = {
   /**
    * Update an existing chiller reading
    */
-  async updateChillerReading(
-    id: string,
-    data: Partial<any>,
-  ): Promise<any> {
+  async updateChillerReading(id: string, data: Partial<any>): Promise<any> {
     const updateFields: Record<string, any> = { updated_at: Date.now() };
 
     if (data.chillerId !== undefined) updateFields.chiller_id = data.chillerId;
-    if (data.equipmentId !== undefined) updateFields.equipment_id = data.equipmentId;
+    if (data.equipmentId !== undefined)
+      updateFields.equipment_id = data.equipmentId;
     if (data.assetName !== undefined) updateFields.asset_name = data.assetName;
     if (data.assetType !== undefined) updateFields.asset_type = data.assetType;
     if (data.dateShift !== undefined) updateFields.date_shift = data.dateShift;
-    if (data.assignedTo !== undefined) updateFields.assigned_to = data.assignedTo;
-    if (data.readingTime !== undefined) updateFields.reading_time = data.readingTime;
-    if (data.startDatetime !== undefined) updateFields.start_datetime = data.startDatetime;
-    if (data.endDatetime !== undefined) updateFields.end_datetime = data.endDatetime;
-    if (data.condenserInletTemp !== undefined) updateFields.condenser_inlet_temp = data.condenserInletTemp;
-    if (data.condenserOutletTemp !== undefined) updateFields.condenser_outlet_temp = data.condenserOutletTemp;
-    if (data.evaporatorInletTemp !== undefined) updateFields.evaporator_inlet_temp = data.evaporatorInletTemp;
-    if (data.evaporatorOutletTemp !== undefined) updateFields.evaporator_outlet_temp = data.evaporatorOutletTemp;
-    if (data.saturatedCondenserTemp !== undefined) updateFields.saturated_condenser_temp = data.saturatedCondenserTemp;
-    if (data.saturatedSuctionTemp !== undefined) updateFields.saturated_suction_temp = data.saturatedSuctionTemp;
-    if (data.compressorSuctionTemp !== undefined) updateFields.compressor_suction_temp = data.compressorSuctionTemp;
-    if (data.motorTemperature !== undefined) updateFields.motor_temperature = data.motorTemperature;
-    if (data.setPointCelsius !== undefined) updateFields.set_point_celsius = data.setPointCelsius;
-    if (data.dischargePressure !== undefined) updateFields.discharge_pressure = data.dischargePressure;
-    if (data.mainSuctionPressure !== undefined) updateFields.main_suction_pressure = data.mainSuctionPressure;
-    if (data.oilPressure !== undefined) updateFields.oil_pressure = data.oilPressure;
-    if (data.oilPressureDifference !== undefined) updateFields.oil_pressure_difference = data.oilPressureDifference;
-    if (data.condenserInletPressure !== undefined) updateFields.condenser_inlet_pressure = data.condenserInletPressure;
-    if (data.condenserOutletPressure !== undefined) updateFields.condenser_outlet_pressure = data.condenserOutletPressure;
-    if (data.evaporatorInletPressure !== undefined) updateFields.evaporator_inlet_pressure = data.evaporatorInletPressure;
-    if (data.evaporatorOutletPressure !== undefined) updateFields.evaporator_outlet_pressure = data.evaporatorOutletPressure;
-    if (data.compressorLoadPercentage !== undefined) updateFields.compressor_load_percentage = data.compressorLoadPercentage;
-    if (data.inlineBtuMeter !== undefined) updateFields.inline_btu_meter = data.inlineBtuMeter;
+    if (data.assignedTo !== undefined)
+      updateFields.assigned_to = data.assignedTo;
+    if (data.readingTime !== undefined)
+      updateFields.reading_time = data.readingTime;
+    if (data.startDatetime !== undefined)
+      updateFields.start_datetime = data.startDatetime;
+    if (data.endDatetime !== undefined)
+      updateFields.end_datetime = data.endDatetime;
+    if (data.condenserInletTemp !== undefined)
+      updateFields.condenser_inlet_temp = data.condenserInletTemp;
+    if (data.condenserOutletTemp !== undefined)
+      updateFields.condenser_outlet_temp = data.condenserOutletTemp;
+    if (data.evaporatorInletTemp !== undefined)
+      updateFields.evaporator_inlet_temp = data.evaporatorInletTemp;
+    if (data.evaporatorOutletTemp !== undefined)
+      updateFields.evaporator_outlet_temp = data.evaporatorOutletTemp;
+    if (data.saturatedCondenserTemp !== undefined)
+      updateFields.saturated_condenser_temp = data.saturatedCondenserTemp;
+    if (data.saturatedSuctionTemp !== undefined)
+      updateFields.saturated_suction_temp = data.saturatedSuctionTemp;
+    if (data.compressorSuctionTemp !== undefined)
+      updateFields.compressor_suction_temp = data.compressorSuctionTemp;
+    if (data.motorTemperature !== undefined)
+      updateFields.motor_temperature = data.motorTemperature;
+    if (data.setPointCelsius !== undefined)
+      updateFields.set_point_celsius = data.setPointCelsius;
+    if (data.dischargePressure !== undefined)
+      updateFields.discharge_pressure = data.dischargePressure;
+    if (data.mainSuctionPressure !== undefined)
+      updateFields.main_suction_pressure = data.mainSuctionPressure;
+    if (data.oilPressure !== undefined)
+      updateFields.oil_pressure = data.oilPressure;
+    if (data.oilPressureDifference !== undefined)
+      updateFields.oil_pressure_difference = data.oilPressureDifference;
+    if (data.condenserInletPressure !== undefined)
+      updateFields.condenser_inlet_pressure = data.condenserInletPressure;
+    if (data.condenserOutletPressure !== undefined)
+      updateFields.condenser_outlet_pressure = data.condenserOutletPressure;
+    if (data.evaporatorInletPressure !== undefined)
+      updateFields.evaporator_inlet_pressure = data.evaporatorInletPressure;
+    if (data.evaporatorOutletPressure !== undefined)
+      updateFields.evaporator_outlet_pressure = data.evaporatorOutletPressure;
+    if (data.compressorLoadPercentage !== undefined)
+      updateFields.compressor_load_percentage = data.compressorLoadPercentage;
+    if (data.inlineBtuMeter !== undefined)
+      updateFields.inline_btu_meter = data.inlineBtuMeter;
     if (data.remarks !== undefined) updateFields.remarks = data.remarks;
     if (data.status !== undefined) updateFields.status = data.status;
 
     if (data.signatureText !== undefined) {
       updateFields.signature_text = await queueAttachmentIfLocal(
-        data.signatureText, "site-signatures", "chiller_reading", id, "signature_text"
+        data.signatureText,
+        "site-signatures",
+        "chiller_reading",
+        id,
+        "signature_text",
       );
     }
-    
+
     if (data.attachments !== undefined) {
       updateFields.attachments = await queueAttachmentIfLocal(
-        data.attachments, "chiller-readings", "chiller_reading", id, "attachments"
+        data.attachments,
+        "chiller-readings",
+        "chiller_reading",
+        id,
+        "attachments",
       );
     }
 
@@ -592,14 +691,21 @@ export const SiteLogService: ISiteLogService = {
       .where(eq(chillerReadings.id, id))
       .limit(1);
 
-    logger.activity("UPDATE", "CHILLER_READING", `Chiller reading updated for ${record?.site_code || id}`, {
-      log_id: id,
-      site_code: record?.site_code,
-      asset_name: record?.asset_name,
-      chiller_id: record?.chiller_id,
-      updated_fields: Object.keys(updateFields).filter((k) => k !== "updated_at"),
-      status: data.status,
-    });
+    logger.activity(
+      "UPDATE",
+      "CHILLER_READING",
+      `Chiller reading updated for ${record?.site_code || id}`,
+      {
+        log_id: id,
+        site_code: record?.site_code,
+        asset_name: record?.asset_name,
+        chiller_id: record?.chiller_id,
+        updated_fields: Object.keys(updateFields).filter(
+          (k) => k !== "updated_at",
+        ),
+        status: data.status,
+      },
+    );
 
     // Enqueue for offline sync
     await cacheManager.enqueue({
@@ -615,7 +721,9 @@ export const SiteLogService: ISiteLogService = {
         body: JSON.stringify(updateFields),
       });
     } catch {
-      logger.debug("updateChillerReading: API call failed, will sync later", { module: "SITE_LOG_SERVICE" });
+      logger.debug("updateChillerReading: API call failed, will sync later", {
+        module: "SITE_LOG_SERVICE",
+      });
     }
 
     return record;
@@ -626,9 +734,7 @@ export const SiteLogService: ISiteLogService = {
    */
   async deleteChillerReading(id: string): Promise<void> {
     try {
-      await db
-        .delete(chillerReadings)
-        .where(eq(chillerReadings.id, id));
+      await db.delete(chillerReadings).where(eq(chillerReadings.id, id));
 
       // Enqueue for offline sync
       await cacheManager.enqueue({
@@ -641,10 +747,17 @@ export const SiteLogService: ISiteLogService = {
       try {
         await apiFetch(`/api/chiller-readings/${id}`, { method: "DELETE" });
       } catch {
-        logger.debug("deleteChillerReading: API call failed, will sync later", { module: "SITE_LOG_SERVICE" });
+        logger.debug("deleteChillerReading: API call failed, will sync later", {
+          module: "SITE_LOG_SERVICE",
+        });
       }
 
-      logger.activity("DELETE", "CHILLER_READING", `Chiller reading deleted: ${id}`, { log_id: id });
+      logger.activity(
+        "DELETE",
+        "CHILLER_READING",
+        `Chiller reading deleted: ${id}`,
+        { log_id: id },
+      );
     } catch (error: any) {
       logger.error("Error deleting chiller reading", {
         module: "SITE_LOG_SERVICE",
@@ -659,9 +772,7 @@ export const SiteLogService: ISiteLogService = {
    */
   async deleteSiteLog(id: string): Promise<void> {
     try {
-      await db
-        .delete(siteLogs)
-        .where(eq(siteLogs.id, id));
+      await db.delete(siteLogs).where(eq(siteLogs.id, id));
 
       // Enqueue for offline sync
       await cacheManager.enqueue({
@@ -674,10 +785,14 @@ export const SiteLogService: ISiteLogService = {
       try {
         await apiFetch(`/api/site-logs/${id}`, { method: "DELETE" });
       } catch {
-        logger.debug("deleteSiteLog: API call failed, will sync later", { module: "SITE_LOG_SERVICE" });
+        logger.debug("deleteSiteLog: API call failed, will sync later", {
+          module: "SITE_LOG_SERVICE",
+        });
       }
 
-      logger.activity("DELETE", "SITE_LOG", `Site log deleted: ${id}`, { log_id: id });
+      logger.activity("DELETE", "SITE_LOG", `Site log deleted: ${id}`, {
+        log_id: id,
+      });
     } catch (error: any) {
       logger.error("Error deleting site log", {
         module: "SITE_LOG_SERVICE",
@@ -715,34 +830,43 @@ export const SiteLogService: ISiteLogService = {
     try {
       const updateFields: Record<string, any> = { updated_at: Date.now() };
 
-      if (data.temperature !== undefined) updateFields.temperature = data.temperature;
+      if (data.temperature !== undefined)
+        updateFields.temperature = data.temperature;
       if (data.rh !== undefined) updateFields.rh = data.rh;
       if (data.tds !== undefined) updateFields.tds = data.tds;
       if (data.ph !== undefined) updateFields.ph = data.ph;
       if (data.hardness !== undefined) updateFields.hardness = data.hardness;
-      if (data.chemicalDosing !== undefined) updateFields.chemical_dosing = data.chemicalDosing;
+      if (data.chemicalDosing !== undefined)
+        updateFields.chemical_dosing = data.chemicalDosing;
       if (data.remarks !== undefined) updateFields.remarks = data.remarks;
       if (data.status !== undefined) updateFields.status = data.status;
-      if (data.assignedTo !== undefined) updateFields.assigned_to = data.assignedTo;
+      if (data.assignedTo !== undefined)
+        updateFields.assigned_to = data.assignedTo;
       if (data.endTime !== undefined) updateFields.end_time = data.endTime;
-      if (data.scheduledDate !== undefined) updateFields.scheduled_date = data.scheduledDate;
+      if (data.scheduledDate !== undefined)
+        updateFields.scheduled_date = data.scheduledDate;
 
       if (data.signature !== undefined) {
         updateFields.signature = await queueAttachmentIfLocal(
-          data.signature, "site-signatures", "site_log", id, "signature"
-        );
-      }
-      
-      if (data.attachment !== undefined) {
-        updateFields.attachment = await queueAttachmentIfLocal(
-          data.attachment, "site-logs", "site_log", id, "attachment"
+          data.signature,
+          "site-signatures",
+          "site_log",
+          id,
+          "signature",
         );
       }
 
-      await db
-        .update(siteLogs)
-        .set(updateFields)
-        .where(eq(siteLogs.id, id));
+      if (data.attachment !== undefined) {
+        updateFields.attachment = await queueAttachmentIfLocal(
+          data.attachment,
+          "site-logs",
+          "site_log",
+          id,
+          "attachment",
+        );
+      }
+
+      await db.update(siteLogs).set(updateFields).where(eq(siteLogs.id, id));
 
       const [record] = await db
         .select()
@@ -750,13 +874,20 @@ export const SiteLogService: ISiteLogService = {
         .where(eq(siteLogs.id, id))
         .limit(1);
 
-      logger.activity("UPDATE", "SITE_LOG", `Site log updated (${record?.log_name || "unknown"}) for ${record?.site_code || id}`, {
-        log_id: id,
-        log_name: record?.log_name,
-        site_code: record?.site_code,
-        updated_fields: Object.keys(updateFields).filter((k) => k !== "updated_at"),
-        status: data.status,
-      });
+      logger.activity(
+        "UPDATE",
+        "SITE_LOG",
+        `Site log updated (${record?.log_name || "unknown"}) for ${record?.site_code || id}`,
+        {
+          log_id: id,
+          log_name: record?.log_name,
+          site_code: record?.site_code,
+          updated_fields: Object.keys(updateFields).filter(
+            (k) => k !== "updated_at",
+          ),
+          status: data.status,
+        },
+      );
 
       // Enqueue for offline sync
       await cacheManager.enqueue({
@@ -772,7 +903,9 @@ export const SiteLogService: ISiteLogService = {
           body: JSON.stringify(updateFields),
         });
       } catch {
-        logger.debug("updateSiteLog: API call failed, will sync later", { module: "SITE_LOG_SERVICE" });
+        logger.debug("updateSiteLog: API call failed, will sync later", {
+          module: "SITE_LOG_SERVICE",
+        });
       }
 
       return record;
@@ -795,7 +928,11 @@ export const SiteLogService: ISiteLogService = {
 
       // If "all" is requested but we have specific site codes,
       // check if we can just pull a specific one
-      if (finalSiteCode === "all" && options.siteCodes && options.siteCodes.length === 1) {
+      if (
+        finalSiteCode === "all" &&
+        options.siteCodes &&
+        options.siteCodes.length === 1
+      ) {
         finalSiteCode = options.siteCodes[0];
       }
 
@@ -817,7 +954,13 @@ export const SiteLogService: ISiteLogService = {
           module: "SITE_LOG_SERVICE",
           url,
           count: serverLogs.length,
-          firstLog: serverLogs[0] ? { id: serverLogs[0].id, log_name: serverLogs[0].log_name, site_code: serverLogs[0].site_code } : null,
+          firstLog: serverLogs[0]
+            ? {
+                id: serverLogs[0].id,
+                log_name: serverLogs[0].log_name,
+                site_code: serverLogs[0].site_code,
+              }
+            : null,
         });
         const serverIds = serverLogs.map((l: any) => l.id);
 
@@ -983,23 +1126,44 @@ export const SiteLogService: ISiteLogService = {
           start_datetime: safeTimestamp(serverLog.start_datetime),
           end_datetime: safeTimestamp(serverLog.end_datetime),
           condenser_inlet_temp: safeParseFloat(serverLog.condenser_inlet_temp),
-          condenser_outlet_temp: safeParseFloat(serverLog.condenser_outlet_temp),
-          evaporator_inlet_temp: safeParseFloat(serverLog.evaporator_inlet_temp),
-          evaporator_outlet_temp: safeParseFloat(serverLog.evaporator_outlet_temp),
-          compressor_suction_temp: safeParseFloat(serverLog.compressor_suction_temp),
+          condenser_outlet_temp: safeParseFloat(
+            serverLog.condenser_outlet_temp,
+          ),
+          evaporator_inlet_temp: safeParseFloat(
+            serverLog.evaporator_inlet_temp,
+          ),
+          evaporator_outlet_temp: safeParseFloat(
+            serverLog.evaporator_outlet_temp,
+          ),
+          compressor_suction_temp: safeParseFloat(
+            serverLog.compressor_suction_temp,
+          ),
           motor_temperature: safeParseFloat(serverLog.motor_temperature),
-          saturated_condenser_temp: safeParseFloat(serverLog.saturated_condenser_temp),
-          saturated_suction_temp: safeParseFloat(serverLog.saturated_suction_temp),
+          saturated_condenser_temp: safeParseFloat(
+            serverLog.saturated_condenser_temp,
+          ),
+          saturated_suction_temp: safeParseFloat(
+            serverLog.saturated_suction_temp,
+          ),
           set_point_celsius: safeParseFloat(serverLog.set_point_celsius),
           discharge_pressure: safeParseFloat(serverLog.discharge_pressure),
-          main_suction_pressure: safeParseFloat(serverLog.main_suction_pressure),
+          main_suction_pressure: safeParseFloat(
+            serverLog.main_suction_pressure,
+          ),
           oil_pressure: safeParseFloat(serverLog.oil_pressure),
-          oil_pressure_difference: safeParseFloat(serverLog.oil_pressure_difference),
-          condenser_inlet_pressure: parseFloat(serverLog.condenser_inlet_pressure) || null,
-          condenser_outlet_pressure: parseFloat(serverLog.condenser_outlet_pressure) || null,
-          evaporator_inlet_pressure: parseFloat(serverLog.evaporator_inlet_pressure) || null,
-          evaporator_outlet_pressure: parseFloat(serverLog.evaporator_outlet_pressure) || null,
-          compressor_load_percentage: parseFloat(serverLog.compressor_load_percentage) || null,
+          oil_pressure_difference: safeParseFloat(
+            serverLog.oil_pressure_difference,
+          ),
+          condenser_inlet_pressure:
+            parseFloat(serverLog.condenser_inlet_pressure) || null,
+          condenser_outlet_pressure:
+            parseFloat(serverLog.condenser_outlet_pressure) || null,
+          evaporator_inlet_pressure:
+            parseFloat(serverLog.evaporator_inlet_pressure) || null,
+          evaporator_outlet_pressure:
+            parseFloat(serverLog.evaporator_outlet_pressure) || null,
+          compressor_load_percentage:
+            parseFloat(serverLog.compressor_load_percentage) || null,
           inline_btu_meter: parseFloat(serverLog.inline_btu_meter) || null,
           remarks: serverLog.remarks || null,
           sla_status: serverLog.sla_status || null,
@@ -1007,7 +1171,9 @@ export const SiteLogService: ISiteLogService = {
           signature_text: serverLog.signature_text || null,
           attachments: serverLog.attachments || null,
           status: serverLog.status || "Completed",
-          created_at: serverLog.created_at ? new Date(serverLog.created_at).getTime() : Date.now(),
+          created_at: serverLog.created_at
+            ? new Date(serverLog.created_at).getTime()
+            : Date.now(),
           updated_at: Date.now(),
         }));
         await cacheManager.write("chiller_readings", normalizedReadings);
@@ -1033,10 +1199,7 @@ export const SiteLogService: ISiteLogService = {
           .select({ count: count() })
           .from(siteLogs)
           .where(
-            and(
-              eq(siteLogs.site_code, siteCode),
-              eq(siteLogs.log_name, type),
-            ),
+            and(eq(siteLogs.site_code, siteCode), eq(siteLogs.log_name, type)),
           );
         counts[type] = result?.count ?? 0;
       }
@@ -1075,9 +1238,20 @@ export const SiteLogService: ISiteLogService = {
       for (const type of types) {
         let tasks: TaskItem[] = [];
         if (type === "Chiller Logs") {
-          tasks = await SiteConfigService.getChillerTasks(siteCode, fromDate, toDate);
+          tasks = await SiteConfigService.getChillerTasks(
+            siteCode,
+            fromDate,
+            toDate,
+          );
         } else {
-          tasks = await SiteConfigService.getLogTasks(siteCode, type, fromDate, toDate, undefined, true);
+          tasks = await SiteConfigService.getLogTasks(
+            siteCode,
+            type,
+            fromDate,
+            toDate,
+            undefined,
+            true,
+          );
         }
 
         const completed = tasks.filter((t: TaskItem) => t.isCompleted).length;
@@ -1103,7 +1277,7 @@ export const SiteLogService: ISiteLogService = {
     const logTypes = ["Temp RH", "Water", "Chemical Dosing"];
     const counts: Record<string, number> = {
       "Temp RH": 0,
-      "Water": 0,
+      Water: 0,
       "Chemical Dosing": 0,
     };
 
@@ -1237,15 +1411,15 @@ export const SiteLogService: ISiteLogService = {
   async runCleanup(): Promise<void> {
     try {
       const ninetyDaysAgo = Date.now() - 90 * 24 * 60 * 60 * 1000;
-      
+
       // Delete old synced logs
       const deletedLogs = await db
         .delete(siteLogs)
         .where(
           and(
             lt(siteLogs.created_at, ninetyDaysAgo),
-            eq(siteLogs.status, "Completed")
-          )
+            eq(siteLogs.status, "Completed"),
+          ),
         );
 
       // Delete old synced chiller readings
@@ -1254,17 +1428,20 @@ export const SiteLogService: ISiteLogService = {
         .where(
           and(
             lt(chillerReadings.created_at, ninetyDaysAgo),
-            eq(chillerReadings.status, "Completed")
-          )
+            eq(chillerReadings.status, "Completed"),
+          ),
         );
 
-      logger.info(`Database maintenance complete. Cleaned up old synced logs.`, {
-        module: "SITE_LOG_SERVICE"
-      });
+      logger.info(
+        `Database maintenance complete. Cleaned up old synced logs.`,
+        {
+          module: "SITE_LOG_SERVICE",
+        },
+      );
     } catch (error: any) {
       logger.error("Database maintenance failed", {
         module: "SITE_LOG_SERVICE",
-        error: error.message
+        error: error.message,
       });
     }
   },

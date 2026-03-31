@@ -392,7 +392,7 @@ export default function Tickets() {
           toDate: toApiEndDate(toDate),
         };
         
-        const res = await TicketsService.getTickets(selectedSiteCode, options);
+        const res = await TicketsService.getTickets(selectedSiteCode, { ...options, refresh: reset });
         
         if (res.success) {
           const newTickets = res.data || [];
@@ -433,7 +433,7 @@ export default function Tickets() {
 
   const resetAndFetch = useCallback(() => {
     setPage(1);
-    setTickets([]);
+    // Removed setTickets([]) to preserve Optimistic UI during background pull
     setHasMore(true);
     lastRequestedPageRef.current = 0;
     fetchTickets(1, true);

@@ -50,6 +50,10 @@ TaskManager.defineTask(BACKGROUND_SYNC_TASK, async () => {
       userId,
     });
 
+    // Android Reliability: Small delay for background tasks to allow native
+    // modules (like SQLite) to fully initialize in the new process context.
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+
     // Initialize the engine for this user session if needed
     await syncEngine.initialize(userId);
 

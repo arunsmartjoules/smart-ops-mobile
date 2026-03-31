@@ -71,15 +71,22 @@ const PAGE_SIZE = 20;
 
 const safeFormat = (date: any, formatStr: string) => {
   if (!date) return "N/A";
-  const d =
-    date instanceof Date
-      ? date
-      : typeof date === "string"
-        ? parseISO(date)
-        : new Date(date);
-  if (!isValid(d)) {
-    return "Invalid Date";
+  let d: Date;
+  if (date instanceof Date) {
+    d = date;
+  } else if (typeof date === "number") {
+    d = new Date(date);
+  } else if (typeof date === "string") {
+    if (/^\d+$/.test(date)) {
+      d = new Date(parseInt(date, 10));
+    } else {
+      d = parseISO(date);
+    }
+  } else {
+    d = new Date(date);
   }
+
+  if (!isValid(d)) return "Invalid Date";
   return format(d, formatStr);
 };
 
@@ -103,34 +110,23 @@ const PMSkeleton = () => {
       {[1, 2, 3, 4].map((i) => (
         <View
           key={i}
-          style={[
-            styles.card,
-            { backgroundColor: cardBg, borderColor: cardBorder },
-          ]}
+          className="rounded-2xl p-3 mb-2 border"
+          style={{ backgroundColor: cardBg, borderColor: cardBorder }}
         >
-          <View style={styles.cardTopRow}>
-            <Skeleton width={80} height={18} borderRadius={8} />
-            <Skeleton width={70} height={18} borderRadius={8} />
+          <View className="flex-row justify-between mb-2">
+            <Skeleton width={60} height={14} borderRadius={6} />
+            <Skeleton width={50} height={14} borderRadius={6} />
           </View>
-          <View style={styles.cardBody}>
-            <Skeleton
-              width={48}
-              height={48}
-              borderRadius={16}
-              style={{ marginRight: 12 }}
-            />
-            <View style={{ flex: 1 }}>
-              <Skeleton width="60%" height={16} style={{ marginBottom: 6 }} />
-              <Skeleton width="40%" height={14} style={{ marginBottom: 10 }} />
-              <View style={{ flexDirection: "row", gap: 8 }}>
-                <Skeleton width={60} height={14} />
-                <Skeleton width={40} height={14} />
-              </View>
+          <View className="flex-row items-center">
+            <Skeleton width={40} height={40} borderRadius={10} style={{ marginRight: 10 }} />
+            <View className="flex-1">
+              <Skeleton width="50%" height={14} style={{ marginBottom: 4 }} />
+              <Skeleton width="40%" height={12} />
             </View>
           </View>
-          <View style={styles.cardFooter}>
-            <Skeleton width={100} height={14} />
-            <Skeleton width={80} height={14} />
+          <View className="mt-2 pt-2 border-t border-slate-50 dark:border-slate-800 flex-row justify-between">
+            <Skeleton width={80} height={12} />
+            <Skeleton width={60} height={12} />
           </View>
         </View>
       ))}
@@ -140,7 +136,15 @@ const PMSkeleton = () => {
 
 // ─── Memoized PM Card ──────────────────────────────────────────────────────────
 const PMCard = React.memo(
-  ({ instance, onPress }: { instance: PMInstanceRow; onPress: () => void }) => {
+  ({
+    instance,
+    onPress,
+    showCompletedDate,
+  }: {
+    instance: PMInstanceRow;
+    onPress: () => void;
+    showCompletedDate?: boolean;
+  }) => {
     const isDark = useColorScheme() === "dark";
     const statusInfo =
       STATUS_COLORS[instance.status] || STATUS_COLORS["Pending"];
@@ -149,117 +153,101 @@ const PMCard = React.memo(
       <TouchableOpacity
         onPress={onPress}
         activeOpacity={0.7}
-        className="bg-white dark:bg-slate-900 mb-3 border border-slate-100 dark:border-slate-800 rounded-2xl p-4"
+        className="bg-white dark:bg-slate-900 mb-2 border border-slate-100 dark:border-slate-800 rounded-2xl p-3"
         style={{
           shadowColor: "#000",
-          shadowOffset: { width: 0, height: 2 },
+          shadowOffset: { width: 0, height: 1 },
           shadowOpacity: isDark ? 0 : 0.04,
-          shadowRadius: 8,
+          shadowRadius: 6,
           elevation: 2,
         }}
       >
-        <View style={styles.cardTopRow}>
-          <View className="bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 flex-row items-center px-2 py-1 rounded-lg gap-1.5">
-            <Clock size={12} color={isDark ? "#94a3b8" : "#64748b"} />
-            <Text className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase">
+        <View className="flex-row items-center justify-between mb-1.5">
+          <View className="bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 flex-row items-center px-1.5 py-0.5 rounded-lg gap-1">
+            <Clock size={10} color={isDark ? "#94a3b8" : "#64748b"} />
+            <Text className="text-[9px] font-bold text-slate-500 dark:text-slate-400 uppercase">
               {instance.frequency || "ONCE"}
             </Text>
           </View>
           <View
-            style={[
-              styles.statusBadge,
-              {
-                backgroundColor: isDark ? statusInfo.bg + "20" : statusInfo.bg,
-              },
-            ]}
+            className="px-2 py-0.5 rounded-md"
+            style={{
+              backgroundColor: isDark ? statusInfo.bg + "20" : statusInfo.bg,
+            }}
           >
             <Text
-              style={[
-                styles.statusText,
-                { color: isDark ? statusInfo.dot : statusInfo.text },
-              ]}
+              style={{
+                fontSize: 9,
+                fontWeight: "700",
+                color: isDark ? statusInfo.dot : statusInfo.text,
+              }}
             >
               {instance.status}
             </Text>
           </View>
         </View>
 
-        <View style={styles.cardBody}>
+        <View className="flex-row items-center">
           <View
-            style={[
-              styles.iconWrap,
-              {
-                backgroundColor: isDark
-                  ? statusInfo.dot + "20"
-                  : statusInfo.bg + "40",
-              },
-            ]}
+            className="w-10 h-10 rounded-xl items-center justify-center mr-3"
+            style={{
+              backgroundColor: isDark
+                ? statusInfo.dot + "20"
+                : statusInfo.bg + "40",
+            }}
           >
-            <Wrench size={22} color={statusInfo.dot} />
+            <Wrench size={18} color={statusInfo.dot} />
           </View>
-          <View style={styles.cardBodyText}>
+          <View className="flex-1">
             <Text
-              className="text-slate-900 dark:text-slate-50 text-base font-bold mb-0.5"
+              className="text-slate-900 dark:text-slate-50 text-[13px] font-bold"
               numberOfLines={1}
             >
               {instance.asset_id || "Unknown Asset"}
             </Text>
             <Text
-              className="text-slate-500 dark:text-slate-400 text-sm mb-2"
+              className="text-slate-500 dark:text-slate-400 text-[11px]"
               numberOfLines={1}
             >
               {instance.title}
             </Text>
-            <View className="flex-row items-center gap-2">
-              <View className="flex-row items-center gap-1">
-                <Briefcase size={12} color="#94a3b8" />
-                <Text
-                  className="text-slate-400 dark:text-slate-500 text-xs font-medium"
-                  numberOfLines={1}
-                >
-                  {instance.asset_type || "General Asset"}
-                </Text>
-              </View>
-              {instance.maintenance_id ? (
-                <View className="bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded-md">
-                  <Text className="text-slate-500 dark:text-slate-400 text-[10px] font-bold">
-                    ID: {instance.maintenance_id}
-                  </Text>
-                </View>
-              ) : null}
-            </View>
           </View>
-          <ChevronRight size={18} color="#cbd5e1" />
+          <ChevronRight size={14} color="#cbd5e1" />
         </View>
 
-        <View className="mt-4 pt-3 border-t border-slate-50 dark:border-slate-800 flex-row items-center justify-between">
-          <View className="flex-row items-center gap-1.5">
-            <Clock size={12} color="#94a3b8" />
-            <Text className="text-slate-400 dark:text-slate-500 text-xs font-medium">
-              Due:{" "}
-              <Text className="text-slate-600 dark:text-slate-300 font-bold">
-                {instance.start_due_date
-                  ? format(new Date(instance.start_due_date), "d MMM yyyy")
-                  : "N/A"}
-              </Text>
+        <View className="mt-2 pt-2 border-t border-slate-50 dark:border-slate-800 flex-row items-center justify-between flex-wrap gap-y-1">
+          <View className="flex-row items-center gap-1.5 flex-shrink max-w-[65%]">
+            <Clock size={10} color="#94a3b8" />
+            <Text className="text-slate-400 dark:text-slate-500 text-[10px] font-medium" numberOfLines={1}>
+              Due: <Text className="text-slate-600 dark:text-slate-300 font-bold">{safeFormat(instance.start_due_date, "d MMM yyyy")}</Text>
             </Text>
+            {showCompletedDate && instance.completed_on && (
+              <View className="flex-row items-center flex-shrink">
+                <Text className="text-slate-400 mx-0.5">•</Text>
+                <Text className="text-green-600 dark:text-green-400 text-[10px] font-medium" numberOfLines={1}>
+                  Done: <Text className="font-bold">{safeFormat(instance.completed_on, "d MMM")}</Text>
+                </Text>
+              </View>
+            )}
           </View>
+
           {instance.assigned_to_name ? (
-            <View className="flex-row items-center gap-2">
-              <View className="w-6 h-6 rounded-full bg-red-100 items-center justify-center">
-                <Text className="text-red-700 text-[10px] font-bold">
-                  {instance.assigned_to_name.charAt(0)}
+            <View className="flex-row items-center gap-1.5 flex-1 justify-end ml-2 max-w-[35%]">
+              <View className="w-4 h-4 rounded-full bg-slate-100 dark:bg-slate-800 items-center justify-center">
+                <Text className="text-slate-500 text-[8px] font-bold">
+                  {instance.assigned_to_name.charAt(0).toUpperCase()}
                 </Text>
               </View>
               <Text
-                className="text-slate-600 dark:text-slate-300 text-xs font-bold"
+                className="text-slate-600 dark:text-slate-300 text-[10px] font-bold flex-1"
                 numberOfLines={1}
+                ellipsizeMode="tail"
               >
                 {instance.assigned_to_name}
               </Text>
             </View>
           ) : (
-            <Text className="text-slate-400 dark:text-slate-500 text-xs italic">
+            <Text className="text-slate-300 dark:text-slate-600 text-[10px] italic">
               Unassigned
             </Text>
           )}
@@ -270,7 +258,9 @@ const PMCard = React.memo(
   (prev, next) =>
     prev.instance.id === next.instance.id &&
     prev.instance.status === next.instance.status &&
-    prev.instance.progress === next.instance.progress,
+    prev.instance.progress === next.instance.progress &&
+    prev.instance.assigned_to_name === next.instance.assigned_to_name &&
+    prev.showCompletedDate === next.showCompletedDate,
 );
 
 // ─── Stat Card ─────────────────────────────────────────────────────────────────
@@ -385,16 +375,17 @@ export default function PreventiveMaintenance() {
 
   // ── High-Performance Data Loader ──────────────────────────────────────────
   const loadPMData = useCallback(
-    async (isInitial = false, currentOffset = 0) => {
+    async (isInitial = false, currentOffset = 0, showLoadingSpinner = true) => {
       if (!siteCode || siteCode === "all") return;
 
-      if (isInitial) {
+      if (isInitial && showLoadingSpinner) {
         setLoading(true);
-        setServerStats(null); // Clear stale stats immediately on filter change
+      }
+      if (isInitial) {
         setOffset(0);
         setHasMore(true);
       }
-      
+
       try {
         // 1. Fetch local cached data
         let local = await PMService.getLocalInstances(siteCode);
@@ -417,15 +408,16 @@ export default function PreventiveMaintenance() {
             .then((data) => {
               if (data) setServerStats(data);
             })
-            .catch(() => setServerStats(null));
+            .catch(() => {});
         }
         setLoading(false);
 
         // 2. BACKGROUND SYNC: Pull latest from API if online
-        if (isConnected && isInitial && currentOffset === 0) {
+        // (Now triggered on ANY load from the top, including auto-sync)
+        if (isConnected && currentOffset === 0) {
           if (isFetchingRef.current) return;
           isFetchingRef.current = true;
-          
+
           try {
             const apiData = await PMService.fetchFromAPI(
               siteCode,
@@ -434,7 +426,7 @@ export default function PreventiveMaintenance() {
               currentDate,
               toDate,
             );
-            
+
             if (apiData && apiData.length > 0) {
               // Refresh local state after sync
               const freshLocal = await PMService.getLocalInstances(siteCode);
@@ -498,16 +490,13 @@ export default function PreventiveMaintenance() {
   }, [siteCode, currentDate, toDate, loadPMData]);
 
   // Auto-sync for PM tasks (Handles Focus, AppState, and 60s Polling)
-  useAutoSync(
-    () => {
-      if (siteCode) loadPMData(false);
-    },
-    [siteCode, currentDate, toDate],
-  );
+  useAutoSync(() => {
+    if (siteCode) loadPMData(true, 0, false);
+  }, [siteCode, currentDate, toDate]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await loadPMData(true);
+    await loadPMData(true, 0, false);
     setRefreshing(false);
   }, [loadPMData]);
 
@@ -517,7 +506,7 @@ export default function PreventiveMaintenance() {
     // 1. Apply Date Filter in memory
     const startRange = startOfDay(parseISO(currentDate)).getTime();
     const endRange = endOfDay(parseISO(toDate)).getTime();
-    
+
     list = list.filter((i) => {
       if (!i.start_due_date) return false;
       const ts = new Date(i.start_due_date).getTime();
@@ -532,7 +521,9 @@ export default function PreventiveMaintenance() {
           return s === "Pending" || s === "Overdue";
         }
         if (statusFilter === "In-progress") {
-          return s === "In-progress" || s === "In Progress" || s === "Inprogress";
+          return (
+            s === "In-progress" || s === "In Progress" || s === "Inprogress"
+          );
         }
         return s === statusFilter;
       });
@@ -548,7 +539,7 @@ export default function PreventiveMaintenance() {
         const dueDateStr = dateObj ? format(dateObj, "d MMM yyyy") : "";
         const dueDateISO = dateObj ? format(dateObj, "yyyy-MM-dd") : "";
         const dueDateShort = dateObj ? format(dateObj, "d/M") : "";
-        
+
         return (
           (i.title && i.title.toLowerCase().includes(q)) ||
           (i.asset_id && i.asset_id.toLowerCase().includes(q)) ||
@@ -560,7 +551,14 @@ export default function PreventiveMaintenance() {
       });
     }
     return list;
-  }, [allInstances, statusFilter, searchQuery, qrAssetFilter, currentDate, toDate]);
+  }, [
+    allInstances,
+    statusFilter,
+    searchQuery,
+    qrAssetFilter,
+    currentDate,
+    toDate,
+  ]);
 
   const stats = useMemo(() => {
     const startRange = startOfDay(parseISO(currentDate)).getTime();
@@ -583,19 +581,22 @@ export default function PreventiveMaintenance() {
         const s = i.status?.toLowerCase() || "";
         return s === "in-progress" || s === "in progress" || s === "inprogress";
       }).length,
-      completed: rangeInstances.filter((i) => i.status?.toLowerCase() === "completed").length,
+      completed: rangeInstances.filter(
+        (i) => i.status?.toLowerCase() === "completed",
+      ).length,
     };
 
     // If we have server stats (Global Actual), AND our local list is incomplete (limit reached),
     // then the server stats are the "Ground Truth" for total counts.
     // However, if localCount.total >= serverStats.total, it means we HAVE the full picture locally.
     if (serverStats) {
-      const serverInProgress = (serverStats.byStatus?.["In-progress"] || 0) + 
-                             (serverStats.byStatus?.["In Progress"] || 0) + 
-                             (serverStats.byStatus?.Inprogress || 0);
+      const serverInProgress =
+        (serverStats.byStatus?.["In-progress"] || 0) +
+        (serverStats.byStatus?.["In Progress"] || 0) +
+        (serverStats.byStatus?.Inprogress || 0);
       const serverCompleted = serverStats.byStatus?.Completed || 0;
 
-      // Robust merging: 
+      // Robust merging:
       // 1. Total is the maximum of local and server.
       // 2. In-progress/Completed: Always take the maximum (favors local updates + server reality).
       // 3. Pending: Adjusted to keep the total consistent.
@@ -611,12 +612,29 @@ export default function PreventiveMaintenance() {
     return localCount;
   }, [allInstances, currentDate, toDate, serverStats]);
 
-  const handlePMCardPress = useCallback((instance: PMInstanceRow) => {
-    router.push({
-      pathname: "/pm-execution",
-      params: { instanceId: instance.id },
-    });
-  }, []);
+  const handlePMCardPress = useCallback(
+    async (instance: PMInstanceRow) => {
+      // Auto-assign on tap
+      const userName = (user?.full_name && user.full_name.trim()) || (user?.name && user.name.trim()) || user?.email || "User";
+      if (instance.assigned_to_name !== userName) {
+        await PMService.updateAssignment(instance.id, userName);
+        // Optimistic update
+        setAllInstances((prev) =>
+          prev.map((inst) =>
+            inst.id === instance.id
+              ? { ...inst, assigned_to_name: userName }
+              : inst,
+          ),
+        );
+      }
+
+      router.push({
+        pathname: "/pm-execution",
+        params: { instanceId: instance.id },
+      });
+    },
+    [user],
+  );
 
   const applyAdvancedFilters = useCallback(() => {
     setSearchQuery(tempSearch);
@@ -650,9 +668,13 @@ export default function PreventiveMaintenance() {
 
   const renderItem: ListRenderItem<PMInstanceRow> = useCallback(
     ({ item }) => (
-      <PMCard instance={item} onPress={() => handlePMCardPress(item)} />
+      <PMCard
+        instance={item}
+        onPress={() => handlePMCardPress(item)}
+        showCompletedDate={statusFilter === "Completed"}
+      />
     ),
-    [handlePMCardPress],
+    [handlePMCardPress, statusFilter],
   );
 
   const keyExtractor = useCallback((item: PMInstanceRow) => item.id, []);

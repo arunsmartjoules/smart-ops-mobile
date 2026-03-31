@@ -7,9 +7,10 @@ import {
   Switch,
   ActivityIndicator,
   Alert,
+  Clipboard,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { ArrowLeft, Bell, BellOff } from "lucide-react-native";
+import { ArrowLeft, Bell, BellOff, Info, Copy, CheckCircle, XCircle, RefreshCw } from "lucide-react-native";
 import { router } from "expo-router";
 import { useAuth } from "@/contexts/AuthContext";
 import {
@@ -29,11 +30,30 @@ export default function NotificationSettingsPage() {
   const [ticketNotificationsEnabled, setTicketNotificationsEnabled] =
     useState(true);
   const [hasSystemPermission, setHasSystemPermission] = useState(false);
+  const [debugToken, setDebugToken] = useState<string | null>(null);
+  const [regStatus, setRegStatus] = useState<any>(null);
+  const [showDebug, setShowDebug] = useState(false);
 
   useEffect(() => {
     loadPreferences();
     checkSystemPermissions();
+    loadDebugInfo();
   }, []);
+
+  const loadDebugInfo = useCallback(async () => {
+    const token = await AsyncStorage.getItem("last_expo_push_token");
+    const status = await AsyncStorage.getItem("last_push_registration_status");
+    const time = await AsyncStorage.getItem("last_push_registration_time");
+    const error = await AsyncStorage.getItem("last_push_registration_error");
+    
+    setDebugToken(token);
+    setRegStatus({ status, time, error });
+  }, []);
+
+  const copyToClipboard = (text: string) => {
+    Clipboard.setString(text);
+    Alert.alert("Copied", "Token copied to clipboard");
+  };
 
   const checkSystemPermissions = useCallback(async () => {
     // This doesn't request permissions, just checks current status
@@ -289,7 +309,7 @@ export default function NotificationSettingsPage() {
               </View>
 
               {/* Info Section */}
-              <View className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-2xl p-4">
+              <View className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-2xl p-4 mb-4">
                 <Text className="text-blue-900 dark:text-blue-200 font-semibold mb-2">
                   ℹ️ About Notifications
                 </Text>
@@ -299,6 +319,90 @@ export default function NotificationSettingsPage() {
                   assigned sites.
                 </Text>
               </View>
+
+              {/* Debug Tools Label (Hidden toggle) */}
+              <TouchableOpacity 
+                onLongPress={() => setShowDebug(!showDebug)}
+                className="py-4 items-center"
+                activeOpacity={1}
+              >
+                <Text className="text-slate-300 dark:text-slate-700 text-[10px]">
+                  Version 1.0.3 • Long press for diagnostics
+                </Text>
+              </TouchableOpacity>
+
+              {/* Diagnostic Section */}
+              {showDebug && (
+                <View className="mb-8 bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4">
+                  <View className="flex-row items-center justify-between mb-3">
+                    <View className="flex-row items-center">
+                      <Info size={16} color="#64748b" style={{ marginRight: 8 }} />
+                      <Text className="text-slate-900 dark:text-slate-50 font-bold">
+                        Diagnostics
+                      </Text>
+                    </View>
+                    <TouchableOpacity onPress={loadDebugInfo}>
+                      <RefreshCw size={14} color="#64748b" />
+                    </TouchableOpacity>
+                  </View>
+
+                  {/* Token Status */}
+                  <View className="mb-4">
+                    <Text className="text-slate-500 dark:text-slate-400 text-xs font-semibold mb-1">
+                      EXPO PUSH TOKEN
+                    </Text>
+                    {debugToken ? (
+                      <TouchableOpacity 
+                        onPress={() => copyToClipboard(debugToken)}
+                        className="bg-white dark:bg-slate-800 p-3 rounded-xl border border-slate-200 dark:border-slate-700 flex-row items-center justify-between"
+                      >
+                        <Text className="text-slate-700 dark:text-slate-300 text-[10px] flex-1 mr-2" numberOfLines={1}>
+                          {debugToken}
+                        </Text>
+                        <Copy size={12} color="#64748b" />
+                      </TouchableOpacity>
+                    ) : (
+                      <View className="bg-white dark:bg-slate-800 p-3 rounded-xl border border-slate-200 dark:border-slate-700">
+                        <Text className="text-slate-400 italic text-[10px]">Not generated yet</Text>
+                      </View>
+                    )}
+                  </View>
+
+                  {/* Backend Status */}
+                  <View>
+                    <Text className="text-slate-500 dark:text-slate-400 text-xs font-semibold mb-1">
+                      BACKEND REGISTRATION
+                    </Text>
+                    <View className="bg-white dark:bg-slate-800 p-3 rounded-xl border border-slate-200 dark:border-slate-700">
+                      <View className="flex-row items-center mb-1">
+                        {regStatus?.status === 'success' ? (
+                          <CheckCircle size={12} color="#22c55e" style={{ marginRight: 6 }} />
+                        ) : regStatus?.status ? (
+                          <XCircle size={12} color="#ef4444" style={{ marginRight: 6 }} />
+                        ) : (
+                          <View className="w-3 h-3 rounded-full bg-slate-300 mr-[6px]" />
+                        )}
+                        <Text className={`text-[10px] font-bold ${
+                          regStatus?.status === 'success' ? 'text-green-600' : 
+                          regStatus?.status ? 'text-red-500' : 'text-slate-500'
+                        }`}>
+                          {regStatus?.status?.toUpperCase() || 'UNKNOWN'}
+                        </Text>
+                      </View>
+                      {regStatus?.time && (
+                        <Text className="text-slate-400 text-[10px]">
+                          Last attempt: {new Date(regStatus.time).toLocaleString()}
+                        </Text>
+                      )}
+                      {regStatus?.error && (
+                        <Text className="text-red-400 text-[9px] mt-1 italic">
+                          Error: {regStatus.error}
+                        </Text>
+                      )}
+                    </View>
+                  </View>
+                </View>
+              )}
             </>
           )}
         </ScrollView>

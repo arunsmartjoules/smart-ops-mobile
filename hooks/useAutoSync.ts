@@ -46,11 +46,11 @@ export function useAutoSync(
     }
   }, [enabled, isReady, throttle]);
 
-  // 1. Sync on Screen Focus
+  // 1. Sync on Screen Focus (Always Force on Focus)
   useFocusEffect(
     useCallback(() => {
       isFocusedRef.current = true;
-      triggerSync();
+      triggerSync(true); // Force sync on focus to ensure fresh data
       return () => {
         isFocusedRef.current = false;
       };

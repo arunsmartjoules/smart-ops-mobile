@@ -26,6 +26,7 @@ import {
 import { syncEngine } from "../services/SyncEngine";
 import siteResolver from "../services/SiteResolver";
 import { API_BASE_URL } from "../constants/api";
+import { fetchWithTimeout } from "../utils/apiHelper";
 
 const BACKEND_URL = API_BASE_URL;
 
@@ -114,7 +115,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   const fetchAndSetProfile = useCallback(
     async (firebaseUser: FirebaseUser, idToken: string) => {
       try {
-        const response = await fetch(`${BACKEND_URL}/api/auth/profile`, {
+        const response = await fetchWithTimeout(`${BACKEND_URL}/api/auth/profile`, {
           headers: { Authorization: `Bearer ${idToken}` },
         });
         const result = await response.json();
@@ -219,7 +220,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     async (email: string, password: string, name: string) => {
       logger.activity("SIGNUP_ATTEMPT", "AUTH", `Signup attempt for ${email}`, { email, name });
       try {
-        const res = await fetch(`${BACKEND_URL}/api/auth/signup`, {
+        const res = await fetchWithTimeout(`${BACKEND_URL}/api/auth/signup`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ email, password, name }),
@@ -306,7 +307,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   const resetPasswordWithCode = useCallback(
     async (email: string, code: string, newPassword: string) => {
       try {
-        const res = await fetch(`${BACKEND_URL}/api/auth/reset-password-with-code`, {
+        const res = await fetchWithTimeout(`${BACKEND_URL}/api/auth/reset-password-with-code`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ email, code, newPassword }),
@@ -339,7 +340,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       const idToken = await AsyncStorage.getItem("firebase-token");
       if (!idToken) return { error: "Not authenticated" };
 
-      const res = await fetch(`${BACKEND_URL}/api/auth/change-password`, {
+      const res = await fetchWithTimeout(`${BACKEND_URL}/api/auth/change-password`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -363,7 +364,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const sendVerificationCode = useCallback(async (email: string) => {
     try {
-      const res = await fetch(`${BACKEND_URL}/api/auth/send-verification`, {
+      const res = await fetchWithTimeout(`${BACKEND_URL}/api/auth/send-verification`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email }),
@@ -384,7 +385,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const verifySignupCode = useCallback(async (email: string, code: string) => {
     try {
-      const res = await fetch(`${BACKEND_URL}/api/auth/verify-code`, {
+      const res = await fetchWithTimeout(`${BACKEND_URL}/api/auth/verify-code`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, code }),

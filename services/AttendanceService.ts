@@ -75,7 +75,6 @@ const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
 
       if (response.status === 401) {
         // Silent sign-out: avoid intrusive alerts for token issues
-        result.error = "No token provided";
         authEvents.emitUnauthorized();
       }
     }

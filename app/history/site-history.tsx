@@ -299,9 +299,10 @@ export default function SiteHistory() {
     loadSites();
   }, []);
 
-  const fetchLocalLogs = useCallback(async () => {
+  const fetchLocalLogs = useCallback(async (showLoadingSpinner = true) => {
     try {
-      setLoading(true);
+      if (showLoadingSpinner) setLoading(true);
+      
       const data = await SiteLogService.getLogsByType(
         siteCode,
         params.logName,
@@ -310,13 +311,12 @@ export default function SiteHistory() {
 
       if (data.length > 0) {
         setLogs(data);
-        setLoading(false);
-        return;
+        if (showLoadingSpinner) setLoading(false);
       }
 
-      // Cache empty — pull from API then re-query
+      // 2. BACKGROUND SYNC: Pull from API
       const pullSite = siteCode || "all";
-      console.log("[SiteHistory] Cache empty, pulling from API", { pullSite, logName: params.logName });
+      console.log("[SiteHistory] Pulling from API in background", { pullSite, logName: params.logName });
       try {
         if (params.logName !== "Chiller Logs") {
           await SiteLogService.pullSiteLogs(pullSite, { logName: params.logName });
@@ -332,12 +332,11 @@ export default function SiteHistory() {
         params.logName,
         { fromDate: fromDate?.getTime(), toDate: toDate?.getTime() },
       );
-      console.log("[SiteHistory] After pull count:", fresh.length);
       setLogs(fresh);
     } catch (error) {
       console.error("Fetch local logs error:", error);
     } finally {
-      setLoading(false);
+      if (showLoadingSpinner) setLoading(false);
     }
   }, [siteCode, params.logName, fromDate, toDate]);
 
@@ -384,27 +383,7 @@ export default function SiteHistory() {
   const loadHistory = async () => {
     try {
       setRefreshing(true);
-      // Reset TTL for site_logs and chiller_readings so SyncEngine re-fetches them
-      await syncEngine.syncNow();
-
-      const requestedSite =
-        siteCode === "all" && availableSites.length > 0
-          ? availableSites[0].site_code
-          : siteCode;
-
-      if (params.logName !== "Chiller Logs") {
-        await SiteLogService.pullSiteLogs(requestedSite, {
-          logName: params.logName,
-          fromDate: fromDate?.getTime(),
-          toDate: toDate?.getTime(),
-        });
-      } else {
-        await SiteLogService.pullChillerReadings(requestedSite, {
-          fromDate: fromDate?.getTime(),
-          toDate: toDate?.getTime(),
-        });
-      }
-      await fetchLocalLogs();
+      await fetchLocalLogs(false);
     } catch (error) {
       console.error("Error refreshing history", error);
     } finally {

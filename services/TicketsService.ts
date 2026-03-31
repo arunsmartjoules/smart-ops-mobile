@@ -1,3 +1,4 @@
+import NetInfo from "@react-native-community/netinfo";
 import logger from "../utils/logger";
 import { authEvents } from "../utils/authEvents";
 import { areas, categories as categoriesTable } from "../database";
@@ -122,10 +123,13 @@ export const TicketsService = {
       priority,
       page = 1,
       limit = 50,
+      refresh = false,
     } = options;
 
-    // 1. Return local data if searching/filtering within standard view
-    if (page === 1) {
+    const netState = await NetInfo.fetch();
+
+    // 1. Return local data ONLY if not refreshing and on page 1
+    if (page === 1 && !refresh) {
       try {
         const whereFilter: Record<string, any> = {};
         if (siteCode !== "all") whereFilter.site_code = siteCode;
