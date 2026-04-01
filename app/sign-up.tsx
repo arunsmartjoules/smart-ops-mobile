@@ -13,6 +13,7 @@ import { Mail, Lock, User, Zap, Eye, EyeOff } from "lucide-react-native";
 import { router } from "expo-router";
 import { useAuth } from "@/contexts/AuthContext";
 import { showAlert } from "@/utils/alert";
+import logger from "@/utils/logger";
 
 
 export default function SignUp() {
@@ -37,13 +38,16 @@ export default function SignUp() {
 
     setLoading(true);
     try {
+      logger.info("User clicked Create Account", { module: "SIGN_UP", email });
       const { error } = await signUp(email, password, name);
       if (error) {
         showAlert("Sign Up Failed", typeof error === "string" ? error : error.message || "An error occurred during sign up.");
       } else {
-        router.push({ pathname: "/verify-email", params: { email } });
+        logger.info("Sign up successful, navigating to verification screen", { module: "SIGN_UP", email });
+        router.push({ pathname: "/verify-email", params: { email, password } });
       }
-    } catch (e) {
+    } catch (e: any) {
+      logger.error("Unexpected error during sign up", { module: "SIGN_UP", error: e.message });
       showAlert("Error", "Something went wrong. Please try again.");
     } finally {
       setLoading(false);

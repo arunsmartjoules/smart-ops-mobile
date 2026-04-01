@@ -80,6 +80,16 @@ interface PendingItem {
   priorityOrder?: number;
 }
 
+const getDefaultUpdateStatus = (ticket: Ticket) => {
+  if (ticket.status === "Open") return "Inprogress";
+  if (ticket.status === "Inprogress") return "Resolved";
+  return ticket.status;
+};
+
+const getInitialUpdateRemarks = (ticket: Ticket, status: string) => {
+  return status === ticket.status ? ticket.internal_remarks || "" : "";
+};
+
 // --- Memoized Skeleton Component ---
 const DashboardSkeleton = React.memo(() => {
   return (
@@ -193,6 +203,8 @@ const DashboardSkeleton = React.memo(() => {
     </View>
   );
 });
+
+DashboardSkeleton.displayName = "DashboardSkeleton";
 
 // --- Pending Item Row Component ---
 const PendingItemRow = React.memo(
@@ -335,6 +347,8 @@ const PendingItemRow = React.memo(
   },
 );
 
+PendingItemRow.displayName = "PendingItemRow";
+
 const LogCountCard = React.memo(
   ({
     count,
@@ -379,6 +393,8 @@ const LogCountCard = React.memo(
   ),
 );
 
+LogCountCard.displayName = "LogCountCard";
+
 export default function Dashboard() {
   const { isConnected } = useNetworkStatus();
   const [refreshing, setRefreshing] = useState(false);
@@ -411,6 +427,7 @@ export default function Dashboard() {
   const [areasLoading, setAreasLoading] = useState(false);
   const [beforeTemp, setBeforeTemp] = useState("");
   const [afterTemp, setAfterTemp] = useState("");
+  const [attachmentUri, setAttachmentUri] = useState("");
 
   // Ref for timeout cleanup
   const refreshTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -778,11 +795,15 @@ export default function Dashboard() {
       }).then((res) => {
         if (res.success && res.data && res.data.length > 0) {
           const ticket = res.data[0];
+          const defaultStatus = getDefaultUpdateStatus(ticket);
           setSelectedTicket(ticket);
-          setUpdateStatus(ticket.status);
-          setUpdateRemarks(ticket.internal_remarks || "");
+          setUpdateStatus(defaultStatus);
+          setUpdateRemarks(getInitialUpdateRemarks(ticket, defaultStatus));
           setUpdateArea(ticket.area_asset || "");
           setUpdateCategory(ticket.category || "");
+          setBeforeTemp("");
+          setAfterTemp("");
+          setAttachmentUri("");
           setIsDetailVisible(true);
         }
       });
@@ -796,8 +817,18 @@ export default function Dashboard() {
     const needsRemarks = ["Hold", "Cancelled", "Waiting", "Resolved"].includes(
       updateStatus,
     );
+    const needsAreaAndCategory =
+      updateStatus === "Inprogress" || updateStatus === "Resolved";
     if (needsRemarks && !updateRemarks.trim()) {
       Alert.alert("Required", "Please provide remarks for this status update.");
+      return;
+    }
+    if (needsAreaAndCategory && !updateArea.trim()) {
+      Alert.alert("Required", "Please select an area before updating the ticket.");
+      return;
+    }
+    if (needsAreaAndCategory && !updateCategory.trim()) {
+      Alert.alert("Required", "Please select a category before updating the ticket.");
       return;
     }
 
@@ -808,31 +839,105 @@ export default function Dashboard() {
       category: updateCategory || selectedTicket.category,
     };
 
+    if (beforeTemp.trim() !== "") payload.before_temp = parseFloat(beforeTemp);
+    if (afterTemp.trim() !== "") payload.after_temp = parseFloat(afterTemp);
+
     if (updateStatus === "Inprogress" || updateStatus === "Cancelled") {
       payload.assigned_to = user.full_name || user.name || "";
     }
 
     setIsUpdating(true);
     try {
-      const res = await TicketsService.updateTicket(
-        selectedTicket.id || selectedTicket.ticket_no,
-        payload,
-      );
-      if (res.success) {
-        const updatedTicketForWA = { ...selectedTicket, ...payload };
-        WhatsAppService.sendStatusUpdate(
-          updatedTicketForWA,
-          updateStatus,
-          updateRemarks,
-        ).catch((e) =>
-          logger.warn("Failed WhatsApp notification", { error: e }),
+      const nowIso = new Date().toISOString();
+      const optimisticTicket = {
+        ...selectedTicket,
+        ...payload,
+        responded_at:
+          updateStatus === "Inprogress" || updateStatus === "Resolved"
+            ? selectedTicket.responded_at || nowIso
+            : selectedTicket.responded_at,
+        resolved_at:
+          updateStatus === "Resolved" ? nowIso : selectedTicket.resolved_at,
+      };
+      const netState = await NetInfo.fetch();
+      if (netState.isConnected) {
+        const res = await TicketsService.updateTicket(
+          selectedTicket.id || selectedTicket.ticket_no,
+          payload,
+        );
+        if (res.success) {
+          WhatsAppService.sendStatusUpdate(
+            optimisticTicket,
+            updateStatus,
+            updateRemarks,
+          ).catch((e) =>
+            logger.warn("Failed WhatsApp notification", { error: e }),
+          );
+
+          if (attachmentUri) {
+            const uploadRes = await TicketsService.uploadImage(
+              attachmentUri,
+              selectedTicket.id || selectedTicket.ticket_no,
+            );
+
+            if (uploadRes.success && uploadRes.url) {
+              const lineItemRes = await TicketsService.addLineItem(
+                selectedTicket.id || selectedTicket.ticket_no,
+                { image_url: uploadRes.url },
+              );
+
+              if (!lineItemRes.success && !lineItemRes.queued) {
+                Alert.alert(
+                  "Partial Success",
+                  "Ticket updated, but the image attachment could not be added.",
+                );
+              }
+            } else {
+              Alert.alert(
+                "Partial Success",
+                "Ticket updated, but the image attachment could not be uploaded.",
+              );
+            }
+          }
+
+          Alert.alert("Success", "Ticket updated successfully");
+          setSelectedTicket(optimisticTicket);
+          setUpdateRemarks("");
+          setBeforeTemp("");
+          setAfterTemp("");
+          setAttachmentUri("");
+          setIsDetailVisible(false);
+          fetchData();
+        } else {
+          Alert.alert("Error", res.error || "Failed to update ticket");
+        }
+      } else {
+        await TicketsService.updateTicket(
+          selectedTicket.id || selectedTicket.ticket_no,
+          payload,
         );
 
-        Alert.alert("Success", "Ticket updated successfully");
+        if (attachmentUri) {
+          const uploadRes = await TicketsService.uploadImage(
+            attachmentUri,
+            selectedTicket.id || selectedTicket.ticket_no,
+          );
+
+          if (uploadRes.success && uploadRes.url) {
+            await TicketsService.addLineItem(selectedTicket.id || selectedTicket.ticket_no, {
+              image_url: uploadRes.url,
+            });
+          }
+        }
+
+        Alert.alert("Saved Offline", "Update saved and will sync when online.");
+        setSelectedTicket(optimisticTicket);
+        setUpdateRemarks("");
+        setBeforeTemp("");
+        setAfterTemp("");
+        setAttachmentUri("");
         setIsDetailVisible(false);
-        fetchData(); // Refresh dashboard list
-      } else {
-        Alert.alert("Error", res.error || "Failed to update ticket");
+        fetchData();
       }
     } catch (error: any) {
       Alert.alert("Error", error.message);
@@ -1349,6 +1454,8 @@ export default function Dashboard() {
           setBeforeTemp={setBeforeTemp}
           afterTemp={afterTemp}
           setAfterTemp={setAfterTemp}
+          attachmentUri={attachmentUri}
+          setAttachmentUri={setAttachmentUri}
         />
       </SafeAreaView>
     </View>

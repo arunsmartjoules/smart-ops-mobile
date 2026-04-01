@@ -37,6 +37,13 @@ interface TicketDetailModalProps {
   setBeforeTemp: (v: string) => void;
   afterTemp: string;
   setAfterTemp: (v: string) => void;
+  attachmentUri?: string;
+  setAttachmentUri: (uri: string) => void;
+  areaSearchQuery?: string;
+  setAreaSearchQuery?: (query: string) => void;
+  loadMoreAreas?: () => void;
+  hasMoreAreas?: boolean;
+  loadingMoreAreas?: boolean;
 }
 
 const TicketDetailModal = React.memo(
@@ -61,6 +68,13 @@ const TicketDetailModal = React.memo(
     setBeforeTemp,
     afterTemp,
     setAfterTemp,
+    attachmentUri,
+    setAttachmentUri,
+    areaSearchQuery,
+    setAreaSearchQuery,
+    loadMoreAreas,
+    hasMoreAreas,
+    loadingMoreAreas,
   }: TicketDetailModalProps) => {
     const isDirty = React.useMemo(() => {
       if (!ticket) return false;
@@ -73,9 +87,21 @@ const TicketDetailModal = React.memo(
         updateStatus !== ticket.status ||
         updateRemarks.trim() !== originalRemarks.trim() ||
         updateArea !== originalArea ||
-        updateCategory !== originalCategory
+        updateCategory !== originalCategory ||
+        beforeTemp.trim() !== "" ||
+        afterTemp.trim() !== "" ||
+        Boolean(attachmentUri)
       );
-    }, [ticket, updateStatus, updateRemarks, updateArea, updateCategory]);
+    }, [
+      ticket,
+      updateStatus,
+      updateRemarks,
+      updateArea,
+      updateCategory,
+      beforeTemp,
+      afterTemp,
+      attachmentUri,
+    ]);
 
     const { height: windowHeight } = useWindowDimensions();
     const { isDark } = useTheme();
@@ -138,6 +164,13 @@ const TicketDetailModal = React.memo(
                     setBeforeTemp={setBeforeTemp}
                     afterTemp={afterTemp}
                     setAfterTemp={setAfterTemp}
+                    attachmentUri={attachmentUri}
+                    setAttachmentUri={setAttachmentUri}
+                    areaSearchQuery={areaSearchQuery}
+                    setAreaSearchQuery={setAreaSearchQuery}
+                    loadMoreAreas={loadMoreAreas}
+                    hasMoreAreas={hasMoreAreas}
+                    loadingMoreAreas={loadingMoreAreas}
                   />
 
                   {/* Comments & Timeline */}
@@ -188,5 +221,7 @@ const TicketDetailModal = React.memo(
     );
   },
 );
+
+TicketDetailModal.displayName = "TicketDetailModal";
 
 export default TicketDetailModal;

@@ -1,5 +1,7 @@
 import React from "react";
-import { View, Text, TouchableOpacity, TextInput } from "react-native";
+import { View, Text, TouchableOpacity, TextInput, Image, Alert } from "react-native";
+import * as ImagePicker from "expo-image-picker";
+import { Camera, Image as ImageIcon, X } from "lucide-react-native";
 import SearchableSelect, { type SelectOption } from "./SearchableSelect";
 import { type Ticket } from "@/services/TicketsService";
 
@@ -62,6 +64,13 @@ interface TicketDetailStatusUpdateProps {
   setBeforeTemp: (v: string) => void;
   afterTemp: string;
   setAfterTemp: (v: string) => void;
+  attachmentUri?: string;
+  setAttachmentUri: (uri: string) => void;
+  areaSearchQuery?: string;
+  setAreaSearchQuery?: (query: string) => void;
+  loadMoreAreas?: () => void;
+  hasMoreAreas?: boolean;
+  loadingMoreAreas?: boolean;
 }
 
 const TicketDetailStatusUpdate = ({
@@ -81,6 +90,13 @@ const TicketDetailStatusUpdate = ({
   setBeforeTemp,
   afterTemp,
   setAfterTemp,
+  attachmentUri,
+  setAttachmentUri,
+  areaSearchQuery,
+  setAreaSearchQuery,
+  loadMoreAreas,
+  hasMoreAreas,
+  loadingMoreAreas,
 }: TicketDetailStatusUpdateProps) => {
   const statuses = [
     "Inprogress",
@@ -102,6 +118,46 @@ const TicketDetailStatusUpdate = ({
   const needsRemarks = ["Hold", "Cancelled", "Waiting", "Resolved"].includes(
     updateStatus,
   );
+  const showAreaAndCategory =
+    updateStatus === "Inprogress" || updateStatus === "Resolved";
+
+  const pickImage = async () => {
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ["images"],
+        allowsEditing: true,
+        quality: 0.6,
+      });
+
+      if (!result.canceled && result.assets?.[0]?.uri) {
+        setAttachmentUri(result.assets[0].uri);
+      }
+    } catch {
+      Alert.alert("Error", "Unable to open the image library.");
+    }
+  };
+
+  const takePhoto = async () => {
+    try {
+      const { status } = await ImagePicker.requestCameraPermissionsAsync();
+      if (status !== "granted") {
+        Alert.alert("Permission Required", "Camera permission is required to take photos.");
+        return;
+      }
+
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ["images"],
+        allowsEditing: true,
+        quality: 0.6,
+      });
+
+      if (!result.canceled && result.assets?.[0]?.uri) {
+        setAttachmentUri(result.assets[0].uri);
+      }
+    } catch {
+      Alert.alert("Error", "Unable to open the camera.");
+    }
+  };
 
   return (
     <View style={{ marginBottom: 20 }}>
@@ -140,7 +196,7 @@ const TicketDetailStatusUpdate = ({
           flexDirection: "row",
           flexWrap: "wrap",
           gap: 8,
-          marginBottom: needsRemarks || updateStatus === "Inprogress" ? 16 : 0,
+          marginBottom: needsRemarks || showAreaAndCategory ? 16 : 0,
         }}
       >
         {filteredStatuses.map((s) => {
@@ -151,6 +207,9 @@ const TicketDetailStatusUpdate = ({
               key={s}
               onPress={() => {
                 setUpdateStatus(s);
+                if (!["Hold", "Cancelled", "Waiting", "Resolved"].includes(s)) {
+                  setAttachmentUri("");
+                }
                 if (["Hold", "Cancelled", "Waiting", "Resolved"].includes(s)) {
                   setUpdateRemarks("");
                 }
@@ -182,11 +241,11 @@ const TicketDetailStatusUpdate = ({
         })}
       </View>
 
-      {/* Area & Category (for Inprogress) */}
-      {updateStatus === "Inprogress" && (
+      {/* Area & Category (for Inprogress / Resolved) */}
+      {showAreaAndCategory && (
         <View style={{ marginBottom: 8 }}>
           <SearchableSelect
-            label="Select Area"
+            label="Select Area *"
             placeholder="Choose an area..."
             value={updateArea}
             options={areaOptions}
@@ -194,9 +253,15 @@ const TicketDetailStatusUpdate = ({
             loading={areasLoading}
             searchPlaceholder="Search areas..."
             emptyMessage="No areas found"
+            searchValue={areaSearchQuery}
+            onSearchChange={setAreaSearchQuery}
+            onLoadMore={loadMoreAreas}
+            hasMore={hasMoreAreas}
+            loadingMore={loadingMoreAreas}
+            remoteSearch={Boolean(setAreaSearchQuery)}
           />
           <SearchableSelect
-            label="Select Category"
+            label="Select Category *"
             placeholder="Choose a category..."
             value={updateCategory}
             options={categoryOptions}
@@ -331,6 +396,81 @@ const TicketDetailStatusUpdate = ({
             value={updateRemarks}
             onChangeText={setUpdateRemarks}
           />
+          <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
+            <TouchableOpacity
+              onPress={takePhoto}
+              className="bg-slate-100 dark:bg-slate-800 border-slate-200 dark:border-slate-700"
+              style={{
+                width: 40,
+                height: 40,
+                borderRadius: 12,
+                justifyContent: "center",
+                alignItems: "center",
+                borderWidth: 1,
+              }}
+            >
+              <Camera size={18} color="#64748b" />
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={pickImage}
+              className="bg-slate-100 dark:bg-slate-800 border-slate-200 dark:border-slate-700"
+              style={{
+                width: 40,
+                height: 40,
+                borderRadius: 12,
+                justifyContent: "center",
+                alignItems: "center",
+                borderWidth: 1,
+              }}
+            >
+              <ImageIcon size={18} color="#64748b" />
+            </TouchableOpacity>
+            <View
+              className="bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700"
+              style={{
+                flex: 1,
+                minHeight: 40,
+                borderRadius: 12,
+                borderWidth: 1,
+                justifyContent: "center",
+                paddingHorizontal: 12,
+              }}
+            >
+              <Text
+                className="text-slate-500 dark:text-slate-400"
+                style={{ fontSize: 12, fontWeight: "600" }}
+              >
+                {attachmentUri ? "1 image selected" : "Attach image (optional)"}
+              </Text>
+            </View>
+          </View>
+          {attachmentUri ? (
+            <View style={{ marginTop: 10 }}>
+              <View style={{ alignSelf: "flex-start" }}>
+                <Image
+                  source={{ uri: attachmentUri }}
+                  style={{ width: 120, height: 120, borderRadius: 12 }}
+                  resizeMode="cover"
+                />
+                <TouchableOpacity
+                  onPress={() => setAttachmentUri("")}
+                  style={{
+                    position: "absolute",
+                    top: 6,
+                    right: 6,
+                    width: 24,
+                    height: 24,
+                    borderRadius: 12,
+                    backgroundColor: "rgba(15,23,42,0.75)",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  <X size={14} color="#ffffff" />
+                </TouchableOpacity>
+              </View>
+            </View>
+          ) : null}
         </View>
       )}
     </View>

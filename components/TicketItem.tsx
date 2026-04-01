@@ -168,4 +168,6 @@ const TicketItem = React.memo(
   },
 );
 
+TicketItem.displayName = "TicketItem";
+
 export default TicketItem;

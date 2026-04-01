@@ -4,7 +4,6 @@ import {
   Ticket as TicketIcon,
   TrendingUp,
   CheckCircle,
-  X,
 } from "lucide-react-native";
 import Skeleton from "./Skeleton";
 
@@ -25,7 +24,7 @@ const TicketStats = ({
     return (
       <View className="px-5 mb-3">
         <View className="flex-row gap-2">
-          {[1, 2, 3, 4].map((i) => (
+          {[1, 2, 3].map((i) => (
             <Skeleton
               key={i}
               height={70}
@@ -46,8 +45,6 @@ const TicketStats = ({
     color: string,
     bgColor: string,
   ) => {
-    const isActive = currentStatus === status;
-
     return (
       <TouchableOpacity
         onPress={() => onStatusChange(status)}
@@ -105,15 +102,6 @@ const TicketStats = ({
           <CheckCircle size={16} color="#22c55e" />,
           "#22c55e",
           "#22c55e15",
-        )}
-
-        {renderStatCard(
-          "Cancelled",
-          stats?.byStatus?.Cancelled || 0,
-          "Cancelled",
-          <X size={16} color="#64748b" />,
-          "#64748b",
-          "#64748b15",
         )}
       </View>
     </View>

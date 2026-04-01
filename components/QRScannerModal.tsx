@@ -11,18 +11,7 @@ import {
 import { useTheme } from "@/contexts/ThemeContext";
 import { X } from "lucide-react-native";
 import { AssetService } from "@/services/AssetService";
-
-// Lazy import — avoids crashing the PM screen if expo-camera native module
-// isn't linked in the current build yet.
-let CameraView: any = null;
-let useCameraPermissions: any = null;
-try {
-  const cam = require("expo-camera");
-  CameraView = cam.CameraView;
-  useCameraPermissions = cam.useCameraPermissions;
-} catch {
-  // expo-camera not available in this build
-}
+import { CameraView, useCameraPermissions } from "expo-camera";
 
 export interface QRScannerRef {
   open: () => void;
@@ -42,8 +31,8 @@ const QRScannerModal = React.forwardRef<QRScannerRef, QRScannerModalProps>(
     const scannedRef = useRef(false);
 
     // useCameraPermissions is null when expo-camera native module isn't linked
-    const permissionHook = useCameraPermissions ? useCameraPermissions() : [null, async () => ({ granted: false })];
-    const [permission, requestPermission] = permissionHook as [any, any];
+    const permissionHook = useCameraPermissions();
+    const [permission, requestPermission] = permissionHook;
 
     const close = useCallback(() => {
       scannedRef.current = false;
@@ -104,17 +93,19 @@ const QRScannerModal = React.forwardRef<QRScannerRef, QRScannerModalProps>(
           // 2. Resolve current site ID for validation
           const { siteResolver } = require("@/services/SiteResolver");
           const currentSites = siteResolver.getSites();
-          const currentSite = currentSites.find((s: any) => s.site_code === siteCode);
-          
+          const currentSite = currentSites.find(
+            (s: any) => s.site_code === siteCode,
+          );
+
           // 3. Compare Site ID
           // My database research shows asset.site_id is actually the site_code
           const checkCode = siteCode.trim().toUpperCase();
           const assetSiteId = (asset.site_id || "").trim().toUpperCase();
 
-          const isCorrectSite = 
-            !asset.site_id || 
-            assetSiteId === checkCode || 
-            assetSiteId === (currentSite?.site_id || "").trim().toUpperCase() || 
+          const isCorrectSite =
+            !asset.site_id ||
+            assetSiteId === checkCode ||
+            assetSiteId === (currentSite?.site_id || "").trim().toUpperCase() ||
             assetSiteId === (currentSite?.id || "").trim().toUpperCase();
 
           if (!isCorrectSite) {

@@ -86,6 +86,7 @@ export const siteLogs = sqliteTable("site_logs", {
   hardness: real("hardness"),
   chemical_dosing: text("chemical_dosing"),
   remarks: text("remarks"),
+  main_remarks: text("main_remarks"),
   entry_time: real("entry_time"),
   end_time: real("end_time"),
   signature: text("signature"),

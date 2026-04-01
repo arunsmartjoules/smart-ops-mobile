@@ -94,6 +94,7 @@ export interface Ticket {
   id: string;
   ticket_no: string;
   title: string;
+  description?: string;
   status: string;
   site_code: string;
   site_name?: string;
@@ -107,7 +108,24 @@ export interface Ticket {
   assigned_to?: string;
   created_user?: string;
   priority?: string;
-  // ... other fields if needed
+  responded_at?: string;
+  resolved_at?: string;
+  contact_number?: string;
+  before_temp?: number | null;
+  after_temp?: number | null;
+}
+
+interface AssetsPagination {
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
+}
+
+interface GetAssetsOptions {
+  page?: number;
+  limit?: number;
+  search?: string;
 }
 
 export const TicketsService = {
@@ -196,6 +214,8 @@ export const TicketsService = {
               created_user: t.created_by,
               site_code: t.site_code,
               created_at: new Date(t.created_at).toISOString(),
+              before_temp: t.before_temp,
+              after_temp: t.after_temp,
             }))
             .sort((a, b) => {
               const pA = priorityOrder[a.priority || ""] || 4;
@@ -401,8 +421,14 @@ export const TicketsService = {
   /**
    * Get assets for a site
    */
-  async getAssets(siteCode: string) {
-    const result = await apiFetch(`/api/assets/site/${siteCode}?limit=1000`);
+  async getAssets(siteCode: string, options: GetAssetsOptions = {}) {
+    const { page = 1, limit = 50, search } = options;
+    const params = new URLSearchParams();
+    params.append("page", page.toString());
+    params.append("limit", limit.toString());
+    if (search?.trim()) params.append("search", search.trim());
+
+    const result = await apiFetch(`/api/assets/site/${siteCode}?${params.toString()}`);
     if (result.success) {
       return result;
     }
@@ -410,7 +436,36 @@ export const TicketsService = {
       // Fallback to local SQLite-synced areas table
       const cached = await db.select().from(areas).where(eq(areas.site_code, siteCode)).catch(() => []);
       if (cached.length > 0) {
-        return { success: true, data: cached, isFromCache: true };
+        const normalizedSearch = search?.trim().toLowerCase() || "";
+        const filtered = cached.filter((asset: any) => {
+          if (!normalizedSearch) return true;
+          return [
+            asset.asset_name,
+            asset.asset_id,
+            asset.location,
+            asset.asset_type,
+          ]
+            .filter(Boolean)
+            .join(" ")
+            .toLowerCase()
+            .includes(normalizedSearch);
+        });
+
+        const start = (page - 1) * limit;
+        const pageData = filtered.slice(start, start + limit);
+        const pagination: AssetsPagination = {
+          page,
+          limit,
+          total: filtered.length,
+          totalPages: Math.max(1, Math.ceil(filtered.length / limit)),
+        };
+
+        return {
+          success: true,
+          data: pageData,
+          pagination,
+          isFromCache: true,
+        };
       }
     }
     return result;

@@ -16,10 +16,12 @@ import { useAuth } from "@/contexts/AuthContext";
 import {
   getNotificationPreferences,
   updateNotificationPreferences,
-  requestPermissions,
+  getNotificationPermissionStatus,
+  requestNotificationPermissions,
 } from "@/services/NotificationService";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import logger from "@/utils/logger";
+import cacheManager from "@/services/CacheManager";
 
 export default function NotificationSettingsPage() {
   const { token } = useAuth();
@@ -34,20 +36,17 @@ export default function NotificationSettingsPage() {
   const [regStatus, setRegStatus] = useState<any>(null);
   const [showDebug, setShowDebug] = useState(false);
 
-  useEffect(() => {
-    loadPreferences();
-    checkSystemPermissions();
-    loadDebugInfo();
-  }, []);
-
   const loadDebugInfo = useCallback(async () => {
     const token = await AsyncStorage.getItem("last_expo_push_token");
     const status = await AsyncStorage.getItem("last_push_registration_status");
     const time = await AsyncStorage.getItem("last_push_registration_time");
     const error = await AsyncStorage.getItem("last_push_registration_error");
+    const pending = await cacheManager.getPendingQueueItemsByType(
+      "notification_token_registration",
+    );
     
     setDebugToken(token);
-    setRegStatus({ status, time, error });
+    setRegStatus({ status, time, error, pendingCount: pending.length });
   }, []);
 
   const copyToClipboard = (text: string) => {
@@ -56,9 +55,8 @@ export default function NotificationSettingsPage() {
   };
 
   const checkSystemPermissions = useCallback(async () => {
-    // This doesn't request permissions, just checks current status
-    const hasPermission = await requestPermissions();
-    setHasSystemPermission(hasPermission);
+    const permission = await getNotificationPermissionStatus();
+    setHasSystemPermission(permission.granted);
   }, []);
 
   const loadPreferences = useCallback(async () => {
@@ -92,17 +90,28 @@ export default function NotificationSettingsPage() {
     }
   }, [token]);
 
+  useEffect(() => {
+    loadPreferences();
+    checkSystemPermissions();
+    loadDebugInfo();
+  }, [checkSystemPermissions, loadDebugInfo, loadPreferences]);
+
   const handleToggleAttendanceNotifications = useCallback(
     async (value: boolean) => {
       if (!hasSystemPermission && value) {
-        Alert.alert(
-          "Permission Required",
-          "Please enable notifications in your device settings first.",
-          [{ text: "OK" }]
-        );
-        return;
+        const granted = await requestNotificationPermissions();
+        setHasSystemPermission(granted);
+        if (!granted) {
+          Alert.alert(
+            "Permission Required",
+            "Enable notifications to receive attendance reminders.",
+            [{ text: "OK" }]
+          );
+          return;
+        }
       }
 
+      const previousValue = attendanceNotificationsEnabled;
       setAttendanceNotificationsEnabled(value);
 
       if (!token) return;
@@ -114,35 +123,49 @@ export default function NotificationSettingsPage() {
         });
 
         if (!result.success) {
-          logger.warn("Server update failed, setting kept locally", {
+          setAttendanceNotificationsEnabled(previousValue);
+          logger.warn("Attendance notification preference update failed", {
             module: "NOTIFICATION_SETTINGS",
+            error: result.error,
           });
-          // Alert user that it's only local for now (backend issue)
-          Alert.alert("Info", "Preference updated locally. We will sync with the server soon.");
+          Alert.alert(
+            "Update Failed",
+            result.error || "Could not update attendance notification preference.",
+          );
         }
       } catch (error: any) {
+        setAttendanceNotificationsEnabled(previousValue);
         logger.error("Update notification preferences error", {
           module: "NOTIFICATION_SETTINGS",
           error: error.message,
         });
+        Alert.alert(
+          "Update Failed",
+          error.message || "Could not update attendance notification preference.",
+        );
       } finally {
         setSaving(false);
       }
     },
-    [hasSystemPermission, token]
+    [attendanceNotificationsEnabled, hasSystemPermission, token]
   );
 
   const handleToggleTicketNotifications = useCallback(
     async (value: boolean) => {
       if (!hasSystemPermission && value) {
-        Alert.alert(
-          "Permission Required",
-          "Please enable notifications in your device settings first.",
-          [{ text: "OK" }]
-        );
-        return;
+        const granted = await requestNotificationPermissions();
+        setHasSystemPermission(granted);
+        if (!granted) {
+          Alert.alert(
+            "Permission Required",
+            "Enable notifications to receive ticket alerts.",
+            [{ text: "OK" }]
+          );
+          return;
+        }
       }
 
+      const previousValue = ticketNotificationsEnabled;
       setTicketNotificationsEnabled(value);
 
       if (!token) return;
@@ -154,20 +177,31 @@ export default function NotificationSettingsPage() {
         });
 
         if (!result.success) {
-          logger.warn("Server update failed, setting kept locally", {
+          setTicketNotificationsEnabled(previousValue);
+          logger.warn("Ticket notification preference update failed", {
             module: "NOTIFICATION_SETTINGS",
+            error: result.error,
           });
+          Alert.alert(
+            "Update Failed",
+            result.error || "Could not update ticket notification preference.",
+          );
         }
       } catch (error: any) {
+        setTicketNotificationsEnabled(previousValue);
         logger.error("Update ticket notification preferences error", {
           module: "NOTIFICATION_SETTINGS",
           error: error.message,
         });
+        Alert.alert(
+          "Update Failed",
+          error.message || "Could not update ticket notification preference.",
+        );
       } finally {
         setSaving(false);
       }
     },
-    [hasSystemPermission, token]
+    [hasSystemPermission, ticketNotificationsEnabled, token]
   );
 
   return (
@@ -261,13 +295,13 @@ export default function NotificationSettingsPage() {
                 {attendanceNotificationsEnabled && hasSystemPermission && (
                   <View className="bg-slate-50 dark:bg-slate-800 rounded-xl p-3">
                     <Text className="text-slate-600 dark:text-slate-400 text-xs">
-                      You'll receive notifications when:
+                      You&apos;ll receive notifications when:
                     </Text>
                     <Text className="text-slate-600 dark:text-slate-400 text-xs mt-1">
-                      • You haven't checked in by the scheduled time
+                      • You haven&apos;t checked in by the scheduled time
                     </Text>
                     <Text className="text-slate-600 dark:text-slate-400 text-xs">
-                      • You haven't checked out by the scheduled time
+                      • You haven&apos;t checked out by the scheduled time
                     </Text>
                   </View>
                 )}
@@ -399,6 +433,12 @@ export default function NotificationSettingsPage() {
                           Error: {regStatus.error}
                         </Text>
                       )}
+                      {typeof regStatus?.pendingCount === "number" &&
+                        regStatus.pendingCount > 0 && (
+                          <Text className="text-amber-500 text-[9px] mt-1 italic">
+                            Pending retry jobs: {regStatus.pendingCount}
+                          </Text>
+                        )}
                     </View>
                   </View>
                 </View>

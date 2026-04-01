@@ -1,70 +1,99 @@
-import React, { useEffect } from 'react';
-import { TouchableOpacity, StyleSheet } from 'react-native';
-import Animated, { 
-  useAnimatedStyle, 
-  withSpring, 
-  useSharedValue 
-} from 'react-native-reanimated';
+import React, { useEffect } from "react";
+import { Pressable, StyleProp, StyleSheet, ViewStyle } from "react-native";
+import Animated, {
+  interpolate,
+  interpolateColor,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+} from "react-native-reanimated";
 
 interface AnimatedTabBarButtonProps {
   focused: boolean;
-  onPress: () => void;
+  onPress?: () => void;
+  onLongPress?: () => void;
   children: React.ReactNode;
   activeColor: string;
   inactiveColor: string;
+  style?: StyleProp<ViewStyle>;
+  testID?: string;
+  accessibilityState?: {
+    selected?: boolean;
+  };
+  accessibilityLabel?: string;
 }
 
-export const AnimatedTabBarButton: React.FC<AnimatedTabBarButtonProps> = ({ 
-  focused, 
-  onPress, 
+export const AnimatedTabBarButton: React.FC<AnimatedTabBarButtonProps> = ({
+  focused,
+  onPress,
+  onLongPress,
   children,
   activeColor,
-  inactiveColor
+  inactiveColor,
+  style,
+  testID,
+  accessibilityState,
+  accessibilityLabel,
 }) => {
-  const scale = useSharedValue(1);
-   const progress = useSharedValue(focused ? 1 : 0);
+  const pressScale = useSharedValue(1);
+  const focusProgress = useSharedValue(focused ? 1 : 0);
 
-   useEffect(() => {
-     progress.value = withSpring(focused ? 1 : 0, { damping: 15 });
-   }, [focused, progress]);
+  useEffect(() => {
+    focusProgress.value = withTiming(focused ? 1 : 0, { duration: 180 });
+  }, [focused, focusProgress]);
 
   const animatedStyle = useAnimatedStyle(() => {
     return {
-      transform: [{ scale: scale.value }],
-      backgroundColor: focused ? withSpring('#f8fafc', { damping: 12 }) : 'transparent',
+      transform: [
+        { scale: pressScale.value },
+        { translateY: interpolate(focusProgress.value, [0, 1], [0, -2]) },
+      ],
+      backgroundColor: interpolateColor(
+        focusProgress.value,
+        [0, 1],
+        ["transparent", `${activeColor}14`],
+      ),
+      opacity: interpolate(focusProgress.value, [0, 1], [0.9, 1]),
     };
   });
 
-   const handlePress = () => {
-     scale.value = withSpring(0.9, { damping: 10 }, () => {
-       scale.value = withSpring(1, { damping: 10 });
-     });
-     onPress();
-   };
+  const handlePressIn = () => {
+    pressScale.value = withTiming(0.96, { duration: 90 });
+  };
+
+  const handlePressOut = () => {
+    pressScale.value = withTiming(1, { duration: 120 });
+  };
 
   return (
-    <TouchableOpacity 
-      onPress={handlePress}
-      activeOpacity={0.8}
-      style={styles.container}
+    <Pressable
+      onPress={onPress}
+      onLongPress={onLongPress}
+      onPressIn={handlePressIn}
+      onPressOut={handlePressOut}
+      testID={testID}
+      accessibilityLabel={accessibilityLabel}
+      accessibilityRole="button"
+      accessibilityState={accessibilityState}
+      style={[styles.container, style]}
     >
       <Animated.View style={[styles.inner, animatedStyle]}>
         {children}
       </Animated.View>
-    </TouchableOpacity>
+    </Pressable>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
+    alignItems: "center",
+    justifyContent: "center",
   },
   inner: {
     padding: 10,
     borderRadius: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
+    alignItems: "center",
+    justifyContent: "center",
   },
 });

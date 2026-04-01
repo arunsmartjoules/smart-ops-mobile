@@ -1,9 +1,8 @@
 import React from "react";
-import { View, Text, TouchableOpacity, TextInput } from "react-native";
+import { View, Text, TextInput, TouchableOpacity } from "react-native";
 import { 
   CheckCircle2, 
   FlaskConical, 
-  ChevronDown, 
   Droplets, 
   Activity, 
   Beaker, 
@@ -18,7 +17,6 @@ interface UnifiedLogItemProps {
   type: "Chemical" | "Water" | "TempRH";
   value: any;
   onUpdateValue: (taskId: string, field: string, value: string) => void;
-  onSelectDosing?: (taskId: string) => void;
   isUploading?: boolean;
 }
 
@@ -27,15 +25,13 @@ export const UnifiedLogItem = React.memo(({
   type,
   value,
   onUpdateValue,
-  onSelectDosing,
   isUploading = false
 }: UnifiedLogItemProps) => {
   const subtitle = item.meta?.remarks || null;
   const isCompleted = item.status === "Completed";
-
   return (
     <View
-      className={`bg-white dark:bg-slate-900 rounded-xl p-4 mb-3 border ${
+      className={`bg-white dark:bg-slate-900 rounded-xl ${type === "Chemical" ? "p-3" : "p-4"} mb-3 border ${
         isCompleted ? "border-green-200 dark:border-green-900" : "border-slate-100 dark:border-slate-800"
       }`}
     >
@@ -58,26 +54,56 @@ export const UnifiedLogItem = React.memo(({
 
       {/* Input Fields based on Type */}
       {type === "Chemical" && (
-        <View className="flex-row items-center gap-2 mb-3">
-          <TouchableOpacity
-            onPress={() => onSelectDosing?.(item.id)}
-            className="flex-row flex-1 items-center bg-slate-50 dark:bg-slate-800 p-2.5 rounded-xl border border-slate-200 dark:border-slate-700"
-          >
-            <View className="w-7 h-7 rounded-lg bg-purple-50 dark:bg-purple-900/30 items-center justify-center mr-3">
+        <View className="mb-2">
+          <View className="flex-row items-center gap-2">
+            <View className="w-7 h-7 rounded-lg bg-purple-50 dark:bg-purple-900/30 items-center justify-center mr-2">
               <FlaskConical size={14} color="#9333ea" />
             </View>
-            <Text className={`font-bold text-sm ${value.dosing ? "text-slate-900 dark:text-slate-50" : "text-slate-400"}`}>
-              {value.dosing || "Select Option"}
-            </Text>
-            <View className="flex-1" />
-            <ChevronDown size={16} color="#94a3b8" />
-          </TouchableOpacity>
-          <LogImagePicker
-            value={value.attachment}
-            onImageChange={(url) => onUpdateValue(item.id, "attachment", url || "")}
-            uploadPath={`chemical/${item.id}`}
-            compact
-          />
+            <View className="flex-1 flex-row items-center gap-2">
+              <TouchableOpacity
+                onPress={() => onUpdateValue(item.id, "dosing", "Yes")}
+                className={`flex-1 rounded-xl border px-3 py-2.5 items-center justify-center ${
+                  value.dosing === "Yes"
+                    ? "bg-emerald-50 border-emerald-500"
+                    : "bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700"
+                }`}
+              >
+                <Text
+                  className={`text-sm font-bold ${
+                    value.dosing === "Yes"
+                      ? "text-emerald-700"
+                      : "text-slate-500 dark:text-slate-300"
+                  }`}
+                >
+                  Yes
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => onUpdateValue(item.id, "dosing", "No")}
+                className={`flex-1 rounded-xl border px-3 py-2.5 items-center justify-center ${
+                  value.dosing === "No"
+                    ? "bg-amber-50 border-amber-500"
+                    : "bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700"
+                }`}
+              >
+                <Text
+                  className={`text-sm font-bold ${
+                    value.dosing === "No"
+                      ? "text-amber-700"
+                      : "text-slate-500 dark:text-slate-300"
+                  }`}
+                >
+                  No
+                </Text>
+              </TouchableOpacity>
+            </View>
+            <LogImagePicker
+              value={value.attachment}
+              onImageChange={(url) => onUpdateValue(item.id, "attachment", url || "")}
+              uploadPath={`chemical/${item.id}`}
+              compact
+            />
+          </View>
         </View>
       )}
 
@@ -125,8 +151,8 @@ export const UnifiedLogItem = React.memo(({
             <View className="flex-1 bg-slate-50 dark:bg-slate-800 rounded-lg px-3 border border-slate-200 dark:border-slate-700">
               <TextInput
                 placeholder="Remarks..."
-                value={value.remarks}
-                onChangeText={(t) => onUpdateValue(item.id, "remarks", t)}
+                value={value.mainRemarks}
+                onChangeText={(t) => onUpdateValue(item.id, "mainRemarks", t)}
                 className="py-2 text-xs font-medium text-slate-600 dark:text-slate-400"
               />
             </View>
@@ -183,8 +209,8 @@ export const UnifiedLogItem = React.memo(({
         <View className="bg-slate-50 dark:bg-slate-800 rounded-lg px-3 border border-slate-200 dark:border-slate-700">
           <TextInput
             placeholder="Add remarks..."
-            value={value.remarks}
-            onChangeText={(t) => onUpdateValue(item.id, "remarks", t)}
+            value={value.mainRemarks}
+            onChangeText={(t) => onUpdateValue(item.id, "mainRemarks", t)}
             className="py-2 text-xs font-medium text-slate-600 dark:text-slate-400"
             placeholderTextColor="#94a3b8"
           />
@@ -200,3 +226,5 @@ export const UnifiedLogItem = React.memo(({
     prev.isUploading === next.isUploading
   );
 });
+
+UnifiedLogItem.displayName = "UnifiedLogItem";

@@ -670,6 +670,15 @@ class SyncEngineImpl implements SyncEngine {
       endpoint = `/api/attendance/${attendanceId}/check-out`;
       method = "POST";
 
+    } else if (entity_type === "notification_token_registration") {
+      endpoint = "/api/notifications/register-token";
+      method = "POST";
+      body = JSON.stringify({
+        pushToken: payload.pushToken,
+        deviceId: payload.deviceId,
+        platform: payload.platform,
+      });
+
     // ── Site log operations ───────────────────────────────────────────────
     } else if (entity_type === "site_log_create") {
       endpoint = "/api/site-logs";

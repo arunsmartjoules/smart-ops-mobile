@@ -25,6 +25,7 @@ import {
   offlineQueue,
   syncMeta,
   ensureDatabaseConnection,
+  ensureSiteLogsSchema,
 } from "@/database";
 import logger from "@/utils/logger";
 
@@ -69,6 +70,7 @@ export interface OfflineQueueItem {
     | "ticket_line_item"
     | "attendance_check_in"
     | "attendance_check_out"
+    | "notification_token_registration"
     | "site_log_create"
     | "site_log_update"
     | "site_log_delete"
@@ -120,6 +122,9 @@ class CacheManagerImpl {
   ): Promise<T[]> {
     try {
       ensureDatabaseConnection();
+      if (domain === "site_logs") {
+        ensureSiteLogsSchema();
+      }
       const table = getTable(domain);
       if (!table) {
         logger.warn("CacheManager.read: unsupported domain", {

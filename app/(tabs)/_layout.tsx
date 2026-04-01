@@ -21,7 +21,9 @@ export default function TabLayout() {
     const unsubscribe = UpdateService.subscribe(() => {
       setHasUpdate(UpdateService.isUpdateAvailable);
     });
-    return () => { unsubscribe(); };
+    return () => {
+      unsubscribe();
+    };
   }, []);
 
   return (
@@ -40,9 +42,9 @@ export default function TabLayout() {
         tabBarStyle: {
           backgroundColor: isDark ? "#0f172a" : "#ffffff",
           borderTopWidth: 0,
-          height: Platform.OS === 'ios' ? 88 : 80,
+          height: Platform.OS === "ios" ? 88 : 80,
           paddingTop: 8,
-          paddingBottom: Platform.OS === 'ios' ? 28 : 16,
+          paddingBottom: Platform.OS === "ios" ? 28 : 16,
           shadowColor: "#000",
           shadowOffset: { width: 0, height: -4 },
           shadowOpacity: 0.08,
@@ -54,7 +56,7 @@ export default function TabLayout() {
           fontWeight: "700",
           marginTop: -4,
           marginBottom: 4,
-          textTransform: 'uppercase',
+          textTransform: "uppercase",
           letterSpacing: 0.5,
         },
       }}
@@ -70,10 +72,10 @@ export default function TabLayout() {
         options={{
           title: "Home",
           tabBarButton: (props) => (
-            <AnimatedTabBarButton 
-              {...props} 
-              activeColor="#dc2626" 
-              inactiveColor={isDark ? "#64748b" : "#94a3b8"} 
+            <AnimatedTabBarButton
+              {...props}
+              activeColor="#dc2626"
+              inactiveColor={isDark ? "#64748b" : "#94a3b8"}
             />
           ),
           tabBarIcon: ({ color, focused }) => (
@@ -90,10 +92,10 @@ export default function TabLayout() {
         options={{
           title: "Tickets",
           tabBarButton: (props) => (
-            <AnimatedTabBarButton 
-              {...props} 
-              activeColor="#ef4444" 
-              inactiveColor={isDark ? "#64748b" : "#94a3b8"} 
+            <AnimatedTabBarButton
+              {...props}
+              activeColor="#ef4444"
+              inactiveColor={isDark ? "#64748b" : "#94a3b8"}
             />
           ),
           tabBarIcon: ({ color, focused }) => (
@@ -110,10 +112,10 @@ export default function TabLayout() {
         options={{
           title: "Logs",
           tabBarButton: (props) => (
-            <AnimatedTabBarButton 
-              {...props} 
-              activeColor="#f59e0b" 
-              inactiveColor={isDark ? "#64748b" : "#94a3b8"} 
+            <AnimatedTabBarButton
+              {...props}
+              activeColor="#f59e0b"
+              inactiveColor={isDark ? "#64748b" : "#94a3b8"}
             />
           ),
           tabBarIcon: ({ color, focused }) => (
@@ -130,10 +132,10 @@ export default function TabLayout() {
         options={{
           title: "PM",
           tabBarButton: (props) => (
-            <AnimatedTabBarButton 
-              {...props} 
-              activeColor="#3b82f6" 
-              inactiveColor={isDark ? "#64748b" : "#94a3b8"} 
+            <AnimatedTabBarButton
+              {...props}
+              activeColor="#3b82f6"
+              inactiveColor={isDark ? "#64748b" : "#94a3b8"}
             />
           ),
           tabBarIcon: ({ color, focused }) => (
@@ -150,10 +152,10 @@ export default function TabLayout() {
         options={{
           title: "Profile",
           tabBarButton: (props) => (
-            <AnimatedTabBarButton 
-              {...props} 
-              activeColor="#ef4444" 
-              inactiveColor={isDark ? "#64748b" : "#94a3b8"} 
+            <AnimatedTabBarButton
+              {...props}
+              activeColor="#ef4444"
+              inactiveColor={isDark ? "#64748b" : "#94a3b8"}
             />
           ),
           tabBarIcon: ({ color, focused }) => (
@@ -164,9 +166,9 @@ export default function TabLayout() {
                 strokeWidth={focused ? 2.5 : 2}
               />
               {hasUpdate && (
-                <View 
+                <View
                   className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 bg-red-500 rounded-full border-2 border-white dark:border-slate-900"
-                  style={{ position: 'absolute' }}
+                  style={{ position: "absolute" }}
                 />
               )}
             </View>
@@ -176,4 +178,3 @@ export default function TabLayout() {
     </Tabs>
   );
 }
-

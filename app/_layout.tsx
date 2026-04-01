@@ -18,7 +18,10 @@ import * as Location from "expo-location";
 import * as Notifications from "expo-notifications";
 import * as ImagePicker from "expo-image-picker";
 import * as Crypto from "expo-crypto";
-import { setupNotificationHandlers, setupAndroidChannels } from "@/services/NotificationService";
+import {
+  setupNotificationHandlers,
+  setupAndroidChannels,
+} from "@/services/NotificationService";
 import logger from "@/utils/logger";
 
 // Fix: crypto.getRandomValues() not supported — required for uuid library in React Native
@@ -30,7 +33,6 @@ if (!global.crypto) {
   });
 }
 
-
 // Keep the native splash visible until JS is ready
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
@@ -38,7 +40,7 @@ SplashScreen.preventAutoHideAsync().catch(() => {});
 SplashScreen.hideAsync().catch(() => {});
 
 function AuthGuard({ children }: { children: React.ReactNode }) {
-  const { token, isLoading } = useAuth();
+  const { token, isLoading, isEmailVerified } = useAuth();
   const segments = useSegments();
   const router = useRouter();
 
@@ -52,28 +54,42 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
       segments[0] === "forgot-password" ||
       segments[0] === "reset-password";
 
-    // Screens that should ONLY be seen by unauthenticated users
+    // Screens that should ONLY be seen by fully unauthenticated users
     const isUnauthenticatedInternal =
-      segments[0] === "sign-in" ||
-      segments[0] === "sign-up";
+      segments[0] === "sign-in" || segments[0] === "sign-up";
 
     if (!token && !isAuthRelated) {
       router.replace("/sign-in");
-    } else if (token && isUnauthenticatedInternal) {
+    } else if (token && !isEmailVerified && segments[0] !== "verify-email") {
+      router.replace("/verify-email");
+    } else if (token && isEmailVerified && isUnauthenticatedInternal) {
       router.replace("/(tabs)/dashboard");
     }
-  }, [token, isLoading, segments]);
+  }, [token, isLoading, isEmailVerified, segments]);
 
   useEffect(() => {
     if (isLoading) return;
   }, [token, isLoading]);
 
-
   // Show full-screen JS splash while auth is resolving
   if (isLoading) {
     return (
-      <View style={{ flex: 1, backgroundColor: "#b91c1c", alignItems: "center", justifyContent: "center" }}>
-        <Text style={{ color: "white", fontSize: 36, fontWeight: "800", letterSpacing: 1 }}>
+      <View
+        style={{
+          flex: 1,
+          backgroundColor: "#b91c1c",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        <Text
+          style={{
+            color: "white",
+            fontSize: 36,
+            fontWeight: "800",
+            letterSpacing: 1,
+          }}
+        >
           JouleOps
         </Text>
       </View>
@@ -91,7 +107,6 @@ export default function RootLayout() {
         initDatabase();
         // Request all permissions on startup
         await Location.requestForegroundPermissionsAsync();
-        await Notifications.requestPermissionsAsync();
         await ImagePicker.requestCameraPermissionsAsync();
         await ImagePicker.requestMediaLibraryPermissionsAsync();
         syncManager.initialize();
@@ -104,32 +119,47 @@ export default function RootLayout() {
     };
     init();
 
-    // Setup notification handlers
-    const cleanupNotifications = setupNotificationHandlers(
-      (notification) => {
-        console.log("Notification received:", notification);
-      },
-      (response) => {
-        const data = response.notification.request.content.data as any;
-        logger.info("Notification tapped", { data });
+    const handleNotificationResponse = (
+      response: Notifications.NotificationResponse,
+    ) => {
+      const data = response.notification.request.content.data as any;
+      logger.info("Notification tapped", { data });
 
-        if (data?.ticket_no) {
-          // Navigate to tickets screen with ticketId param
-          // Note: Using push/navigate with search params
-          router.push({
-            pathname: "/(tabs)/tickets",
-            params: { 
-              ticketId: data.ticket_no,
-              siteCode: data.site_code
-            }
-          });
-        } else if (data?.screen === "attendance" || String(data?.type || "").includes("attendance")) {
-          router.push("/attendance");
-        } else if (data?.screen) {
-          router.push(data.screen as any);
-        }
+      if (data?.ticket_no) {
+        router.push({
+          pathname: "/(tabs)/tickets",
+          params: {
+            ticketId: data.ticket_no,
+            siteCode: data.site_code,
+          },
+        });
+      } else if (
+        data?.screen === "attendance" ||
+        String(data?.type || "").includes("attendance")
+      ) {
+        router.push("/attendance");
+      } else if (data?.screen) {
+        router.push(data.screen as any);
       }
-    );
+    };
+
+    // Setup notification handlers
+    const cleanupNotifications = setupNotificationHandlers((notification) => {
+      console.log("Notification received:", notification);
+    }, handleNotificationResponse);
+
+    Notifications.getLastNotificationResponseAsync()
+      .then((response) => {
+        if (response) {
+          handleNotificationResponse(response);
+        }
+      })
+      .catch((error) => {
+        logger.warn("Failed to restore last notification response", {
+          module: "APP_LAYOUT",
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
 
     return () => {
       syncManager.cleanup();

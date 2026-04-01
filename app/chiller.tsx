@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   View,
   Text,
@@ -14,7 +14,7 @@ import {
   Modal,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { router, useLocalSearchParams } from "expo-router";
+import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import {
   ChevronLeft,
   Snowflake,
@@ -40,11 +40,13 @@ import { LinearGradient } from "expo-linear-gradient";
 import { db, chillerReadings } from "@/database";
 import { eq } from "drizzle-orm";
 import Skeleton from "@/components/Skeleton";
+import { addDays, endOfDay, startOfDay } from "date-fns";
 
 export default function ChillerEntry() {
   const { user } = useAuth();
   const params = useLocalSearchParams<{
     id?: string;
+    editId?: string;
     chillerId?: string;
     siteCode: string;
     isNew?: string;
@@ -91,6 +93,25 @@ export default function ChillerEntry() {
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [signatureModalVisible, setSignatureModalVisible] = useState(false);
+  const [dailyReadingCount, setDailyReadingCount] = useState(0);
+  const [loadingDailyProgress, setLoadingDailyProgress] = useState(false);
+  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const isEditMode = !!(params.editId || params.id);
+  const targetId = (params.editId || params.id || "") as string;
+
+  // Derived state to check if any technical field is filled (excluding IDs)
+  const isAnyFieldFilled = Object.entries(formData).some(([key, value]) => {
+    if (["chillerId", "equipmentId", "remarks", "attachment", "signature"].includes(key)) return false;
+    return value !== "" && value !== null && value !== undefined;
+  });
+
+  // Clean up timer on unmount
+  useEffect(() => {
+    return () => {
+      if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    };
+  }, []);
 
   useEffect(() => {
     loadSites();
@@ -100,11 +121,78 @@ export default function ChillerEntry() {
     loadAssets();
   }, [selectedSite]);
 
+  const loadDailyProgress = useCallback(
+    async (syncFromServer = false) => {
+      if (isEditMode || !selectedSite) {
+        setDailyReadingCount(0);
+        return;
+      }
+
+      try {
+        setLoadingDailyProgress(true);
+
+        if (syncFromServer) {
+          const fromDate = startOfDay(addDays(new Date(), -1)).getTime();
+          const toDate = endOfDay(addDays(new Date(), 1)).getTime();
+          await SiteLogService.pullChillerReadings(selectedSite, {
+            fromDate,
+            toDate,
+          });
+        }
+
+        const count = await SiteLogService.getTodayChillerReadingCount(
+          selectedSite,
+        );
+        setDailyReadingCount(count);
+      } catch (e) {
+        console.error("Failed to load chiller progress", e);
+      } finally {
+        setLoadingDailyProgress(false);
+      }
+    },
+    [isEditMode, selectedSite],
+  );
+
   useEffect(() => {
-    if (params.id) {
+    if (targetId) {
       loadReading();
     }
-  }, [params.id]);
+  }, [targetId]);
+
+  useEffect(() => {
+    loadDailyProgress(true);
+  }, [loadDailyProgress]);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadDailyProgress(true);
+    }, [loadDailyProgress]),
+  );
+
+  useEffect(() => {
+    if (!assets.length || !formData.chillerId) return;
+
+    const hasSelectedAsset = assets.some(
+      (asset) => asset.value === formData.chillerId,
+    );
+    if (hasSelectedAsset) return;
+
+    const matchedAsset =
+      assets.find((asset) => asset.value === formData.equipmentId) ||
+      assets.find(
+        (asset) =>
+          asset.label.trim().toLowerCase() ===
+          formData.chillerId.trim().toLowerCase(),
+      );
+
+    if (!matchedAsset) return;
+
+    setFormData((prev) => ({
+      ...prev,
+      chillerId: matchedAsset.value,
+      equipmentId: matchedAsset.value,
+    }));
+  }, [assets, formData.chillerId, formData.equipmentId]);
 
   const ChillerFormSkeleton = () => (
     <View className="py-6">
@@ -145,19 +233,19 @@ export default function ChillerEntry() {
 
   const loadReading = async () => {
     try {
-      if (!params.id) return;
+      if (!targetId) return;
       setLoading(true);
       const rows = await db
         .select()
         .from(chillerReadings)
-        .where(eq(chillerReadings.id, params.id));
+        .where(eq(chillerReadings.id, targetId));
       const record = rows[0];
-      if (record) {
-        setSelectedSite(record.site_code);
-        setFormData({
-          chillerId: record.chiller_id || "",
-          equipmentId: record.equipment_id || "",
-          condenserInletTemp: record.condenser_inlet_temp?.toString() || "",
+        if (record) {
+          setSelectedSite(record.site_code);
+          setFormData({
+            chillerId: record.equipment_id || record.chiller_id || "",
+            equipmentId: record.equipment_id || "",
+            condenserInletTemp: record.condenser_inlet_temp?.toString() || "",
           condenserOutletTemp: record.condenser_outlet_temp?.toString() || "",
           evaporatorInletTemp: record.evaporator_inlet_temp?.toString() || "",
           evaporatorOutletTemp: record.evaporator_outlet_temp?.toString() || "",
@@ -230,7 +318,21 @@ export default function ChillerEntry() {
   };
 
   const updateField = (field: string, value: string) => {
-    setFormData((prev) => ({ ...prev, [field]: value }));
+    setFormData((prev) => {
+      const next = { ...prev, [field]: value };
+      
+      // Auto-save logic (debounced)
+      if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+      
+      // Only auto-save if we have a chiller selection
+      if (next.chillerId) {
+        autoSaveTimerRef.current = setTimeout(() => {
+          handleSubmission("In-progress");
+        }, 1500); // 1.5s delay for technical logs
+      }
+      
+      return next;
+    });
   };
 
 
@@ -242,7 +344,7 @@ export default function ChillerEntry() {
 
     const finalSignature = sig || formData.signature;
 
-    if (status === "Completed" && !finalSignature) {
+    if (!isEditMode && status === "Completed" && !finalSignature) {
       Alert.alert("Error", "Signature is required to complete the log");
       return;
     }
@@ -250,13 +352,14 @@ export default function ChillerEntry() {
     try {
       setSaving(true);
       const selectedAsset = assets.find((a) => a.value === formData.chillerId);
+      const assetName = selectedAsset?.label || formData.chillerId;
 
       const payload = {
         siteCode: selectedSite,
         executorId: user?.user_id || user?.id || "unknown",
-        chillerId: formData.chillerId,
+        chillerId: assetName,
         equipmentId: formData.chillerId,
-        assetName: selectedAsset?.label || formData.chillerId,
+        assetName: assetName,
         assetType: selectedAsset?.description || "Chiller",
         condenserInletTemp: parseFloat(formData.condenserInletTemp),
         condenserOutletTemp: parseFloat(formData.condenserOutletTemp),
@@ -287,10 +390,15 @@ export default function ChillerEntry() {
         attachments: formData.attachment,
       };
 
-      if (params.id) {
-        await SiteLogService.updateChillerReading(params.id, payload);
+      if (isEditMode) {
+        const targetId = (params.editId || params.id) as string;
+        await SiteLogService.updateChillerReading(targetId, payload);
       } else {
         await SiteLogService.saveChillerReading(payload);
+      }
+
+      if (status === "Completed") {
+        await loadDailyProgress(true);
       }
 
       setSignatureModalVisible(false);
@@ -339,6 +447,12 @@ export default function ChillerEntry() {
     </View>
   );
 
+  const progressSegments = [0, 1, 2].map((index) => {
+    const segmentCount = Math.min(Math.max(dailyReadingCount - index * 4, 0), 4);
+    return segmentCount / 4;
+  });
+  const progressDisplayCount = `${dailyReadingCount}/12`;
+
   return (
     <View className="flex-1 bg-slate-50 dark:bg-slate-950">
       <SafeAreaView className="flex-1" edges={["top"]}>
@@ -353,11 +467,11 @@ export default function ChillerEntry() {
           </TouchableOpacity>
           <View className="flex-1 items-center">
             <Text className="text-lg font-bold text-slate-900 dark:text-slate-50 text-center">
-              {params.id ? "Edit Chiller Reading" : "Chiller Reading"}
+              {isEditMode ? "Edit Chiller Reading" : "Chiller Reading"}
             </Text>
             <Text className="text-[10px] text-slate-400 dark:text-slate-500 font-bold uppercase tracking-widest mt-0.5">
-              {params.id
-                ? `ID: ${params.id.slice(-8).toUpperCase()}`
+              {isEditMode
+                ? `ID: ${targetId.slice(-8).toUpperCase()}`
                 : `Chiller ID: ${formData.chillerId || params.chillerId}`}
             </Text>
           </View>
@@ -381,6 +495,32 @@ export default function ChillerEntry() {
               <ChillerFormSkeleton />
             ) : (
               <View className="py-6">
+                {!isEditMode && (
+                  <View className="mb-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 px-4 py-3">
+                    <View className="flex-row items-center justify-between mb-2">
+                      <Text className="text-[10px] text-slate-500 dark:text-slate-400 font-bold uppercase tracking-widest">
+                        Today Progress
+                      </Text>
+                      <Text className="text-[11px] font-bold text-slate-700 dark:text-slate-200">
+                        {loadingDailyProgress ? "Updating..." : progressDisplayCount}
+                      </Text>
+                    </View>
+                    <View className="flex-row gap-2">
+                      {progressSegments.map((progress, index) => (
+                        <View
+                          key={`progress-${index}`}
+                          className="flex-1 h-1 rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden"
+                        >
+                          <View
+                            className="h-full rounded-full bg-emerald-500"
+                            style={{ width: `${progress * 100}%` }}
+                          />
+                        </View>
+                      ))}
+                    </View>
+                  </View>
+                )}
+
                 <SearchableSelect
                   label="Site"
                   options={sites}
@@ -391,7 +531,7 @@ export default function ChillerEntry() {
                   }}
                   loading={loadingSites}
                   placeholder="Select Site"
-                  disabled={!!params.id} // Disable site change for existing records
+                  disabled={isEditMode} // Disable site change for existing records
                 />
 
                 <SearchableSelect
@@ -401,7 +541,7 @@ export default function ChillerEntry() {
                   onChange={(val) => updateField("chillerId", val)}
                   loading={loadingAssets}
                   placeholder="Select Chiller"
-                  disabled={params.isNew !== "true" && !!params.chillerId}
+                  disabled={isEditMode || (params.isNew !== "true" && !!params.chillerId)}
                 />
 
                 {/* Temperatures Section */}
@@ -604,25 +744,17 @@ export default function ChillerEntry() {
               elevation: 10,
             }}
           >
+            {/* Removed manual Save button as autosave is implemented */}
+            
             <TouchableOpacity
-              onPress={() => handleSubmission("In-progress")}
-              disabled={saving}
-              className="flex-1 py-4 bg-slate-100 dark:bg-slate-800 rounded-xl flex-row items-center justify-center"
-            >
-              <Save size={20} color="#64748b" style={{ marginRight: 8 }} />
-              <Text className="text-slate-600 dark:text-slate-300 font-bold text-base uppercase tracking-wider">
-                Save
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              onPress={() => setSignatureModalVisible(true)}
-              disabled={saving}
+              onPress={() => isEditMode ? handleSubmission("Completed") : setSignatureModalVisible(true)}
+              disabled={saving || (!isEditMode && !isAnyFieldFilled)}
               activeOpacity={0.8}
-              className="flex-[2] rounded-xl overflow-hidden"
+              className="flex-1 rounded-xl overflow-hidden"
+              style={{ opacity: (!isEditMode && !isAnyFieldFilled) ? 0.6 : 1 }}
             >
               <LinearGradient
-                colors={["#0d9488", "#0f766e"]}
+                colors={isEditMode ? ["#334155", "#0f172a"] : ["#0d9488", "#0f766e"]}
                 start={{ x: 0, y: 0 }}
                 end={{ x: 1, y: 1 }}
                 style={StyleSheet.absoluteFill}
@@ -632,13 +764,13 @@ export default function ChillerEntry() {
                   <ActivityIndicator color="white" />
                 ) : (
                   <>
-                    <CheckCircle2
-                      size={20}
-                      color="white"
-                      style={{ marginRight: 8 }}
-                    />
+                    {isEditMode ? (
+                      <Save size={20} color="white" style={{ marginRight: 8 }} />
+                    ) : (
+                      <CheckCircle2 size={20} color="white" style={{ marginRight: 8 }} />
+                    )}
                     <Text className="text-white font-bold text-base uppercase tracking-wider">
-                      Complete
+                      {isEditMode ? "Update Reading" : "Complete"}
                     </Text>
                   </>
                 )}
@@ -659,7 +791,7 @@ export default function ChillerEntry() {
           <View className="bg-white dark:bg-slate-900 rounded-t-3xl h-[60%] overflow-hidden">
             <View className="flex-row items-center justify-between px-6 py-4 border-b border-slate-100 dark:border-slate-800">
               <Text className="text-slate-900 dark:text-slate-50 font-bold text-lg">
-                Sign to {params.id ? "Update" : "Complete"} Reading
+                Sign to {isEditMode ? "Update" : "Complete"} Reading
               </Text>
               <TouchableOpacity onPress={() => setSignatureModalVisible(false)}>
                 <Text className="text-purple-600 font-bold">Close</Text>
@@ -667,7 +799,7 @@ export default function ChillerEntry() {
             </View>
             <SignaturePad
               standalone
-              okText={params.id ? "Update Reading" : "Complete Reading"}
+              okText={isEditMode ? "Update Reading" : "Complete Reading"}
               onOK={(sig: string) => handleSubmission("Completed", sig)}
             />
           </View>

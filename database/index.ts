@@ -8,6 +8,14 @@ import logger from "@/utils/logger";
 let sqlite: SQLiteDatabase;
 export let db: ExpoSQLiteDatabase<typeof schema>;
 
+function ensureSiteLogsMainRemarksColumn() {
+  try {
+    sqlite.execSync("ALTER TABLE site_logs ADD COLUMN main_remarks TEXT");
+  } catch {
+    // Column already exists or table is unavailable during boot.
+  }
+}
+
 /**
  * Initializes or re-initializes the database connection and schema.
  * Called at module load and during recovery from native failures.
@@ -78,6 +86,7 @@ function init() {
           hardness REAL,
           chemical_dosing TEXT,
           remarks TEXT,
+          main_remarks TEXT,
           entry_time REAL,
           end_time REAL,
           signature TEXT,
@@ -261,6 +270,7 @@ function init() {
     // Run column migrations
     const columnMigrations = [
       "ALTER TABLE site_logs ADD COLUMN scheduled_date TEXT",
+      "ALTER TABLE site_logs ADD COLUMN main_remarks TEXT",
       "ALTER TABLE tickets ADD COLUMN before_temp REAL",
       "ALTER TABLE tickets ADD COLUMN after_temp REAL",
       "ALTER TABLE tickets ADD COLUMN due_date REAL",
@@ -275,6 +285,7 @@ function init() {
         // Column already exists — safe to ignore
       }
     }
+    ensureSiteLogsMainRemarksColumn();
   } catch (error) {
     logger.error("Database initialization failed", { module: "DATABASE", error });
   }
@@ -295,6 +306,7 @@ export function ensureDatabaseConnection(): boolean {
     }
     // Lightweight check to see if the native handle is still alive
     sqlite.execSync("SELECT 1");
+    ensureSiteLogsMainRemarksColumn();
     return true;
   } catch (error: any) {
     logger.warn("Database connection check failed, attempting recovery", {
@@ -309,6 +321,11 @@ export function ensureDatabaseConnection(): boolean {
       return false;
     }
   }
+}
+
+export function ensureSiteLogsSchema() {
+  ensureDatabaseConnection();
+  ensureSiteLogsMainRemarksColumn();
 }
 
 // Re-export schema tables for convenient imports
@@ -334,4 +351,44 @@ export {
 export function initDatabase() {
   // Legacy shim, initialization now handled by ensuring connection on access
   ensureDatabaseConnection();
+}
+
+/**
+ * Wipes all data from all tables, keeping the schema intact.
+ * Essential for multi-user device security on logout.
+ */
+export async function clearDatabase() {
+  try {
+    if (!ensureDatabaseConnection()) return;
+    
+    const tables = [
+      "tickets",
+      "ticket_updates",
+      "areas",
+      "categories",
+      "user_sites",
+      "site_logs",
+      "chiller_readings",
+      "pm_instances",
+      "activities",
+      "pm_checklist_master",
+      "pm_checklist_items",
+      "pm_responses",
+      "log_master",
+      "offline_queue",
+      "sync_meta",
+      "attendance_logs",
+      "attachment_queue"
+    ];
+
+    sqlite.withTransactionSync(() => {
+      for (const table of tables) {
+        sqlite.execSync(`DELETE FROM ${table}`);
+      }
+    });
+
+    logger.info("Database wiped successfully", { module: "DATABASE" });
+  } catch (error) {
+    logger.error("Failed to wipe database", { module: "DATABASE", error });
+  }
 }

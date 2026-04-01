@@ -18,7 +18,6 @@ import {
   TextInput,
   useColorScheme,
 } from "react-native";
-import { FlashList } from "@shopify/flash-list";
 import { SafeAreaView } from "react-native-safe-area-context";
 import {
   ListChecks,
@@ -263,6 +262,8 @@ const PMCard = React.memo(
     prev.showCompletedDate === next.showCompletedDate,
 );
 
+PMCard.displayName = "PMCard";
+
 // ─── Stat Card ─────────────────────────────────────────────────────────────────
 const StatCard = React.memo(
   ({
@@ -313,6 +314,8 @@ const StatCard = React.memo(
     );
   },
 );
+
+StatCard.displayName = "StatCard";
 
 // ─── Main Screen ───────────────────────────────────────────────────────────────
 export default function PreventiveMaintenance() {
@@ -709,6 +712,19 @@ export default function PreventiveMaintenance() {
     );
   }, [loadingMore]);
 
+  const renderListHeader = useCallback(
+    () => (
+      <View style={styles.listHeader}>
+        <View style={styles.sectionRow}>
+          <View className="flex-row items-center gap-2">
+            <Text style={styles.sectionTitle}>Maintenance Tasks</Text>
+          </View>
+        </View>
+      </View>
+    ),
+    [],
+  );
+
   return (
     <View className="flex-1 bg-slate-50 dark:bg-slate-950">
       <SafeAreaView style={styles.flex} edges={["top"]}>
@@ -841,27 +857,17 @@ export default function PreventiveMaintenance() {
           ) : null}
         </View>
 
-        <View style={styles.listHeader}>
-          <View style={styles.sectionRow}>
-            <View className="flex-row items-center gap-2">
-              <Text style={styles.sectionTitle}>Maintenance Tasks</Text>
-            </View>
-          </View>
-        </View>
-
         {loading && allInstances.length === 0 ? (
           <PMSkeleton />
         ) : (
-          <FlashList
+          <FlatList
             data={filteredInstances}
-            // @ts-ignore
             renderItem={renderItem}
             keyExtractor={keyExtractor}
             ListEmptyComponent={ListEmpty}
-            // @ts-ignore
-            estimatedItemSize={160}
             onEndReached={handleLoadMore}
             onEndReachedThreshold={0.5}
+            ListHeaderComponent={renderListHeader}
             ListFooterComponent={renderFooter}
             refreshControl={
               <RefreshControl
@@ -872,6 +878,7 @@ export default function PreventiveMaintenance() {
             }
             contentContainerStyle={styles.listContent}
             showsVerticalScrollIndicator={false}
+            removeClippedSubviews={false}
           />
         )}
 
@@ -914,7 +921,7 @@ export default function PreventiveMaintenance() {
 const styles = StyleSheet.create({
   flex: { flex: 1 },
   container: { flex: 1 },
-  listHeader: { paddingTop: 2, paddingHorizontal: 20 },
+  listHeader: { paddingTop: 2, paddingHorizontal: 20, paddingBottom: 8 },
   listContent: { paddingHorizontal: 20, paddingBottom: 60 },
 
   // Header

@@ -51,15 +51,15 @@
       [
         "expo-splash-screen",
         {
-          "image": "./assets/images/jouleops-icon.png",
-          "imageWidth": 150,
+          "image": "./assets/images/Jouleops-spash-screen.png",
+          "imageWidth": 280,
           "resizeMode": "contain",
-          "backgroundColor": "#b91c1c",
+          "backgroundColor": "#ffffff",
           "dark": {
-            "image": "./assets/images/jouleops-icon.png",
-            "imageWidth": 150,
+            "image": "./assets/images/Jouleops-spash-screen.png",
+            "imageWidth": 280,
             "resizeMode": "contain",
-            "backgroundColor": "#b91c1c"
+            "backgroundColor": "#ffffff"
           }
         }
       ],

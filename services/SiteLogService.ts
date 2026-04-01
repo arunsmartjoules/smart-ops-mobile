@@ -22,6 +22,7 @@ import { SiteConfigService } from "./SiteConfigService";
 import type { TaskItem } from "./SiteConfigService";
 import cacheManager from "./CacheManager";
 import { AttachmentQueueService } from "./AttachmentQueueService";
+import { getISTDateString } from "./AttendanceService";
 
 import { API_BASE_URL } from "../constants/api";
 
@@ -130,6 +131,7 @@ interface ISiteLogService {
     siteCode: string,
     options?: { fromDate?: number; toDate?: number },
   ): Promise<void>;
+  getTodayChillerReadingCount(siteCode: string, targetDate?: Date): Promise<number>;
   getSummaryCounts(siteCode: string): Promise<Record<string, number>>;
   getCategoryProgress(
     siteCode: string,
@@ -300,6 +302,7 @@ export const SiteLogService: ISiteLogService = {
             chemical_dosing:
               data.chemical_dosing || data.chemicalDosing || null,
             remarks: data.remarks || null,
+            main_remarks: data.main_remarks || data.mainRemarks || null,
             signature: signature || null,
             attachment,
             status: data.status || "Completed",
@@ -324,6 +327,7 @@ export const SiteLogService: ISiteLogService = {
             hardness: sql`excluded.hardness`,
             chemical_dosing: sql`excluded.chemical_dosing`,
             remarks: sql`excluded.remarks`,
+            main_remarks: sql`excluded.main_remarks`,
             signature: sql`excluded.signature`,
             attachment: sql`excluded.attachment`,
             status: sql`excluded.status`,
@@ -402,6 +406,7 @@ export const SiteLogService: ISiteLogService = {
       hardness: data.hardness || null,
       chemical_dosing: data.chemicalDosing || null,
       remarks: data.remarks || null,
+      main_remarks: data.mainRemarks || data.main_remarks || null,
       entry_time: data.entryTime || null,
       end_time: data.endTime || null,
       signature: signature || null,
@@ -449,6 +454,7 @@ export const SiteLogService: ISiteLogService = {
         hardness: data.hardness || null,
         chemical_dosing: data.chemicalDosing || null,
         remarks: data.remarks || null,
+        main_remarks: data.mainRemarks || data.main_remarks || null,
         entry_time: data.entryTime || null,
         end_time: data.endTime || null,
         signature: data.signature || null,
@@ -476,6 +482,7 @@ export const SiteLogService: ISiteLogService = {
           hardness: data.hardness || null,
           chemical_dosing: data.chemicalDosing || null,
           remarks: data.remarks || null,
+          main_remarks: data.mainRemarks || data.main_remarks || null,
           entry_time: data.entryTime || null,
           end_time: data.endTime || null,
           signature: data.signature || null,
@@ -660,9 +667,12 @@ export const SiteLogService: ISiteLogService = {
     if (data.remarks !== undefined) updateFields.remarks = data.remarks;
     if (data.status !== undefined) updateFields.status = data.status;
 
-    if (data.signatureText !== undefined) {
+    const signatureValue =
+      data.signatureText !== undefined ? data.signatureText : data.signature;
+
+    if (signatureValue !== undefined) {
       updateFields.signature_text = await queueAttachmentIfLocal(
-        data.signatureText,
+        signatureValue,
         "site-signatures",
         "chiller_reading",
         id,
@@ -839,6 +849,10 @@ export const SiteLogService: ISiteLogService = {
       if (data.chemicalDosing !== undefined)
         updateFields.chemical_dosing = data.chemicalDosing;
       if (data.remarks !== undefined) updateFields.remarks = data.remarks;
+      if (data.mainRemarks !== undefined || data.main_remarks !== undefined) {
+        updateFields.main_remarks =
+          data.mainRemarks !== undefined ? data.mainRemarks : data.main_remarks;
+      }
       if (data.status !== undefined) updateFields.status = data.status;
       if (data.assignedTo !== undefined)
         updateFields.assigned_to = data.assignedTo;
@@ -1042,6 +1056,7 @@ export const SiteLogService: ISiteLogService = {
             hardness: safeParseFloat(serverLog.hardness),
             chemical_dosing: serverLog.chemical_dosing || null,
             remarks: serverLog.remarks || null,
+            main_remarks: serverLog.main_remarks || null,
             signature: serverLog.signature || null,
             status: serverLog.status || null,
             scheduled_date: scheduledDate,
@@ -1183,6 +1198,35 @@ export const SiteLogService: ISiteLogService = {
         module: "SITE_LOG_SERVICE",
         error: error.message,
       });
+    }
+  },
+
+  async getTodayChillerReadingCount(
+    siteCode: string,
+    targetDate: Date = new Date(),
+  ): Promise<number> {
+    try {
+      const targetDateStr = getISTDateString(targetDate);
+      const rows = await db
+        .select({
+          reading_time: chillerReadings.reading_time,
+          created_at: chillerReadings.created_at,
+        })
+        .from(chillerReadings)
+        .where(eq(chillerReadings.site_code, siteCode));
+
+      return rows.filter((row) => {
+        const timestamp = row.reading_time || row.created_at;
+        if (!timestamp) return false;
+        return getISTDateString(new Date(timestamp)) === targetDateStr;
+      }).length;
+    } catch (error: any) {
+      logger.error("Error getting today's chiller reading count", {
+        module: "SITE_LOG_SERVICE",
+        siteCode,
+        error: error.message,
+      });
+      return 0;
     }
   },
 

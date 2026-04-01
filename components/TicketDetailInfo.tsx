@@ -7,6 +7,8 @@ import {
   Calendar,
   Layers,
   FileText,
+  Phone,
+  Clock3,
 } from "lucide-react-native";
 import { format } from "date-fns";
 import { type Ticket } from "@/services/TicketsService";
@@ -75,6 +77,14 @@ const InfoCell = ({
 );
 
 const TicketDetailInfo = ({ ticket }: TicketDetailInfoProps) => {
+  const formatDateTime = (value?: string) => {
+    if (!value) return "N/A";
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime())
+      ? "N/A"
+      : format(parsed, "dd MMM yy, HH:mm");
+  };
+
   return (
     <View style={{ marginBottom: 20 }}>
       {/* 2-Column Grid */}
@@ -127,6 +137,55 @@ const TicketDetailInfo = ({ ticket }: TicketDetailInfoProps) => {
             iconColor="#8b5cf6"
           />
         </View>
+
+        <View
+          className="bg-slate-200 dark:bg-slate-700"
+          style={{ height: 1, marginHorizontal: 4 }}
+        />
+
+        <View style={{ flexDirection: "row", gap: 8 }}>
+          <InfoCell
+            icon={Phone}
+            label="Contact Number"
+            value={ticket.contact_number || "N/A"}
+            iconColor="#0f766e"
+          />
+          {ticket.status === "Resolved" ? (
+            <InfoCell
+              icon={Clock3}
+              label="Resolved At"
+              value={formatDateTime(ticket.resolved_at)}
+              iconColor="#16a34a"
+            />
+          ) : ticket.status === "Inprogress" ? (
+            <InfoCell
+              icon={Clock3}
+              label="Responded At"
+              value={formatDateTime(ticket.responded_at)}
+              iconColor="#2563eb"
+            />
+          ) : (
+            <View style={{ flex: 1 }} />
+          )}
+        </View>
+
+        {ticket.status === "Resolved" && (
+          <>
+            <View
+              className="bg-slate-200 dark:bg-slate-700"
+              style={{ height: 1, marginHorizontal: 4 }}
+            />
+            <View style={{ flexDirection: "row", gap: 8 }}>
+              <InfoCell
+                icon={Clock3}
+                label="Responded At"
+                value={formatDateTime(ticket.responded_at)}
+                iconColor="#2563eb"
+              />
+              <View style={{ flex: 1 }} />
+            </View>
+          </>
+        )}
       </View>
 
       {/* Conditional Cards: Customer Inputs / Internal Remarks */}

@@ -77,6 +77,25 @@ const toApiEndDate = (dateStr: string | null) => {
   return ms == null ? undefined : new Date(ms).toISOString();
 };
 
+const AREA_PAGE_SIZE = 50;
+
+const mapAssetToOption = (asset: any): SelectOption => ({
+  value: asset.asset_name || asset.asset_id,
+  label: asset.asset_name,
+  description:
+    `${asset.asset_type || ""} ${asset.location ? `- ${asset.location}` : ""}`.trim(),
+});
+
+const getDefaultUpdateStatus = (ticket: Ticket) => {
+  if (ticket.status === "Open") return "Inprogress";
+  if (ticket.status === "Inprogress") return "Resolved";
+  return ticket.status;
+};
+
+const getInitialUpdateRemarks = (ticket: Ticket, status: string) => {
+  return status === ticket.status ? ticket.internal_remarks || "" : "";
+};
+
 export default function Tickets() {
   const { user, isLoading } = useAuth();
   const isDark = useColorScheme() === "dark";
@@ -121,11 +140,17 @@ export default function Tickets() {
   const [isUpdating, setIsUpdating] = useState(false);
   const [beforeTemp, setBeforeTemp] = useState("");
   const [afterTemp, setAfterTemp] = useState("");
+  const [attachmentUri, setAttachmentUri] = useState("");
 
   // Area and Category options for dropdowns
   const [areaOptions, setAreaOptions] = useState<SelectOption[]>([]);
   const [categoryOptions, setCategoryOptions] = useState<SelectOption[]>([]);
   const [areasLoading, setAreasLoading] = useState(false);
+  const [areaSearchQuery, setAreaSearchQuery] = useState("");
+  const [debouncedAreaSearchQuery, setDebouncedAreaSearchQuery] = useState("");
+  const [areaPage, setAreaPage] = useState(1);
+  const [hasMoreAreas, setHasMoreAreas] = useState(false);
+  const [loadingMoreAreas, setLoadingMoreAreas] = useState(false);
 
   // Memoized callbacks to prevent unnecessary re-renders
   const handleCloseDetail = useCallback(() => {
@@ -193,44 +218,103 @@ export default function Tickets() {
     } catch (e) {}
   }, [selectedSiteCode]);
 
-  const fetchAssets = useCallback(async () => {
+  const loadAreaOptions = useCallback(async (
+    nextPage = 1,
+    search = "",
+    append = false,
+  ) => {
     if (!selectedSiteCode) return;
+
+    if (append) {
+      setLoadingMoreAreas(true);
+    } else {
+      setAreasLoading(true);
+      setAreaOptions([]);
+    }
+
     try {
-      const res = await TicketsService.getAssets(selectedSiteCode);
-      if (res.success) {
-        setAssets(res.data);
-        await AsyncStorage.setItem(
-          `assets_${selectedSiteCode}`,
-          JSON.stringify(res.data),
-        );
+      const netState = await NetInfo.fetch();
+      const normalizedSearch = search.trim();
+
+      if (netState.isConnected) {
+        const assetsResult = await TicketsService.getAssets(selectedSiteCode, {
+          page: nextPage,
+          limit: AREA_PAGE_SIZE,
+          search: normalizedSearch || undefined,
+        });
+
+        if (assetsResult?.success) {
+          const nextOptions = (assetsResult.data || []).map(mapAssetToOption);
+          setAreaOptions((prev) => {
+            if (!append) return nextOptions;
+            const merged = [...prev];
+            for (const option of nextOptions) {
+              if (!merged.some((item) => item.value === option.value)) {
+                merged.push(option);
+              }
+            }
+            return merged;
+          });
+          setAreaPage(nextPage);
+          const totalPages = assetsResult.pagination?.totalPages || 1;
+          setHasMoreAreas(nextPage < totalPages);
+          return;
+        }
       }
-    } catch (e) {}
+
+      const localAreas = await db
+        .select()
+        .from(areas)
+        .where(eq(areas.site_code, selectedSiteCode))
+        .catch(() => []);
+      const filteredLocalAreas = localAreas.filter((asset: any) => {
+        if (!normalizedSearch) return true;
+        return [
+          asset.asset_name,
+          asset.asset_id,
+          asset.location,
+          asset.asset_type,
+        ]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase()
+          .includes(normalizedSearch.toLowerCase());
+      });
+      const pagedLocalAreas = filteredLocalAreas.slice(
+        (nextPage - 1) * AREA_PAGE_SIZE,
+        nextPage * AREA_PAGE_SIZE,
+      );
+      const nextOptions = pagedLocalAreas.map(mapAssetToOption);
+      setAreaOptions((prev) => {
+        if (!append) return nextOptions;
+        const merged = [...prev];
+        for (const option of nextOptions) {
+          if (!merged.some((item) => item.value === option.value)) {
+            merged.push(option);
+          }
+        }
+        return merged;
+      });
+      setAreaPage(nextPage);
+      setHasMoreAreas(nextPage * AREA_PAGE_SIZE < filteredLocalAreas.length);
+    } catch (error) {
+      logger.warn("Error loading areas", {
+        module: "TICKETS",
+        error,
+      });
+      if (!append) {
+        setAreaOptions([]);
+        setHasMoreAreas(false);
+      }
+    } finally {
+      setAreasLoading(false);
+      setLoadingMoreAreas(false);
+    }
   }, [selectedSiteCode]);
 
-  const loadAreasAndCategories = useCallback(async () => {
-    if (!selectedSiteCode) return;
-
-    setAreasLoading(true);
-    setAreaOptions([]);
-
+  const loadCategories = useCallback(async () => {
     try {
-      const [localAreas, cachedCategories] = await Promise.all([
-        db.select().from(areas).where(eq(areas.site_code, selectedSiteCode)).catch(() => []),
-        TicketsService.getComplaintCategories(),
-      ]);
-      const cachedAreas = localAreas;
-
-      if (cachedAreas.length > 0) {
-        setAreaOptions(
-          cachedAreas.map((a: any) => ({
-            value: a.asset_name || a.asset_id,
-            label: a.asset_name,
-            description:
-              `${a.asset_type || ""} ${a.location ? `- ${a.location}` : ""}`.trim(),
-          })),
-        );
-      }
-
+      const cachedCategories = await TicketsService.getComplaintCategories();
       if (cachedCategories?.data && cachedCategories.data.length > 0) {
         const categories = cachedCategories.data.map((cat: any) => ({
           value: cat.category,
@@ -238,38 +322,16 @@ export default function Tickets() {
           description: cat.description || "",
         }));
         setCategoryOptions(categories);
-      }
-
-      const netState = await NetInfo.fetch();
-      if (netState.isConnected) {
-        TicketsService.getAssets(selectedSiteCode)
-          .then((assetsResult) => {
-            if (assetsResult?.data && assetsResult.data.length > 0) {
-              const areas = assetsResult.data.map((asset: any) => ({
-                value: asset.asset_name || asset.asset_id,
-                label: asset.asset_name,
-                description:
-                  `${asset.asset_type || ""} ${asset.location ? `- ${asset.location}` : ""}`.trim(),
-              }));
-              setAreaOptions(areas);
-            }
-          })
-          .catch((error) => {
-            logger.warn("Background assets refresh failed", {
-              module: "TICKETS",
-              error,
-            });
-          });
+      } else {
+        setCategoryOptions([]);
       }
     } catch (error) {
-      logger.warn("Error loading areas/categories", {
+      logger.warn("Error loading categories", {
         module: "TICKETS",
         error,
       });
-    } finally {
-      setAreasLoading(false);
     }
-  }, [selectedSiteCode]);
+  }, []);
 
   const fetchTickets = useCallback(
     async (p: number, reset = false) => {
@@ -444,7 +506,6 @@ export default function Tickets() {
     if (selectedSiteCode) {
       resetAndFetch();
       fetchStats();
-      loadAreasAndCategories();
     }
   }, [
     selectedSiteCode,
@@ -455,8 +516,27 @@ export default function Tickets() {
     toDate,
     resetAndFetch,
     fetchStats,
-    loadAreasAndCategories,
   ]);
+
+  useEffect(() => {
+    const timeout = setTimeout(() => {
+      setDebouncedAreaSearchQuery(areaSearchQuery.trim());
+    }, 300);
+
+    return () => clearTimeout(timeout);
+  }, [areaSearchQuery]);
+
+  useEffect(() => {
+    if (!selectedSiteCode) return;
+    setAreaPage(1);
+    loadAreaOptions(1, debouncedAreaSearchQuery, false);
+  }, [selectedSiteCode, debouncedAreaSearchQuery, loadAreaOptions]);
+
+  useEffect(() => {
+    if (selectedSiteCode) {
+      loadCategories();
+    }
+  }, [selectedSiteCode, loadCategories]);
 
   // Auto-sync for tickets (Handles Focus, AppState, and 60s Polling)
   // This ensures data is fresh when returning to focus or every 60s
@@ -488,16 +568,34 @@ export default function Tickets() {
     setRefreshing(true);
     fetchStats();
     resetAndFetch();
+    loadAreaOptions(1, debouncedAreaSearchQuery, false);
   };
 
+  const handleLoadMoreAreas = useCallback(() => {
+    if (areasLoading || loadingMoreAreas || !hasMoreAreas || !selectedSiteCode) return;
+    const nextPage = areaPage + 1;
+    loadAreaOptions(nextPage, debouncedAreaSearchQuery, true);
+  }, [
+    areasLoading,
+    loadingMoreAreas,
+    hasMoreAreas,
+    selectedSiteCode,
+    areaPage,
+    debouncedAreaSearchQuery,
+    loadAreaOptions,
+  ]);
+
   const handleTicketPress = useCallback((ticket: Ticket) => {
+    const defaultStatus = getDefaultUpdateStatus(ticket);
     setSelectedTicket(ticket);
-    setUpdateStatus(ticket.status);
-    setUpdateRemarks(ticket.internal_remarks || "");
+    setUpdateStatus(defaultStatus);
+    setUpdateRemarks(getInitialUpdateRemarks(ticket, defaultStatus));
     setUpdateArea(ticket.area_asset || "");
     setUpdateCategory(ticket.category || "");
     setBeforeTemp("");
     setAfterTemp("");
+    setAttachmentUri("");
+    setAreaSearchQuery("");
     setIsDetailVisible(true);
   }, []);
 
@@ -549,6 +647,10 @@ export default function Tickets() {
     setSelectedTicket(ticket);
     setUpdateStatus("Cancelled");
     setUpdateRemarks("");
+    setUpdateArea(ticket.area_asset || "");
+    setUpdateCategory(ticket.category || "");
+    setAttachmentUri("");
+    setAreaSearchQuery("");
     setIsDetailVisible(true);
   }, []);
 
@@ -589,8 +691,18 @@ export default function Tickets() {
     if (!selectedTicket) return;
 
     const needsRemarks = ["Hold", "Cancelled", "Waiting", "Resolved"].includes(updateStatus);
+    const needsAreaAndCategory =
+      updateStatus === "Inprogress" || updateStatus === "Resolved";
     if (needsRemarks && !updateRemarks.trim()) {
       Alert.alert("Required", "Please provide remarks for this status update.");
+      return;
+    }
+    if (needsAreaAndCategory && !updateArea.trim()) {
+      Alert.alert("Required", "Please select an area before updating the ticket.");
+      return;
+    }
+    if (needsAreaAndCategory && !updateCategory.trim()) {
+      Alert.alert("Required", "Please select a category before updating the ticket.");
       return;
     }
 
@@ -610,22 +722,60 @@ export default function Tickets() {
 
     setIsUpdating(true);
     try {
+      const nowIso = new Date().toISOString();
+      const optimisticTicket = {
+        ...selectedTicket,
+        ...payload,
+        responded_at:
+          updateStatus === "Inprogress" || updateStatus === "Resolved"
+            ? selectedTicket.responded_at || nowIso
+            : selectedTicket.responded_at,
+        resolved_at:
+          updateStatus === "Resolved" ? nowIso : selectedTicket.resolved_at,
+      };
+
       const netState = await NetInfo.fetch();
       if (netState.isConnected) {
         const res = await TicketsService.updateTicket(selectedTicket.id || selectedTicket.ticket_no, payload);
         if (res.success) {
-          const updatedTicketForWA = { ...selectedTicket, ...payload };
-          WhatsAppService.sendStatusUpdate(updatedTicketForWA, updateStatus, updateRemarks).catch((e: any) =>
+          WhatsAppService.sendStatusUpdate(optimisticTicket, updateStatus, updateRemarks).catch((e: any) =>
             logger.warn("Failed WhatsApp notification", { error: e })
           );
+
+          if (attachmentUri) {
+            const uploadRes = await TicketsService.uploadImage(
+              attachmentUri,
+              selectedTicket.id || selectedTicket.ticket_no,
+            );
+
+            if (uploadRes.success && uploadRes.url) {
+              const lineItemRes = await TicketsService.addLineItem(
+                selectedTicket.id || selectedTicket.ticket_no,
+                { image_url: uploadRes.url },
+              );
+
+              if (!lineItemRes.success && !lineItemRes.queued) {
+                Alert.alert(
+                  "Partial Success",
+                  "Ticket updated, but the image attachment could not be added.",
+                );
+              }
+            } else {
+              Alert.alert(
+                "Partial Success",
+                "Ticket updated, but the image attachment could not be uploaded.",
+              );
+            }
+          }
 
           Alert.alert("Success", "Ticket updated successfully");
           if (updateStatus === "Resolved") setIsDetailVisible(false);
           
-          setSelectedTicket({ ...selectedTicket, ...payload });
+          setSelectedTicket(optimisticTicket);
           setUpdateRemarks("");
           setBeforeTemp("");
           setAfterTemp("");
+          setAttachmentUri("");
           fetchStats();
           resetAndFetch();
         } else {
@@ -633,12 +783,27 @@ export default function Tickets() {
         }
       } else {
         await TicketsService.updateTicket(selectedTicket.id || selectedTicket.ticket_no, payload);
+
+        if (attachmentUri) {
+          const uploadRes = await TicketsService.uploadImage(
+            attachmentUri,
+            selectedTicket.id || selectedTicket.ticket_no,
+          );
+
+          if (uploadRes.success && uploadRes.url) {
+            await TicketsService.addLineItem(selectedTicket.id || selectedTicket.ticket_no, {
+              image_url: uploadRes.url,
+            });
+          }
+        }
+
         Alert.alert("Saved Offline", "Update saved and will sync when online.");
         if (updateStatus === "Resolved") setIsDetailVisible(false);
-        setSelectedTicket({ ...selectedTicket, ...payload });
+        setSelectedTicket(optimisticTicket);
         setUpdateRemarks("");
         setBeforeTemp("");
         setAfterTemp("");
+        setAttachmentUri("");
         resetAndFetch();
       }
     } catch (error: any) {
@@ -752,6 +917,13 @@ export default function Tickets() {
             setBeforeTemp={setBeforeTemp}
             afterTemp={afterTemp}
             setAfterTemp={setAfterTemp}
+            attachmentUri={attachmentUri}
+            setAttachmentUri={setAttachmentUri}
+            areaSearchQuery={areaSearchQuery}
+            setAreaSearchQuery={setAreaSearchQuery}
+            loadMoreAreas={handleLoadMoreAreas}
+            hasMoreAreas={hasMoreAreas}
+            loadingMoreAreas={loadingMoreAreas}
           />
         )}
       </SafeAreaView>

@@ -38,10 +38,6 @@ const SyncButton = memo(({ onSync, pendingCount = 0 }: SyncButtonProps) => {
     };
   }, []);
 
-  useEffect(() => {
-    loadLastSyncTime();
-  }, []);
-
   const loadLastSyncTime = useCallback(async () => {
     try {
       const timestamp = await AsyncStorage.getItem("last_sync_time");
@@ -52,6 +48,10 @@ const SyncButton = memo(({ onSync, pendingCount = 0 }: SyncButtonProps) => {
       logger.error("Failed to load last sync time", { error: error.message });
     }
   }, []);
+
+  useEffect(() => {
+    loadLastSyncTime();
+  }, [loadLastSyncTime]);
 
   const handleSync = useCallback(async () => {
     // isConnected === null means unknown (initial state) — treat as online and allow sync attempt
@@ -136,5 +136,7 @@ const SyncButton = memo(({ onSync, pendingCount = 0 }: SyncButtonProps) => {
     </View>
   );
 });
+
+SyncButton.displayName = "SyncButton";
 
 export default SyncButton;

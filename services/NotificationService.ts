@@ -1,10 +1,12 @@
 import * as Device from "expo-device";
 import * as Notifications from "expo-notifications";
+import NetInfo from "@react-native-community/netinfo";
 import { Platform } from "react-native";
 import Constants from "expo-constants";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import logger from "@/utils/logger";
 import { fetchWithTimeout } from "@/utils/apiHelper";
+import cacheManager from "./CacheManager";
 
 import { API_URL } from "../constants/api";
 import { authEvents } from "@/utils/authEvents";
@@ -18,6 +20,179 @@ Notifications.setNotificationHandler({
     shouldShowList: true,
   }),
 });
+
+const PUSH_TOKEN_STORAGE_KEY = "pushToken";
+const LAST_EXPO_PUSH_TOKEN_KEY = "last_expo_push_token";
+const LAST_PUSH_STATUS_KEY = "last_push_registration_status";
+const LAST_PUSH_TIME_KEY = "last_push_registration_time";
+const LAST_PUSH_ERROR_KEY = "last_push_registration_error";
+
+type PushRegistrationStatus =
+  | "permission_denied"
+  | "offline"
+  | "token_fetch_failed"
+  | "backend_pending"
+  | "success"
+  | "failed"
+  | "error";
+
+interface NotificationPermissionStatus {
+  canAskAgain: boolean;
+  granted: boolean;
+  isPhysicalDevice: boolean;
+  status: Notifications.PermissionStatus | "unavailable";
+}
+
+interface NotificationRegistrationPayload {
+  userId: string;
+  authToken: string;
+  deviceId: string;
+  platform: string;
+  pushToken: string;
+}
+
+const setRegistrationDiagnostics = async (
+  status: PushRegistrationStatus,
+  error?: string | null,
+) => {
+  const writes: [string, string][] = [
+    [LAST_PUSH_STATUS_KEY, status],
+    [LAST_PUSH_TIME_KEY, new Date().toISOString()],
+  ];
+
+  if (typeof error === "string" && error.length > 0) {
+    writes.push([LAST_PUSH_ERROR_KEY, error]);
+  }
+
+  await AsyncStorage.multiSet(writes);
+
+  if (!error) {
+    await AsyncStorage.removeItem(LAST_PUSH_ERROR_KEY);
+  }
+};
+
+const isTransientRegistrationError = (
+  statusCode?: number,
+  errorMessage?: string,
+): boolean => {
+  if (statusCode === undefined || statusCode === 0) return true;
+  if (statusCode >= 500) return true;
+
+  const normalized = String(errorMessage || "").toLowerCase();
+  return (
+    normalized.includes("network request failed") ||
+    normalized.includes("network unavailable") ||
+    normalized.includes("timed out") ||
+    normalized.includes("timeout") ||
+    normalized.includes("abort")
+  );
+};
+
+const queueNotificationRegistration = async (
+  payload: NotificationRegistrationPayload,
+  error?: string,
+) => {
+  const pending = await cacheManager.getPendingQueueItemsByType(
+    "notification_token_registration",
+  );
+
+  const duplicate = pending.some(
+    (item) =>
+      item.payload?.pushToken === payload.pushToken &&
+      item.payload?.deviceId === payload.deviceId &&
+      item.payload?.userId === payload.userId,
+  );
+
+  if (!duplicate) {
+    await cacheManager.enqueue({
+      entity_type: "notification_token_registration",
+      operation: "create",
+      payload,
+    });
+  }
+
+  await setRegistrationDiagnostics("backend_pending", error || null);
+};
+
+const clearQueuedNotificationRegistrations = async (
+  payload: NotificationRegistrationPayload,
+) => {
+  const pending = await cacheManager.getPendingQueueItemsByType(
+    "notification_token_registration",
+  );
+
+  await Promise.all(
+    pending
+      .filter(
+        (item) =>
+          item.payload?.pushToken === payload.pushToken &&
+          item.payload?.deviceId === payload.deviceId &&
+          item.payload?.userId === payload.userId,
+      )
+      .map((item) => cacheManager.dequeue(item.id)),
+  );
+};
+
+const postPushTokenRegistration = async ({
+  userId,
+  authToken,
+  deviceId,
+  platform,
+  pushToken,
+}: NotificationRegistrationPayload): Promise<{
+  success: boolean;
+  error?: string;
+  statusCode?: number;
+}> => {
+  const response = await fetchWithTimeout(`${API_URL}/notifications/register-token`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${authToken}`,
+    },
+    body: JSON.stringify({
+      pushToken,
+      deviceId,
+      platform,
+    }),
+  });
+
+  if (response.status === 401) {
+    authEvents.emitUnauthorized();
+    return { success: false, error: "No token provided", statusCode: 401 };
+  }
+
+  let data: any = null;
+  try {
+    data = await response.json();
+  } catch {
+    data = null;
+  }
+
+  if (response.ok && data?.success) {
+    await AsyncStorage.setItem(PUSH_TOKEN_STORAGE_KEY, pushToken);
+    await clearQueuedNotificationRegistrations({
+      userId,
+      authToken,
+      deviceId,
+      platform,
+      pushToken,
+    });
+    await setRegistrationDiagnostics("success");
+
+    logger.info("PushNotifications: Backend registration successful", {
+      module: "NOTIFICATION_SERVICE",
+      userId,
+    });
+    return { success: true };
+  }
+
+  const errorMessage =
+    data?.error ||
+    `Push registration failed with status ${response.status}`;
+
+  return { success: false, error: errorMessage, statusCode: response.status };
+};
 
 /**
  * Configure Android notification channels (mandatory for Android 8.0+)
@@ -34,20 +209,47 @@ export const setupAndroidChannels = async () => {
 };
 
 /**
- * Request notification permissions from user
+ * Read notification permission status without prompting the user.
  */
-export const requestPermissions = async (): Promise<boolean> => {
+export const getNotificationPermissionStatus =
+  async (): Promise<NotificationPermissionStatus> => {
+    if (!Device.isDevice) {
+      return {
+        canAskAgain: false,
+        granted: false,
+        isPhysicalDevice: false,
+        status: "unavailable",
+      };
+    }
+
+    const permission = await Notifications.getPermissionsAsync();
+    return {
+      canAskAgain: permission.canAskAgain,
+      granted: permission.status === "granted",
+      isPhysicalDevice: true,
+      status: permission.status,
+    };
+  };
+
+/**
+ * Request notification permissions from user.
+ */
+export const requestNotificationPermissions = async (): Promise<boolean> => {
   if (!Device.isDevice) {
     logger.warn("Push Notifications attempted on non-physical device", {
       module: "NOTIFICATION_SERVICE",
     });
+    await setRegistrationDiagnostics(
+      "failed",
+      "Push notifications require a physical device",
+    );
     return false;
   }
 
-  const { status: existingStatus } = await Notifications.getPermissionsAsync();
-  let finalStatus = existingStatus;
+  const permission = await getNotificationPermissionStatus();
+  let finalStatus = permission.status;
 
-  if (existingStatus !== "granted") {
+  if (permission.status !== "granted") {
     const { status } = await Notifications.requestPermissionsAsync();
     finalStatus = status;
   }
@@ -56,6 +258,10 @@ export const requestPermissions = async (): Promise<boolean> => {
     logger.error("Failed to get push token: permission not granted", {
       module: "NOTIFICATION_SERVICE",
     });
+    await setRegistrationDiagnostics(
+      "permission_denied",
+      "Notification permissions not granted",
+    );
     return false;
   }
 
@@ -65,11 +271,25 @@ export const requestPermissions = async (): Promise<boolean> => {
   return true;
 };
 
+export const requestPermissions = requestNotificationPermissions;
+
 /**
  * Get Expo push token for this device
  */
 export const getPushToken = async (): Promise<string | null> => {
   try {
+    const netState = await NetInfo.fetch();
+    const isOnline =
+      netState.isConnected === true && netState.isInternetReachable !== false;
+
+    if (!isOnline) {
+      await setRegistrationDiagnostics(
+        "offline",
+        "Device is offline, push token fetch deferred",
+      );
+      return null;
+    }
+
     // Robust Project ID detection for standalone builds
     const easProjectId = Constants.expoConfig?.extra?.eas?.projectId;
     const legacyProjectId = Constants.projectId;
@@ -99,11 +319,15 @@ export const getPushToken = async (): Promise<string | null> => {
         token: token.data,
       });
       // Cache the token for diagnostic display
-      await AsyncStorage.setItem("last_expo_push_token", token.data);
+      await AsyncStorage.setItem(LAST_EXPO_PUSH_TOKEN_KEY, token.data);
     }
 
     return token.data;
   } catch (error: any) {
+    await setRegistrationDiagnostics(
+      "token_fetch_failed",
+      error.message || "Failed to fetch Expo push token",
+    );
     logger.error("Error getting push token", {
       module: "NOTIFICATION_SERVICE",
       error: error.message,
@@ -121,7 +345,7 @@ export const registerForPushNotifications = async (
   authToken: string,
 ): Promise<{ success: boolean; error?: string }> => {
   try {
-    const hasPermission = await requestPermissions();
+    const hasPermission = await requestNotificationPermissions();
 
     if (!hasPermission) {
       return {
@@ -142,50 +366,44 @@ export const registerForPushNotifications = async (
     // Get device ID
     const deviceId = await getDeviceId();
     const platform = Platform.OS;
+    const registrationPayload = {
+      userId,
+      authToken,
+      deviceId,
+      platform,
+      pushToken,
+    };
 
-    // Register with backend
-    const response = await fetchWithTimeout(
-      `${API_URL}/notifications/register-token`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${authToken}`,
-        },
-        body: JSON.stringify({
-          pushToken,
-          deviceId,
-          platform,
-        }),
-      },
-    );
+    try {
+      const result = await postPushTokenRegistration(registrationPayload);
 
-    if (response.status === 401) {
-      authEvents.emitUnauthorized();
-      return { success: false, error: "No token provided" };
-    }
+      if (result.success) {
+        return result;
+      }
 
-    const data = await response.json();
+      if (isTransientRegistrationError(result.statusCode, result.error)) {
+        await queueNotificationRegistration(registrationPayload, result.error);
+        return {
+          success: false,
+          error: result.error || "Push registration queued for retry",
+        };
+      }
 
-    if (data.success) {
-      // Store token results locally for diagnostic view
-      await AsyncStorage.setItem("pushToken", pushToken);
-      await AsyncStorage.setItem("last_push_registration_status", "success");
-      await AsyncStorage.setItem("last_push_registration_time", new Date().toISOString());
-      
-      logger.info("PushNotifications: Backend registration successful", {
-        module: "NOTIFICATION_SERVICE",
-        userId,
-      });
-      return { success: true };
-    } else {
-      await AsyncStorage.setItem("last_push_registration_status", "failed");
-      await AsyncStorage.setItem("last_push_registration_error", data.error || "Unknown error");
-      return { success: false, error: data.error };
+      await setRegistrationDiagnostics("failed", result.error || "Unknown error");
+      return result;
+    } catch (error: any) {
+      if (isTransientRegistrationError(undefined, error.message)) {
+        await queueNotificationRegistration(registrationPayload, error.message);
+        return {
+          success: false,
+          error: error.message || "Push registration queued for retry",
+        };
+      }
+
+      throw error;
     }
   } catch (error: any) {
-    await AsyncStorage.setItem("last_push_registration_status", "error");
-    await AsyncStorage.setItem("last_push_registration_error", error.message);
+    await setRegistrationDiagnostics("error", error.message);
     logger.error("Error registering for push notifications", {
       module: "NOTIFICATION_SERVICE",
       error: error.message,
@@ -199,7 +417,7 @@ export const registerForPushNotifications = async (
  */
 export const unregisterPushToken = async (authToken: string): Promise<void> => {
   try {
-    const pushToken = await AsyncStorage.getItem("pushToken");
+    const pushToken = await AsyncStorage.getItem(PUSH_TOKEN_STORAGE_KEY);
 
     if (!pushToken) return;
 
@@ -212,7 +430,7 @@ export const unregisterPushToken = async (authToken: string): Promise<void> => {
       body: JSON.stringify({ pushToken }),
     });
 
-    await AsyncStorage.removeItem("pushToken");
+    await AsyncStorage.removeItem(PUSH_TOKEN_STORAGE_KEY);
   } catch (error: any) {
     logger.error("Error unregistering push token", {
       module: "NOTIFICATION_SERVICE",
@@ -333,6 +551,8 @@ export const updateNotificationPreferences = async (
 };
 
 export default {
+  getNotificationPermissionStatus,
+  requestNotificationPermissions,
   requestPermissions,
   registerForPushNotifications,
   unregisterPushToken,

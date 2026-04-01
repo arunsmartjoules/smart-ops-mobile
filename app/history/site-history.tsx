@@ -2,15 +2,12 @@ import React, { useState, useEffect, useCallback, useMemo, memo } from "react";
 import {
   View,
   Text,
-  ActivityIndicator,
   TouchableOpacity,
   TextInput,
   Alert,
   RefreshControl,
   ScrollView,
-  Platform,
   Image,
-  Modal,
 } from "react-native";
 import { FlashList } from "@shopify/flash-list";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -20,8 +17,6 @@ import {
   Search,
   Filter,
   MapPin,
-  Clock,
-  User,
   History as HistoryIcon,
   X,
   Plus,
@@ -38,7 +33,6 @@ import LogFilterModal from "@/components/sitelogs/LogFilterModal";
 import AttendanceService, { type Site } from "@/services/AttendanceService";
 import { useAuth } from "@/contexts/AuthContext";
 import Skeleton from "@/components/Skeleton";
-import { syncEngine } from "@/services/SyncEngine";
 import UserLookupService from "@/services/UserLookupService";
 
 // Memoized History Item Component
@@ -253,7 +247,7 @@ const HistoryItem = memo(
               className="text-slate-400 text-xs italic"
               numberOfLines={1}
             >
-              "{item.remarks}"
+              {`"${item.remarks}"`}
             </Text>
           </View>
         )}
@@ -269,6 +263,7 @@ const HistoryItem = memo(
     );
   },
 );
+HistoryItem.displayName = "HistoryItem";
 
 export default function SiteHistory() {
   const { user } = useAuth();
@@ -490,15 +485,21 @@ export default function SiteHistory() {
           onPreviewImage={(url) => setPreviewImage(url)}
           onPress={() => {
             if (route) {
+              const isChillerRoute = route === "/chiller";
               router.push({
                 pathname: route,
-                params: {
-                  editId: item.id,
-                  siteCode: item.site_code || siteCode,
-                  areaName: item.task_name || "",
-                  chillerId: item.chiller_id || item.equipment_id,
-                  mode: "edit",
-                },
+                params: isChillerRoute
+                  ? {
+                      editId: item.id,
+                      siteCode: item.site_code || siteCode,
+                      chillerId: item.equipment_id || item.chiller_id,
+                      mode: "edit",
+                    }
+                  : {
+                      editId: item.id,
+                      siteCode: item.site_code || siteCode,
+                      mode: "edit",
+                    },
               });
             }
           }}

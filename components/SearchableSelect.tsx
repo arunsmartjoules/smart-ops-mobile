@@ -5,7 +5,7 @@ import {
   TextInput,
   TouchableOpacity,
   Modal,
-  ScrollView,
+  FlatList,
   ActivityIndicator,
   Keyboard,
 } from "react-native";
@@ -27,6 +27,16 @@ interface SearchableSelectProps {
   disabled?: boolean;
   searchPlaceholder?: string;
   emptyMessage?: string;
+  hideLabel?: boolean;
+  compact?: boolean;
+  hideSearch?: boolean;
+  modalPosition?: "bottom" | "center";
+  searchValue?: string;
+  onSearchChange?: (query: string) => void;
+  onLoadMore?: () => void;
+  hasMore?: boolean;
+  loadingMore?: boolean;
+  remoteSearch?: boolean;
 }
 
 export default function SearchableSelect({
@@ -39,9 +49,20 @@ export default function SearchableSelect({
   disabled = false,
   searchPlaceholder = "Search...",
   emptyMessage = "No options found",
+  hideLabel = false,
+  compact = false,
+  hideSearch = false,
+  modalPosition = "bottom",
+  searchValue,
+  onSearchChange,
+  onLoadMore,
+  hasMore = false,
+  loadingMore = false,
+  remoteSearch = false,
 }: SearchableSelectProps) {
   const [isOpen, setIsOpen] = useState(false);
-  const [searchQuery, setSearchQuery] = useState("");
+  const [internalSearchQuery, setInternalSearchQuery] = useState("");
+  const searchQuery = searchValue ?? internalSearchQuery;
 
   const selectedOption = useMemo(
     () => options.find((opt) => opt.value === value),
@@ -49,7 +70,7 @@ export default function SearchableSelect({
   );
 
   const filteredOptions = useMemo(() => {
-    if (!searchQuery.trim()) return options;
+    if (remoteSearch || !searchQuery.trim()) return options;
     const query = searchQuery.toLowerCase();
     return options.filter(
       (opt) =>
@@ -62,17 +83,41 @@ export default function SearchableSelect({
     (selectedValue: string) => {
       onChange(selectedValue);
       setIsOpen(false);
-      setSearchQuery("");
+      if (onSearchChange) {
+        onSearchChange("");
+      } else {
+        setInternalSearchQuery("");
+      }
       Keyboard.dismiss();
     },
-    [onChange]
+    [onChange, onSearchChange]
   );
 
   const handleClose = useCallback(() => {
     setIsOpen(false);
-    setSearchQuery("");
+    if (onSearchChange) {
+      onSearchChange("");
+    } else {
+      setInternalSearchQuery("");
+    }
     Keyboard.dismiss();
-  }, []);
+  }, [onSearchChange]);
+
+  const handleSearchChange = useCallback(
+    (query: string) => {
+      if (onSearchChange) {
+        onSearchChange(query);
+      } else {
+        setInternalSearchQuery(query);
+      }
+    },
+    [onSearchChange]
+  );
+
+  const handleLoadMore = useCallback(() => {
+    if (!onLoadMore || !hasMore || loadingMore) return;
+    onLoadMore();
+  }, [onLoadMore, hasMore, loadingMore]);
 
   const renderOption = useCallback(
     ({ item }: { item: SelectOption }) => {
@@ -110,13 +155,18 @@ export default function SearchableSelect({
     <>
       {/* Trigger Button */}
       <View className="mb-4">
-        <Text className="text-slate-700 font-semibold text-sm mb-2">
-          {label}
-        </Text>
+        {!hideLabel && (
+          <Text className="text-slate-700 font-semibold text-sm mb-2">
+            {label}
+          </Text>
+        )}
         <TouchableOpacity
-          onPress={() => !disabled && setIsOpen(true)}
+          onPress={() => {
+            if (disabled) return;
+            setIsOpen(true);
+          }}
           disabled={disabled || loading}
-          className={`flex-row items-center bg-white border border-slate-200 rounded-xl px-4 py-3 ${
+          className={`flex-row items-center bg-white border border-slate-200 rounded-xl px-4 ${compact ? "py-2.5" : "py-3"} ${
             disabled ? "opacity-50" : ""
           }`}
           style={{
@@ -133,10 +183,10 @@ export default function SearchableSelect({
             <>
               <Text
                 className={`flex-1 ${
-                  selectedOption ? "text-slate-900" : "text-slate-400"
+                  selectedOption || value ? "text-slate-900" : "text-slate-400"
                 }`}
               >
-                {selectedOption?.label || placeholder}
+                {selectedOption?.label || value || placeholder}
               </Text>
               <ChevronDown size={18} color="#94a3b8" />
             </>
@@ -147,12 +197,17 @@ export default function SearchableSelect({
       {/* Selection Modal */}
       <Modal
         visible={isOpen}
-        animationType="slide"
+        animationType="fade"
         transparent={true}
         onRequestClose={handleClose}
       >
-        <View className="flex-1 bg-black/50 justify-end">
-          <View className="bg-white rounded-t-3xl" style={{ maxHeight: "80%" }}>
+        <View
+          className={`flex-1 bg-black/50 ${modalPosition === "center" ? "justify-center px-6" : "justify-end"}`}
+        >
+          <View
+            className={`bg-white ${modalPosition === "center" ? "rounded-3xl" : "rounded-t-3xl"}`}
+            style={{ maxHeight: modalPosition === "center" ? "60%" : "80%" }}
+          >
             {/* Header */}
             <View className="flex-row items-center justify-between px-5 py-4 border-b border-slate-100">
               <Text className="text-slate-900 font-bold text-lg">{label}</Text>
@@ -164,44 +219,55 @@ export default function SearchableSelect({
               </TouchableOpacity>
             </View>
 
-            {/* Search */}
-            <View className="px-5 py-3">
-              <View className="flex-row items-center bg-slate-100 rounded-xl px-4 py-2">
-                <Search size={18} color="#94a3b8" />
-                <TextInput
-                  className="flex-1 ml-3 text-slate-900"
-                  placeholder={searchPlaceholder}
-                  placeholderTextColor="#94a3b8"
-                  value={searchQuery}
-                  onChangeText={setSearchQuery}
-                  autoFocus={true}
-                  autoCorrect={false}
-                />
-                {searchQuery.length > 0 && (
-                  <TouchableOpacity onPress={() => setSearchQuery("")}>
-                    <X size={16} color="#94a3b8" />
-                  </TouchableOpacity>
-                )}
+            {!hideSearch && (
+              <View className="px-5 py-3">
+                <View className="flex-row items-center bg-slate-100 rounded-xl px-4 py-2">
+                  <Search size={18} color="#94a3b8" />
+                  <TextInput
+                    className="flex-1 ml-3 text-slate-900"
+                    placeholder={searchPlaceholder}
+                    placeholderTextColor="#94a3b8"
+                    value={searchQuery}
+                    onChangeText={handleSearchChange}
+                    autoFocus={true}
+                    autoCorrect={false}
+                  />
+                  {searchQuery.length > 0 && (
+                    <TouchableOpacity onPress={() => handleSearchChange("")}>
+                      <X size={16} color="#94a3b8" />
+                    </TouchableOpacity>
+                  )}
+                </View>
               </View>
-            </View>
+            )}
 
             {/* Options List */}
             {filteredOptions.length === 0 ? (
               <View className="py-12 items-center">
-                <Text className="text-slate-400 text-sm">{emptyMessage}</Text>
+                {loading ? (
+                  <ActivityIndicator size="small" color="#94a3b8" />
+                ) : (
+                  <Text className="text-slate-400 text-sm">{emptyMessage}</Text>
+                )}
               </View>
             ) : (
-              <ScrollView
+              <FlatList
+                data={filteredOptions}
+                keyExtractor={(item) => item.value}
+                renderItem={renderOption}
                 keyboardShouldPersistTaps="handled"
                 showsVerticalScrollIndicator={false}
                 contentContainerStyle={{ paddingBottom: 40 }}
-              >
-                {filteredOptions.map((item) => (
-                  <React.Fragment key={item.value}>
-                    {renderOption({ item })}
-                  </React.Fragment>
-                ))}
-              </ScrollView>
+                onEndReached={handleLoadMore}
+                onEndReachedThreshold={0.3}
+                ListFooterComponent={
+                  loadingMore ? (
+                    <View className="py-4 items-center">
+                      <ActivityIndicator size="small" color="#94a3b8" />
+                    </View>
+                  ) : null
+                }
+              />
             )}
           </View>
         </View>
