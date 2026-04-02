@@ -380,8 +380,10 @@ export default function PreventiveMaintenance() {
   const loadPMData = useCallback(
     async (isInitial = false, currentOffset = 0, showLoadingSpinner = true) => {
       if (!siteCode || siteCode === "all") return;
+      const hasRenderedData = allInstances.length > 0;
 
-      if (isInitial && showLoadingSpinner) {
+      // Avoid skeleton flash when data already exists on screen.
+      if (isInitial && showLoadingSpinner && !hasRenderedData) {
         setLoading(true);
       }
       if (isInitial) {
@@ -471,7 +473,7 @@ export default function PreventiveMaintenance() {
         setRefreshing(false);
       }
     },
-    [siteCode, currentDate, toDate, isConnected, PAGE_SIZE],
+    [siteCode, currentDate, toDate, isConnected, PAGE_SIZE, allInstances.length],
   );
 
   const handleLoadMore = useCallback(() => {

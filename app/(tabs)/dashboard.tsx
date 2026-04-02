@@ -505,11 +505,19 @@ export default function Dashboard() {
     }
 
     const userId = user.user_id || user.id;
+    const hasRenderedData =
+      !!todayAttendance ||
+      pendingTickets.length > 0 ||
+      pendingTempRH.length > 0 ||
+      pendingWater.length > 0 ||
+      pendingChemical.length > 0;
 
     try {
-      // Always show loading on fresh fetch
-      setLoadingPending(true);
-      setLoadingAttendance(true);
+      // Only show skeleton on true cold start; keep existing data visible on refreshes
+      if (!hasRenderedData) {
+        setLoadingPending(true);
+        setLoadingAttendance(true);
+      }
 
       // 1. Load cached data FIRST for instant UI (Drizzle/PowerSync local query)
       const [localSiteRows, lastSiteCode] = await Promise.all([
@@ -733,7 +741,7 @@ export default function Dashboard() {
       setLoadingAttendance(false);
       setLoadingPending(false);
     }
-  }, [user]); // ✅ Only depend on user, not todayAttendance
+  }, [user, todayAttendance, pendingTickets.length, pendingTempRH.length, pendingWater.length, pendingChemical.length]); // Keep refresh behavior while avoiding cold-start skeleton on every fetch
 
   const loadAreasAndCategories = useCallback(async () => {
     if (sites.length === 0) return;

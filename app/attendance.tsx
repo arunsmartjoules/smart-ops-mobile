@@ -260,6 +260,7 @@ const SiteItem = React.memo(
 export default function AttendancePage() {
   const { isConnected } = useNetworkStatus();
   const { user } = useAuth();
+  const userId = user?.user_id || user?.id;
   const [refreshing, setRefreshing] = useState(false);
   const [loading, setLoading] = useState(true);
   const [attendanceHistory, setAttendanceHistory] = useState<AttendanceLog[]>(
@@ -297,7 +298,7 @@ export default function AttendancePage() {
   }, []);
 
   const fetchData = React.useCallback(async () => {
-    if (!user?.id) {
+    if (!userId) {
       setLoading(false);
       return;
     }
@@ -305,8 +306,8 @@ export default function AttendancePage() {
     try {
       // 1. Show cached data immediately (SWR)
       const [cachedToday, cachedHistory] = await Promise.all([
-        AttendanceService.getTodayAttendance(user.id).catch(() => null),
-        AttendanceService.getAttendanceHistory(user.id, 1, 30).catch(() => ({
+        AttendanceService.getTodayAttendance(userId).catch(() => null),
+        AttendanceService.getAttendanceHistory(userId, 1, 30).catch(() => ({
           data: [],
           pagination: {},
         })),
@@ -319,6 +320,10 @@ export default function AttendancePage() {
       if (cachedToday || cachedHistory.data.length > 0) {
         setLoading(false);
       }
+      // Keep screen responsive even when cache is empty; fresh API data can hydrate in background.
+      if (!cachedToday && cachedHistory.data.length === 0) {
+        setLoading(false);
+      }
 
       // 2. Fetch fresh data from API (only if online)
       const netState = await NetInfo.fetch();
@@ -326,8 +331,8 @@ export default function AttendancePage() {
 
       if (isActuallyOnline) {
         const [today, history] = await Promise.all([
-          AttendanceService.getTodayAttendance(user.id, true),
-          AttendanceService.getAttendanceHistory(user.id),
+          AttendanceService.getTodayAttendance(userId, true),
+          AttendanceService.getAttendanceHistory(userId),
         ]);
 
         setTodayAttendance(today);
@@ -337,12 +342,12 @@ export default function AttendancePage() {
       logger.error("Fetch attendance data error", {
         module: "ATTENDANCE_SCREEN",
         error: error.message,
-        userId: user?.id,
+        userId,
       });
     } finally {
       setLoading(false);
     }
-  }, [user?.id, isConnected]);
+  }, [userId, isConnected]);
 
   // Track when location was last fetched
   const locationTimestampRef = React.useRef<number>(0);
@@ -593,7 +598,7 @@ export default function AttendancePage() {
     async (siteCode: string) => {
       // Offline allowed
       // if (!isConnected) { ... }
-      if (!user?.id) {
+      if (!userId) {
         Alert.alert(
           "Error",
           "User session not available. Please sign in again.",
@@ -604,7 +609,7 @@ export default function AttendancePage() {
         // Optimistic UI update
         const optimisticLog: AttendanceLog = {
           id: `opt-${Date.now()}`,
-          user_id: user!.id,
+          user_id: userId,
           site_code: siteCode,
           date: getISTDateString(),
           check_in_time: new Date().toISOString(),
@@ -613,7 +618,7 @@ export default function AttendancePage() {
         setTodayAttendance(optimisticLog);
 
         const res = await AttendanceService.checkIn(
-          user!.id,
+          userId,
           siteCode,
           location?.coords.latitude,
           location?.coords.longitude,
@@ -662,11 +667,11 @@ export default function AttendancePage() {
         Alert.alert("Error", error.message);
       }
     },
-    [user?.id, location, fetchData, isConnected, handleCheckOutPress],
+    [userId, location, fetchData, isConnected, handleCheckOutPress],
   );
 
   const handleCheckInPress = useCallback(async () => {
-    if (!user?.id) {
+    if (!userId) {
       Alert.alert("Error", "User session not available. Please sign in again.");
       return;
     }
@@ -676,7 +681,7 @@ export default function AttendancePage() {
       const localSiteRows = await db
         .select()
         .from(userSites)
-        .where(eq(userSites.user_id, user.id))
+        .where(eq(userSites.user_id, userId))
         .catch(() => []);
       const cached = localSiteRows.map((r: any) => ({
         site_code: r.site_code,
@@ -708,7 +713,7 @@ export default function AttendancePage() {
       }
 
       const validation = await AttendanceService.validateLocation(
-        user!.id,
+        userId,
         locToUse.coords.latitude,
         locToUse.coords.longitude,
       );
@@ -745,13 +750,13 @@ export default function AttendancePage() {
       logger.error("Check-in validation error", {
         module: "ATTENDANCE_SCREEN",
         error: error.message,
-        userId: user?.id,
+        userId,
       });
       Alert.alert("Error", error.message || "Failed to validate location");
     } finally {
       setValidatingLocation(false);
     }
-  }, [user, isConnected, ensureLocation, performCheckIn]);
+  }, [userId, isConnected, ensureLocation, performCheckIn]);
 
   // Helper to calculate duration
   const getDuration = useCallback(

@@ -341,6 +341,7 @@ export default function Tickets() {
       }
 
       let hasLocalData = false;
+      const hasRenderedTickets = tickets.length > 0;
 
       if (reset) {
         try {
@@ -427,7 +428,7 @@ export default function Tickets() {
           });
         }
 
-        if (!hasLocalData && !refreshing) {
+        if (!hasLocalData && !refreshing && !hasRenderedTickets) {
           setLoading(true);
         }
       } else {
@@ -490,6 +491,7 @@ export default function Tickets() {
       fromDate,
       toDate,
       refreshing,
+      tickets.length,
     ],
   );
 
