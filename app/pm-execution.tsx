@@ -632,15 +632,21 @@ export default function PMExecutionScreen() {
           }
         }
 
-        const nextInstance = {
-          ...(instance || {}),
-          [type]: finalUri,
-        };
-        setInstance(nextInstance);
-        handleSave(true, undefined, undefined, nextInstance);
+        let computedNextInstance: any = null;
+        setInstance((prev) => {
+          const nextInstance = {
+            ...(prev || {}),
+            [type]: finalUri,
+          };
+          computedNextInstance = nextInstance;
+          return nextInstance;
+        });
+        if (computedNextInstance) {
+          handleSave(true, undefined, undefined, computedNextInstance);
+        }
       }
     },
-    [instanceId, isConnected],
+    [instanceId, isConnected, handleSave],
   );
 
   useEffect(() => {
