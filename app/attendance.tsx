@@ -286,6 +286,7 @@ export default function AttendancePage() {
   const [validatingLocation, setValidatingLocation] = useState(false);
   const [earlyCheckoutHours, setEarlyCheckoutHours] = useState("");
   const [currentTime, setCurrentTime] = useState(new Date());
+  const locationRef = React.useRef<Location.LocationObject | null>(null);
 
   // Safety timer to clear loading no matter what
   useEffect(() => {
@@ -390,16 +391,20 @@ export default function AttendancePage() {
   const locationTimestampRef = React.useRef<number>(0);
   const LOCATION_FRESHNESS_MS = 5 * 60 * 1000; // 5 minutes
 
+  useEffect(() => {
+    locationRef.current = location;
+  }, [location]);
+
   // Robust location getter — optimized for speed
   const ensureLocation = useCallback(
     async (forceRefresh = false): Promise<Location.LocationObject | null> => {
       // Reuse cached location if fresh (< 5 min old)
       if (
         !forceRefresh &&
-        location &&
+        locationRef.current &&
         Date.now() - locationTimestampRef.current < LOCATION_FRESHNESS_MS
       ) {
-        return location;
+        return locationRef.current;
       }
 
       try {
@@ -473,7 +478,7 @@ export default function AttendancePage() {
         return null;
       }
     },
-    [location, user?.work_location_type],
+    [],
   );
 
   useFocusEffect(
@@ -485,7 +490,7 @@ export default function AttendancePage() {
       fetchData();
       // Always request location regardless of work_location_type
       ensureLocation();
-    }, [user?.user_id, user?.id, refreshProfile, fetchData, ensureLocation]),
+    }, [user?.user_id, user?.id, refreshProfile, fetchData]),
   );
 
   // Update current time every minute for the live timer with AppState handling
