@@ -259,8 +259,12 @@ const SiteItem = React.memo(
 
 export default function AttendancePage() {
   const { isConnected } = useNetworkStatus();
-  const { user } = useAuth();
+  const { user, refreshProfile } = useAuth();
   const userId = user?.user_id || user?.id;
+  const candidateUserIds = useMemo(
+    () => Array.from(new Set([user?.user_id, user?.id].filter(Boolean))) as string[],
+    [user?.user_id, user?.id],
+  );
   const [refreshing, setRefreshing] = useState(false);
   const [loading, setLoading] = useState(true);
   const [attendanceHistory, setAttendanceHistory] = useState<AttendanceLog[]>(
@@ -298,20 +302,35 @@ export default function AttendancePage() {
   }, []);
 
   const fetchData = React.useCallback(async () => {
-    if (!userId) {
+    if (candidateUserIds.length === 0) {
       setLoading(false);
       return;
     }
 
     try {
       // 1. Show cached data immediately (SWR)
-      const [cachedToday, cachedHistory] = await Promise.all([
-        AttendanceService.getTodayAttendance(userId).catch(() => null),
-        AttendanceService.getAttendanceHistory(userId, 1, 30).catch(() => ({
-          data: [],
-          pagination: {},
-        })),
-      ]);
+      let cachedToday: AttendanceLog | null = null;
+      let cachedHistory: { data: AttendanceLog[]; pagination: any } = {
+        data: [],
+        pagination: {},
+      };
+
+      for (const id of candidateUserIds) {
+        const [todayForId, historyForId] = await Promise.all([
+          AttendanceService.getTodayAttendance(id).catch(() => null),
+          AttendanceService.getAttendanceHistory(id, 1, 30).catch(() => ({
+            data: [],
+            pagination: {},
+          })),
+        ]);
+
+        if (!cachedToday && todayForId) cachedToday = todayForId;
+        if (cachedHistory.data.length === 0 && historyForId.data.length > 0) {
+          cachedHistory = historyForId;
+        }
+
+        if (cachedToday) break;
+      }
 
       if (cachedToday) setTodayAttendance(cachedToday);
       if (cachedHistory.data.length > 0)
@@ -330,10 +349,28 @@ export default function AttendancePage() {
       const isActuallyOnline = netState.isConnected === true;
 
       if (isActuallyOnline) {
-        const [today, history] = await Promise.all([
-          AttendanceService.getTodayAttendance(userId, true),
-          AttendanceService.getAttendanceHistory(userId),
-        ]);
+        let today: AttendanceLog | null = null;
+        let history: { data: AttendanceLog[]; pagination: any } = {
+          data: [],
+          pagination: {},
+        };
+
+        for (const id of candidateUserIds) {
+          const [todayForId, historyForId] = await Promise.all([
+            AttendanceService.getTodayAttendance(id, true).catch(() => null),
+            AttendanceService.getAttendanceHistory(id).catch(() => ({
+              data: [],
+              pagination: {},
+            })),
+          ]);
+
+          if (!today && todayForId) today = todayForId;
+          if (history.data.length === 0 && historyForId.data.length > 0) {
+            history = historyForId;
+          }
+
+          if (today) break;
+        }
 
         setTodayAttendance(today);
         setAttendanceHistory(history.data);
@@ -342,12 +379,12 @@ export default function AttendancePage() {
       logger.error("Fetch attendance data error", {
         module: "ATTENDANCE_SCREEN",
         error: error.message,
-        userId,
+        userId: userId || candidateUserIds.join(","),
       });
     } finally {
       setLoading(false);
     }
-  }, [userId, isConnected]);
+  }, [userId, candidateUserIds, isConnected]);
 
   // Track when location was last fetched
   const locationTimestampRef = React.useRef<number>(0);
@@ -441,10 +478,14 @@ export default function AttendancePage() {
 
   useFocusEffect(
     useCallback(() => {
+      // Preview builds may carry stale cached auth user shape; refresh profile silently.
+      if (!user?.user_id && user?.id) {
+        refreshProfile().catch(() => {});
+      }
       fetchData();
       // Always request location regardless of work_location_type
       ensureLocation();
-    }, [fetchData, ensureLocation]),
+    }, [user?.user_id, user?.id, refreshProfile, fetchData, ensureLocation]),
   );
 
   // Update current time every minute for the live timer with AppState handling
