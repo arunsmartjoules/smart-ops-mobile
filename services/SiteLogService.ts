@@ -132,6 +132,15 @@ interface ISiteLogService {
     options?: { fromDate?: number; toDate?: number },
   ): Promise<void>;
   getTodayChillerReadingCount(siteCode: string, targetDate?: Date): Promise<number>;
+  getTodayChillerCompletedReadingCount(
+    siteCode: string,
+    targetDate?: Date,
+  ): Promise<number>;
+  getTodayChillerDailyPendingCount(
+    siteCode: string,
+    targetDate?: Date,
+    goal?: number,
+  ): Promise<number>;
   getSummaryCounts(siteCode: string): Promise<Record<string, number>>;
   getCategoryProgress(
     siteCode: string,
@@ -1228,6 +1237,65 @@ export const SiteLogService: ISiteLogService = {
       });
       return 0;
     }
+  },
+
+  async getTodayChillerCompletedReadingCount(
+    siteCode: string,
+    targetDate: Date = new Date(),
+  ): Promise<number> {
+    try {
+      const targetDateStr = getISTDateString(targetDate);
+
+      const rows = await db
+        .select({
+          reading_time: chillerReadings.reading_time,
+          created_at: chillerReadings.created_at,
+        })
+        .from(chillerReadings)
+        .where(and(eq(chillerReadings.site_code, siteCode), eq(chillerReadings.status, "Completed")));
+
+      return rows.filter((row) => {
+        const timestamp = row.reading_time || row.created_at;
+        if (!timestamp) return false;
+        return getISTDateString(new Date(timestamp)) === targetDateStr;
+      }).length;
+    } catch (error: any) {
+      logger.error("Error getting today's completed chiller reading count", {
+        module: "SITE_LOG_SERVICE",
+        siteCode,
+        error: error.message,
+      });
+      return 0;
+    }
+  },
+
+  async getTodayChillerDailyPendingCount(
+    siteCode: string,
+    targetDate: Date = new Date(),
+    goal: number = 12,
+  ): Promise<number> {
+    const targetDateStr = getISTDateString(targetDate);
+
+    const rows = await db
+      .select({
+        reading_time: chillerReadings.reading_time,
+        created_at: chillerReadings.created_at,
+      })
+      .from(chillerReadings)
+      .where(
+        and(
+          eq(chillerReadings.site_code, siteCode),
+          eq(chillerReadings.status, "Completed"),
+        ),
+      );
+
+    const completed = rows.filter((row) => {
+      const timestamp = row.reading_time || row.created_at;
+      if (!timestamp) return false;
+      return getISTDateString(new Date(timestamp)) === targetDateStr;
+    }).length;
+
+    return Math.max(0, goal - completed);
   },
 
   /**

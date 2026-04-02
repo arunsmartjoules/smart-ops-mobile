@@ -3,20 +3,16 @@ import {
   View,
   Text,
   TouchableOpacity,
-  RefreshControl,
-  ScrollView,
   Modal,
   useColorScheme,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { router, useFocusEffect } from "expo-router";
+import { router } from "expo-router";
 import { useAuth } from "@/contexts/AuthContext";
 import { useAutoSync } from "@/hooks/useAutoSync";
-import NetInfo from "@react-native-community/netinfo";
-import SiteLogService from "@/services/SiteLogService";
+import siteLogService from "@/services/SiteLogService";
 import { SiteConfigService } from "@/services/SiteConfigService";
 import LogFilterModal from "@/components/sitelogs/LogFilterModal";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
   Filter,
   MapPin,
@@ -31,19 +27,15 @@ import {
   X,
 } from "lucide-react-native";
 import { useNetworkStatus } from "@/hooks/useNetworkStatus";
-import AttendanceService, { type Site } from "@/services/AttendanceService";
 import { useSites } from "@/hooks/useSites";
-import { db } from "@/database";
-import { eq } from "drizzle-orm";
 import { startOfDay, endOfDay, addDays } from "date-fns";
-import logger from "@/utils/logger";
+import loggerUtil from "@/utils/logger";
 import Skeleton from "@/components/Skeleton";
 
 export default function SiteLogs() {
   const { user } = useAuth();
   const isDark = useColorScheme() === "dark";
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
   const [logProgress, setLogProgress] = useState<
     Record<string, { total: number; completed: number }>
   >({});
@@ -56,6 +48,7 @@ export default function SiteLogs() {
   const fetchLogsRef = useRef<((targetSite: string) => Promise<void>) | null>(null);
   const [shiftModalVisible, setShiftModalVisible] = useState(false);
   const [shiftCounts, setShiftCounts] = useState<Record<string, number>>({ A: 0, B: 0, C: 0 });
+  const [chillerDailyPending, setChillerDailyPending] = useState(0);
   const { isConnected } = useNetworkStatus();
 
   // ── Clean sites hook ──────────────────────────────────────────────────────
@@ -68,7 +61,7 @@ export default function SiteLogs() {
   useEffect(() => {
     const timer = setTimeout(() => {
       setLoading(prev => {
-        if (prev) logger.debug("SiteLogs safety timeout triggered", { module: "SITE_LOGS_SCREEN" });
+        if (prev) loggerUtil.debug("SiteLogs safety timeout triggered", { module: "SITE_LOGS_SCREEN" });
         return false;
       });
     }, 10000);
@@ -90,15 +83,15 @@ export default function SiteLogs() {
           const toDateObj = endOfDay(addDays(new Date(), 7));
           
           await Promise.all([
-            SiteLogService.pullSiteLogs(targetSite, {
+            siteLogService.pullSiteLogs(targetSite, {
               fromDate: fromDateObj.getTime(),
               toDate: toDateObj.getTime()
             }),
-            SiteLogService.pullChillerReadings(targetSite, {
+            siteLogService.pullChillerReadings(targetSite, {
               fromDate: fromDateObj.getTime(),
               toDate: toDateObj.getTime()
             }),
-            SiteLogService.pullLogMaster(),
+            siteLogService.pullLogMaster(),
           ]);
           lastSyncRef.current = { ...lastSyncRef.current, [targetSite]: now };
         } catch (e) {
@@ -107,18 +100,19 @@ export default function SiteLogs() {
       }
 
       // Fetch open/inprogress/pending counts from backend + local progress in parallel
-      const [counts, progress] = await Promise.all([
-        SiteLogService.getOpenCounts(targetSite),
-        SiteLogService.getCategoryProgress(targetSite, fromDate, toDate),
+      const [counts, progress, dailyChillerPending] = await Promise.all([
+        siteLogService.getOpenCounts(targetSite),
+        siteLogService.getCategoryProgress(targetSite, fromDate, toDate),
+        siteLogService.getTodayChillerDailyPendingCount(targetSite),
       ]);
       setOpenCounts(counts);
       setLogProgress(progress);
+      setChillerDailyPending(dailyChillerPending);
     } catch (e) {
       console.error(e);
     } finally {
       setLoading(false);
       refreshingRef.current = false;
-      setRefreshing(false);
     }
   }, [fromDate, toDate, isConnected]);
 
@@ -139,11 +133,7 @@ export default function SiteLogs() {
   }, [siteCode, fromDate, toDate]);
 
 
-  const onRefresh = () => {
-    refreshingRef.current = true;
-    setRefreshing(true);
-    if (siteCode) fetchLogs(siteCode);
-  };
+  // Manual pull-to-refresh removed to guarantee no vertical scrolling on small screens.
 
   const getLogName = (title: string) => {
     // Robust mapping
@@ -259,10 +249,12 @@ export default function SiteLogs() {
                     completed: 0,
                   };
                   // For Temp/Water/Chemical: show open+inprogress+pending count from backend
-                  // For Chiller: show completed count from local progress
-                  const displayCount = cat.id === "chiller"
-                    ? progress.completed
-                    : (openCounts[getLogName(cat.title)] ?? Math.max(0, progress.total - progress.completed));
+                  // For Chiller: show pending (12 - completedToday) for IST today
+                  const displayCount =
+                    cat.id === "chiller"
+                      ? chillerDailyPending
+                      : openCounts[getLogName(cat.title)] ??
+                        Math.max(0, progress.total - progress.completed);
                   return (
                     <View
                       key={cat.id}
@@ -287,7 +279,7 @@ export default function SiteLogs() {
                         className="text-slate-400 dark:text-slate-500 text-[10px] font-bold uppercase tracking-tight"
                         numberOfLines={1}
                       >
-                        {cat.id === "chiller" ? "Logged" : (cat.shortTitle || cat.title)}
+                        {cat.id === "chiller" ? "Pending" : (cat.shortTitle || cat.title)}
                       </Text>
                     </View>
                   );
@@ -295,167 +287,176 @@ export default function SiteLogs() {
           </View>
         </View>
 
-        <ScrollView
-          className="flex-1 px-5 pt-6"
-          contentContainerStyle={{ paddingBottom: 100 }}
-          refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={onRefresh}
-              tintColor="#dc2626"
-            />
-          }
-        >
+        <View className="flex-1 px-5 pt-6 pb-6">
           {loading ? (
-            <View>
-              <Skeleton height={20} width={120} style={{ marginBottom: 20 }} />
-              {[1, 2, 3, 4].map((i) => (
-                <Skeleton
-                  key={i}
-                  height={140}
-                  style={{ marginBottom: 16, borderRadius: 16 }}
-                />
-              ))}
+            <View className="flex-1">
+              <Text className="text-slate-900 dark:text-slate-50 font-bold text-sm mb-2">
+                Log Categories
+              </Text>
+              <View className="flex-1 gap-2">
+                {[1, 2, 3, 4].map((i) => (
+                  <Skeleton
+                    key={i}
+                    height={112}
+                    style={{ borderRadius: 16 }}
+                  />
+                ))}
+              </View>
             </View>
           ) : (
-            <>
-              <Text className="text-slate-900 dark:text-slate-50 font-bold text-lg mb-4">
+            <View className="flex-1">
+              <Text className="text-slate-900 dark:text-slate-50 font-bold text-sm mb-2">
                 Log Categories
               </Text>
 
-              {categories.map((item) => {
-                const progress = logProgress[getLogName(item.title)] || {
-                  total: 0,
-                  completed: 0,
-                };
-                const pending = item.id === "chiller"
-                  ? 0
-                  : (openCounts[getLogName(item.title)] ?? Math.max(0, progress.total - progress.completed));
+              <View className="flex-1 gap-2">
+                {categories.map((item) => {
+                  const progress = logProgress[getLogName(item.title)] || {
+                    total: 0,
+                    completed: 0,
+                  };
+                  const pending =
+                    item.id === "chiller"
+                      ? 0
+                      : openCounts[getLogName(item.title)] ??
+                        Math.max(0, progress.total - progress.completed);
 
-                return (
-                  <View
-                    key={item.id}
-                    className="bg-white dark:bg-slate-900 rounded-xl p-4 mb-3"
-                    style={{
-                      shadowColor: "#000",
-                      shadowOffset: { width: 0, height: 1 },
-                      shadowOpacity: 0.05,
-                      shadowRadius: 4,
-                      elevation: 2,
-                    }}
-                  >
-                    <View className="flex-row items-center mb-4">
-                      <View
-                        className={`w-10 h-10 rounded-lg items-center justify-center mr-3 ${item.bg}`}
-                      >
-                        <item.icon size={20} color={item.accent} />
-                      </View>
-
-                      <View className="flex-1">
-                        <View className="flex-row justify-between items-center">
-                          <Text className="text-slate-900 dark:text-slate-50 font-bold text-base">
-                            {item.title}
-                          </Text>
-                          {item.id === "chiller" ? (
-                            progress.completed > 0 && (
-                              <View className="px-2 py-0.5 rounded-md bg-teal-100 dark:bg-teal-900/30">
-                                <Text className="text-xs font-bold text-teal-700 dark:text-teal-400">
-                                  {progress.completed} Logged
-                                </Text>
-                              </View>
-                            )
-                          ) : (
-                            progress.total > 0 && (
-                              <View
-                                className={`px-2 py-0.5 rounded-md ${pending === 0 ? "bg-green-100" : "bg-red-50"}`}
-                              >
-                                <Text
-                                  className={`text-xs font-bold ${pending === 0 ? "text-green-700" : "text-red-600"}`}
-                                >
-                                  {pending === 0
-                                    ? "All Done"
-                                    : `${pending} Pending`}
-                                </Text>
-                              </View>
-                            )
-                          )}
-                        </View>
-                        <Text className="text-slate-400 text-xs mt-0.5">
-                          {item.subtitle}
-                        </Text>
-                      </View>
-                    </View>
-
-                    <View className="flex-row gap-3">
-                      <TouchableOpacity
-                        onPress={() => {
-                          if (item.id === "temp-rh") {
-                            setShiftModalVisible(true);
-                            // Load pending counts for each shift
-                            if (siteCode) {
-                              const today = new Date().toISOString().slice(0, 10);
-                              Promise.all([
-                                SiteConfigService.getPendingCountForDate(siteCode, "Temp RH", today, "A"),
-                                SiteConfigService.getPendingCountForDate(siteCode, "Temp RH", today, "B"),
-                                SiteConfigService.getPendingCountForDate(siteCode, "Temp RH", today, "C"),
-                              ]).then(([a, b, c]) => setShiftCounts({ A: a, B: b, C: c })).catch(() => {});
-                            }
-                          } else {
-                            router.push({
-                              pathname: item.route,
-                              params: { siteCode, isNew: "true" },
-                            });
-                          }
-                        }}
-                        activeOpacity={0.8}
-                        className="flex-1"
-                      >
+                  return (
+                    <View
+                      key={item.id}
+                      className="bg-white dark:bg-slate-900 rounded-xl p-3"
+                      style={{
+                        flex: 1,
+                        minHeight: 0,
+                        shadowColor: "#000",
+                        shadowOffset: { width: 0, height: 1 },
+                        shadowOpacity: 0.05,
+                        shadowRadius: 4,
+                        elevation: 2,
+                      }}
+                    >
+                      <View className="flex-row items-center mb-2">
                         <View
-                          className="py-3 rounded-lg flex-row items-center justify-center"
-                          style={{
-                            backgroundColor: item.colors[0],
-                          }}
+                          className={`w-8 h-8 rounded-lg items-center justify-center mr-2 ${item.bg}`}
                         >
-                          <Plus
-                            size={16}
-                            color="white"
-                            strokeWidth={2.5}
-                            style={{ marginRight: 6 }}
-                          />
-                          <Text className="text-white font-bold text-sm">
-                            Start
+                          <item.icon size={18} color={item.accent} />
+                        </View>
+
+                        <View className="flex-1">
+                          <View className="flex-row justify-between items-center">
+                            <Text className="text-slate-900 dark:text-slate-50 font-bold text-sm" numberOfLines={1}>
+                              {item.title}
+                            </Text>
+                            {item.id === "chiller" ? (
+                              progress.completed > 0 && (
+                                <View className="px-2 py-0.5 rounded-md bg-teal-100 dark:bg-teal-900/30">
+                                  <Text className="text-[10px] font-bold text-teal-700 dark:text-teal-400">
+                                    {progress.completed} Logged
+                                  </Text>
+                                </View>
+                              )
+                            ) : (
+                              progress.total > 0 && (
+                                <View
+                                  className={`px-2 py-0.5 rounded-md ${
+                                    pending === 0
+                                      ? "bg-green-100"
+                                      : "bg-red-50"
+                                  }`}
+                                >
+                                  <Text
+                                    className={`text-[10px] font-bold ${
+                                      pending === 0 ? "text-green-700" : "text-red-600"
+                                    }`}
+                                    numberOfLines={1}
+                                  >
+                                    {pending === 0
+                                      ? "All Done"
+                                      : `${pending} Pending`}
+                                  </Text>
+                                </View>
+                              )
+                            )}
+                          </View>
+                          <Text className="text-slate-400 text-[10px] mt-0.5" numberOfLines={1}>
+                            {item.subtitle}
                           </Text>
                         </View>
-                      </TouchableOpacity>
+                      </View>
 
-                      <TouchableOpacity
-                        onPress={() =>
-                          router.push({
-                            pathname: "/history/site-history",
-                            params: {
-                              siteCode,
-                              logName: getLogName(item.title),
-                            },
-                          })
-                        }
-                        className="flex-1 bg-slate-50 dark:bg-slate-800 py-3 rounded-lg flex-row items-center justify-center border border-slate-100 dark:border-slate-700"
-                      >
-                        <History
-                          size={16}
-                          color="#64748b"
-                          style={{ marginRight: 6 }}
-                        />
-                        <Text className="text-slate-600 dark:text-slate-300 font-bold text-sm">
-                          History
-                        </Text>
-                      </TouchableOpacity>
+                      <View className="flex-row gap-2 mt-auto">
+                        <TouchableOpacity
+                          onPress={() => {
+                            if (item.id === "temp-rh") {
+                              setShiftModalVisible(true);
+                              // Load pending counts for each shift
+                              if (siteCode) {
+                                const today = new Date().toISOString().slice(0, 10);
+                                Promise.all([
+                                  SiteConfigService.getPendingCountForDate(siteCode, "Temp RH", today, "A"),
+                                  SiteConfigService.getPendingCountForDate(siteCode, "Temp RH", today, "B"),
+                                  SiteConfigService.getPendingCountForDate(siteCode, "Temp RH", today, "C"),
+                                ])
+                                  .then(([a, b, c]) => setShiftCounts({ A: a, B: b, C: c }))
+                                  .catch(() => {});
+                              }
+                            } else {
+                              router.push({
+                                pathname: item.route,
+                                params: { siteCode, isNew: "true" },
+                              });
+                            }
+                          }}
+                          activeOpacity={0.8}
+                          className="flex-1"
+                        >
+                          <View
+                            className="py-2 rounded-md flex-row items-center justify-center"
+                            style={{
+                              backgroundColor: item.colors[0],
+                            }}
+                          >
+                            <Plus
+                              size={14}
+                              color="white"
+                              strokeWidth={2.5}
+                              style={{ marginRight: 5 }}
+                            />
+                            <Text className="text-white font-bold text-xs">
+                              Start
+                            </Text>
+                          </View>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                          onPress={() =>
+                            router.push({
+                              pathname: "/history/site-history",
+                              params: {
+                                siteCode,
+                                logName: getLogName(item.title),
+                              },
+                            })
+                          }
+                          className="flex-1 bg-slate-50 dark:bg-slate-800 py-2 rounded-md flex-row items-center justify-center border border-slate-100 dark:border-slate-700"
+                        >
+                          <History
+                            size={14}
+                            color="#64748b"
+                            style={{ marginRight: 5 }}
+                          />
+                          <Text className="text-slate-600 dark:text-slate-300 font-bold text-xs">
+                            History
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
                     </View>
-                  </View>
-                );
-              })}
-            </>
+                  );
+                })}
+              </View>
+            </View>
           )}
-        </ScrollView>
+        </View>
       </SafeAreaView>
       <LogFilterModal
         visible={filterVisible}

@@ -19,6 +19,7 @@ import {
   signInWithEmailAndPassword, 
   createUserWithEmailAndPassword, 
   signOut as firebaseSignOut, 
+  signInWithCustomToken,
   sendPasswordResetEmail,
   sendEmailVerification,
   onIdTokenChanged,
@@ -32,6 +33,7 @@ import { fetchWithTimeout } from "../utils/apiHelper";
 import { clearDatabase } from "@/database";
 
 const BACKEND_URL = API_BASE_URL;
+const GOOGLE_SKIP_VERIFY_ONCE_KEY = "google_skip_verify_once";
 
 interface AuthUser {
   id: string;
@@ -55,6 +57,7 @@ interface AuthContextType {
     password: string,
     name: string,
   ) => Promise<{ error: any }>;
+  signInWithGoogleIdToken: (idToken: string) => Promise<{ error: any }>;
   signOut: () => Promise<void>;
   sendPasswordResetCode: (email: string) => Promise<{ error: any }>;
   resetPasswordWithCode: (email: string, code: string, newPassword: string) => Promise<{ error: any }>;
@@ -73,6 +76,7 @@ const AuthContext = createContext<AuthContextType>({
   isLoading: true,
   signIn: async () => ({ error: null }),
   signUp: async () => ({ error: null }),
+  signInWithGoogleIdToken: async () => ({ error: null }),
   signOut: async () => {},
   sendPasswordResetCode: async () => ({ error: null }),
   resetPasswordWithCode: async () => ({ error: null }),
@@ -161,7 +165,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       logger.debug(`Firebase auth state change: ${!!firebaseUser}`, { module: "AUTH_CONTEXT" });
 
       if (firebaseUser) {
-        setIsEmailVerified(firebaseUser.emailVerified);
+        const skipVerifyOnce = await AsyncStorage.getItem(
+          GOOGLE_SKIP_VERIFY_ONCE_KEY,
+        );
+        const shouldSkipVerification = skipVerifyOnce === "true";
+        if (shouldSkipVerification) {
+          setIsEmailVerified(true);
+          await AsyncStorage.removeItem(GOOGLE_SKIP_VERIFY_ONCE_KEY);
+        } else {
+          setIsEmailVerified(firebaseUser.emailVerified);
+        }
         const idToken = await firebaseUser.getIdToken();
         setToken(idToken);
         await AsyncStorage.setItem("firebase-token", idToken);
@@ -267,6 +280,41 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       logger.warn("Sign in failed", { module: "AUTH_CONTEXT", error: msg });
       logger.activity(logAction, "AUTH", `Login failed for ${email}: ${msg}`, { email, error: msg });
       return { error: msg };
+    }
+  }, []);
+
+  const signInWithGoogleIdToken = useCallback(async (idToken: string) => {
+    try {
+      const response = await fetchWithTimeout(
+        `${BACKEND_URL}/api/auth/google`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ idToken }),
+        },
+      );
+
+      const result = await response.json();
+
+      if (!response.ok || !result?.success) {
+        return { error: result?.error || "Google authentication failed" };
+      }
+
+      const customToken = result?.data?.token;
+      if (!customToken) {
+        return { error: "Missing custom token from Google auth response" };
+      }
+
+      await AsyncStorage.setItem(GOOGLE_SKIP_VERIFY_ONCE_KEY, "true");
+      await signInWithCustomToken(auth, customToken);
+
+      return { error: null };
+    } catch (e: any) {
+      logger.error("Google sign-in failed", {
+        module: "AUTH_CONTEXT",
+        error: e?.message || String(e),
+      });
+      return { error: e?.message || String(e) };
     }
   }, []);
 
@@ -539,6 +587,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       isLoading,
       signIn,
       signUp,
+      signInWithGoogleIdToken,
       signOut,
       sendPasswordResetCode,
       resetPasswordWithCode,
@@ -556,6 +605,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       isLoading,
       signIn,
       signUp,
+      signInWithGoogleIdToken,
       signOut,
       sendPasswordResetCode,
       resetPasswordWithCode,

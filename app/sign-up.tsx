@@ -10,11 +10,16 @@ import {
   ActivityIndicator,
 } from "react-native";
 import { Mail, Lock, User, Zap, Eye, EyeOff } from "lucide-react-native";
+import { FontAwesome5 } from "@expo/vector-icons";
+import { makeRedirectUri } from "expo-auth-session";
+import { useIdTokenAuthRequest } from "expo-auth-session/providers/google";
 import { router } from "expo-router";
 import { useAuth } from "@/contexts/AuthContext";
 import { showAlert } from "@/utils/alert";
 import logger from "@/utils/logger";
 
+const GOOGLE_CLIENT_ID =
+  "522269111144-d6q0lfa7ddrcrootb44sjp6obt6qr1e5.apps.googleusercontent.com";
 
 export default function SignUp() {
   const [name, setName] = useState("");
@@ -22,7 +27,18 @@ export default function SignUp() {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
-  const { signUp } = useAuth();
+  const { signUp, signInWithGoogleIdToken } = useAuth();
+
+  const redirectUri = makeRedirectUri({
+    scheme: "jouleops",
+    path: "oauthredirect",
+  });
+
+  const [request, , promptAsync] = useIdTokenAuthRequest({
+    clientId: GOOGLE_CLIENT_ID,
+    scopes: ["openid", "profile", "email"],
+    redirectUri,
+  });
 
   const handleSignUp = async () => {
     if (!name || !email || !password) {
@@ -49,6 +65,37 @@ export default function SignUp() {
     } catch (e: any) {
       logger.error("Unexpected error during sign up", { module: "SIGN_UP", error: e.message });
       showAlert("Error", "Something went wrong. Please try again.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleGoogleSignUp = async () => {
+    setLoading(true);
+    try {
+      const authResult = await promptAsync();
+      const idToken =
+        (authResult as any)?.params?.id_token ||
+        (authResult as any)?.params?.idToken;
+
+      if (!idToken) {
+        showAlert(
+          "Google Sign Up Failed",
+          "Could not retrieve Google authentication token.",
+        );
+        return;
+      }
+
+      const { error } = await signInWithGoogleIdToken(String(idToken));
+      if (error) {
+        const msg = typeof error === "string" ? error : error?.message || "";
+        showAlert("Google Sign Up Failed", msg || "Authentication error");
+        return;
+      }
+
+      router.replace("/(tabs)/dashboard");
+    } catch (e: any) {
+      showAlert("Google Sign Up Failed", e?.message || "Authentication error");
     } finally {
       setLoading(false);
     }
@@ -152,6 +199,18 @@ export default function SignUp() {
                     Create Account
                   </Text>
                 )}
+              </TouchableOpacity>
+
+              {/* Google Sign Up Button */}
+              <TouchableOpacity
+                onPress={handleGoogleSignUp}
+                disabled={loading || !request}
+                className="mt-4 border border-slate-300 dark:border-slate-700 py-3 rounded-lg flex-row items-center justify-center active:opacity-90"
+              >
+                <FontAwesome5 name="google" size={18} color="#dc2626" />
+                <Text className="ml-3 text-red-700 dark:text-red-400 font-semibold">
+                  Sign up with Google
+                </Text>
               </TouchableOpacity>
 
               {/* Sign In */}

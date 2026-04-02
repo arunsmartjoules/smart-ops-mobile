@@ -10,16 +10,33 @@ import {
   ActivityIndicator,
 } from "react-native";
 import { Mail, Lock, Zap, Eye, EyeOff } from "lucide-react-native";
+import { FontAwesome5 } from "@expo/vector-icons";
+import { makeRedirectUri } from "expo-auth-session";
+import { useIdTokenAuthRequest } from "expo-auth-session/providers/google";
 import { router } from "expo-router";
 import { useAuth } from "@/contexts/AuthContext";
 import { showAlert } from "@/utils/alert";
+
+const GOOGLE_CLIENT_ID =
+  "522269111144-d6q0lfa7ddrcrootb44sjp6obt6qr1e5.apps.googleusercontent.com";
 
 export default function SignIn() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
-  const { signIn } = useAuth();
+  const { signIn, signInWithGoogleIdToken } = useAuth();
+
+  const redirectUri = makeRedirectUri({
+    scheme: "jouleops",
+    path: "oauthredirect",
+  });
+
+  const [request, response, promptAsync] = useIdTokenAuthRequest({
+    clientId: GOOGLE_CLIENT_ID,
+    scopes: ["openid", "profile", "email"],
+    redirectUri,
+  });
 
   const handleSignIn = async () => {
     if (!email || !password) {
@@ -47,6 +64,37 @@ export default function SignIn() {
       }
     } else {
       router.replace("/(tabs)/dashboard");
+    }
+  };
+
+  const handleGoogleSignIn = async () => {
+    setLoading(true);
+    try {
+      const authResult = await promptAsync();
+      const idToken =
+        (authResult as any)?.params?.id_token ||
+        (authResult as any)?.params?.idToken;
+
+      if (!idToken) {
+        showAlert(
+          "Google Sign In Failed",
+          "Could not retrieve Google authentication token.",
+        );
+        return;
+      }
+
+      const { error } = await signInWithGoogleIdToken(String(idToken));
+      if (error) {
+        const msg = typeof error === "string" ? error : error?.message || "";
+        showAlert("Google Sign In Failed", msg || "Authentication error");
+        return;
+      }
+
+      router.replace("/(tabs)/dashboard");
+    } catch (e: any) {
+      showAlert("Google Sign In Failed", e?.message || "Authentication error");
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -144,10 +192,22 @@ export default function SignIn() {
                 )}
               </TouchableOpacity>
 
+              {/* Google Sign In */}
+              <TouchableOpacity
+                onPress={handleGoogleSignIn}
+                disabled={loading || !request}
+                className="mt-4 border border-slate-300 dark:border-slate-700 py-3 rounded-lg flex-row items-center justify-center active:opacity-90"
+              >
+                <FontAwesome5 name="google" size={18} color="#dc2626" />
+                <Text className="ml-3 text-red-700 dark:text-red-400 font-semibold">
+                  Continue with Google
+                </Text>
+              </TouchableOpacity>
+
               {/* Sign Up */}
               <View className="items-center mt-5">
                 <Text className="text-gray-600 dark:text-slate-400 text-sm">
-                  Don't have an account?{" "}
+                  Don&apos;t have an account?{" "}
                   <TouchableOpacity
                     onPress={() => router.push("/sign-up")}
                     disabled={loading}
