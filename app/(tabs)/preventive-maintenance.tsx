@@ -338,7 +338,7 @@ export default function PreventiveMaintenance() {
 
   // ── Clean sites hook ──────────────────────────────────────────────────────
   const userId = user?.user_id || user?.id;
-  const { sites, selectedSite, selectSite } = useSites(userId);
+  const { sites, selectedSite, selectSite, refresh: refreshSites } = useSites(userId);
   const siteCode = selectedSite?.site_code ?? "";
   const siteName =
     selectedSite?.site_name ?? selectedSite?.site_code ?? "Select Site";
@@ -700,9 +700,22 @@ export default function PreventiveMaintenance() {
             ? "Your tasks are on the phone, but hidden by the current Status/Date filter. Try setting Status to 'All'."
             : "No tasks scheduled for the selected date range."}
         </Text>
+        {isConnected && !siteCode && (
+          <TouchableOpacity
+            onPress={async () => {
+              await refreshSites();
+              if (selectedSite?.site_code) {
+                loadPMData(true, 0, false);
+              }
+            }}
+            className="mt-3 bg-red-600 px-4 py-2 rounded-xl"
+          >
+            <Text className="text-white font-bold">Retry Server Sync</Text>
+          </TouchableOpacity>
+        )}
       </View>
     ),
-    [allInstances.length],
+    [allInstances.length, isConnected, siteCode, refreshSites, selectedSite?.site_code, loadPMData],
   );
 
   const renderFooter = useCallback(() => {

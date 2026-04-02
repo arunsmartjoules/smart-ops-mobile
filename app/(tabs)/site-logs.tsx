@@ -53,7 +53,7 @@ export default function SiteLogs() {
 
   // ── Clean sites hook ──────────────────────────────────────────────────────
   const userId = user?.user_id || user?.id;
-  const { sites: availableSites, selectedSite, selectSite } = useSites(userId);
+  const { sites: availableSites, selectedSite, selectSite, refresh: refreshSites } = useSites(userId);
   const siteCode = selectedSite?.site_code ?? null;
   const siteName = selectedSite?.site_name ?? selectedSite?.site_code ?? "Select Site";
 
@@ -288,6 +288,22 @@ export default function SiteLogs() {
         </View>
 
         <View className="flex-1 px-5 pt-6 pb-6">
+          {!loading && isConnected && !siteCode && (
+            <View className="mb-3 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 p-4 items-center">
+              <Text className="text-slate-900 dark:text-slate-50 font-bold">
+                No sites synced yet
+              </Text>
+              <TouchableOpacity
+                onPress={async () => {
+                  await refreshSites();
+                  if (selectedSite?.site_code) fetchLogs(selectedSite.site_code);
+                }}
+                className="mt-3 bg-red-600 px-4 py-2 rounded-xl"
+              >
+                <Text className="text-white font-bold">Retry Server Sync</Text>
+              </TouchableOpacity>
+            </View>
+          )}
           {loading ? (
             <View className="flex-1">
               <Text className="text-slate-900 dark:text-slate-50 font-bold text-sm mb-2">

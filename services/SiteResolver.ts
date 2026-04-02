@@ -42,6 +42,7 @@ export interface SiteResolver {
 // ─── AsyncStorage key ─────────────────────────────────────────────────────────
 
 const SITE_CACHE_KEY = "@user_sites_cache_";
+const normalizeIdentityKey = (value: string) => value.trim().toLowerCase();
 
 // ─── Shared apiFetch helper ───────────────────────────────────────────────────
 
@@ -75,19 +76,25 @@ class SiteResolverImpl implements SiteResolver {
   // ── initialize ────────────────────────────────────────────────────────────
 
   async initialize(userId: string): Promise<void> {
+    const identityKey = normalizeIdentityKey(userId);
     const start = Date.now();
+    logger.info("SiteResolver initialize", {
+      module: "SITE_RESOLVER",
+      identityKey,
+      isEmailKey: identityKey.includes("@"),
+    });
 
     // Step 1: SQLite user_sites WHERE user_id = ?
     try {
       const rows = await db
         .select()
         .from(userSites)
-        .where(eq(userSites.user_id, userId));
+        .where(eq(userSites.user_id, identityKey));
 
       if (rows.length > 0) {
         const sites: Site[] = rows.map((r) => ({
           id: r.id,
-          user_id: r.user_id,
+          user_id: identityKey,
           site_id: r.site_id ?? null,
           site_code: r.site_code,
           site_name: r.site_name,
@@ -95,8 +102,9 @@ class SiteResolverImpl implements SiteResolver {
         }));
         logger.debug("SiteResolver: resolved from SQLite user_sites", {
           module: "SITE_RESOLVER",
-          userId,
+          userId: identityKey,
           count: sites.length,
+          source: "sqlite_user_sites",
         });
         this._emit(sites, start);
         return;
@@ -104,20 +112,21 @@ class SiteResolverImpl implements SiteResolver {
     } catch (error) {
       logger.error("SiteResolver: SQLite user_sites query failed", {
         module: "SITE_RESOLVER",
-        userId,
+        userId: identityKey,
         error,
+        source: "sqlite_user_sites",
       });
     }
 
     // Step 2: AsyncStorage @user_sites_cache_{userId}
     try {
-      const raw = await AsyncStorage.getItem(`${SITE_CACHE_KEY}${userId}`);
+      const raw = await AsyncStorage.getItem(`${SITE_CACHE_KEY}${identityKey}`);
       if (raw) {
         const cached = JSON.parse(raw) as Array<Record<string, any>>;
         if (Array.isArray(cached) && cached.length > 0) {
           const sites: Site[] = cached.map((r) => ({
-            id: r.id ?? `${userId}_${r.site_code}`,
-            user_id: r.user_id ?? userId,
+            id: r.id ?? `${identityKey}_${r.site_code}`,
+            user_id: r.user_id ?? identityKey,
             site_id: r.site_id ?? null,
             site_code: r.site_code,
             site_name: r.site_name ?? r.name ?? r.site_code,
@@ -125,8 +134,9 @@ class SiteResolverImpl implements SiteResolver {
           }));
           logger.debug("SiteResolver: resolved from AsyncStorage cache", {
             module: "SITE_RESOLVER",
-            userId,
+            userId: identityKey,
             count: sites.length,
+            source: "async_storage",
           });
           this._emit(sites, start);
           return;
@@ -135,8 +145,9 @@ class SiteResolverImpl implements SiteResolver {
     } catch (error) {
       logger.error("SiteResolver: AsyncStorage read failed", {
         module: "SITE_RESOLVER",
-        userId,
+        userId: identityKey,
         error,
+        source: "async_storage",
       });
     }
 
@@ -156,8 +167,8 @@ class SiteResolverImpl implements SiteResolver {
 
       if (allCodes.size > 0) {
         const sites: Site[] = Array.from(allCodes).map((code) => ({
-          id: `${userId}_${code}`,
-          user_id: userId,
+          id: `${identityKey}_${code}`,
+          user_id: identityKey,
           site_id: null,
           site_code: code,
           site_name: code,
@@ -165,8 +176,9 @@ class SiteResolverImpl implements SiteResolver {
         }));
         logger.debug("SiteResolver: resolved by inference from data tables", {
           module: "SITE_RESOLVER",
-          userId,
+          userId: identityKey,
           count: sites.length,
+          source: "inference",
         });
         this._emit(sites, start);
         return;
@@ -174,21 +186,22 @@ class SiteResolverImpl implements SiteResolver {
     } catch (error) {
       logger.error("SiteResolver: inference from data tables failed", {
         module: "SITE_RESOLVER",
-        userId,
+        userId: identityKey,
         error,
+        source: "inference",
       });
     }
 
     // Step 4: API fetch /api/site-users/user/{userId}
     try {
-      const response = await apiFetch(`/api/site-users/user/${userId}`);
+      const response = await apiFetch(`/api/site-users/user/${encodeURIComponent(identityKey)}`);
       if (response.ok) {
         const result = await response.json();
         const data: any[] = result.data || [];
         if (data.length > 0) {
           const sites: Site[] = data.map((r) => ({
-            id: r.id ?? `${userId}_${r.site_code}`,
-            user_id: userId,
+            id: r.id ?? `${identityKey}_${r.site_code}`,
+            user_id: identityKey,
             site_id: r.site_id ?? null,
             site_code: r.site_code,
             site_name: r.site_name ?? r.name ?? r.site_code,
@@ -196,33 +209,36 @@ class SiteResolverImpl implements SiteResolver {
           }));
           logger.debug("SiteResolver: resolved from API", {
             module: "SITE_RESOLVER",
-            userId,
+            userId: identityKey,
             count: sites.length,
+            source: "api",
           });
           // Persist to both caches for future offline use
-          await this._persistToCaches(userId, sites);
+          await this._persistToCaches(identityKey, sites);
           this._emit(sites, start);
           return;
         }
       } else {
         logger.warn("SiteResolver: API returned non-ok status", {
           module: "SITE_RESOLVER",
-          userId,
+          userId: identityKey,
           status: response.status,
+          source: "api",
         });
       }
     } catch (error) {
       logger.error("SiteResolver: API fetch failed", {
         module: "SITE_RESOLVER",
-        userId,
+        userId: identityKey,
         error,
+        source: "api",
       });
     }
 
     // All steps failed — emit empty list
     logger.warn("SiteResolver: all resolution steps failed, returning []", {
       module: "SITE_RESOLVER",
-      userId,
+      userId: identityKey,
     });
     this._emit([], start);
   }
@@ -230,13 +246,15 @@ class SiteResolverImpl implements SiteResolver {
   // ── refresh ───────────────────────────────────────────────────────────────
 
   async refresh(userId: string): Promise<void> {
+    const identityKey = normalizeIdentityKey(userId);
     try {
-      const response = await apiFetch(`/api/site-users/user/${userId}`);
+      const response = await apiFetch(`/api/site-users/user/${encodeURIComponent(identityKey)}`);
       if (!response.ok) {
         logger.warn("SiteResolver.refresh: API returned non-ok status", {
           module: "SITE_RESOLVER",
-          userId,
+          userId: identityKey,
           status: response.status,
+          source: "api_refresh",
         });
         return;
       }
@@ -244,8 +262,8 @@ class SiteResolverImpl implements SiteResolver {
       const result = await response.json();
       const data: any[] = result.data || [];
       const sites: Site[] = data.map((r) => ({
-        id: r.id ?? `${userId}_${r.site_code}`,
-        user_id: userId,
+        id: r.id ?? `${identityKey}_${r.site_code}`,
+        user_id: identityKey,
         site_id: r.site_id ?? null,
         site_code: r.site_code,
         site_name: r.site_name ?? r.name ?? r.site_code,
@@ -253,11 +271,11 @@ class SiteResolverImpl implements SiteResolver {
       }));
 
       // Persist to both SQLite and AsyncStorage
-      await this._persistToCaches(userId, sites);
+      await this._persistToCaches(identityKey, sites);
 
       logger.debug("SiteResolver.refresh: persisted and emitting", {
         module: "SITE_RESOLVER",
-        userId,
+        userId: identityKey,
         count: sites.length,
       });
 
@@ -266,7 +284,7 @@ class SiteResolverImpl implements SiteResolver {
       // Log but do not throw — existing cached sites remain active
       logger.error("SiteResolver.refresh: API error (non-fatal)", {
         module: "SITE_RESOLVER",
-        userId,
+        userId: identityKey,
         error,
       });
     }

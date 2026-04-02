@@ -103,7 +103,7 @@ export default function Tickets() {
 
   // ── Clean sites hook ──────────────────────────────────────────────────────
   const userId = user?.user_id || user?.id;
-  const { sites, selectedSite, selectSite, loading: sitesLoading } = useSites(userId);
+  const { sites, selectedSite, selectSite, loading: sitesLoading, refresh: refreshSites } = useSites(userId);
   const selectedSiteCode = selectedSite?.site_code ?? "";
   const siteName = selectedSite?.site_name ?? selectedSite?.site_code ?? "Select Site";
 
@@ -859,6 +859,17 @@ export default function Tickets() {
                   <TicketIcon size={36} color="#cbd5e1" />
                 </View>
                 <Text className="text-slate-900 dark:text-slate-50 font-bold text-lg">No tickets found</Text>
+                {isConnected && !sitesLoading && sites.length === 0 && (
+                  <TouchableOpacity
+                    onPress={async () => {
+                      await refreshSites();
+                      resetAndFetch();
+                    }}
+                    className="mt-4 bg-red-600 px-4 py-2 rounded-xl"
+                  >
+                    <Text className="text-white font-bold">Retry Server Sync</Text>
+                  </TouchableOpacity>
+                )}
               </View>
             )}
             ListFooterComponent={isFetchingMore ? <TicketSkeletonItem /> : null}

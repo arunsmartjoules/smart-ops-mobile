@@ -137,6 +137,8 @@ class SyncEngineImpl implements SyncEngine {
 
   // Debounce: in-flight sync promise
   private syncPromise: Promise<void> | null = null;
+  private forceFullSyncOnce = false;
+  private hasAttemptedEmptySitesRecovery = false;
 
   // Track previous connectivity to detect offline→online transitions
   private wasConnected = false;
@@ -409,6 +411,13 @@ class SyncEngineImpl implements SyncEngine {
     }
 
     this.userId = userId;
+    this.hasAttemptedEmptySitesRecovery = false;
+
+    logger.info("SyncEngine runtime config", {
+      module: "SYNC_ENGINE",
+      apiBaseUrl: API_BASE_URL,
+      userId,
+    });
 
     // Seed connected state
     const netState = await NetInfo.fetch();
@@ -418,6 +427,13 @@ class SyncEngineImpl implements SyncEngine {
       connected: this.wasConnected,
       pendingQueueCount,
     });
+
+    // If local caches are empty, force a complete first sync (ignore TTL once).
+    this.forceFullSyncOnce = await this.areLocalCachesEmpty();
+
+    if (this.wasConnected) {
+      await this.runHealthCheck();
+    }
 
     // Watch network changes
     this.netUnsubscribe = NetInfo.addEventListener(
@@ -521,7 +537,9 @@ class SyncEngineImpl implements SyncEngine {
 
       // Step 2: Pull each domain in priority order (Req 2.4)
       for (const handler of this.domainHandlers) {
-        const eligible = await this.isDomainEligible(handler.domain);
+        const eligible = this.forceFullSyncOnce
+          ? true
+          : await this.isDomainEligible(handler.domain);
         if (!eligible) {
           logger.debug(`SyncEngine: skipping ${handler.domain} (within TTL)`, {
             module: "SYNC_ENGINE",
@@ -542,6 +560,22 @@ class SyncEngineImpl implements SyncEngine {
           });
         }
       }
+
+      this.forceFullSyncOnce = false;
+
+      const syncedSites = await cacheManager.read<{ site_code: string }>("sites");
+      if (
+        this._status.connected &&
+        syncedSites.length === 0 &&
+        !this.hasAttemptedEmptySitesRecovery
+      ) {
+        this.hasAttemptedEmptySitesRecovery = true;
+        logger.warn("SyncEngine: empty sites after sync, forcing one recovery refresh", {
+          module: "SYNC_ENGINE",
+          userId: this.userId,
+        });
+        await this.domainHandlers[0].sync(this.userId);
+      }
     } finally {
       // Always clear downloading flag and update lastSyncedAt (Req 2.6)
       const pendingQueueCount = await cacheManager.getQueueCount();
@@ -550,6 +584,41 @@ class SyncEngineImpl implements SyncEngine {
         lastSyncedAt: new Date(syncStartedAt).toISOString(),
         pendingQueueCount,
       });
+    }
+  }
+
+  private async runHealthCheck(): Promise<void> {
+    try {
+      const response = await apiFetch("/api/health");
+      logger.info("SyncEngine health check result", {
+        module: "SYNC_ENGINE",
+        status: response.status,
+        ok: response.ok,
+      });
+    } catch (error) {
+      logger.warn("SyncEngine health check failed", {
+        module: "SYNC_ENGINE",
+        error,
+      });
+    }
+  }
+
+  private async areLocalCachesEmpty(): Promise<boolean> {
+    try {
+      const [sites, tickets, attendance, pmInstances] = await Promise.all([
+        cacheManager.read("sites", { limit: 1 }),
+        cacheManager.read("tickets", { limit: 1 }),
+        cacheManager.read("attendance", { limit: 1 }),
+        cacheManager.read("pm_instances", { limit: 1 }),
+      ]);
+      return (
+        sites.length === 0 &&
+        tickets.length === 0 &&
+        attendance.length === 0 &&
+        pmInstances.length === 0
+      );
+    } catch {
+      return true;
     }
   }
 

@@ -18,11 +18,12 @@ export function useSiteResolver(userId: string | undefined): {
   loading: boolean;
   refresh: () => Promise<void>;
 } {
+  const normalizedIdentity = userId?.trim().toLowerCase();
   const [sites, setSites] = useState<Site[]>(siteResolver.getSites());
   const [selectedSite, setSelectedSite] = useState<Site | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const lastSiteKey = userId ? `last_site_${userId}` : null;
+  const lastSiteKey = normalizedIdentity ? `last_site_${normalizedIdentity}` : null;
 
   // Restore persisted selectedSite when sites become available
   const applyPersistedSite = useCallback(
@@ -43,7 +44,7 @@ export function useSiteResolver(userId: string | undefined): {
 
   // Subscribe to siteResolver and initialize on userId change
   useEffect(() => {
-    if (!userId) {
+    if (!normalizedIdentity) {
       setLoading(false);
       return;
     }
@@ -58,12 +59,12 @@ export function useSiteResolver(userId: string | undefined): {
     });
 
     // Kick off resolution if not already done
-    siteResolver.initialize(userId).catch(() => {
+    siteResolver.initialize(normalizedIdentity).catch(() => {
       setLoading(false);
     });
 
     return unsubscribe;
-  }, [userId, applyPersistedSite]);
+  }, [normalizedIdentity, applyPersistedSite]);
 
   const selectSite = useCallback(
     async (site: Site) => {
@@ -80,9 +81,9 @@ export function useSiteResolver(userId: string | undefined): {
   );
 
   const refresh = useCallback(async () => {
-    if (!userId) return;
-    await siteResolver.refresh(userId);
-  }, [userId]);
+    if (!normalizedIdentity) return;
+    await siteResolver.refresh(normalizedIdentity);
+  }, [normalizedIdentity]);
 
   return { sites, selectedSite, selectSite, loading, refresh };
 }

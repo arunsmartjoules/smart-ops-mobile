@@ -34,6 +34,10 @@ import { clearDatabase } from "@/database";
 
 const BACKEND_URL = API_BASE_URL;
 const GOOGLE_SKIP_VERIFY_ONCE_KEY = "google_skip_verify_once";
+const LAST_PROFILE_FETCH_STATUS_KEY = "last_profile_fetch_status";
+
+const normalizeEmail = (email?: string | null) =>
+  String(email || "").trim().toLowerCase();
 
 interface AuthUser {
   id: string;
@@ -102,12 +106,12 @@ function mapFirebaseUser(
   firebaseUser: FirebaseUser,
   profile?: Partial<AuthUser>,
 ): AuthUser {
-  // Prefer the DB user_id from profile (may differ from Firebase UID)
-  const dbUserId = profile?.user_id ?? profile?.id ?? firebaseUser.uid;
+  const normalized = normalizeEmail(profile?.email || firebaseUser.email);
+  const backendUserId = String(profile?.user_id || profile?.id || "").trim();
   return {
-    id: dbUserId,
-    user_id: dbUserId,
-    email: firebaseUser.email ?? "",
+    id: backendUserId || normalized,
+    user_id: backendUserId || normalized,
+    email: normalized,
     name: profile?.name ?? firebaseUser.displayName ?? "",
     full_name: profile?.full_name ?? firebaseUser.displayName ?? "",
     role: profile?.role ?? "",
@@ -127,35 +131,90 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
 
   // Fetch extended profile from backend and merge into user state
   const fetchAndSetProfile = useCallback(
-    async (firebaseUser: FirebaseUser, idToken: string) => {
-      try {
-        const response = await fetchWithTimeout(`${BACKEND_URL}/api/auth/profile`, {
-          headers: { Authorization: `Bearer ${idToken}` },
-        });
-        const result = await response.json();
-        if (result.success && result.data) {
-          const mapped = mapFirebaseUser(firebaseUser, result.data);
-          await AsyncStorage.setItem("auth_user", JSON.stringify(mapped));
-          setUser(mapped);
-          return mapped;
+    async (firebaseUser: FirebaseUser, idToken: string): Promise<AuthUser | null> => {
+      const normalizedEmail = normalizeEmail(firebaseUser.email);
+      const maxAttempts = 3;
+      let lastError = "unknown";
+
+      for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+        try {
+          const response = await fetchWithTimeout(`${BACKEND_URL}/api/auth/profile`, {
+            headers: { Authorization: `Bearer ${idToken}` },
+          });
+          const result = await response.json();
+          const profileEmail = normalizeEmail(result?.data?.email);
+
+          if (
+            result.success &&
+            result.data &&
+            String(result.data.user_id || result.data.id || "").trim()
+          ) {
+            // If backend returns email, enforce a match. If not returned, trust user_id.
+            if (profileEmail && profileEmail !== normalizedEmail) {
+              lastError = "profile email mismatch";
+            } else {
+            const mapped = mapFirebaseUser(firebaseUser, result.data);
+            await AsyncStorage.setItem("auth_user", JSON.stringify(mapped));
+            await AsyncStorage.setItem(
+              LAST_PROFILE_FETCH_STATUS_KEY,
+              JSON.stringify({
+                status: "success",
+                normalized_email: normalizedEmail,
+                attempts: attempt,
+                at: Date.now(),
+              }),
+            );
+            setUser(mapped);
+            return mapped;
+            }
+          }
+
+          lastError = result?.error || "profile email mismatch";
+        } catch (e: any) {
+          lastError = e?.message || "profile fetch failed";
         }
-      } catch (e: any) {
-        logger.warn("Profile fetch failed, falling back to cached or session metadata", {
-          module: "AUTH_CONTEXT",
-          error: e.message,
-        });
+
+        if (attempt < maxAttempts) {
+          await new Promise((resolve) => setTimeout(resolve, attempt * 500));
+        }
       }
-      
+
+      logger.warn("Profile fetch failed after retries", {
+        module: "AUTH_CONTEXT",
+        normalizedEmail,
+        error: lastError,
+      });
+
+      await AsyncStorage.setItem(
+        LAST_PROFILE_FETCH_STATUS_KEY,
+        JSON.stringify({
+          status: "failed",
+          normalized_email: normalizedEmail,
+          error: lastError,
+          at: Date.now(),
+        }),
+      );
+
       const cached = await AsyncStorage.getItem("auth_user");
       if (cached) {
         const parsed = JSON.parse(cached);
-        setUser(parsed);
-        return parsed;
+        if (
+          normalizeEmail(parsed?.email) === normalizedEmail &&
+          parsed?.user_id
+        ) {
+          setUser(parsed);
+          return parsed;
+        }
       }
 
-      const mapped = mapFirebaseUser(firebaseUser);
+      // Keep session alive, but do not attach UUID-based identity fallback.
+      const mapped = mapFirebaseUser(firebaseUser, {
+        user_id: normalizedEmail,
+        id: normalizedEmail,
+        email: normalizedEmail,
+      });
       setUser(mapped);
-      return mapped;
+      return null;
     },
     [],
   );
@@ -204,6 +263,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
                 error: error.message,
               });
             });
+        } else {
+          logger.warn("Login in degraded profile mode; sync bootstrap deferred", {
+            module: "AUTH_CONTEXT",
+            email: normalizeEmail(firebaseUser.email),
+          });
         }
         setIsLoading(false);
       } else {

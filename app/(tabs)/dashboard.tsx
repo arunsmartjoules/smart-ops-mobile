@@ -1374,6 +1374,21 @@ export default function Dashboard() {
             </View>
           </>
         )}
+        {!loadingPending && isConnected && sites.length === 0 && (
+          <View className="px-6 mb-6">
+            <View className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 items-center">
+              <Text className="text-slate-900 dark:text-slate-50 font-bold">
+                No sites synced yet
+              </Text>
+              <TouchableOpacity
+                onPress={() => fetchData()}
+                className="mt-3 bg-red-600 px-4 py-2 rounded-xl"
+              >
+                <Text className="text-white font-bold">Retry Server Sync</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
         <ScrollView
           className="flex-1"
           contentContainerStyle={{ paddingBottom: 100 }}
