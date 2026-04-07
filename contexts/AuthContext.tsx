@@ -166,23 +166,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
             result.data &&
             String(result.data.user_id || result.data.id || "").trim()
           ) {
-            // If backend returns email, enforce a match. If not returned, trust user_id.
-            if (profileEmail && profileEmail !== normalizedEmail) {
+            // If Firebase email is unavailable (common in custom-token Google flow),
+            // trust backend profile email instead of rejecting by mismatch.
+            if (profileEmail && normalizedEmail && profileEmail !== normalizedEmail) {
               lastError = "profile email mismatch";
             } else {
-            const mapped = mapFirebaseUser(firebaseUser, result.data);
-            await AsyncStorage.setItem("auth_user", JSON.stringify(mapped));
-            await AsyncStorage.setItem(
-              LAST_PROFILE_FETCH_STATUS_KEY,
-              JSON.stringify({
-                status: "success",
-                normalized_email: normalizedEmail,
-                attempts: attempt,
-                at: Date.now(),
-              }),
-            );
-            setUser(mapped);
-            return mapped;
+              const mapped = mapFirebaseUser(firebaseUser, result.data);
+              await AsyncStorage.setItem("auth_user", JSON.stringify(mapped));
+              await AsyncStorage.setItem(
+                LAST_PROFILE_FETCH_STATUS_KEY,
+                JSON.stringify({
+                  status: "success",
+                  normalized_email: normalizeEmail(mapped.email),
+                  attempts: attempt,
+                  at: Date.now(),
+                }),
+              );
+              setUser(mapped);
+              return mapped;
             }
           }
 
