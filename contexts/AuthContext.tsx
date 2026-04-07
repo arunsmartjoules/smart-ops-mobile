@@ -33,11 +33,28 @@ import { fetchWithTimeout } from "../utils/apiHelper";
 import { clearDatabase } from "@/database";
 
 const BACKEND_URL = API_BASE_URL;
-const GOOGLE_SKIP_VERIFY_ONCE_KEY = "google_skip_verify_once";
+const GOOGLE_SKIP_VERIFY_KEY = "google_skip_verify";
 const LAST_PROFILE_FETCH_STATUS_KEY = "last_profile_fetch_status";
 
 const normalizeEmail = (email?: string | null) =>
   String(email || "").trim().toLowerCase();
+
+const hasGoogleProvider = (firebaseUser?: FirebaseUser | null) =>
+  Boolean(
+    firebaseUser?.providerData?.some(
+      (provider) => provider?.providerId === "google.com",
+    ),
+  );
+
+const getEffectiveEmailVerified = (
+  firebaseUser: FirebaseUser,
+  skipGoogleVerification: boolean,
+) =>
+  Boolean(
+    firebaseUser.emailVerified ||
+      hasGoogleProvider(firebaseUser) ||
+      skipGoogleVerification,
+  );
 
 interface AuthUser {
   id: string;
@@ -224,16 +241,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       logger.debug(`Firebase auth state change: ${!!firebaseUser}`, { module: "AUTH_CONTEXT" });
 
       if (firebaseUser) {
-        const skipVerifyOnce = await AsyncStorage.getItem(
-          GOOGLE_SKIP_VERIFY_ONCE_KEY,
+        const skipGoogleVerification = await AsyncStorage.getItem(
+          GOOGLE_SKIP_VERIFY_KEY,
         );
-        const shouldSkipVerification = skipVerifyOnce === "true";
-        if (shouldSkipVerification) {
-          setIsEmailVerified(true);
-          await AsyncStorage.removeItem(GOOGLE_SKIP_VERIFY_ONCE_KEY);
-        } else {
-          setIsEmailVerified(firebaseUser.emailVerified);
-        }
+        const shouldSkipVerification = skipGoogleVerification === "true";
+        setIsEmailVerified(
+          getEffectiveEmailVerified(firebaseUser, shouldSkipVerification),
+        );
         const idToken = await firebaseUser.getIdToken();
         setToken(idToken);
         await AsyncStorage.setItem("firebase-token", idToken);
@@ -333,6 +347,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   const signIn = useCallback(async (email: string, password: string) => {
     logger.activity("LOGIN_ATTEMPT", "AUTH", `Login attempt for ${email}`, { email });
     try {
+      // Ensure email/password sessions are not treated as Google-verified.
+      await AsyncStorage.removeItem(GOOGLE_SKIP_VERIFY_KEY);
       await signInWithEmailAndPassword(auth, email, password);
       return { error: null };
     } catch (error: any) {
@@ -376,7 +392,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         return { error: "Missing custom token from Google auth response" };
       }
 
-      await AsyncStorage.setItem(GOOGLE_SKIP_VERIFY_ONCE_KEY, "true");
+      await AsyncStorage.setItem(GOOGLE_SKIP_VERIFY_KEY, "true");
       await signInWithCustomToken(auth, customToken);
 
       return { error: null };
@@ -394,6 +410,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       logger.activity("SIGNUP_ATTEMPT", "AUTH", `Signup start for ${email}`, { email, name });
       
       try {
+        // Ensure signup/password flow requires regular email verification.
+        await AsyncStorage.removeItem(GOOGLE_SKIP_VERIFY_KEY);
         // 1. Create user in Firebase Auth
         logger.debug("Creating user in Firebase Auth", { module: "AUTH_CONTEXT", email });
         const userCredential = await createUserWithEmailAndPassword(auth, email, password);
@@ -659,8 +677,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     if (!auth.currentUser) return;
     try {
       await auth.currentUser.reload();
-      setIsEmailVerified(auth.currentUser.emailVerified);
-      logger.debug("Firebase user reloaded", { module: "AUTH_CONTEXT", verified: auth.currentUser.emailVerified });
+      const skipGoogleVerification = await AsyncStorage.getItem(
+        GOOGLE_SKIP_VERIFY_KEY,
+      );
+      const shouldSkipVerification = skipGoogleVerification === "true";
+      const effectiveVerified = getEffectiveEmailVerified(
+        auth.currentUser,
+        shouldSkipVerification,
+      );
+      setIsEmailVerified(effectiveVerified);
+      logger.debug("Firebase user reloaded", {
+        module: "AUTH_CONTEXT",
+        verified: effectiveVerified,
+        emailVerified: auth.currentUser.emailVerified,
+        googleProvider: hasGoogleProvider(auth.currentUser),
+      });
     } catch (e: any) {
       logger.error("Failed to reload user", { module: "AUTH_CONTEXT", error: e.message });
     }

@@ -11,18 +11,11 @@ import {
 } from "react-native";
 import { Mail, Lock, User, Zap, Eye, EyeOff } from "lucide-react-native";
 import { FontAwesome5 } from "@expo/vector-icons";
-import { useIdTokenAuthRequest } from "expo-auth-session/providers/google";
 import { router } from "expo-router";
 import { useAuth } from "@/contexts/AuthContext";
 import { showAlert } from "@/utils/alert";
 import logger from "@/utils/logger";
-
-const GOOGLE_ANDROID_CLIENT_ID =
-  process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID ||
-  "827077771492-f70i5f338hbs73mqlflk0s2m0oqok4kr.apps.googleusercontent.com";
-const GOOGLE_WEB_CLIENT_ID =
-  process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID ||
-  "522269111144-d6q0lfa7ddrcrootb44sjp6obt6qr1e5.apps.googleusercontent.com";
+import { getNativeGoogleIdToken } from "@/services/GoogleAuthService";
 
 export default function SignUp() {
   const [name, setName] = useState("");
@@ -31,12 +24,6 @@ export default function SignUp() {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const { signUp, signInWithGoogleIdToken } = useAuth();
-
-  const [request, , promptAsync] = useIdTokenAuthRequest({
-    androidClientId: GOOGLE_ANDROID_CLIENT_ID,
-    webClientId: GOOGLE_WEB_CLIENT_ID,
-    scopes: ["openid", "profile", "email"],
-  });
 
   const handleSignUp = async () => {
     if (!name || !email || !password) {
@@ -71,18 +58,7 @@ export default function SignUp() {
   const handleGoogleSignUp = async () => {
     setLoading(true);
     try {
-      const authResult = await promptAsync();
-      const idToken =
-        (authResult as any)?.params?.id_token ||
-        (authResult as any)?.params?.idToken;
-
-      if (!idToken) {
-        showAlert(
-          "Google Sign Up Failed",
-          "Could not retrieve Google authentication token.",
-        );
-        return;
-      }
+      const idToken = await getNativeGoogleIdToken();
 
       const { error } = await signInWithGoogleIdToken(String(idToken));
       if (error) {
@@ -202,7 +178,7 @@ export default function SignUp() {
               {/* Google Sign Up Button */}
               <TouchableOpacity
                 onPress={handleGoogleSignUp}
-                disabled={loading || !request}
+                disabled={loading}
                 className="mt-4 border border-slate-300 dark:border-slate-700 py-3 rounded-lg flex-row items-center justify-center active:opacity-90"
               >
                 <FontAwesome5 name="google" size={18} color="#dc2626" />

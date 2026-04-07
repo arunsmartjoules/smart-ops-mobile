@@ -11,17 +11,10 @@ import {
 } from "react-native";
 import { Mail, Lock, Zap, Eye, EyeOff } from "lucide-react-native";
 import { FontAwesome5 } from "@expo/vector-icons";
-import { useIdTokenAuthRequest } from "expo-auth-session/providers/google";
 import { router } from "expo-router";
 import { useAuth } from "@/contexts/AuthContext";
 import { showAlert } from "@/utils/alert";
-
-const GOOGLE_ANDROID_CLIENT_ID =
-  process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID ||
-  "827077771492-f70i5f338hbs73mqlflk0s2m0oqok4kr.apps.googleusercontent.com";
-const GOOGLE_WEB_CLIENT_ID =
-  process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID ||
-  "522269111144-d6q0lfa7ddrcrootb44sjp6obt6qr1e5.apps.googleusercontent.com";
+import { getNativeGoogleIdToken } from "@/services/GoogleAuthService";
 
 export default function SignIn() {
   const [email, setEmail] = useState("");
@@ -29,12 +22,6 @@ export default function SignIn() {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const { signIn, signInWithGoogleIdToken } = useAuth();
-
-  const [request, _response, promptAsync] = useIdTokenAuthRequest({
-    androidClientId: GOOGLE_ANDROID_CLIENT_ID,
-    webClientId: GOOGLE_WEB_CLIENT_ID,
-    scopes: ["openid", "profile", "email"],
-  });
 
   const handleSignIn = async () => {
     if (!email || !password) {
@@ -68,18 +55,7 @@ export default function SignIn() {
   const handleGoogleSignIn = async () => {
     setLoading(true);
     try {
-      const authResult = await promptAsync();
-      const idToken =
-        (authResult as any)?.params?.id_token ||
-        (authResult as any)?.params?.idToken;
-
-      if (!idToken) {
-        showAlert(
-          "Google Sign In Failed",
-          "Could not retrieve Google authentication token.",
-        );
-        return;
-      }
+      const idToken = await getNativeGoogleIdToken();
 
       const { error } = await signInWithGoogleIdToken(String(idToken));
       if (error) {
@@ -193,7 +169,7 @@ export default function SignIn() {
               {/* Google Sign In */}
               <TouchableOpacity
                 onPress={handleGoogleSignIn}
-                disabled={loading || !request}
+                disabled={loading}
                 className="mt-4 border border-slate-300 dark:border-slate-700 py-3 rounded-lg flex-row items-center justify-center active:opacity-90"
               >
                 <FontAwesome5 name="google" size={18} color="#dc2626" />
