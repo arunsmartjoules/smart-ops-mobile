@@ -520,21 +520,35 @@ export const TicketsService = {
       message_id?: string;
     },
   ) {
-    // Enqueue for offline sync
-    await cacheManager.enqueue({
-      entity_type: "ticket_line_item",
-      operation: "create",
-      payload: { ticket_id: id, ...data },
-    });
-
-    // Best-effort API call
     try {
       const result = await apiFetch(`/api/complaints/${id}/line-items`, {
         method: "POST",
         body: JSON.stringify(data),
       });
+
+      // Success: do not enqueue, otherwise SyncEngine will replay and duplicate.
+      if (result?.success) {
+        return result;
+      }
+
+      // Queue only for transient/offline failures.
+      if (result?.isNetworkError) {
+        await cacheManager.enqueue({
+          entity_type: "ticket_line_item",
+          operation: "create",
+          payload: { ticket_id: id, ...data },
+        });
+        return { success: false, error: "Offline: Line item queued for sync.", queued: true };
+      }
+
+      // For non-network API failures (validation/auth/etc), do not queue.
       return result;
     } catch {
+      await cacheManager.enqueue({
+        entity_type: "ticket_line_item",
+        operation: "create",
+        payload: { ticket_id: id, ...data },
+      });
       return { success: false, error: "Offline: Line item queued for sync.", queued: true };
     }
   },

@@ -217,17 +217,20 @@ const PMCard = React.memo(
         <View className="mt-2 pt-2 border-t border-slate-50 dark:border-slate-800 flex-row items-center justify-between flex-wrap gap-y-1">
           <View className="flex-row items-center gap-1.5 flex-shrink max-w-[65%]">
             <Clock size={10} color="#94a3b8" />
-            <Text className="text-slate-400 dark:text-slate-500 text-[10px] font-medium" numberOfLines={1}>
-              Due: <Text className="text-slate-600 dark:text-slate-300 font-bold">{safeFormat(instance.start_due_date, "d MMM yyyy")}</Text>
+            <Text
+              className="text-slate-400 dark:text-slate-500 text-[10px] font-medium flex-shrink"
+              numberOfLines={1}
+            >
+              {`Due: ${safeFormat(instance.start_due_date, "d MMM yyyy")}`}
             </Text>
-            {showCompletedDate && instance.completed_on && (
-              <View className="flex-row items-center flex-shrink">
-                <Text className="text-slate-400 mx-0.5">•</Text>
-                <Text className="text-green-600 dark:text-green-400 text-[10px] font-medium" numberOfLines={1}>
-                  Done: <Text className="font-bold">{safeFormat(instance.completed_on, "d MMM")}</Text>
-                </Text>
-              </View>
-            )}
+            {showCompletedDate && instance.completed_on ? (
+              <Text
+                className="text-green-600 dark:text-green-400 text-[10px] font-medium flex-shrink"
+                numberOfLines={1}
+              >
+                {`• Done: ${safeFormat(instance.completed_on, "d MMM")}`}
+              </Text>
+            ) : null}
           </View>
 
           {instance.assigned_to_name ? (
@@ -619,9 +622,21 @@ export default function PreventiveMaintenance() {
 
   const handlePMCardPress = useCallback(
     async (instance: PMInstanceRow) => {
-      // Auto-assign on tap
-      const userName = (user?.full_name && user.full_name.trim()) || (user?.name && user.name.trim()) || user?.email || "User";
-      if (instance.assigned_to_name !== userName) {
+      const normalizedStatus = (instance.status || "").toLowerCase();
+      const shouldAutoAssign =
+        normalizedStatus === "pending" ||
+        normalizedStatus === "open" ||
+        normalizedStatus === "in-progress" ||
+        normalizedStatus === "in progress" ||
+        normalizedStatus === "inprogress";
+
+      // Auto-assign only for active PMs, not completed ones.
+      const userName =
+        (user?.full_name && user.full_name.trim()) ||
+        (user?.name && user.name.trim()) ||
+        user?.email ||
+        "User";
+      if (shouldAutoAssign && instance.assigned_to_name !== userName) {
         await PMService.updateAssignment(instance.id, userName);
         // Optimistic update
         setAllInstances((prev) =>

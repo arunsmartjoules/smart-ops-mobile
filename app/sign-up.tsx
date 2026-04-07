@@ -11,14 +11,17 @@ import {
 } from "react-native";
 import { Mail, Lock, User, Zap, Eye, EyeOff } from "lucide-react-native";
 import { FontAwesome5 } from "@expo/vector-icons";
-import { makeRedirectUri } from "expo-auth-session";
 import { useIdTokenAuthRequest } from "expo-auth-session/providers/google";
 import { router } from "expo-router";
 import { useAuth } from "@/contexts/AuthContext";
 import { showAlert } from "@/utils/alert";
 import logger from "@/utils/logger";
 
-const GOOGLE_CLIENT_ID =
+const GOOGLE_ANDROID_CLIENT_ID =
+  process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID ||
+  "827077771492-f70i5f338hbs73mqlflk0s2m0oqok4kr.apps.googleusercontent.com";
+const GOOGLE_WEB_CLIENT_ID =
+  process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID ||
   "522269111144-d6q0lfa7ddrcrootb44sjp6obt6qr1e5.apps.googleusercontent.com";
 
 export default function SignUp() {
@@ -29,15 +32,10 @@ export default function SignUp() {
   const [loading, setLoading] = useState(false);
   const { signUp, signInWithGoogleIdToken } = useAuth();
 
-  const redirectUri = makeRedirectUri({
-    scheme: "jouleops",
-    path: "oauthredirect",
-  });
-
   const [request, , promptAsync] = useIdTokenAuthRequest({
-    clientId: GOOGLE_CLIENT_ID,
+    androidClientId: GOOGLE_ANDROID_CLIENT_ID,
+    webClientId: GOOGLE_WEB_CLIENT_ID,
     scopes: ["openid", "profile", "email"],
-    redirectUri,
   });
 
   const handleSignUp = async () => {

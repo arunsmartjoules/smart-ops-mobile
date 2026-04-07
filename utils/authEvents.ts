@@ -1,4 +1,9 @@
-type AuthEventCallback = () => void;
+export type AuthUnauthorizedReason =
+  | "unauthorized"
+  | "token_missing"
+  | "session_revoked";
+
+type AuthEventCallback = (reason: AuthUnauthorizedReason) => void;
 
 class AuthEventEmitter {
   private listeners: AuthEventCallback[] = [];
@@ -10,8 +15,8 @@ class AuthEventEmitter {
     };
   }
 
-  emitUnauthorized() {
-    this.listeners.forEach((callback) => callback());
+  emitUnauthorized(reason: AuthUnauthorizedReason = "unauthorized") {
+    this.listeners.forEach((callback) => callback(reason));
   }
 }
 

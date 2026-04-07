@@ -56,6 +56,18 @@ class SiteResolverImpl implements SiteResolver {
   private _sites: Site[] = [];
   private _listeners: Set<(sites: Site[]) => void> = new Set();
 
+  private _dedupeSitesByCode(sites: Site[]): Site[] {
+    const seen = new Set<string>();
+    const deduped: Site[] = [];
+    for (const site of sites) {
+      const key = String(site.site_code || "").trim().toLowerCase();
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      deduped.push(site);
+    }
+    return deduped;
+  }
+
   // ── getSites ──────────────────────────────────────────────────────────────
 
   getSites(): Site[] {
@@ -92,14 +104,14 @@ class SiteResolverImpl implements SiteResolver {
         .where(eq(userSites.user_id, identityKey));
 
       if (rows.length > 0) {
-        const sites: Site[] = rows.map((r) => ({
+        const sites = this._dedupeSitesByCode(rows.map((r) => ({
           id: r.id,
           user_id: identityKey,
           site_id: r.site_id ?? null,
           site_code: r.site_code,
           site_name: r.site_name,
           name: r.site_name,
-        }));
+        })));
         logger.debug("SiteResolver: resolved from SQLite user_sites", {
           module: "SITE_RESOLVER",
           userId: identityKey,
@@ -124,14 +136,14 @@ class SiteResolverImpl implements SiteResolver {
       if (raw) {
         const cached = JSON.parse(raw) as Array<Record<string, any>>;
         if (Array.isArray(cached) && cached.length > 0) {
-          const sites: Site[] = cached.map((r) => ({
+          const sites = this._dedupeSitesByCode(cached.map((r) => ({
             id: r.id ?? `${identityKey}_${r.site_code}`,
             user_id: r.user_id ?? identityKey,
             site_id: r.site_id ?? null,
             site_code: r.site_code,
             site_name: r.site_name ?? r.name ?? r.site_code,
             name: r.site_name ?? r.name ?? r.site_code,
-          }));
+          })));
           logger.debug("SiteResolver: resolved from AsyncStorage cache", {
             module: "SITE_RESOLVER",
             userId: identityKey,
@@ -151,7 +163,10 @@ class SiteResolverImpl implements SiteResolver {
       });
     }
 
-    // Step 3: Infer distinct site_code values from tickets, pm_instances, site_logs
+    // Step 3: Infer distinct site_code values from local data tables.
+    // Keep this as a fallback only; do not return yet because API/user mapping
+    // is authoritative and may be narrower than local historical data.
+    let inferredSites: Site[] = [];
     try {
       const [ticketRows, pmRows, logRows] = await Promise.all([
         db.select({ site_code: tickets.site_code }).from(tickets),
@@ -166,7 +181,7 @@ class SiteResolverImpl implements SiteResolver {
       ]);
 
       if (allCodes.size > 0) {
-        const sites: Site[] = Array.from(allCodes).map((code) => ({
+        inferredSites = Array.from(allCodes).map((code) => ({
           id: `${identityKey}_${code}`,
           user_id: identityKey,
           site_id: null,
@@ -177,11 +192,9 @@ class SiteResolverImpl implements SiteResolver {
         logger.debug("SiteResolver: resolved by inference from data tables", {
           module: "SITE_RESOLVER",
           userId: identityKey,
-          count: sites.length,
+          count: inferredSites.length,
           source: "inference",
         });
-        this._emit(sites, start);
-        return;
       }
     } catch (error) {
       logger.error("SiteResolver: inference from data tables failed", {
@@ -199,14 +212,14 @@ class SiteResolverImpl implements SiteResolver {
         const result = await response.json();
         const data: any[] = result.data || [];
         if (data.length > 0) {
-          const sites: Site[] = data.map((r) => ({
+          const sites = this._dedupeSitesByCode(data.map((r) => ({
             id: r.id ?? `${identityKey}_${r.site_code}`,
             user_id: identityKey,
             site_id: r.site_id ?? null,
             site_code: r.site_code,
             site_name: r.site_name ?? r.name ?? r.site_code,
             name: r.site_name ?? r.name ?? r.site_code,
-          }));
+          })));
           logger.debug("SiteResolver: resolved from API", {
             module: "SITE_RESOLVER",
             userId: identityKey,
@@ -235,6 +248,16 @@ class SiteResolverImpl implements SiteResolver {
       });
     }
 
+    if (inferredSites.length > 0) {
+      logger.warn("SiteResolver: falling back to inferred sites (API unavailable)", {
+        module: "SITE_RESOLVER",
+        userId: identityKey,
+        count: inferredSites.length,
+      });
+      this._emit(this._dedupeSitesByCode(inferredSites), start);
+      return;
+    }
+
     // All steps failed — emit empty list
     logger.warn("SiteResolver: all resolution steps failed, returning []", {
       module: "SITE_RESOLVER",
@@ -261,14 +284,14 @@ class SiteResolverImpl implements SiteResolver {
 
       const result = await response.json();
       const data: any[] = result.data || [];
-      const sites: Site[] = data.map((r) => ({
+      const sites = this._dedupeSitesByCode(data.map((r) => ({
         id: r.id ?? `${identityKey}_${r.site_code}`,
         user_id: identityKey,
         site_id: r.site_id ?? null,
         site_code: r.site_code,
         site_name: r.site_name ?? r.name ?? r.site_code,
         name: r.site_name ?? r.name ?? r.site_code,
-      }));
+      })));
 
       // Persist to both SQLite and AsyncStorage
       await this._persistToCaches(identityKey, sites);
@@ -316,6 +339,7 @@ class SiteResolverImpl implements SiteResolver {
   private async _persistToCaches(userId: string, sites: Site[]): Promise<void> {
     // Persist to SQLite user_sites
     try {
+      await db.delete(userSites).where(eq(userSites.user_id, userId));
       for (const site of sites) {
         await db
           .insert(userSites)

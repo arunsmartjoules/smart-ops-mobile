@@ -109,8 +109,8 @@ function mapFirebaseUser(
   const normalized = normalizeEmail(profile?.email || firebaseUser.email);
   const backendUserId = String(profile?.user_id || profile?.id || "").trim();
   return {
-    id: backendUserId || normalized,
-    user_id: backendUserId || normalized,
+    id: backendUserId,
+    user_id: backendUserId,
     email: normalized,
     name: profile?.name ?? firebaseUser.displayName ?? "",
     full_name: profile?.full_name ?? firebaseUser.displayName ?? "",
@@ -209,8 +209,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
 
       // Keep session alive, but do not attach UUID-based identity fallback.
       const mapped = mapFirebaseUser(firebaseUser, {
-        user_id: normalizedEmail,
-        id: normalizedEmail,
+        user_id: "",
+        id: "",
         email: normalizedEmail,
       });
       setUser(mapped);
@@ -321,6 +321,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     });
 
     return () => unsubscribe();
+  }, [token, user?.user_id]);
+
+  // Ensure data sync bootstrap recovers when profile is refreshed later.
+  useEffect(() => {
+    if (!token || !user?.user_id) return;
+    syncEngine.initialize(user.user_id).catch(() => {});
+    siteResolver.initialize(user.user_id).catch(() => {});
   }, [token, user?.user_id]);
 
   const signIn = useCallback(async (email: string, password: string) => {
@@ -490,13 +497,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     }
   }, [token]);
 
-  // Listen for global 401 events from API calls
+  // Listen for global auth events, but do not sign users out on generic 401s.
+  // Users should stay logged in unless they explicitly sign out or their
+  // session is revoked (e.g. password/security change).
   useEffect(() => {
-    const unsubscribe = authEvents.subscribe(() => {
-      logger.warn("Global 401 event received. Signing out.", {
+    const unsubscribe = authEvents.subscribe((reason) => {
+      if (reason === "session_revoked") {
+        logger.warn("Session revoked event received. Signing out.", {
+          module: "AUTH_CONTEXT",
+          reason,
+        });
+        signOut();
+        return;
+      }
+
+      logger.warn("Unauthorized API response received, keeping user signed in.", {
         module: "AUTH_CONTEXT",
+        reason,
       });
-      signOut();
     });
     return unsubscribe;
   }, [signOut]);
@@ -544,7 +562,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     if (!auth.currentUser) return;
     const idToken = await auth.currentUser.getIdToken(true);
     setToken(idToken);
-    await fetchAndSetProfile(auth.currentUser, idToken);
+    const refreshed = await fetchAndSetProfile(auth.currentUser, idToken);
+    if (refreshed?.user_id) {
+      syncEngine.initialize(refreshed.user_id).catch(() => {});
+      siteResolver.initialize(refreshed.user_id).catch(() => {});
+    }
   }, [fetchAndSetProfile]);
 
   const changePassword = useCallback(async (password: string) => {
