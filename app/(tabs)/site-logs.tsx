@@ -15,6 +15,7 @@ import { SiteConfigService } from "@/services/SiteConfigService";
 import LogFilterModal from "@/components/sitelogs/LogFilterModal";
 import {
   Filter,
+  RefreshCw,
   MapPin,
   ChevronDown,
   Thermometer,
@@ -50,6 +51,7 @@ export default function SiteLogs() {
   const [shiftCounts, setShiftCounts] = useState<Record<string, number>>({ A: 0, B: 0, C: 0 });
   const [chillerDailyPending, setChillerDailyPending] = useState(0);
   const { isConnected } = useNetworkStatus();
+  const prePullInFlightRef = useRef(false);
 
   // ── Clean sites hook ──────────────────────────────────────────────────────
   const userId = user?.user_id || user?.id;
@@ -115,6 +117,50 @@ export default function SiteLogs() {
       refreshingRef.current = false;
     }
   }, [fromDate, toDate, isConnected]);
+
+  // Full online pull set used by Start flow to ensure destination screens have fresh local data.
+  const pullLatestForSite = useCallback(
+    async (targetSite: string, opts?: { force?: boolean }) => {
+      if (!targetSite) return;
+      if (!isConnected) return;
+      if (prePullInFlightRef.current) return;
+
+      const force = opts?.force ?? false;
+      const now = Date.now();
+      const lastSyncTime = lastSyncRef.current[targetSite] || 0;
+      const shouldSync =
+        force || refreshingRef.current || lastSyncTime === 0 || now - lastSyncTime > 1000 * 60 * 10;
+
+      if (!shouldSync) return;
+
+      prePullInFlightRef.current = true;
+      try {
+        const fromDateObj = startOfDay(addDays(new Date(), -7));
+        const toDateObj = endOfDay(addDays(new Date(), 7));
+        await Promise.all([
+          siteLogService.pullSiteLogs(targetSite, {
+            fromDate: fromDateObj.getTime(),
+            toDate: toDateObj.getTime(),
+          }),
+          siteLogService.pullChillerReadings(targetSite, {
+            fromDate: fromDateObj.getTime(),
+            toDate: toDateObj.getTime(),
+          }),
+          siteLogService.pullLogMaster(),
+        ]);
+        lastSyncRef.current = { ...lastSyncRef.current, [targetSite]: now };
+      } finally {
+        prePullInFlightRef.current = false;
+      }
+    },
+    [isConnected],
+  );
+
+  const handleHeaderManualRefresh = useCallback(async () => {
+    if (!isConnected || !siteCode) return;
+    await pullLatestForSite(siteCode, { force: true });
+    await fetchLogs(siteCode);
+  }, [fetchLogs, isConnected, pullLatestForSite, siteCode]);
 
   // Keep a stable ref to the latest fetchLogs so useFocusEffect doesn't re-register
   useEffect(() => {
@@ -218,19 +264,40 @@ export default function SiteLogs() {
                 <ChevronDown size={20} color="#94a3b8" />
               </TouchableOpacity>
             </View>
-            <TouchableOpacity
-              onPress={() => setFilterVisible(true)}
-              className="w-11 h-11 rounded-xl bg-white dark:bg-slate-900 items-center justify-center"
-              style={{
-                shadowColor: "#000",
-                shadowOffset: { width: 0, height: 2 },
-                shadowOpacity: 0.08,
-                shadowRadius: 8,
-                elevation: 3,
-              }}
-            >
-              <Filter size={20} color={fromDate ? "#dc2626" : isDark ? "#dc2626" : "#64748b"} />
-            </TouchableOpacity>
+            <View className="flex-row items-center gap-2">
+              <TouchableOpacity
+                disabled={!isConnected || !siteCode}
+                onPress={handleHeaderManualRefresh}
+                className="w-11 h-11 rounded-xl bg-white dark:bg-slate-900 items-center justify-center"
+                style={{
+                  opacity: !isConnected || !siteCode ? 0.4 : 1,
+                  shadowColor: "#000",
+                  shadowOffset: { width: 0, height: 2 },
+                  shadowOpacity: 0.08,
+                  shadowRadius: 8,
+                  elevation: 3,
+                }}
+              >
+                <RefreshCw
+                  size={20}
+                  color={!isConnected || !siteCode ? "#94a3b8" : "#dc2626"}
+                />
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={() => setFilterVisible(true)}
+                className="w-11 h-11 rounded-xl bg-white dark:bg-slate-900 items-center justify-center"
+                style={{
+                  shadowColor: "#000",
+                  shadowOffset: { width: 0, height: 2 },
+                  shadowOpacity: 0.08,
+                  shadowRadius: 8,
+                  elevation: 3,
+                }}
+              >
+                <Filter size={20} color={fromDate ? "#dc2626" : isDark ? "#dc2626" : "#64748b"} />
+              </TouchableOpacity>
+            </View>
           </View>
 
           {/* Stats Bar */}
@@ -402,20 +469,23 @@ export default function SiteLogs() {
 
                       <View className="flex-row gap-2 mt-auto">
                         <TouchableOpacity
-                          onPress={() => {
+                          onPress={async () => {
+                            if (!siteCode) return;
+
+                            // Ensure destination screens see freshly pulled local data first time.
+                            await pullLatestForSite(siteCode, { force: true });
+
                             if (item.id === "temp-rh") {
                               setShiftModalVisible(true);
                               // Load pending counts for each shift
-                              if (siteCode) {
-                                const today = new Date().toISOString().slice(0, 10);
-                                Promise.all([
-                                  SiteConfigService.getPendingCountForDate(siteCode, "Temp RH", today, "A"),
-                                  SiteConfigService.getPendingCountForDate(siteCode, "Temp RH", today, "B"),
-                                  SiteConfigService.getPendingCountForDate(siteCode, "Temp RH", today, "C"),
-                                ])
-                                  .then(([a, b, c]) => setShiftCounts({ A: a, B: b, C: c }))
-                                  .catch(() => {});
-                              }
+                              const today = new Date().toISOString().slice(0, 10);
+                              Promise.all([
+                                SiteConfigService.getPendingCountForDate(siteCode, "Temp RH", today, "A"),
+                                SiteConfigService.getPendingCountForDate(siteCode, "Temp RH", today, "B"),
+                                SiteConfigService.getPendingCountForDate(siteCode, "Temp RH", today, "C"),
+                              ])
+                                .then(([a, b, c]) => setShiftCounts({ A: a, B: b, C: c }))
+                                .catch(() => {});
                             } else {
                               router.push({
                                 pathname: item.route,

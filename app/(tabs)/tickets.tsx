@@ -14,6 +14,7 @@ import * as Haptics from "expo-haptics";
 import {
   Ticket as TicketIcon,
   Filter,
+  RefreshCw,
   MapPin,
   ChevronDown,
 } from "lucide-react-native";
@@ -839,9 +840,29 @@ export default function Tickets() {
                 <ChevronDown size={20} color="#94a3b8" />
               </TouchableOpacity>
             </View>
-            <TouchableOpacity onPress={() => setShowFiltersModal(true)} className="w-11 h-11 rounded-xl bg-white dark:bg-slate-900 items-center justify-center">
-              <Filter size={20} color={fromDate ? "#dc2626" : (isDark ? "#dc2626" : "#64748b")} />
-            </TouchableOpacity>
+            <View className="flex-row items-center gap-2">
+              <TouchableOpacity
+                disabled={!isConnected || !selectedSiteCode}
+                onPress={() => {
+                  if (!isConnected || !selectedSiteCode) return;
+                  onRefresh();
+                }}
+                className="w-11 h-11 rounded-xl bg-white dark:bg-slate-900 items-center justify-center"
+                style={{ opacity: !isConnected || !selectedSiteCode ? 0.4 : 1 }}
+              >
+                <RefreshCw
+                  size={20}
+                  color={!isConnected || !selectedSiteCode ? "#94a3b8" : "#dc2626"}
+                />
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={() => setShowFiltersModal(true)}
+                className="w-11 h-11 rounded-xl bg-white dark:bg-slate-900 items-center justify-center"
+              >
+                <Filter size={20} color={fromDate ? "#dc2626" : (isDark ? "#dc2626" : "#64748b")} />
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
 

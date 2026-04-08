@@ -24,6 +24,7 @@ import {
   Wrench,
   ChevronRight,
   Filter,
+  RefreshCw,
   WifiOff,
   MapPin,
   ChevronDown,
@@ -508,6 +509,12 @@ export default function PreventiveMaintenance() {
     setRefreshing(false);
   }, [loadPMData]);
 
+  const handleHeaderManualRefresh = useCallback(async () => {
+    if (!isConnected) return;
+    // Reload from API (only runs when online) and keep UI stable (no spinner).
+    await loadPMData(true, 0, false);
+  }, [isConnected, loadPMData]);
+
   const filteredInstances = useMemo(() => {
     let list = [...allInstances];
 
@@ -779,44 +786,62 @@ export default function PreventiveMaintenance() {
               </TouchableOpacity>
             </View>
 
-            <TouchableOpacity
-              onPress={() => setShowFiltersModal(true)}
-              className="flex-shrink-0"
-            >
-              <View className="items-end">
-                <View className="flex-row items-center bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded-lg mb-1">
-                  <CalendarIcon size={12} color="#64748b" />
-                  <Text className="text-[10px] font-bold text-slate-500 ml-1">
-                    {safeFormat(currentDate, "d MMM")}
-                    {currentDate !== toDate
-                      ? ` - ${safeFormat(toDate, "d MMM")}`
-                      : ""}
-                  </Text>
-                </View>
-                <View
-                  className="w-11 h-11 rounded-xl bg-white dark:bg-slate-900 items-center justify-center"
-                  style={{
-                    shadowColor: "#000",
-                    shadowOffset: { width: 0, height: 2 },
-                    shadowOpacity: 0.08,
-                    shadowRadius: 8,
-                    elevation: 3,
-                  }}
-                >
-                  <Filter
-                    size={20}
-                    color={
-                      tempFromDate !== format(new Date(), "yyyy-MM-dd") ||
-                      tempToDate !== format(new Date(), "yyyy-MM-dd")
-                        ? "#dc2626"
-                        : isDark
+            <View className="flex-row items-center gap-2 flex-shrink-0">
+              <TouchableOpacity
+                disabled={!isConnected}
+                onPress={handleHeaderManualRefresh}
+                className="w-11 h-11 rounded-xl bg-white dark:bg-slate-900 items-center justify-center"
+                style={{
+                  opacity: !isConnected ? 0.4 : 1,
+                  shadowColor: "#000",
+                  shadowOffset: { width: 0, height: 2 },
+                  shadowOpacity: 0.08,
+                  shadowRadius: 8,
+                  elevation: 3,
+                }}
+              >
+                <RefreshCw size={20} color={!isConnected ? "#94a3b8" : "#dc2626"} />
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={() => setShowFiltersModal(true)}
+                className="flex-shrink-0"
+              >
+                <View className="items-end">
+                  <View className="flex-row items-center bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded-lg mb-1">
+                    <CalendarIcon size={12} color="#64748b" />
+                    <Text className="text-[10px] font-bold text-slate-500 ml-1">
+                      {safeFormat(currentDate, "d MMM")}
+                      {currentDate !== toDate
+                        ? ` - ${safeFormat(toDate, "d MMM")}`
+                        : ""}
+                    </Text>
+                  </View>
+                  <View
+                    className="w-11 h-11 rounded-xl bg-white dark:bg-slate-900 items-center justify-center"
+                    style={{
+                      shadowColor: "#000",
+                      shadowOffset: { width: 0, height: 2 },
+                      shadowOpacity: 0.08,
+                      shadowRadius: 8,
+                      elevation: 3,
+                    }}
+                  >
+                    <Filter
+                      size={20}
+                      color={
+                        tempFromDate !== format(new Date(), "yyyy-MM-dd") ||
+                        tempToDate !== format(new Date(), "yyyy-MM-dd")
                           ? "#dc2626"
-                          : "#64748b"
-                    }
-                  />
+                          : isDark
+                            ? "#dc2626"
+                            : "#64748b"
+                      }
+                    />
+                  </View>
                 </View>
-              </View>
-            </TouchableOpacity>
+              </TouchableOpacity>
+            </View>
           </View>
 
           <View className="flex-row gap-2 mb-3">
