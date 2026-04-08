@@ -131,6 +131,7 @@ interface ISiteLogService {
     siteCode: string,
     options?: { fromDate?: number; toDate?: number },
   ): Promise<void>;
+  prefetchPendingForCategory(siteCode: string, logName: string): Promise<void>;
   getTodayChillerReadingCount(siteCode: string, targetDate?: Date): Promise<number>;
   getTodayChillerCompletedReadingCount(
     siteCode: string,
@@ -1208,6 +1209,27 @@ export const SiteLogService: ISiteLogService = {
         error: error.message,
       });
     }
+  },
+
+  async prefetchPendingForCategory(siteCode: string, logName: string): Promise<void> {
+    const netState = await NetInfo.fetch();
+    if (netState.isConnected === false) return;
+
+    const normalized = normalizeLogName(logName);
+    if (normalized === "Chiller Logs") {
+      const fromDateObj = startOfDay(addDays(new Date(), -1));
+      const toDateObj = endOfDay(addDays(new Date(), 1));
+      await this.pullChillerReadings(siteCode, {
+        fromDate: fromDateObj.getTime(),
+        toDate: toDateObj.getTime(),
+      });
+      return;
+    }
+
+    await this.pullSiteLogs(siteCode, {
+      logName: normalized,
+      status: "pending",
+    });
   },
 
   async getTodayChillerReadingCount(

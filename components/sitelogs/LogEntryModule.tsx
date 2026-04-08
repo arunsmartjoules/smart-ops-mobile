@@ -156,6 +156,58 @@ export const LogEntryModule = ({ type, siteCode: initialSiteCode, onBack }: LogE
             if (sig) setSignature(sig);
           } catch {}
         }
+
+        // Background pending-only refresh so Open/Inprogress records are available
+        // on first Start flow without forcing user to visit History first.
+        void SiteLogService.prefetchPendingForCategory(siteCode, logName)
+          .then(async () => {
+            const refreshedTasks = await SiteConfigService.getPendingTasks(
+              siteCode,
+              logName,
+              scheduledDate,
+              shift || undefined,
+            );
+
+            const refreshedInitialValues: Record<string, any> = {};
+            refreshedTasks.forEach((task) => {
+              if (type === "Chemical") {
+                refreshedInitialValues[task.id] = {
+                  dosing: task.meta?.chemical_dosing || "",
+                  attachment: task.meta?.attachment || "",
+                  mainRemarks: task.meta?.main_remarks || "",
+                };
+              } else if (type === "Water") {
+                refreshedInitialValues[task.id] = {
+                  tds: task.meta?.tds?.toString() || "",
+                  ph: task.meta?.ph?.toString() || "",
+                  hardness: task.meta?.hardness?.toString() || "",
+                  attachment: task.meta?.attachment || "",
+                  mainRemarks: task.meta?.main_remarks || "",
+                };
+              } else {
+                refreshedInitialValues[task.id] = {
+                  temp: task.meta?.temperature?.toString() || "",
+                  rh: task.meta?.rh?.toString() || "",
+                  attachment: task.meta?.attachment || "",
+                  mainRemarks: task.meta?.main_remarks || "",
+                };
+              }
+            });
+
+            setTasks(refreshedTasks);
+            setLogValues((prev) => {
+              const merged = { ...refreshedInitialValues };
+              Object.keys(prev).forEach((key) => {
+                if (merged[key]) {
+                  merged[key] = { ...merged[key], ...prev[key] };
+                } else {
+                  merged[key] = prev[key];
+                }
+              });
+              return merged;
+            });
+          })
+          .catch(() => {});
       }
 
       setTasks(finalTasks);

@@ -469,11 +469,17 @@ export default function SiteLogs() {
 
                       <View className="flex-row gap-2 mt-auto">
                         <TouchableOpacity
-                          onPress={async () => {
+                          onPress={() => {
                             if (!siteCode) return;
 
-                            // Ensure destination screens see freshly pulled local data first time.
-                            await pullLatestForSite(siteCode, { force: true });
+                            // Non-blocking targeted prefetch for Start flow.
+                            void siteLogService
+                              .prefetchPendingForCategory(siteCode, getLogName(item.title))
+                              .then(() => {
+                                // Refresh top counters after prefetch completes.
+                                void fetchLogs(siteCode);
+                              })
+                              .catch(() => {});
 
                             if (item.id === "temp-rh") {
                               setShiftModalVisible(true);
