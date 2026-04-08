@@ -30,8 +30,6 @@ import {
   ChevronDown,
   Clock,
   Briefcase,
-  AlertCircle,
-  CheckCircle2,
   Search,
   ChevronLeft,
   Calendar as CalendarIcon,
@@ -267,59 +265,6 @@ const PMCard = React.memo(
 );
 
 PMCard.displayName = "PMCard";
-
-// ─── Stat Card ─────────────────────────────────────────────────────────────────
-const StatCard = React.memo(
-  ({
-    icon,
-    value,
-    label,
-    bg,
-    color,
-    isActive,
-    onPress,
-  }: {
-    icon: React.ReactNode;
-    value: number;
-    label: string;
-    bg: string;
-    color: string;
-    isActive: boolean;
-    onPress: () => void;
-  }) => {
-    return (
-      <TouchableOpacity
-        onPress={onPress}
-        activeOpacity={0.7}
-        className="flex-1 rounded-xl p-3 bg-white dark:bg-slate-900"
-        style={{
-          shadowColor: "#000",
-          shadowOffset: { width: 0, height: 1 },
-          shadowOpacity: 0.05,
-          shadowRadius: 4,
-          elevation: 2,
-          borderWidth: isActive ? 1 : 0,
-          borderColor: isActive ? color : "transparent",
-        }}
-      >
-        <View
-          className="w-8 h-8 rounded-lg items-center justify-center mb-2"
-          style={{ backgroundColor: bg }}
-        >
-          {icon}
-        </View>
-        <Text className="text-slate-900 dark:text-slate-50 text-xl font-bold">
-          {value}
-        </Text>
-        <Text className="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
-          {label}
-        </Text>
-      </TouchableOpacity>
-    );
-  },
-);
-
-StatCard.displayName = "StatCard";
 
 // ─── Main Screen ───────────────────────────────────────────────────────────────
 export default function PreventiveMaintenance() {
@@ -575,58 +520,6 @@ export default function PreventiveMaintenance() {
     toDate,
   ]);
 
-  const stats = useMemo(() => {
-    const startRange = startOfDay(parseISO(currentDate)).getTime();
-    const endRange = endOfDay(parseISO(toDate)).getTime();
-
-    // Local items for the current date range
-    const rangeInstances = allInstances.filter((i) => {
-      if (!i.start_due_date) return false;
-      const ts = new Date(i.start_due_date).getTime();
-      return ts >= startRange && ts <= endRange;
-    });
-
-    const localCount = {
-      total: rangeInstances.length,
-      pending: rangeInstances.filter((i) => {
-        const s = i.status?.toLowerCase() || "";
-        return s === "pending" || s === "overdue";
-      }).length,
-      inProgress: rangeInstances.filter((i) => {
-        const s = i.status?.toLowerCase() || "";
-        return s === "in-progress" || s === "in progress" || s === "inprogress";
-      }).length,
-      completed: rangeInstances.filter(
-        (i) => i.status?.toLowerCase() === "completed",
-      ).length,
-    };
-
-    // If we have server stats (Global Actual), AND our local list is incomplete (limit reached),
-    // then the server stats are the "Ground Truth" for total counts.
-    // However, if localCount.total >= serverStats.total, it means we HAVE the full picture locally.
-    if (serverStats) {
-      const serverInProgress =
-        (serverStats.byStatus?.["In-progress"] || 0) +
-        (serverStats.byStatus?.["In Progress"] || 0) +
-        (serverStats.byStatus?.Inprogress || 0);
-      const serverCompleted = serverStats.byStatus?.Completed || 0;
-
-      // Robust merging:
-      // 1. Total is the maximum of local and server.
-      // 2. In-progress/Completed: Always take the maximum (favors local updates + server reality).
-      // 3. Pending: Adjusted to keep the total consistent.
-      const total = Math.max(serverStats.total, localCount.total);
-      const inProgress = Math.max(localCount.inProgress, serverInProgress);
-      const completed = Math.max(localCount.completed, serverCompleted);
-      const pending = Math.max(0, total - inProgress - completed);
-
-      return { total, pending, inProgress, completed };
-    }
-
-    // Otherwise, use local counts (more up-to-date for immediately modified items)
-    return localCount;
-  }, [allInstances, currentDate, toDate, serverStats]);
-
   const handlePMCardPress = useCallback(
     async (instance: PMInstanceRow) => {
       const normalizedStatus = (instance.status || "").toLowerCase();
@@ -777,7 +670,7 @@ export default function PreventiveMaintenance() {
               >
                 <MapPin size={20} color="#dc2626" />
                 <Text
-                  className="text-slate-900 dark:text-slate-50 text-xl font-bold ml-2 mr-1 flex-shrink"
+                  className="text-slate-900 dark:text-slate-50 text-lg font-bold ml-2 mr-1 flex-shrink"
                   numberOfLines={1}
                 >
                   {siteName}
@@ -842,36 +735,6 @@ export default function PreventiveMaintenance() {
                 </View>
               </TouchableOpacity>
             </View>
-          </View>
-
-          <View className="flex-row gap-2 mb-3">
-            <StatCard
-              icon={<AlertCircle size={14} color="#f97316" />}
-              value={stats.pending}
-              label="Pending"
-              bg="#fff7ed"
-              color="#f97316"
-              isActive={statusFilter === "Pending"}
-              onPress={() => setStatusFilter("Pending")}
-            />
-            <StatCard
-              icon={<Clock size={14} color="#3b82f6" />}
-              value={stats.inProgress}
-              label="In Progress"
-              bg="#eff6ff"
-              color="#3b82f6"
-              isActive={statusFilter === "In-progress"}
-              onPress={() => setStatusFilter("In-progress")}
-            />
-            <StatCard
-              icon={<CheckCircle2 size={14} color="#22c55e" />}
-              value={stats.completed}
-              label="Completed"
-              bg="#f0fdf4"
-              color="#22c55e"
-              isActive={statusFilter === "Completed"}
-              onPress={() => setStatusFilter("Completed")}
-            />
           </View>
 
           <View
