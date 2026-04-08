@@ -13,7 +13,7 @@ import {
 } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
 import NetInfo from "@react-native-community/netinfo";
-import { startOfDay, endOfDay } from "date-fns";
+import { startOfDay, endOfDay, addDays } from "date-fns";
 import { db, siteLogs, chillerReadings, logMaster } from "../database";
 import logger from "../utils/logger";
 import { authEvents } from "../utils/authEvents";
@@ -323,6 +323,17 @@ export const SiteLogService: ISiteLogService = {
         }),
       );
 
+      // Determine which IDs already exist (pre-generated scheduled logs) so we
+      // sync them as UPDATE instead of CREATE on the backend.
+      const ids = recordsToInsert.map((r) => r.id).filter(Boolean);
+      const existingRows = ids.length
+        ? await db
+            .select({ id: siteLogs.id })
+            .from(siteLogs)
+            .where(inArray(siteLogs.id, ids))
+        : [];
+      const existingIdSet = new Set(existingRows.map((r) => r.id));
+
       // 2. Batch Insert
       await db
         .insert(siteLogs)
@@ -347,14 +358,60 @@ export const SiteLogService: ISiteLogService = {
 
       // 3. Enqueue for Sync
       for (const record of recordsToInsert) {
+        const isExisting = existingIdSet.has(record.id);
         await cacheManager.enqueue({
-          entity_type: "site_log_create",
-          operation: "create",
+          entity_type: isExisting ? "site_log_update" : "site_log_create",
+          operation: isExisting ? "update" : "create",
           payload: {
             ...record,
             scheduled_date: record.scheduled_date,
           },
         });
+      }
+
+      // 4. Best-effort immediate API sync (online path).
+      // Existing scheduled rows should be PUT, new rows should be POST.
+      for (const record of recordsToInsert) {
+        const isExisting = existingIdSet.has(record.id);
+        try {
+          if (isExisting) {
+            const response = await apiFetch(`/api/site-logs/${record.id}`, {
+              method: "PUT",
+              body: JSON.stringify({
+                temperature: record.temperature,
+                rh: record.rh,
+                tds: record.tds,
+                ph: record.ph,
+                hardness: record.hardness,
+                chemical_dosing: record.chemical_dosing,
+                remarks: record.remarks,
+                main_remarks: record.main_remarks,
+                signature: record.signature,
+                attachment: record.attachment,
+                status: record.status,
+                assigned_to: record.assigned_to,
+                scheduled_date: record.scheduled_date,
+              }),
+            });
+            if (!response.ok) {
+              throw new Error(`PUT /api/site-logs/${record.id} failed: ${response.status}`);
+            }
+          } else {
+            const response = await apiFetch("/api/site-logs", {
+              method: "POST",
+              body: JSON.stringify(record),
+            });
+            if (!response.ok) {
+              throw new Error(`POST /api/site-logs failed: ${response.status}`);
+            }
+          }
+        } catch {
+          logger.debug("saveBulkSiteLogs: immediate API sync failed, queued for retry", {
+            module: "SITE_LOG_SERVICE",
+            id: record.id,
+            mode: isExisting ? "update" : "create",
+          });
+        }
       }
 
       logger.info(`Bulk saved ${recordsToInsert.length} logs`, {
@@ -922,10 +979,13 @@ export const SiteLogService: ISiteLogService = {
 
       // Best-effort API call
       try {
-        await apiFetch(`/api/site-logs/${id}`, {
+        const response = await apiFetch(`/api/site-logs/${id}`, {
           method: "PUT",
           body: JSON.stringify(updateFields),
         });
+        if (!response.ok) {
+          throw new Error(`PUT /api/site-logs/${id} failed: ${response.status}`);
+        }
       } catch {
         logger.debug("updateSiteLog: API call failed, will sync later", {
           module: "SITE_LOG_SERVICE",
