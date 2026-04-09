@@ -2,7 +2,8 @@ import React from "react";
 import { View, Text, TouchableOpacity, TextInput, Image, Alert } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 import { Camera, Image as ImageIcon, X } from "lucide-react-native";
-import SearchableSelect, { type SelectOption } from "./SearchableSelect";
+import { type SelectOption } from "./SearchableSelect";
+import FullscreenPicker from "./FullscreenPicker";
 import { type Ticket } from "@/services/TicketsService";
 
 const STATUS_THEME: Record<
@@ -244,7 +245,7 @@ const TicketDetailStatusUpdate = ({
       {/* Area & Category (for Inprogress / Resolved) */}
       {showAreaAndCategory && (
         <View style={{ marginBottom: 8 }}>
-          <SearchableSelect
+          <FullscreenPicker
             label="Select Area *"
             placeholder="Choose an area..."
             value={updateArea}
@@ -260,7 +261,7 @@ const TicketDetailStatusUpdate = ({
             loadingMore={loadingMoreAreas}
             remoteSearch={Boolean(setAreaSearchQuery)}
           />
-          <SearchableSelect
+          <FullscreenPicker
             label="Select Category *"
             placeholder="Choose a category..."
             value={updateCategory}

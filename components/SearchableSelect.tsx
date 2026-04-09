@@ -7,7 +7,8 @@ import {
   Modal,
   FlatList,
   ActivityIndicator,
-  Keyboard,
+  Platform,
+  KeyboardAvoidingView,
 } from "react-native";
 import { Search, X, Check, ChevronDown } from "lucide-react-native";
 
@@ -77,7 +78,7 @@ export default function SearchableSelect({
         opt.label.toLowerCase().includes(query) ||
         opt.description?.toLowerCase().includes(query)
     );
-  }, [options, searchQuery]);
+  }, [options, searchQuery, remoteSearch]);
 
   const handleSelect = useCallback(
     (selectedValue: string) => {
@@ -88,7 +89,6 @@ export default function SearchableSelect({
       } else {
         setInternalSearchQuery("");
       }
-      Keyboard.dismiss();
     },
     [onChange, onSearchChange]
   );
@@ -100,7 +100,6 @@ export default function SearchableSelect({
     } else {
       setInternalSearchQuery("");
     }
-    Keyboard.dismiss();
   }, [onSearchChange]);
 
   const handleSearchChange = useCallback(
@@ -201,76 +200,84 @@ export default function SearchableSelect({
         transparent={true}
         onRequestClose={handleClose}
       >
-        <View
-          className={`flex-1 bg-black/50 ${modalPosition === "center" ? "justify-center px-6" : "justify-end"}`}
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+          style={{ flex: 1 }}
         >
           <View
-            className={`bg-white ${modalPosition === "center" ? "rounded-3xl" : "rounded-t-3xl"}`}
-            style={{ maxHeight: modalPosition === "center" ? "60%" : "80%" }}
+            className={`flex-1 bg-black/50 ${modalPosition === "center" ? "justify-center px-6" : "justify-end"}`}
           >
-            {/* Header */}
-            <View className="flex-row items-center justify-between px-5 py-4 border-b border-slate-100">
-              <Text className="text-slate-900 font-bold text-lg">{label}</Text>
-              <TouchableOpacity
-                onPress={handleClose}
-                className="w-8 h-8 rounded-full bg-slate-100 items-center justify-center"
-              >
-                <X size={18} color="#64748b" />
-              </TouchableOpacity>
-            </View>
+            <View
+              className={`bg-white ${modalPosition === "center" ? "rounded-3xl" : "rounded-t-3xl"}`}
+              style={{
+                maxHeight: modalPosition === "center" ? "60%" : "80%",
+                minHeight: modalPosition === "bottom" ? 240 : undefined,
+              }}
+            >
+              {/* Header */}
+              <View className="flex-row items-center justify-between px-5 py-4 border-b border-slate-100">
+                <Text className="text-slate-900 font-bold text-lg">{label}</Text>
+                <TouchableOpacity
+                  onPress={handleClose}
+                  className="w-8 h-8 rounded-full bg-slate-100 items-center justify-center"
+                >
+                  <X size={18} color="#64748b" />
+                </TouchableOpacity>
+              </View>
 
-            {!hideSearch && (
-              <View className="px-5 py-3">
-                <View className="flex-row items-center bg-slate-100 rounded-xl px-4 py-2">
-                  <Search size={18} color="#94a3b8" />
-                  <TextInput
-                    className="flex-1 ml-3 text-slate-900"
-                    placeholder={searchPlaceholder}
-                    placeholderTextColor="#94a3b8"
-                    value={searchQuery}
-                    onChangeText={handleSearchChange}
-                    autoFocus={true}
-                    autoCorrect={false}
-                  />
-                  {searchQuery.length > 0 && (
-                    <TouchableOpacity onPress={() => handleSearchChange("")}>
-                      <X size={16} color="#94a3b8" />
-                    </TouchableOpacity>
+              {!hideSearch && (
+                <View className="px-5 py-3">
+                  <View className="flex-row items-center bg-slate-100 rounded-xl px-4 py-2">
+                    <Search size={18} color="#94a3b8" />
+                    <TextInput
+                      className="flex-1 ml-3 text-slate-900"
+                      placeholder={searchPlaceholder}
+                      placeholderTextColor="#94a3b8"
+                      value={searchQuery}
+                      onChangeText={handleSearchChange}
+                      autoFocus={true}
+                      autoCorrect={false}
+                    />
+                    {searchQuery.length > 0 && (
+                      <TouchableOpacity onPress={() => handleSearchChange("")}>
+                        <X size={16} color="#94a3b8" />
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                </View>
+              )}
+
+              {/* Options List */}
+              {filteredOptions.length === 0 ? (
+                <View className="py-12 items-center">
+                  {loading ? (
+                    <ActivityIndicator size="small" color="#94a3b8" />
+                  ) : (
+                    <Text className="text-slate-400 text-sm">{emptyMessage}</Text>
                   )}
                 </View>
-              </View>
-            )}
-
-            {/* Options List */}
-            {filteredOptions.length === 0 ? (
-              <View className="py-12 items-center">
-                {loading ? (
-                  <ActivityIndicator size="small" color="#94a3b8" />
-                ) : (
-                  <Text className="text-slate-400 text-sm">{emptyMessage}</Text>
-                )}
-              </View>
-            ) : (
-              <FlatList
-                data={filteredOptions}
-                keyExtractor={(item) => item.value}
-                renderItem={renderOption}
-                keyboardShouldPersistTaps="handled"
-                showsVerticalScrollIndicator={false}
-                contentContainerStyle={{ paddingBottom: 40 }}
-                onEndReached={handleLoadMore}
-                onEndReachedThreshold={0.3}
-                ListFooterComponent={
-                  loadingMore ? (
-                    <View className="py-4 items-center">
-                      <ActivityIndicator size="small" color="#94a3b8" />
-                    </View>
-                  ) : null
-                }
-              />
-            )}
+              ) : (
+                <FlatList
+                  data={filteredOptions}
+                  keyExtractor={(item) => item.value}
+                  renderItem={renderOption}
+                  keyboardShouldPersistTaps="handled"
+                  showsVerticalScrollIndicator={false}
+                  contentContainerStyle={{ paddingBottom: 40 }}
+                  onEndReached={handleLoadMore}
+                  onEndReachedThreshold={0.3}
+                  ListFooterComponent={
+                    loadingMore ? (
+                      <View className="py-4 items-center">
+                        <ActivityIndicator size="small" color="#94a3b8" />
+                      </View>
+                    ) : null
+                  }
+                />
+              )}
+            </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
     </>
   );
