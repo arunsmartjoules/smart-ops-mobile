@@ -408,6 +408,10 @@ export const AttendanceService = {
         attendance_id: result.data.id,
         offline: false,
       });
+
+      // Write new attendance log to local cache so that getTodayAttendance()
+      // returns fresh data immediately on the next read.
+      await cacheManager.write("attendance", [result.data]).catch(() => {});
     }
 
     if (!result.success && result.isNetworkError) {
@@ -480,6 +484,12 @@ export const AttendanceService = {
         attendance_id: attendanceId,
         offline: false,
       });
+
+      // Write updated attendance log (with check_out_time) back to local cache
+      // so that getTodayAttendance() returns fresh data immediately.
+      if (result.data) {
+        await cacheManager.write("attendance", [result.data]).catch(() => {});
+      }
     }
 
     if (!result.success && result.isNetworkError) {

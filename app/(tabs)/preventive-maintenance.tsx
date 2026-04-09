@@ -30,6 +30,8 @@ import {
   ChevronDown,
   Clock,
   Briefcase,
+  AlertCircle,
+  CheckCircle2,
   Search,
   ChevronLeft,
   Calendar as CalendarIcon,
@@ -46,8 +48,6 @@ import { AttendanceService, type Site } from "@/services/AttendanceService";
 import { useSites } from "@/hooks/useSites";
 import { db, pmInstances } from "@/database";
 import { eq } from "drizzle-orm";
-
-type PMInstanceRow = typeof pmInstances.$inferSelect;
 import {
   format,
   addDays,
@@ -63,6 +63,8 @@ import QRScannerModal, { type QRScannerRef } from "@/components/QRScannerModal";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import logger from "@/utils/logger";
 import Skeleton from "@/components/Skeleton";
+
+type PMInstanceRow = typeof pmInstances.$inferSelect;
 
 // Constants
 const PAGE_SIZE = 20;
@@ -116,7 +118,12 @@ const PMSkeleton = () => {
             <Skeleton width={50} height={14} borderRadius={6} />
           </View>
           <View className="flex-row items-center">
-            <Skeleton width={40} height={40} borderRadius={10} style={{ marginRight: 10 }} />
+            <Skeleton
+              width={40}
+              height={40}
+              borderRadius={10}
+              style={{ marginRight: 10 }}
+            />
             <View className="flex-1">
               <Skeleton width="50%" height={14} style={{ marginBottom: 4 }} />
               <Skeleton width="40%" height={12} />
@@ -266,6 +273,59 @@ const PMCard = React.memo(
 
 PMCard.displayName = "PMCard";
 
+// ─── Stat Card ─────────────────────────────────────────────────────────────────
+const StatCard = React.memo(
+  ({
+    icon,
+    value,
+    label,
+    bg,
+    color,
+    isActive,
+    onPress,
+  }: {
+    icon: React.ReactNode;
+    value: number;
+    label: string;
+    bg: string;
+    color: string;
+    isActive: boolean;
+    onPress: () => void;
+  }) => {
+    return (
+      <TouchableOpacity
+        onPress={onPress}
+        activeOpacity={0.7}
+        className="flex-1 rounded-xl p-3 bg-white dark:bg-slate-900"
+        style={{
+          shadowColor: "#000",
+          shadowOffset: { width: 0, height: 1 },
+          shadowOpacity: 0.05,
+          shadowRadius: 4,
+          elevation: 2,
+          borderWidth: isActive ? 1 : 0,
+          borderColor: isActive ? color : "transparent",
+        }}
+      >
+        <View
+          className="w-8 h-8 rounded-lg items-center justify-center mb-2"
+          style={{ backgroundColor: bg }}
+        >
+          {icon}
+        </View>
+        <Text className="text-slate-900 dark:text-slate-50 text-xl font-bold">
+          {value}
+        </Text>
+        <Text className="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+          {label}
+        </Text>
+      </TouchableOpacity>
+    );
+  },
+);
+
+StatCard.displayName = "StatCard";
+
 // ─── Main Screen ───────────────────────────────────────────────────────────────
 export default function PreventiveMaintenance() {
   const { user } = useAuth();
@@ -287,7 +347,12 @@ export default function PreventiveMaintenance() {
 
   // ── Clean sites hook ──────────────────────────────────────────────────────
   const userId = user?.user_id || user?.id;
-  const { sites, selectedSite, selectSite, refresh: refreshSites } = useSites(userId);
+  const {
+    sites,
+    selectedSite,
+    selectSite,
+    refresh: refreshSites,
+  } = useSites(userId);
   const siteCode = selectedSite?.site_code ?? "";
   const siteName =
     selectedSite?.site_name ?? selectedSite?.site_code ?? "Select Site";
@@ -422,7 +487,14 @@ export default function PreventiveMaintenance() {
         setRefreshing(false);
       }
     },
-    [siteCode, currentDate, toDate, isConnected, PAGE_SIZE, allInstances.length],
+    [
+      siteCode,
+      currentDate,
+      toDate,
+      isConnected,
+      PAGE_SIZE,
+      allInstances.length,
+    ],
   );
 
   const handleLoadMore = useCallback(() => {
@@ -520,6 +592,49 @@ export default function PreventiveMaintenance() {
     toDate,
   ]);
 
+  const stats = useMemo(() => {
+    const startRange = startOfDay(parseISO(currentDate)).getTime();
+    const endRange = endOfDay(parseISO(toDate)).getTime();
+
+    const rangeInstances = allInstances.filter((i) => {
+      if (!i.start_due_date) return false;
+      const ts = new Date(i.start_due_date).getTime();
+      return ts >= startRange && ts <= endRange;
+    });
+
+    const localCount = {
+      total: rangeInstances.length,
+      pending: rangeInstances.filter((i) => {
+        const s = i.status?.toLowerCase() || "";
+        return s === "pending" || s === "overdue";
+      }).length,
+      inProgress: rangeInstances.filter((i) => {
+        const s = i.status?.toLowerCase() || "";
+        return s === "in-progress" || s === "in progress" || s === "inprogress";
+      }).length,
+      completed: rangeInstances.filter(
+        (i) => i.status?.toLowerCase() === "completed",
+      ).length,
+    };
+
+    if (serverStats) {
+      const serverInProgress =
+        (serverStats.byStatus?.["In-progress"] || 0) +
+        (serverStats.byStatus?.["In Progress"] || 0) +
+        (serverStats.byStatus?.Inprogress || 0);
+      const serverCompleted = serverStats.byStatus?.Completed || 0;
+
+      const total = Math.max(serverStats.total, localCount.total);
+      const inProgress = Math.max(localCount.inProgress, serverInProgress);
+      const completed = Math.max(localCount.completed, serverCompleted);
+      const pending = Math.max(0, total - inProgress - completed);
+
+      return { total, pending, inProgress, completed };
+    }
+
+    return localCount;
+  }, [allInstances, currentDate, toDate, serverStats]);
+
   const handlePMCardPress = useCallback(
     async (instance: PMInstanceRow) => {
       const normalizedStatus = (instance.status || "").toLowerCase();
@@ -612,8 +727,8 @@ export default function PreventiveMaintenance() {
         </Text>
         <Text style={styles.emptyBody}>
           {allInstances.length > 0
-            ? "Your tasks are on the phone, but hidden by the current Status/Date filter. Try setting Status to 'All'."
-            : "No tasks scheduled for the selected date range."}
+            ? "Try adjusting your filters"
+            : "No PM tasks found"}
         </Text>
         {isConnected && !siteCode && (
           <TouchableOpacity
@@ -630,7 +745,14 @@ export default function PreventiveMaintenance() {
         )}
       </View>
     ),
-    [allInstances.length, isConnected, siteCode, refreshSites, selectedSite?.site_code, loadPMData],
+    [
+      allInstances.length,
+      isConnected,
+      siteCode,
+      refreshSites,
+      selectedSite?.site_code,
+      loadPMData,
+    ],
   );
 
   const renderFooter = useCallback(() => {
@@ -658,19 +780,16 @@ export default function PreventiveMaintenance() {
   return (
     <View className="flex-1 bg-slate-50 dark:bg-slate-950">
       <SafeAreaView style={styles.flex} edges={["top"]}>
-        <View className="px-5 pt-2 pb-3 bg-slate-50 dark:bg-slate-950">
-          <View className="flex-row items-center justify-between mb-4">
+        <View className="px-5 pt-2 pb-2 bg-slate-50 dark:bg-slate-950">
+          <View className="flex-row items-center justify-between mb-2">
             <View className="flex-1">
-              <Text className="text-slate-400 dark:text-slate-500 text-sm font-medium mb-1">
-                Site Operations
-              </Text>
               <TouchableOpacity
                 onPress={() => setShowFiltersModal(true)}
                 className="flex-row items-center"
               >
                 <MapPin size={20} color="#dc2626" />
                 <Text
-                  className="text-slate-900 dark:text-slate-50 text-lg font-bold ml-2 mr-1 flex-shrink"
+                  className="text-slate-900 dark:text-slate-50 text-base font-bold ml-2 mr-1 flex-shrink"
                   numberOfLines={1}
                 >
                   {siteName}
@@ -693,48 +812,70 @@ export default function PreventiveMaintenance() {
                   elevation: 3,
                 }}
               >
-                <RefreshCw size={20} color={!isConnected ? "#94a3b8" : "#dc2626"} />
+                <RefreshCw
+                  size={20}
+                  color={!isConnected ? "#94a3b8" : "#dc2626"}
+                />
               </TouchableOpacity>
 
               <TouchableOpacity
                 onPress={() => setShowFiltersModal(true)}
                 className="flex-shrink-0"
               >
-                <View className="items-end">
-                  <View className="flex-row items-center bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded-lg mb-1">
-                    <CalendarIcon size={12} color="#64748b" />
-                    <Text className="text-[10px] font-bold text-slate-500 ml-1">
-                      {safeFormat(currentDate, "d MMM")}
-                      {currentDate !== toDate
-                        ? ` - ${safeFormat(toDate, "d MMM")}`
-                        : ""}
-                    </Text>
-                  </View>
-                  <View
-                    className="w-11 h-11 rounded-xl bg-white dark:bg-slate-900 items-center justify-center"
-                    style={{
-                      shadowColor: "#000",
-                      shadowOffset: { width: 0, height: 2 },
-                      shadowOpacity: 0.08,
-                      shadowRadius: 8,
-                      elevation: 3,
-                    }}
-                  >
-                    <Filter
-                      size={20}
-                      color={
-                        tempFromDate !== format(new Date(), "yyyy-MM-dd") ||
-                        tempToDate !== format(new Date(), "yyyy-MM-dd")
+                <View
+                  className="w-11 h-11 rounded-xl bg-white dark:bg-slate-900 items-center justify-center"
+                  style={{
+                    shadowColor: "#000",
+                    shadowOffset: { width: 0, height: 2 },
+                    shadowOpacity: 0.08,
+                    shadowRadius: 8,
+                    elevation: 3,
+                  }}
+                >
+                  <Filter
+                    size={20}
+                    color={
+                      tempFromDate !== format(new Date(), "yyyy-MM-dd") ||
+                      tempToDate !== format(new Date(), "yyyy-MM-dd")
+                        ? "#dc2626"
+                        : isDark
                           ? "#dc2626"
-                          : isDark
-                            ? "#dc2626"
-                            : "#64748b"
-                      }
-                    />
-                  </View>
+                          : "#64748b"
+                    }
+                  />
                 </View>
               </TouchableOpacity>
             </View>
+          </View>
+
+          <View className="flex-row gap-2 mb-3">
+            <StatCard
+              icon={<AlertCircle size={14} color="#f97316" />}
+              value={stats.pending}
+              label="Pending"
+              bg="#fff7ed"
+              color="#f97316"
+              isActive={statusFilter === "Pending"}
+              onPress={() => setStatusFilter("Pending")}
+            />
+            <StatCard
+              icon={<Clock size={14} color="#3b82f6" />}
+              value={stats.inProgress}
+              label="In Progress"
+              bg="#eff6ff"
+              color="#3b82f6"
+              isActive={statusFilter === "In-progress"}
+              onPress={() => setStatusFilter("In-progress")}
+            />
+            <StatCard
+              icon={<CheckCircle2 size={14} color="#22c55e" />}
+              value={stats.completed}
+              label="Completed"
+              bg="#f0fdf4"
+              color="#22c55e"
+              isActive={statusFilter === "Completed"}
+              onPress={() => setStatusFilter("Completed")}
+            />
           </View>
 
           <View

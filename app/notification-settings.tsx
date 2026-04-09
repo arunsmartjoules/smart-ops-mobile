@@ -132,6 +132,13 @@ export default function NotificationSettingsPage() {
             "Update Failed",
             result.error || "Could not update attendance notification preference.",
           );
+        } else if (result.data) {
+          setAttendanceNotificationsEnabled(
+            result.data.attendance_notifications_enabled ?? value,
+          );
+          setTicketNotificationsEnabled(
+            result.data.ticket_notifications_enabled ?? ticketNotificationsEnabled,
+          );
         }
       } catch (error: any) {
         setAttendanceNotificationsEnabled(previousValue);
@@ -147,7 +154,7 @@ export default function NotificationSettingsPage() {
         setSaving(false);
       }
     },
-    [attendanceNotificationsEnabled, hasSystemPermission, token]
+    [attendanceNotificationsEnabled, hasSystemPermission, ticketNotificationsEnabled, token]
   );
 
   const handleToggleTicketNotifications = useCallback(
@@ -186,6 +193,13 @@ export default function NotificationSettingsPage() {
             "Update Failed",
             result.error || "Could not update ticket notification preference.",
           );
+        } else if (result.data) {
+          setAttendanceNotificationsEnabled(
+            result.data.attendance_notifications_enabled ?? attendanceNotificationsEnabled,
+          );
+          setTicketNotificationsEnabled(
+            result.data.ticket_notifications_enabled ?? value,
+          );
         }
       } catch (error: any) {
         setTicketNotificationsEnabled(previousValue);
@@ -201,7 +215,7 @@ export default function NotificationSettingsPage() {
         setSaving(false);
       }
     },
-    [hasSystemPermission, ticketNotificationsEnabled, token]
+    [attendanceNotificationsEnabled, hasSystemPermission, ticketNotificationsEnabled, token]
   );
 
   return (

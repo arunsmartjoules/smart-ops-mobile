@@ -287,8 +287,9 @@ export const LogEntryModule = ({ type, siteCode: initialSiteCode, onBack }: LogE
   }, [allScheduledTasksComplete, isEditMode, isTaskComplete, searchQuery.length, tasks, type]);
 
   // Submission
-  const handleSubmit = async () => {
+  const handleSubmit = async (signatureOverride?: string) => {
     if (!siteCode) return;
+    const effectiveSignature = signatureOverride || signature;
     
     if (!isEditMode && tasks.length === 0) {
       Alert.alert("No Data", "No scheduled logs are available for this selection.");
@@ -318,7 +319,7 @@ export const LogEntryModule = ({ type, siteCode: initialSiteCode, onBack }: LogE
       return;
     }
 
-    if (!signature && !isEditMode) {
+    if (!effectiveSignature && !isEditMode) {
       setShowSignature(true);
       return;
     }
@@ -338,7 +339,7 @@ export const LogEntryModule = ({ type, siteCode: initialSiteCode, onBack }: LogE
             mainRemarks: val.mainRemarks || null,
             remarks: (task.meta?.remarks || "") + shiftLabel,
             attachment: val.attachment || null,
-            signature: signature || undefined,
+            signature: effectiveSignature || undefined,
             status: hasDosing ? "Completed" : "Inprogress",
             assignedTo: user?.name || user?.user_id || "unknown",
           });
@@ -357,7 +358,7 @@ export const LogEntryModule = ({ type, siteCode: initialSiteCode, onBack }: LogE
             mainRemarks: val.mainRemarks || null,
             remarks: (task.meta?.remarks || "") + shiftLabel,
             attachment: val.attachment || null,
-            signature: signature || undefined,
+            signature: effectiveSignature || undefined,
             status,
             assignedTo: user?.name || user?.user_id || "unknown",
           });
@@ -373,7 +374,7 @@ export const LogEntryModule = ({ type, siteCode: initialSiteCode, onBack }: LogE
             mainRemarks: val.mainRemarks || null,
             remarks: (task.meta?.remarks || "") + shiftLabel,
             attachment: val.attachment || null,
-            signature: signature || undefined,
+            signature: effectiveSignature || undefined,
             status,
             assignedTo: user?.name || user?.user_id || "unknown",
           });
@@ -403,7 +404,7 @@ export const LogEntryModule = ({ type, siteCode: initialSiteCode, onBack }: LogE
           task_name: task.name,
           scheduled_date: scheduledDate,
           status: "Completed", 
-          signature: signature,
+          signature: effectiveSignature,
           main_remarks: val.mainRemarks || null,
           remarks: (task.meta?.remarks || "") + shiftLabel,
           // Specific fields
@@ -568,7 +569,7 @@ export const LogEntryModule = ({ type, siteCode: initialSiteCode, onBack }: LogE
         {!loading && (
           <View className="absolute bottom-0 left-0 right-0 p-5 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border-t border-slate-100 dark:border-slate-800">
             <TouchableOpacity
-              onPress={handleSubmit}
+              onPress={() => handleSubmit()}
               disabled={isSubmitting || (!isEditMode && !allScheduledTasksComplete)}
               className={`w-full py-4 rounded-2xl flex-row items-center justify-center ${(isSubmitting || (!isEditMode && !allScheduledTasksComplete)) ? "bg-slate-300" : "bg-purple-600 shadow-lg shadow-purple-500/30"}`}
             >
@@ -597,7 +598,7 @@ export const LogEntryModule = ({ type, siteCode: initialSiteCode, onBack }: LogE
             onOK={(sig: string) => {
               setSignature(sig);
               setShowSignature(false);
-              setTimeout(() => handleSubmit(), 500);
+              handleSubmit(sig);
             }}
             onClear={() => setSignature(null)}
           />
