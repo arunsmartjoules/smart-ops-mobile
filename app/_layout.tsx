@@ -22,7 +22,8 @@ import {
   setupNotificationHandlers,
   setupAndroidChannels,
 } from "@/services/NotificationService";
-import logger from "@/utils/logger";
+import { applyNotificationNavigation } from "@/utils/notificationDeepLink";
+import { PendingNotificationNavigation } from "@/components/PendingNotificationNavigation";
 
 // Fix: crypto.getRandomValues() not supported — required for uuid library in React Native
 if (!global.crypto) {
@@ -122,44 +123,13 @@ export default function RootLayout() {
     const handleNotificationResponse = (
       response: Notifications.NotificationResponse,
     ) => {
-      const data = response.notification.request.content.data as any;
-      logger.info("Notification tapped", { data });
-
-      if (data?.ticket_no) {
-        router.push({
-          pathname: "/(tabs)/tickets",
-          params: {
-            ticketId: data.ticket_no,
-            siteCode: data.site_code,
-          },
-        });
-      } else if (
-        data?.screen === "attendance" ||
-        String(data?.type || "").includes("attendance")
-      ) {
-        router.push("/attendance");
-      } else if (data?.screen) {
-        router.push(data.screen as any);
-      }
+      applyNotificationNavigation(router, response, { replace: false });
     };
 
-    // Setup notification handlers
+    // Warm / foreground taps only — cold start is handled in PendingNotificationNavigation
     const cleanupNotifications = setupNotificationHandlers((notification) => {
       console.log("Notification received:", notification);
     }, handleNotificationResponse);
-
-    Notifications.getLastNotificationResponseAsync()
-      .then((response) => {
-        if (response) {
-          handleNotificationResponse(response);
-        }
-      })
-      .catch((error) => {
-        logger.warn("Failed to restore last notification response", {
-          module: "APP_LAYOUT",
-          error: error instanceof Error ? error.message : String(error),
-        });
-      });
 
     return () => {
       syncManager.cleanup();
@@ -174,6 +144,7 @@ export default function RootLayout() {
           <AuthGuard>
             <ThemeProvider>
               <UpdateBanner />
+              <PendingNotificationNavigation />
               <Stack screenOptions={{ headerShown: false }}>
                 <Stack.Screen name="index" />
                 <Stack.Screen name="sign-in" />

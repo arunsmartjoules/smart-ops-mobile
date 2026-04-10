@@ -252,22 +252,50 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         const idToken = await firebaseUser.getIdToken();
         setToken(idToken);
         await AsyncStorage.setItem("firebase-token", idToken);
-        
+
+        let releasedLoadingEarly = false;
+        let earlyCachedUser: AuthUser | null = null;
+        try {
+          const cached = await AsyncStorage.getItem("auth_user");
+          if (cached) {
+            const parsed = JSON.parse(cached) as AuthUser;
+            if (
+              normalizeEmail(parsed?.email) ===
+                normalizeEmail(firebaseUser.email) &&
+              String(parsed?.user_id || "").trim()
+            ) {
+              earlyCachedUser = parsed;
+              setUser(parsed);
+              setIsLoading(false);
+              releasedLoadingEarly = true;
+            }
+          }
+        } catch {
+          // ignore malformed cache
+        }
+
         const userProfile = await fetchAndSetProfile(firebaseUser, idToken);
-        
-        if (userProfile?.user_id) {
-          logger.activity("LOGIN_SUCCESS", "AUTH", `User ${userProfile.email} logged in successfully`, { 
-            user_id: userProfile.user_id,
-            email: userProfile.email 
+
+        const bootstrapUserId =
+          userProfile?.user_id || earlyCachedUser?.user_id || "";
+
+        if (bootstrapUserId) {
+          const logEmail =
+            userProfile?.email ||
+            earlyCachedUser?.email ||
+            normalizeEmail(firebaseUser.email);
+          logger.activity("LOGIN_SUCCESS", "AUTH", `User ${logEmail} logged in successfully`, {
+            user_id: bootstrapUserId,
+            email: logEmail,
           });
-          syncEngine.initialize(userProfile.user_id).catch(() => {});
-          siteResolver.initialize(userProfile.user_id).catch(() => {});
-          registerForPushNotifications(userProfile.user_id, idToken)
+          syncEngine.initialize(bootstrapUserId).catch(() => {});
+          siteResolver.initialize(bootstrapUserId).catch(() => {});
+          registerForPushNotifications(bootstrapUserId, idToken)
             .then((result) => {
               if (!result.success) {
                 logger.warn("Push registration did not complete during login bootstrap", {
                   module: "AUTH_CONTEXT",
-                  userId: userProfile.user_id,
+                  userId: bootstrapUserId,
                   error: result.error,
                 });
               }
@@ -284,7 +312,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
             email: normalizeEmail(firebaseUser.email),
           });
         }
-        setIsLoading(false);
+        if (!releasedLoadingEarly) {
+          setIsLoading(false);
+        }
       } else {
         if (token) {
           logger.activity("LOGOUT", "AUTH", "User logged out");

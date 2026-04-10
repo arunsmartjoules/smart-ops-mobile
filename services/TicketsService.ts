@@ -128,6 +128,13 @@ interface GetAssetsOptions {
   search?: string;
 }
 
+export interface GetComplaintStatsOptions {
+  fromDate?: string;
+  toDate?: string;
+  search?: string;
+  priority?: string;
+}
+
 export const TicketsService = {
   /**
    * Get tickets for a site with filters
@@ -139,10 +146,16 @@ export const TicketsService = {
       toDate,
       search,
       priority,
+      ticket_no,
+      id: complaintId,
       page = 1,
       limit = 50,
       refresh = false,
     } = options;
+
+    const ticketNoTrim = String(ticket_no ?? "").trim();
+    const complaintIdTrim = String(complaintId ?? "").trim();
+    const specificTicket = Boolean(ticketNoTrim) || Boolean(complaintIdTrim);
 
     const netState = await NetInfo.fetch();
 
@@ -151,7 +164,7 @@ export const TicketsService = {
       try {
         const whereFilter: Record<string, any> = {};
         if (siteCode !== "all") whereFilter.site_code = siteCode;
-        if (status) whereFilter.status = status;
+        if (status && !specificTicket) whereFilter.status = status;
         if (priority && priority !== "All") whereFilter.priority = priority;
 
         const allCached = await cacheManager.read<typeof tickets.$inferSelect>(
@@ -163,6 +176,14 @@ export const TicketsService = {
         const fromDateMs = toBoundaryMs(fromDate, false);
         const toDateMs = toBoundaryMs(toDate, true);
         const localTickets = allCached.filter((t) => {
+          if (complaintIdTrim) {
+            if (String(t.id || "") !== complaintIdTrim) return false;
+          } else if (ticketNoTrim) {
+            const matchNo = String(t.ticket_number || "") === ticketNoTrim;
+            const matchId = String(t.id || "") === ticketNoTrim;
+            if (!matchNo && !matchId) return false;
+          }
+
           if (fromDateMs != null || toDateMs != null) {
             const createdAtMs = parseCreatedAtMs(t.created_at);
             if (createdAtMs == null) return false;
@@ -240,11 +261,15 @@ export const TicketsService = {
 
     // 2. Fallback to API if no local data or requested specific page
     const params = new URLSearchParams();
-    if (status) params.append("status", status);
+    if (status && !specificTicket) {
+      params.append("status", status);
+    }
     if (priority) params.append("priority", priority);
     if (fromDate) params.append("fromDate", fromDate);
     if (toDate) params.append("toDate", toDate);
     if (search) params.append("search", search);
+    if (ticketNoTrim) params.append("ticket_no", ticketNoTrim);
+    if (complaintIdTrim) params.append("id", complaintIdTrim);
     params.append("page", page.toString());
     params.append("limit", limit.toString());
 
@@ -473,9 +498,19 @@ export const TicketsService = {
 
   /**
    * Get complaint statistics for a site
+   * Pass the same date/search/priority filters as the list (omit status — stats are per-status).
    */
-  async getStats(siteCode: string) {
-    const result = await apiFetch(`/api/complaints/site/${siteCode}/stats`);
+  async getStats(siteCode: string, options: GetComplaintStatsOptions = {}) {
+    const { fromDate, toDate, search, priority } = options;
+    const params = new URLSearchParams();
+    if (priority) params.append("priority", priority);
+    if (fromDate) params.append("fromDate", fromDate);
+    if (toDate) params.append("toDate", toDate);
+    if (search?.trim()) params.append("search", search.trim());
+
+    const qs = params.toString();
+    const path = `/api/complaints/site/${siteCode}/stats${qs ? `?${qs}` : ""}`;
+    const result = await apiFetch(path);
     if (result.success) {
       return result;
     }

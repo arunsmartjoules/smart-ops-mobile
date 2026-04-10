@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from "react";
+import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import {
   View,
   Text,
@@ -18,7 +18,7 @@ import {
   MapPin,
   ChevronDown,
 } from "lucide-react-native";
-import { useLocalSearchParams, useFocusEffect } from "expo-router";
+import { useLocalSearchParams, useFocusEffect, router } from "expo-router";
 import { useAuth } from "@/contexts/AuthContext";
 import { useAutoSync } from "@/hooks/useAutoSync";
 import { useNetworkStatus } from "@/hooks/useNetworkStatus";
@@ -95,6 +95,12 @@ const getDefaultUpdateStatus = (ticket: Ticket) => {
 
 const getInitialUpdateRemarks = (ticket: Ticket, status: string) => {
   return status === ticket.status ? ticket.internal_remarks || "" : "";
+};
+
+const firstParam = (v: string | string[] | undefined): string | undefined => {
+  if (v == null) return undefined;
+  if (Array.isArray(v)) return v[0];
+  return v;
 };
 
 export default function Tickets() {
@@ -212,12 +218,24 @@ export default function Tickets() {
   const fetchStats = useCallback(async () => {
     if (!selectedSiteCode) return;
     try {
-      const res = await TicketsService.getStats(selectedSiteCode);
+      const res = await TicketsService.getStats(selectedSiteCode, {
+        fromDate: toApiStartDate(fromDate),
+        toDate: toApiEndDate(toDate),
+        search: searchQuery,
+        priority:
+          priorityFilter === "All" ? undefined : priorityFilter,
+      });
       if (res.success) {
         setStats(res.data);
       }
     } catch (e) {}
-  }, [selectedSiteCode]);
+  }, [
+    selectedSiteCode,
+    fromDate,
+    toDate,
+    searchQuery,
+    priorityFilter,
+  ]);
 
   const loadAreaOptions = useCallback(async (
     nextPage = 1,
@@ -602,46 +620,96 @@ export default function Tickets() {
     setIsDetailVisible(true);
   }, []);
 
-  const params = useLocalSearchParams<{ ticketId: string; siteCode: string }>();
-  const { ticketId, siteCode } = params;
+  const params = useLocalSearchParams<{
+    ticketId?: string | string[];
+    siteCode?: string | string[];
+  }>();
+  const ticketIdNorm = firstParam(params.ticketId);
+  const siteCodeNorm = firstParam(params.siteCode);
+  const deepLinkFetchGen = useRef(0);
+  const deepLinkAttemptedFor = useRef<string | null>(null);
 
   useEffect(() => {
-    // 1. If siteCode is provided and different from current, switch site
-    if (siteCode && selectedSiteCode !== siteCode && sites.length > 0) {
-      const targetSite = sites.find(s => s.site_code === siteCode);
-      if (targetSite) {
-        selectSite(targetSite);
-        return; // Wait for next effect run after site selection
-      }
+    if (!ticketIdNorm) {
+      deepLinkAttemptedFor.current = null;
+      return;
     }
-    if (ticketId) {
-      // 1. Try to find in already loaded tickets
-      const ticket = tickets.find(
-        (t) =>
-          t.id?.toString() === ticketId.toString() ||
-          t.ticket_no === ticketId.toString()
-      );
 
-      if (ticket) {
-        handleTicketPress(ticket);
-      } else if (selectedSiteCode && !loading) {
-        // 2. If not found and we're not already loading, try to fetch this specific ticket
-        // This handles cases where the notification is for a ticket not in the current view
-        TicketsService.getTickets(selectedSiteCode, { search: ticketId })
-          .then((res) => {
-            if (res.success && res.data?.length > 0) {
-              const matched = res.data.find(
-                (t: Ticket) =>
-                  t.id?.toString() === ticketId.toString() ||
-                  t.ticket_no === ticketId.toString()
-              );
-              if (matched) handleTicketPress(matched);
-            }
-          })
-          .catch((err) => logger.warn("Failed to fetch specific ticket", { err }));
+    if (
+      siteCodeNorm &&
+      selectedSiteCode !== siteCodeNorm &&
+      sites.length > 0
+    ) {
+      const targetSite = sites.find((s) => s.site_code === siteCodeNorm);
+      if (targetSite) {
+        void selectSite(targetSite);
       }
+      return;
     }
-  }, [ticketId, tickets, handleTicketPress, selectedSiteCode, loading]);
+
+    if (siteCodeNorm && sites.length === 0 && sitesLoading) {
+      return;
+    }
+
+    const ticket = tickets.find(
+      (t) =>
+        t.id?.toString() === ticketIdNorm ||
+        t.ticket_no === ticketIdNorm,
+    );
+
+    if (ticket) {
+      handleTicketPress(ticket);
+      router.setParams({ ticketId: undefined, siteCode: undefined });
+      return;
+    }
+
+    if (!selectedSiteCode || sitesLoading) {
+      return;
+    }
+
+    if (deepLinkAttemptedFor.current === ticketIdNorm) {
+      return;
+    }
+    deepLinkAttemptedFor.current = ticketIdNorm;
+    const gen = ++deepLinkFetchGen.current;
+
+    TicketsService.getTickets(selectedSiteCode, {
+      ticket_no: ticketIdNorm,
+      limit: 10,
+      refresh: true,
+    })
+      .then((res) => {
+        if (gen !== deepLinkFetchGen.current) return;
+        if (res.success && res.data?.length) {
+          const matched = res.data.find(
+            (t: Ticket) =>
+              t.id?.toString() === ticketIdNorm ||
+              t.ticket_no === ticketIdNorm,
+          );
+          if (matched) {
+            handleTicketPress(matched);
+            router.setParams({ ticketId: undefined, siteCode: undefined });
+          } else {
+            deepLinkAttemptedFor.current = null;
+          }
+        } else {
+          deepLinkAttemptedFor.current = null;
+        }
+      })
+      .catch((err) => {
+        deepLinkAttemptedFor.current = null;
+        logger.warn("Failed to fetch ticket from deep link", { err });
+      });
+  }, [
+    ticketIdNorm,
+    siteCodeNorm,
+    tickets,
+    handleTicketPress,
+    selectedSiteCode,
+    sites,
+    sitesLoading,
+    selectSite,
+  ]);
 
   const handleTicketLongPress = useCallback((ticket: Ticket) => {
     if (ticket.status !== "Open") return;
