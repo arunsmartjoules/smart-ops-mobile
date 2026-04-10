@@ -779,6 +779,11 @@ class SyncEngineImpl implements SyncEngine {
     } else if (entity_type === "pm_instance_update") {
       endpoint = `/api/pm-instances/${payload.id}`;
       method = "PUT";
+      // Convert ms-epoch completed_on to ISO string for Postgres timestamp column
+      if (payload.completed_on && typeof payload.completed_on === "number") {
+        payload.completed_on = new Date(payload.completed_on).toISOString();
+      }
+      body = JSON.stringify(payload);
 
     // ── Ticket line item ──────────────────────────────────────────────────
     } else if (entity_type === "ticket_line_item") {

@@ -566,12 +566,21 @@ export default function PMExecutionScreen() {
           }),
         );
 
-        let nextStatus = sourceInstance?.status;
-        if (sourceInstance?.status === "Pending") nextStatus = "In-progress";
-        if (executionOptions?.status) nextStatus = executionOptions.status;
+        // Prevent stale async callbacks (e.g., late image upload saves) from
+        // overwriting a newer status like "Completed". We only auto-promote
+        // Pending -> In-progress during regular progress saves.
+        let nextStatus: string | undefined = executionOptions?.status;
+        if (!nextStatus) {
+          const normalized = (sourceInstance?.status || "")
+            .toLowerCase()
+            .replace(/[\s-]/g, "");
+          if (normalized === "pending") {
+            nextStatus = "In-progress";
+          }
+        }
 
         // Optimistic UI update: Immediately reflect status transition
-        if (nextStatus !== sourceInstance?.status) {
+        if (nextStatus && nextStatus !== sourceInstance?.status) {
           setInstance({
             ...sourceInstance,
             status: nextStatus,

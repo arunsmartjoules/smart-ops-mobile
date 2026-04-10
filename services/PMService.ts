@@ -54,6 +54,33 @@ type PMChecklistItemRow = typeof pmChecklistItems.$inferSelect;
 type PMResponseRow = typeof pmResponses.$inferSelect;
 
 const PMService = {
+  async prunePendingInstanceUpdates(instanceId: string): Promise<void> {
+    const pending = await db
+      .select({ id: offlineQueue.id, payload: offlineQueue.payload })
+      .from(offlineQueue)
+      .where(
+        and(
+          eq(offlineQueue.entity_type, "pm_instance_update"),
+          eq(offlineQueue.status, "pending"),
+        ),
+      );
+
+    const staleIds = pending
+      .filter((row) => {
+        try {
+          const parsed = JSON.parse(row.payload);
+          return parsed?.id === instanceId;
+        } catch {
+          return false;
+        }
+      })
+      .map((row) => row.id);
+
+    for (const id of staleIds) {
+      await db.delete(offlineQueue).where(eq(offlineQueue.id, id));
+    }
+  },
+
   /**
    * Fetch PM instances from API and cache them to local DB.
    */
@@ -188,7 +215,7 @@ const PMService = {
   async getPendingUpdatesMap(): Promise<Record<string, Partial<any>>> {
     try {
       const results = await db
-        .select({ payload: offlineQueue.payload })
+        .select({ payload: offlineQueue.payload, created_at: offlineQueue.created_at })
         .from(offlineQueue)
         .where(
           and(
@@ -198,10 +225,17 @@ const PMService = {
         );
 
       const map: Record<string, any> = {};
+      const latestById: Record<string, number> = {};
       results.forEach((r) => {
         try {
           const parsed = JSON.parse(r.payload);
-          if (parsed.id) map[parsed.id] = parsed;
+          if (!parsed.id) return;
+          const ts = Number(r.created_at || 0);
+          // Keep only the latest pending update for each instance.
+          if (!latestById[parsed.id] || ts >= latestById[parsed.id]) {
+            latestById[parsed.id] = ts;
+            map[parsed.id] = parsed;
+          }
         } catch {}
       });
       return map;
@@ -368,8 +402,12 @@ const PMService = {
     responses: PMResponseData[],
     options?: { status?: string; beforeImage?: string | null; afterImage?: string | null; clientSign?: string | null; completed_on?: number | null }
   ): Promise<void> {
-    const localInstance = await this.getInstanceByServerId(instanceServerId);
-    if (!localInstance) return;
+    let localInstance = await this.getInstanceByServerId(instanceServerId);
+    // If this PM was opened from API before being cached locally, hydrate once
+    // so status/progress updates still persist.
+    if (!localInstance) {
+      localInstance = await this.fetchInstanceFromAPI(instanceServerId);
+    }
 
     for (const data of responses) {
       if (data.response_value === undefined) continue;
@@ -411,14 +449,26 @@ const PMService = {
       });
     }
 
-    const checklistItems = await this.getChecklistItems(localInstance.maintenance_id!);
     const currentResponses = await this.getResponsesForInstance(instanceServerId);
     const answeredCount = currentResponses.filter(r => r.response_value).length;
-    const progressStr = `${answeredCount}/${checklistItems.length}`;
+    const checklistItems = localInstance?.maintenance_id
+      ? await this.getChecklistItems(localInstance.maintenance_id)
+      : [];
+    const totalCount =
+      checklistItems.length > 0
+        ? checklistItems.length
+        : Math.max(
+            currentResponses.length,
+            responses.filter((r) => r.response_value !== undefined).length,
+          );
+    const progressStr = totalCount > 0 ? `${answeredCount}/${totalCount}` : undefined;
 
-    const updateData: any = { progress: progressStr, updated_at: Date.now() };
+    const updateData: any = { updated_at: Date.now() };
+    if (progressStr) updateData.progress = progressStr;
     if (options?.status) updateData.status = options.status;
-    if (options?.completed_on !== undefined) updateData.completed_on = options.completed_on;
+    if (options?.completed_on !== undefined) {
+      updateData.completed_on = options.completed_on;
+    }
 
     if (options?.beforeImage !== undefined) {
       updateData.before_image = await queueAttachmentIfLocal(
@@ -440,7 +490,8 @@ const PMService = {
 
     await db.update(pmInstances).set(updateData).where(eq(pmInstances.id, instanceServerId));
 
-    // Enqueue instance metadata update
+    // Enqueue instance metadata update (drop stale pending updates for same PM first)
+    await this.prunePendingInstanceUpdates(instanceServerId);
     const queueItemId = uuidv4();
     await db.insert(offlineQueue).values({
       id: queueItemId,
@@ -453,18 +504,33 @@ const PMService = {
       status: "pending",
     });
 
+    // Build API-safe payload: convert completed_on from ms-epoch to ISO string
+    // so Postgres timestamp columns accept the value.
+    const apiPayload = { ...updateData };
+    if (apiPayload.completed_on && typeof apiPayload.completed_on === "number") {
+      apiPayload.completed_on = new Date(apiPayload.completed_on).toISOString();
+    }
+
     // Try immediate synchronization
     const netState = await NetInfo.fetch();
     if (netState.isConnected) {
       try {
-        await apiFetch(`/api/pm-instances/${instanceServerId}`, {
+        const response = await apiFetch(`/api/pm-instances/${instanceServerId}`, {
           method: "PUT",
-          body: JSON.stringify(updateData),
+          body: JSON.stringify(apiPayload),
         });
-        // We don't dequeue here because the individual responses also need to sync,
-        // and we want to keep the queue sequence logic consistent.
-        // Actually, dequeuing only the instance update is fine.
-        await cacheManager.dequeue(queueItemId);
+        // Only dequeue if the server actually accepted the update.
+        // If we dequeue on failure, fetchFromAPI will overwrite our local
+        // "Completed" with the stale server "In-progress".
+        if (response.ok) {
+          await cacheManager.dequeue(queueItemId);
+        } else {
+          logger.warn("PM instance PUT returned non-OK, keeping in queue", {
+            module: "PM_SERVICE",
+            status: response.status,
+            instanceId: instanceServerId,
+          });
+        }
       } catch (err) {
         logger.warn("Immediate PM update failed, staying in queue", { module: "PM_SERVICE", error: err });
       }

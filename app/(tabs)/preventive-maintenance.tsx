@@ -447,8 +447,16 @@ export default function PreventiveMaintenance() {
             );
 
             if (apiData && apiData.length > 0) {
-              // Refresh local state after sync
-              const freshLocal = await PMService.getLocalInstances(siteCode);
+              // Refresh local state after sync, re-applying any pending updates
+              // so locally-completed PMs aren't overwritten by stale server data.
+              let freshLocal = await PMService.getLocalInstances(siteCode);
+              const freshPending = await PMService.getPendingUpdatesMap();
+              if (Object.keys(freshPending).length > 0) {
+                freshLocal = freshLocal.map((inst) => {
+                  const upd = freshPending[inst.id];
+                  return upd ? { ...inst, ...upd } : inst;
+                });
+              }
               setAllInstances(freshLocal);
               setHasMore(apiData.length === PAGE_SIZE);
             } else {
@@ -472,7 +480,14 @@ export default function PreventiveMaintenance() {
               toDate,
             );
             if (apiData) {
-              const freshLocal = await PMService.getLocalInstances(siteCode);
+              let freshLocal = await PMService.getLocalInstances(siteCode);
+              const freshPending = await PMService.getPendingUpdatesMap();
+              if (Object.keys(freshPending).length > 0) {
+                freshLocal = freshLocal.map((inst) => {
+                  const upd = freshPending[inst.id];
+                  return upd ? { ...inst, ...upd } : inst;
+                });
+              }
               setAllInstances(freshLocal);
               setHasMore(apiData.length === PAGE_SIZE);
             }
