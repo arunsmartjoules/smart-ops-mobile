@@ -51,6 +51,15 @@ interface ResponseMap {
 
 const MULTIPLE_CHOICE_OPTIONS = ["Done", "Not Done"];
 
+/** Checklist row image: menu, direct camera/library, or null to remove */
+type ChecklistImageAction = "MENU" | "CAMERA" | "LIBRARY" | null;
+
+const INSTANCE_IMAGE_PICKER_OPTIONS = {
+  mediaTypes: ["images"] as ImagePicker.MediaType[],
+  allowsEditing: true,
+  quality: 0.7,
+};
+
 // ─── Task Row – Memoized ────────────────────────────────────────────────────
 const TaskRow = React.memo(
   ({
@@ -72,7 +81,7 @@ const TaskRow = React.memo(
       field: "response_value" | "remarks" | "readings",
       value: string | null,
     ) => void;
-    onImageChange: (itemId: string, uri: string | null) => void;
+    onImageChange: (itemId: string, action: ChecklistImageAction) => void;
     onPreview: (uri: string) => void;
     isUploading?: boolean;
     isCompleted?: boolean;
@@ -211,9 +220,7 @@ const TaskRow = React.memo(
           </Text>
           <TextInput
             value={response?.readings || ""}
-            onChangeText={(val) =>
-              onResponseChange(item.id, "readings", val)
-            }
+            onChangeText={(val) => onResponseChange(item.id, "readings", val)}
             placeholder="Enter readings if applicable..."
             placeholderTextColor={isDark ? "#64748b" : "#94a3b8"}
             keyboardType="decimal-pad"
@@ -231,7 +238,7 @@ const TaskRow = React.memo(
         {/* Remarks & Image Row */}
         <View style={styles.actionRow}>
           <TouchableOpacity
-            onPress={() => onImageChange(item.id, "PICK")}
+            onPress={() => onImageChange(item.id, "MENU")}
             style={[
               styles.imageBtn,
               isDark && { backgroundColor: "#1e293b", borderColor: "#334155" },
@@ -289,8 +296,21 @@ const TaskRow = React.memo(
                       onPress: () => onPreview(response.image_url!),
                     },
                     {
-                      text: "Retake Photo",
-                      onPress: () => onImageChange(item.id, "PICK"),
+                      text: "Replace photo",
+                      onPress: () =>
+                        Alert.alert("Replace photo", "Choose a source", [
+                          {
+                            text: "Take photo",
+                            onPress: () =>
+                              onImageChange(item.id, "CAMERA"),
+                          },
+                          {
+                            text: "Choose from gallery",
+                            onPress: () =>
+                              onImageChange(item.id, "LIBRARY"),
+                          },
+                          { text: "Cancel", style: "cancel" },
+                        ]),
                     },
                     { text: "Cancel", style: "cancel" },
                   ]);
@@ -324,6 +344,8 @@ const TaskRow = React.memo(
     prev.isUploading === next.isUploading &&
     prev.isCompleted === next.isCompleted,
 );
+
+TaskRow.displayName = "TaskRow";
 
 // ─── Checklist Skeleton ─────────────────────────────────────────────────────
 const ChecklistSkeleton = ({
@@ -374,13 +396,14 @@ export default function PMExecutionScreen() {
   const { isConnected } = useNetworkStatus();
 
   const [instance, setInstance] = useState<any>(null);
-  const [checklistItems, setChecklistItems] = useState<PMChecklistItemRow[]>([]);
+  const [checklistItems, setChecklistItems] = useState<PMChecklistItemRow[]>(
+    [],
+  );
   const [responses, setResponses] = useState<ResponseMap>({});
   const [loading, setLoading] = useState(true);
   const [fetchingChecklist, setFetchingChecklist] = useState(false);
   const [saving, setSaving] = useState(false);
   const [showCompletionModal, setShowCompletionModal] = useState(false);
-  const [clientSignature, setClientSignature] = useState("");
   const [uploadingItems, setUploadingItems] = useState<Record<string, boolean>>(
     {},
   );
@@ -409,17 +432,25 @@ export default function PMExecutionScreen() {
             instanceId,
           });
           try {
-            const response = await PMService.fetchInstanceFromAPI(instanceId as string);
+            const response = await PMService.fetchInstanceFromAPI(
+              instanceId as string,
+            );
             if (response) inst = response;
           } catch (err) {
-            logger.warn("Failed to fetch instance from API", { module: "PM_EXECUTION", error: err });
+            logger.warn("Failed to fetch instance from API", {
+              module: "PM_EXECUTION",
+              error: err,
+            });
           }
         }
 
         setInstance(inst);
 
         if (!inst?.maintenance_id) {
-          logger.warn("No maintenance_id on instance", { module: "PM_EXECUTION", instanceId });
+          logger.warn("No maintenance_id on instance", {
+            module: "PM_EXECUTION",
+            instanceId,
+          });
           return;
         }
 
@@ -433,7 +464,9 @@ export default function PMExecutionScreen() {
           });
           setFetchingChecklist(true);
           try {
-            const apiItems = await PMService.fetchChecklistItemsFromAPI(inst.maintenance_id);
+            const apiItems = await PMService.fetchChecklistItemsFromAPI(
+              inst.maintenance_id,
+            );
             items = apiItems;
             logger.info("Loaded checklist items from API", {
               module: "PM_EXECUTION",
@@ -441,7 +474,10 @@ export default function PMExecutionScreen() {
               itemCount: items.length,
             });
           } catch (err) {
-            logger.error("Failed to fetch checklist from API", { module: "PM_EXECUTION", error: err });
+            logger.error("Failed to fetch checklist from API", {
+              module: "PM_EXECUTION",
+              error: err,
+            });
           } finally {
             setFetchingChecklist(false);
           }
@@ -472,25 +508,27 @@ export default function PMExecutionScreen() {
 
         // Background sync: Fetch latest responses from server if online
         if (isConnected) {
-          PMService.fetchInstanceResponses(instanceId as string).then((apiRes) => {
-            if (apiRes.length > 0) {
-              setResponses((prev) => {
-                const freshMap = { ...prev };
-                apiRes.forEach((r) => {
-                  // Only update if we don't have a local value yet (don't overwrite user's current session)
-                  if (!freshMap[r.checklist_item_id]) {
-                    freshMap[r.checklist_item_id] = {
-                      response_value: r.response_value,
-                      readings: r.readings,
-                      remarks: r.remarks,
-                      image_url: r.image_url,
-                    };
-                  }
+          PMService.fetchInstanceResponses(instanceId as string).then(
+            (apiRes) => {
+              if (apiRes.length > 0) {
+                setResponses((prev) => {
+                  const freshMap = { ...prev };
+                  apiRes.forEach((r) => {
+                    // Only update if we don't have a local value yet (don't overwrite user's current session)
+                    if (!freshMap[r.checklist_item_id]) {
+                      freshMap[r.checklist_item_id] = {
+                        response_value: r.response_value,
+                        readings: r.readings,
+                        remarks: r.remarks,
+                        image_url: r.image_url,
+                      };
+                    }
+                  });
+                  return freshMap;
                 });
-                return freshMap;
-              });
-            }
-          });
+              }
+            },
+          );
         }
       } catch (err) {
         logger.error("Error loading PM execution data:", { error: err });
@@ -502,191 +540,31 @@ export default function PMExecutionScreen() {
     [instanceId, isConnected],
   );
 
-  // ── Image handler ─────────────────────────────────────────────────────────
-  const handleImageChange = useCallback(
-    async (itemId: string, uri: string | null) => {
-      if (uri === "PICK") {
-        const result = await ImagePicker.launchCameraAsync({
-          mediaTypes: ["images"],
-          allowsEditing: true,
-          quality: 0.7,
-        });
-
-        if (!result.canceled && result.assets[0].uri) {
-          const pickedUri = result.assets[0].uri;
-
-          // Offline-first behavior:
-          // - online: attempt upload
-          // - offline/failure: keep local URI and let PM sync upload later
-          if (!isConnected) {
-            setResponses((prev) => {
-              const next = {
-                ...prev,
-                [itemId]: {
-                  ...prev[itemId],
-                  image_url: pickedUri,
-                },
-              };
-              handleSave(true, undefined, next);
-              return next;
-            });
-            Alert.alert(
-              "Saved Offline",
-              "Image saved locally and will upload when you are back online.",
-            );
-            return;
-          }
-
-          setUploadingItems((prev) => ({ ...prev, [itemId]: true }));
-
-          try {
-            const fileName = `pm-checklists/${itemId}_${Date.now()}.jpg`;
-            const publicUrl = await StorageService.uploadFile(
-              "jouleops-attachments",
-              fileName,
-              pickedUri,
-            );
-
-            setResponses((prev) => {
-              const next = {
-                ...prev,
-                [itemId]: {
-                  ...prev[itemId],
-                  image_url: publicUrl || pickedUri,
-                },
-              };
-              handleSave(true, undefined, next);
-              return next;
-            });
-
-            if (!publicUrl) {
-              Alert.alert(
-                "Saved Offline",
-                "Image upload will retry automatically when online.",
-              );
-            }
-          } catch (err) {
-            logger.error("Error during PM image upload:", { error: err });
-            setResponses((prev) => {
-              const next = {
-                ...prev,
-                [itemId]: {
-                  ...prev[itemId],
-                  image_url: pickedUri,
-                },
-              };
-              handleSave(true, undefined, next);
-              return next;
-            });
-            Alert.alert(
-              "Saved Offline",
-              "Image saved locally and upload will retry automatically.",
-            );
-          } finally {
-            setUploadingItems((prev) => ({ ...prev, [itemId]: false }));
-          }
-        }
-      } else {
-        setResponses((prev) => {
-          const next = {
-            ...prev,
-            [itemId]: {
-              ...prev[itemId],
-              image_url: null,
-            },
-          };
-          handleSave(true, undefined, next);
-          return next;
-        });
-      }
-    },
-    [instanceId, isConnected],
-  );
-  const handleInstanceImageChange = useCallback(
-    async (type: "before_image" | "after_image") => {
-      const result = await ImagePicker.launchCameraAsync({
-        mediaTypes: ["images"],
-        allowsEditing: true,
-        quality: 0.7,
-      });
-
-      if (!result.canceled && result.assets[0].uri) {
-        const pickedUri = result.assets[0].uri;
-
-        // Try to upload immediately if online, else keep local URI
-        let finalUri = pickedUri;
-        const netState = await NetInfo.fetch();
-        const isActuallyOnline = netState.isConnected === true;
-
-        if (isActuallyOnline) {
-          try {
-            const fileName = `pm-completion/${instanceId}_${type}_${Date.now()}.jpg`;
-            const publicUrl = await StorageService.uploadFile(
-              "jouleops-attachments",
-              fileName,
-              pickedUri,
-            );
-            if (publicUrl) finalUri = publicUrl;
-          } catch (err) {
-            logger.warn(`Failed to upload ${type} immediately`, { error: err });
-          }
-        }
-
-        let computedNextInstance: any = null;
-        setInstance((prev) => {
-          const nextInstance = {
-            ...(prev || {}),
-            [type]: finalUri,
-          };
-          computedNextInstance = nextInstance;
-          return nextInstance;
-        });
-        if (computedNextInstance) {
-          handleSave(true, undefined, undefined, computedNextInstance);
-        }
-      }
-    },
-    [instanceId, isConnected, handleSave],
-  );
-
-  useEffect(() => {
-    if (instanceId) {
-      loadData(false);
-    }
-  }, [instanceId, isConnected]);
-
-  // ── Progress derived value ────────────────────────────────────────────────
-  const answered = Object.values(responses).filter(
-    (r) => r.response_value,
-  ).length;
-  const total = checklistItems.length;
-  // Visual percentage for the progress bar fill
-  const progressPercent = total > 0 ? (answered / total) * 100 : 0;
-
   const handleSave = useCallback(
     async (
       quiet = false,
-      executionOptions?: { 
-        status?: string; 
-        clientSign?: string; 
-        completed_on?: number 
+      executionOptions?: {
+        status?: string;
+        clientSign?: string;
+        completed_on?: number;
       },
       overridingResponses?: ResponseMap,
-      overridingInstance?: any
+      overridingInstance?: any,
     ) => {
       setSaving(true);
       try {
         const sourceResponses = overridingResponses || responses;
         const sourceInstance = overridingInstance || instance;
-        const responseData = Object.entries(sourceResponses)
-          .map(([itemId, resp]) => ({
+        const responseData = Object.entries(sourceResponses).map(
+          ([itemId, resp]) => ({
             checklist_item_id: itemId,
             // Keep undefined so saveExecutionProgress ignores untouched rows
             response_value: resp.response_value,
             readings: resp.readings || null,
             remarks: resp.remarks || null,
             image_url: resp.image_url || null,
-          }));
+          }),
+        );
 
         let nextStatus = sourceInstance?.status;
         if (sourceInstance?.status === "Pending") nextStatus = "In-progress";
@@ -694,7 +572,13 @@ export default function PMExecutionScreen() {
 
         // Optimistic UI update: Immediately reflect status transition
         if (nextStatus !== sourceInstance?.status) {
-          setInstance({ ...sourceInstance, status: nextStatus });
+          setInstance({
+            ...sourceInstance,
+            status: nextStatus,
+            ...(executionOptions?.completed_on !== undefined
+              ? { completed_on: executionOptions.completed_on }
+              : {}),
+          });
         }
 
         await PMService.saveExecutionProgress(
@@ -705,12 +589,15 @@ export default function PMExecutionScreen() {
             beforeImage: sourceInstance?.before_image || null,
             afterImage: sourceInstance?.after_image || null,
             clientSign: executionOptions?.clientSign,
-          }
+            completed_on: executionOptions?.completed_on,
+          },
         );
 
         // Verification fetch (optional but keeps DB and State in perfect sync)
         if (nextStatus !== sourceInstance?.status) {
-          const updated = await PMService.getInstanceByServerId(instanceId as string);
+          const updated = await PMService.getInstanceByServerId(
+            instanceId as string,
+          );
           if (updated) setInstance(updated);
         }
 
@@ -728,13 +615,301 @@ export default function PMExecutionScreen() {
         setSaving(false);
       }
     },
-    [
-      responses,
-      instanceId,
-      instance?.before_image,
-      instance?.after_image,
-      instance?.status,
-    ],
+    [responses, instanceId, instance],
+  );
+
+  // ── Image handler (checklist items): menu, camera, library, or clear ───────
+  const handleImageChange = useCallback(
+    async (itemId: string, action: ChecklistImageAction) => {
+      const processPickedUri = async (pickedUri: string) => {
+        if (!isConnected) {
+          setResponses((prev) => {
+            const next = {
+              ...prev,
+              [itemId]: {
+                ...prev[itemId],
+                image_url: pickedUri,
+              },
+            };
+            handleSave(true, undefined, next);
+            return next;
+          });
+          Alert.alert(
+            "Saved Offline",
+            "Image saved locally and will upload when you are back online.",
+          );
+          return;
+        }
+
+        setUploadingItems((prev) => ({ ...prev, [itemId]: true }));
+
+        try {
+          const fileName = `pm-checklists/${itemId}_${Date.now()}.jpg`;
+          const publicUrl = await StorageService.uploadFile(
+            "jouleops-attachments",
+            fileName,
+            pickedUri,
+          );
+
+          setResponses((prev) => {
+            const next = {
+              ...prev,
+              [itemId]: {
+                ...prev[itemId],
+                image_url: publicUrl || pickedUri,
+              },
+            };
+            handleSave(true, undefined, next);
+            return next;
+          });
+
+          if (!publicUrl) {
+            Alert.alert(
+              "Saved Offline",
+              "Image upload will retry automatically when online.",
+            );
+          }
+        } catch (err) {
+          logger.error("Error during PM image upload:", { error: err });
+          setResponses((prev) => {
+            const next = {
+              ...prev,
+              [itemId]: {
+                ...prev[itemId],
+                image_url: pickedUri,
+              },
+            };
+            handleSave(true, undefined, next);
+            return next;
+          });
+          Alert.alert(
+            "Saved Offline",
+            "Image saved locally and upload will retry automatically.",
+          );
+        } finally {
+          setUploadingItems((prev) => ({ ...prev, [itemId]: false }));
+        }
+      };
+
+      const pickFromSource = async (source: "camera" | "library") => {
+        try {
+          if (source === "camera") {
+            const perm = await ImagePicker.requestCameraPermissionsAsync();
+            if (!perm.granted) {
+              Alert.alert(
+                "Permission Required",
+                "Please grant camera access to capture task photos.",
+              );
+              return;
+            }
+            const result = await ImagePicker.launchCameraAsync(
+              INSTANCE_IMAGE_PICKER_OPTIONS,
+            );
+            if (!result.canceled && result.assets[0]?.uri) {
+              await processPickedUri(result.assets[0].uri);
+            }
+          } else {
+            const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+            if (!perm.granted) {
+              Alert.alert(
+                "Permission Required",
+                "Please grant photo library access to choose images.",
+              );
+              return;
+            }
+            const result = await ImagePicker.launchImageLibraryAsync(
+              INSTANCE_IMAGE_PICKER_OPTIONS,
+            );
+            if (!result.canceled && result.assets[0]?.uri) {
+              await processPickedUri(result.assets[0].uri);
+            }
+          }
+        } catch (err) {
+          logger.error("PM checklist image picker error", { error: err });
+          Alert.alert("Error", "Failed to pick image.");
+        }
+      };
+
+      if (action === "MENU") {
+        Alert.alert("Add image", "Choose an option", [
+          {
+            text: "Take photo",
+            onPress: () => void pickFromSource("camera"),
+          },
+          {
+            text: "Choose from gallery",
+            onPress: () => void pickFromSource("library"),
+          },
+          { text: "Cancel", style: "cancel" },
+        ]);
+        return;
+      }
+
+      if (action === "CAMERA") {
+        await pickFromSource("camera");
+        return;
+      }
+
+      if (action === "LIBRARY") {
+        await pickFromSource("library");
+        return;
+      }
+
+      if (action === null) {
+        setResponses((prev) => {
+          const next = {
+            ...prev,
+            [itemId]: {
+              ...prev[itemId],
+              image_url: null,
+            },
+          };
+          handleSave(true, undefined, next);
+          return next;
+        });
+      }
+    },
+    [handleSave, isConnected],
+  );
+
+  useEffect(() => {
+    if (instanceId) {
+      loadData(false);
+    }
+  }, [instanceId, isConnected, loadData]);
+
+  // ── Progress derived value ────────────────────────────────────────────────
+  const answered = Object.values(responses).filter(
+    (r) => r.response_value,
+  ).length;
+  const total = checklistItems.length;
+  // Visual percentage for the progress bar fill
+  const progressPercent = total > 0 ? (answered / total) * 100 : 0;
+
+  const applyInstanceImageFromUri = useCallback(
+    async (type: "before_image" | "after_image", pickedUri: string) => {
+      let finalUri = pickedUri;
+      const netState = await NetInfo.fetch();
+      const isActuallyOnline = netState.isConnected === true;
+
+      if (isActuallyOnline) {
+        try {
+          const fileName = `pm-completion/${instanceId}_${type}_${Date.now()}.jpg`;
+          const publicUrl = await StorageService.uploadFile(
+            "jouleops-attachments",
+            fileName,
+            pickedUri,
+          );
+          if (publicUrl) finalUri = publicUrl;
+        } catch (err) {
+          logger.warn(`Failed to upload ${type} immediately`, { error: err });
+        }
+      }
+
+      let computedNextInstance: any = null;
+      setInstance((prev: any) => {
+        const nextInstance = {
+          ...(prev || {}),
+          [type]: finalUri,
+        };
+        computedNextInstance = nextInstance;
+        return nextInstance;
+      });
+      if (computedNextInstance) {
+        handleSave(true, undefined, undefined, computedNextInstance);
+      }
+    },
+    [instanceId, handleSave],
+  );
+
+  const pickInstanceImage = useCallback(
+    async (
+      type: "before_image" | "after_image",
+      source: "camera" | "library",
+    ) => {
+      try {
+        if (source === "camera") {
+          const perm = await ImagePicker.requestCameraPermissionsAsync();
+          if (!perm.granted) {
+            Alert.alert(
+              "Permission Required",
+              "Please grant camera access to capture evidence photos.",
+            );
+            return;
+          }
+          const result = await ImagePicker.launchCameraAsync(
+            INSTANCE_IMAGE_PICKER_OPTIONS,
+          );
+          if (!result.canceled && result.assets[0]?.uri) {
+            await applyInstanceImageFromUri(type, result.assets[0].uri);
+          }
+        } else {
+          const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+          if (!perm.granted) {
+            Alert.alert(
+              "Permission Required",
+              "Please grant photo library access to choose images.",
+            );
+            return;
+          }
+          const result = await ImagePicker.launchImageLibraryAsync(
+            INSTANCE_IMAGE_PICKER_OPTIONS,
+          );
+          if (!result.canceled && result.assets[0]?.uri) {
+            await applyInstanceImageFromUri(type, result.assets[0].uri);
+          }
+        }
+      } catch (err) {
+        logger.error("PM instance image picker error", { error: err });
+        Alert.alert("Error", "Failed to pick image.");
+      }
+    },
+    [applyInstanceImageFromUri],
+  );
+
+  const promptAddInstanceImage = useCallback(
+    (type: "before_image" | "after_image") => {
+      Alert.alert("Add evidence", "Choose an option", [
+        {
+          text: "Take photo",
+          onPress: () => void pickInstanceImage(type, "camera"),
+        },
+        {
+          text: "Choose from gallery",
+          onPress: () => void pickInstanceImage(type, "library"),
+        },
+        { text: "Cancel", style: "cancel" },
+      ]);
+    },
+    [pickInstanceImage],
+  );
+
+  const promptReplaceInstanceImage = useCallback(
+    (type: "before_image" | "after_image", currentUri: string) => {
+      Alert.alert("Evidence photo", "What would you like to do?", [
+        {
+          text: "Show preview",
+          onPress: () => setPreviewImageUrl(currentUri),
+        },
+        {
+          text: "Replace photo",
+          onPress: () =>
+            Alert.alert("Replace photo", "Choose a source", [
+              {
+                text: "Take photo",
+                onPress: () => void pickInstanceImage(type, "camera"),
+              },
+              {
+                text: "Choose from gallery",
+                onPress: () => void pickInstanceImage(type, "library"),
+              },
+              { text: "Cancel", style: "cancel" },
+            ]),
+        },
+        { text: "Cancel", style: "cancel" },
+      ]);
+    },
+    [pickInstanceImage],
   );
 
   // ── Response handler ──────────────────────────────────────────────────────
@@ -791,10 +966,10 @@ export default function PMExecutionScreen() {
       setSaving(true);
       try {
         const now = Date.now();
-        const saved = await handleSave(true, { 
-          status: "Completed", 
-          clientSign: signature, 
-          completed_on: now 
+        const saved = await handleSave(true, {
+          status: "Completed",
+          clientSign: signature,
+          completed_on: now,
         });
         if (!saved) throw new Error("Failed to complete instance.");
 
@@ -857,28 +1032,36 @@ export default function PMExecutionScreen() {
                 ? "Checklist not cached yet.\nPlease connect to internet and sync to cache all checklists."
                 : "No checklist items found."}
           </Text>
-          {checklistItems.length === 0 && !isConnected && instance?.maintenance_id && (
-            <TouchableOpacity
-              onPress={() => {
-                Alert.alert(
-                  "Offline Mode",
-                  "To use PM checklists offline:\n\n1. Connect to internet\n2. Open the app and wait for sync to complete\n3. All checklists will be cached automatically\n\nAfter that, you can work offline.",
-                  [{ text: "OK" }]
-                );
-              }}
-              style={{
-                marginTop: 16,
-                paddingHorizontal: 20,
-                paddingVertical: 10,
-                backgroundColor: isDark ? "#1e293b" : "#f1f5f9",
-                borderRadius: 8,
-              }}
-            >
-              <Text style={{ color: isDark ? "#94a3b8" : "#64748b", fontSize: 14, fontWeight: "600" }}>
-                Learn More
-              </Text>
-            </TouchableOpacity>
-          )}
+          {checklistItems.length === 0 &&
+            !isConnected &&
+            instance?.maintenance_id && (
+              <TouchableOpacity
+                onPress={() => {
+                  Alert.alert(
+                    "Offline Mode",
+                    "To use PM checklists offline:\n\n1. Connect to internet\n2. Open the app and wait for sync to complete\n3. All checklists will be cached automatically\n\nAfter that, you can work offline.",
+                    [{ text: "OK" }],
+                  );
+                }}
+                style={{
+                  marginTop: 16,
+                  paddingHorizontal: 20,
+                  paddingVertical: 10,
+                  backgroundColor: isDark ? "#1e293b" : "#f1f5f9",
+                  borderRadius: 8,
+                }}
+              >
+                <Text
+                  style={{
+                    color: isDark ? "#94a3b8" : "#64748b",
+                    fontSize: 14,
+                    fontWeight: "600",
+                  }}
+                >
+                  Learn More
+                </Text>
+              </TouchableOpacity>
+            )}
         </View>
       )}
     </View>
@@ -886,7 +1069,8 @@ export default function PMExecutionScreen() {
 
   const isCompleted = instance?.status === "Completed";
   const canComplete =
-    (progressPercent === 100 || Object.keys(responses).length > 0) &&
+    total > 0 &&
+    answered === total &&
     !!instance?.before_image &&
     !!instance?.after_image;
 
@@ -999,26 +1183,13 @@ export default function PMExecutionScreen() {
                   if (instance.status === "Completed") {
                     setPreviewImageUrl(instance.before_image);
                   } else {
-                    Alert.alert(
-                      "Evidence Photo",
-                      "What would you like to do?",
-                      [
-                        {
-                          text: "Show Preview",
-                          onPress: () =>
-                            setPreviewImageUrl(instance.before_image),
-                        },
-                        {
-                          text: "Retake Photo",
-                          onPress: () =>
-                            handleInstanceImageChange("before_image"),
-                        },
-                        { text: "Cancel", style: "cancel" },
-                      ],
+                    promptReplaceInstanceImage(
+                      "before_image",
+                      instance.before_image,
                     );
                   }
                 } else {
-                  handleInstanceImageChange("before_image");
+                  promptAddInstanceImage("before_image");
                 }
               }}
               style={[
@@ -1062,26 +1233,13 @@ export default function PMExecutionScreen() {
                   if (instance.status === "Completed") {
                     setPreviewImageUrl(instance.after_image);
                   } else {
-                    Alert.alert(
-                      "Evidence Photo",
-                      "What would you like to do?",
-                      [
-                        {
-                          text: "Show Preview",
-                          onPress: () =>
-                            setPreviewImageUrl(instance.after_image),
-                        },
-                        {
-                          text: "Retake Photo",
-                          onPress: () =>
-                            handleInstanceImageChange("after_image"),
-                        },
-                        { text: "Cancel", style: "cancel" },
-                      ],
+                    promptReplaceInstanceImage(
+                      "after_image",
+                      instance.after_image,
                     );
                   }
                 } else {
-                  handleInstanceImageChange("after_image");
+                  promptAddInstanceImage("after_image");
                 }
               }}
               style={[
@@ -1225,7 +1383,7 @@ export default function PMExecutionScreen() {
                   Complete PM Task
                 </Text>
                 <Text style={[styles.modalSub, { color: subTextColor }]}>
-                  Please provide the client's signature below.
+                  Please provide the client signature below.
                 </Text>
               </View>
               <TouchableOpacity
