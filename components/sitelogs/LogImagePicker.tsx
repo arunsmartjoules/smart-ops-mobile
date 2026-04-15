@@ -172,7 +172,7 @@ export const LogImagePicker: React.FC<LogImagePickerProps> = ({
 
   if (compact) {
     return (
-      <View>
+      <View className="flex-row items-center gap-2">
         <TouchableOpacity
           onPress={value ? () => setIsPreviewVisible(true) : () => handlePickImage(true)}
           disabled={isUploading || disabled}
@@ -186,6 +186,20 @@ export const LogImagePicker: React.FC<LogImagePickerProps> = ({
             <Camera size={20} color="#94a3b8" />
           )}
         </TouchableOpacity>
+
+        {!disabled && (
+          <TouchableOpacity
+            onPress={() => handlePickImage(false)}
+            disabled={isUploading}
+            className="w-12 h-12 rounded-xl items-center justify-center border bg-slate-50 dark:bg-slate-900 border-slate-200 dark:border-slate-700"
+          >
+            {isUploading ? (
+              <ActivityIndicator size="small" color="#94a3b8" />
+            ) : (
+              <ImageIcon size={18} color="#94a3b8" />
+            )}
+          </TouchableOpacity>
+        )}
 
         {/* Simplified Preview Modal for compact mode if needed, but we'll use the same full screen one */}
         {renderPreviewModal()}
