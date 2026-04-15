@@ -460,6 +460,15 @@ export default function PreventiveMaintenance() {
               setAllInstances(freshLocal);
               setHasMore(apiData.length === PAGE_SIZE);
             } else {
+              let freshLocal = await PMService.getLocalInstances(siteCode);
+              const freshPending = await PMService.getPendingUpdatesMap();
+              if (Object.keys(freshPending).length > 0) {
+                freshLocal = freshLocal.map((inst) => {
+                  const upd = freshPending[inst.id];
+                  return upd ? { ...inst, ...upd } : inst;
+                });
+              }
+              setAllInstances(freshLocal);
               setHasMore(false);
             }
           } catch (apiErr) {
@@ -550,17 +559,7 @@ export default function PreventiveMaintenance() {
   const filteredInstances = useMemo(() => {
     let list = [...allInstances];
 
-    // 1. Apply Date Filter in memory
-    const startRange = startOfDay(parseISO(currentDate)).getTime();
-    const endRange = endOfDay(parseISO(toDate)).getTime();
-
-    list = list.filter((i) => {
-      if (!i.start_due_date) return false;
-      const ts = new Date(i.start_due_date).getTime();
-      return ts >= startRange && ts <= endRange;
-    });
-
-    // 2. Apply Status Filter
+    // 1. Apply Status Filter
     if (statusFilter !== "All") {
       list = list.filter((i) => {
         const s = i.status;
@@ -576,7 +575,7 @@ export default function PreventiveMaintenance() {
       });
     }
 
-    // 3. Apply Search or QR Filter
+    // 2. Apply Search or QR Filter
     if (qrAssetFilter) {
       list = list.filter((i) => i.asset_id === qrAssetFilter);
     } else if (searchQuery) {
@@ -596,7 +595,18 @@ export default function PreventiveMaintenance() {
           (dueDateShort && dueDateShort.includes(q))
         );
       });
+      // Requirement: text search should not be constrained by date window.
+      return list;
     }
+
+    // 3. Apply Date Filter in normal browsing mode (no text/QR search)
+    const startRange = startOfDay(parseISO(currentDate)).getTime();
+    const endRange = endOfDay(parseISO(toDate)).getTime();
+    list = list.filter((i) => {
+      if (!i.start_due_date) return false;
+      const ts = new Date(i.start_due_date).getTime();
+      return ts >= startRange && ts <= endRange;
+    });
     return list;
   }, [
     allInstances,

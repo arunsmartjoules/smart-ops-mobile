@@ -96,6 +96,7 @@ export default function ChillerEntry() {
   const [dailyReadingCount, setDailyReadingCount] = useState(0);
   const [loadingDailyProgress, setLoadingDailyProgress] = useState(false);
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const formDataRef = useRef(formData);
 
   const isEditMode = !!(params.editId || params.id);
   const targetId = (params.editId || params.id || "") as string;
@@ -112,6 +113,10 @@ export default function ChillerEntry() {
       if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
     };
   }, []);
+
+  useEffect(() => {
+    formDataRef.current = formData;
+  }, [formData]);
 
   useEffect(() => {
     loadSites();
@@ -327,7 +332,7 @@ export default function ChillerEntry() {
       // Only auto-save if we have a chiller selection
       if (next.chillerId) {
         autoSaveTimerRef.current = setTimeout(() => {
-          handleSubmission("In-progress");
+          handleSubmission("In-progress", undefined, next);
         }, 1500); // 1.5s delay for technical logs
       }
       
@@ -336,13 +341,19 @@ export default function ChillerEntry() {
   };
 
 
-  const handleSubmission = async (status: string, sig?: string) => {
-    if (!formData.chillerId) {
+  const handleSubmission = async (
+    status: string,
+    sig?: string,
+    formDataSnapshot?: typeof formData,
+  ) => {
+    const currentFormData = formDataSnapshot || formDataRef.current;
+
+    if (!currentFormData.chillerId) {
       Alert.alert("Error", "Please select a Chiller asset");
       return;
     }
 
-    const finalSignature = sig || formData.signature;
+    const finalSignature = sig || currentFormData.signature;
 
     if (!isEditMode && status === "Completed" && !finalSignature) {
       Alert.alert("Error", "Signature is required to complete the log");
@@ -351,43 +362,43 @@ export default function ChillerEntry() {
 
     try {
       setSaving(true);
-      const selectedAsset = assets.find((a) => a.value === formData.chillerId);
-      const assetName = selectedAsset?.label || formData.chillerId;
+      const selectedAsset = assets.find((a) => a.value === currentFormData.chillerId);
+      const assetName = selectedAsset?.label || currentFormData.chillerId;
 
       const payload = {
         siteCode: selectedSite,
         executorId: user?.user_id || user?.id || "unknown",
         chillerId: assetName,
-        equipmentId: formData.chillerId,
+        equipmentId: currentFormData.chillerId,
         assetName: assetName,
         assetType: selectedAsset?.description || "Chiller",
-        condenserInletTemp: parseFloat(formData.condenserInletTemp),
-        condenserOutletTemp: parseFloat(formData.condenserOutletTemp),
-        evaporatorInletTemp: parseFloat(formData.evaporatorInletTemp),
-        evaporatorOutletTemp: parseFloat(formData.evaporatorOutletTemp),
-        saturatedCondenserTemp: parseFloat(formData.saturatedCondenserTemp),
-        saturatedSuctionTemp: parseFloat(formData.saturatedSuctionTemp),
-        compressorSuctionTemp: parseFloat(formData.compressorSuctionTemp),
-        motorTemperature: parseFloat(formData.motorTemperature),
-        setPointCelsius: parseFloat(formData.setPointCelsius),
-        dischargePressure: parseFloat(formData.dischargePressure),
-        mainSuctionPressure: parseFloat(formData.mainSuctionPressure),
-        oilPressure: parseFloat(formData.oilPressure),
-        oilPressureDifference: parseFloat(formData.oilPressureDifference),
-        condenserInletPressure: parseFloat(formData.condenserInletPressure),
-        condenserOutletPressure: parseFloat(formData.condenserOutletPressure),
-        evaporatorInletPressure: parseFloat(formData.evaporatorInletPressure),
-        evaporatorOutletPressure: parseFloat(formData.evaporatorOutletPressure),
-        compressorLoadPercentage: parseFloat(formData.load),
-        inlineBtuMeter: parseFloat(formData.inlineBtuMeter),
-        remarks: formData.remarks,
+        condenserInletTemp: parseFloat(currentFormData.condenserInletTemp),
+        condenserOutletTemp: parseFloat(currentFormData.condenserOutletTemp),
+        evaporatorInletTemp: parseFloat(currentFormData.evaporatorInletTemp),
+        evaporatorOutletTemp: parseFloat(currentFormData.evaporatorOutletTemp),
+        saturatedCondenserTemp: parseFloat(currentFormData.saturatedCondenserTemp),
+        saturatedSuctionTemp: parseFloat(currentFormData.saturatedSuctionTemp),
+        compressorSuctionTemp: parseFloat(currentFormData.compressorSuctionTemp),
+        motorTemperature: parseFloat(currentFormData.motorTemperature),
+        setPointCelsius: parseFloat(currentFormData.setPointCelsius),
+        dischargePressure: parseFloat(currentFormData.dischargePressure),
+        mainSuctionPressure: parseFloat(currentFormData.mainSuctionPressure),
+        oilPressure: parseFloat(currentFormData.oilPressure),
+        oilPressureDifference: parseFloat(currentFormData.oilPressureDifference),
+        condenserInletPressure: parseFloat(currentFormData.condenserInletPressure),
+        condenserOutletPressure: parseFloat(currentFormData.condenserOutletPressure),
+        evaporatorInletPressure: parseFloat(currentFormData.evaporatorInletPressure),
+        evaporatorOutletPressure: parseFloat(currentFormData.evaporatorOutletPressure),
+        compressorLoadPercentage: parseFloat(currentFormData.load),
+        inlineBtuMeter: parseFloat(currentFormData.inlineBtuMeter),
+        remarks: currentFormData.remarks,
         assignedTo: user?.full_name || user?.name || "unknown",
         signature: finalSignature,
         status: status,
         readingTime: params.readingTime
           ? parseInt(params.readingTime)
           : new Date().getTime(),
-        attachments: formData.attachment,
+        attachments: currentFormData.attachment,
       };
 
       if (isEditMode) {

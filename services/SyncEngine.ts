@@ -104,7 +104,7 @@ interface DomainSyncHandler {
 const TTL = {
   tickets: 10 * 60 * 1000,
   site_logs: 10 * 60 * 1000,
-  pm_instances: 15 * 60 * 1000,
+  pm_instances: 5 * 60 * 1000,
   attendance: 5 * 60 * 1000,
   chiller_readings: 15 * 60 * 1000,
   sites: 60 * 60 * 1000,

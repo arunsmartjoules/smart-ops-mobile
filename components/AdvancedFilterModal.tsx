@@ -18,6 +18,7 @@ import {
   startOfWeek,
   endOfWeek,
   startOfMonth,
+  endOfMonth,
   startOfYear,
   subMonths,
 } from "date-fns";
@@ -66,7 +67,7 @@ const getQuickRangeDates = (
     case "this_week":
       return { from: fmt(startOfWeek(today, { weekStartsOn: 1 })), to: fmt(endOfWeek(today, { weekStartsOn: 1 })) };
     case "this_month":
-      return { from: fmt(startOfMonth(today)), to: fmt(today) };
+      return { from: fmt(startOfMonth(today)), to: fmt(endOfMonth(today)) };
     case "last_month": {
       const lastMonth = subMonths(today, 1);
       return {
@@ -641,7 +642,7 @@ const AdvancedFilterModal = ({
                 setTempSearch("");
                 setTempFromDate(format(new Date(), "yyyy-MM-dd"));
                 setTempToDate?.(format(new Date(), "yyyy-MM-dd"));
-                setStatusFilter?.("Open");
+                setStatusFilter?.("Pending");
                 setPriorityFilter?.("All");
                 setSelectedQuickRange(null);
               }}
