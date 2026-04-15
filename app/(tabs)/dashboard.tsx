@@ -67,6 +67,27 @@ import { eq } from "drizzle-orm";
 import { useSites } from "@/hooks/useSites";
 import { WhatsAppService } from "@/services/WhatsAppService";
 
+function formatLocationFailureMessage(
+  message: string,
+  userLocation?: { latitude: number; longitude: number } | null,
+  nearestSite?: Site,
+) {
+  const parts = [message];
+  if (userLocation) {
+    parts.push(
+      `\nYour location: ${userLocation.latitude.toFixed(6)}, ${userLocation.longitude.toFixed(6)}`,
+    );
+  }
+  if (nearestSite) {
+    const d = nearestSite.distanceMeters ?? nearestSite.distance ?? "?";
+    const r = nearestSite.radius ?? 200;
+    parts.push(
+      `\nNearest site "${nearestSite.name}": about ${d}m away (allowed radius: ${r}m).`,
+    );
+  }
+  return parts.join("");
+}
+
 interface PendingItem {
   id: string;
   title: string;
@@ -965,54 +986,73 @@ export default function Dashboard() {
   const navigateToProfile = useCallback(() => router.push("/app-settings"), []);
 
   const handleQuickCheckIn = async () => {
-    if (!user?.id) return;
+    const uid = user?.user_id || user?.id;
+    if (!uid) return;
+    if (!isConnected) {
+      Alert.alert(
+        "No internet connection",
+        "Check-in requires an active internet connection.",
+      );
+      return;
+    }
     setValidatingLocation(true);
     try {
-      // 1. Get site code (from last site)
-      const lastSiteCode = await AsyncStorage.getItem(`last_site_${user.id}`);
-      let siteToUse = lastSiteCode;
-      if (!siteToUse || siteToUse === "all") {
-        siteToUse = sites.length > 0 ? sites[0].site_code : null;
-      }
-      if (!siteToUse) {
-        router.push("/attendance");
-        return;
-      }
-
-      // 2. Get location
+      const accuracy =
+        Platform.OS === "android"
+          ? Location.Accuracy.High
+          : Location.Accuracy.BestForNavigation;
       const loc = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.Balanced,
+        accuracy,
       });
 
-      // 3. Validate
       const validation = await AttendanceService.validateLocation(
-        user.id,
+        uid,
         loc.coords.latitude,
         loc.coords.longitude,
       );
 
-      if (validation.isValid) {
-        // Find matching site
-        const siteToJoin =
-          validation.allowedSites.find((s) => s.site_code === lastSiteCode) ||
-          validation.allowedSites[0];
-
-        const res = await AttendanceService.checkIn(
-          user.id,
-          siteToJoin.site_code,
-          loc.coords.latitude,
-          loc.coords.longitude,
-        );
-        if (res.success) {
-          Alert.alert("Success", "Checked in successfully!");
-          fetchData();
-        } else {
-          Alert.alert("Failed", res.error || "Check-in failed");
-        }
-      } else {
+      if (!validation.isValid) {
         Alert.alert(
           "Location Failed",
-          "You are too far from the site. Please go to the Attendance screen for details.",
+          formatLocationFailureMessage(
+            validation.message,
+            validation.userLocation,
+            validation.nearestSite,
+          ),
+        );
+        return;
+      }
+
+      const siteCode = validation.isWFH
+        ? validation.resolvedSiteCode ?? null
+        : validation.allowedSites[0]?.site_code ?? null;
+
+      if (!validation.isWFH && !siteCode) {
+        Alert.alert(
+          "Location Failed",
+          "You are not within range of any active site. Open Attendance for details.",
+        );
+        return;
+      }
+
+      const res = await AttendanceService.checkIn(
+        uid,
+        siteCode,
+        loc.coords.latitude,
+        loc.coords.longitude,
+      );
+      if (res.success) {
+        Alert.alert("Success", "Checked in successfully!");
+        fetchData();
+      } else {
+        const ext = res as any;
+        Alert.alert(
+          "Failed",
+          formatLocationFailureMessage(
+            ext.error || "Check-in failed",
+            ext.userLocation,
+            ext.nearestSite,
+          ),
         );
       }
     } catch (e: any) {
@@ -1024,12 +1064,23 @@ export default function Dashboard() {
 
   const handleQuickCheckOut = async () => {
     if (!todayAttendance?.id) return;
+    if (!isConnected) {
+      Alert.alert(
+        "No internet connection",
+        "Check-out requires an active internet connection.",
+      );
+      return;
+    }
     setValidatingLocation(true);
 
     const performCheckOut = async (remarks?: string) => {
       try {
+        const accuracy =
+          Platform.OS === "android"
+            ? Location.Accuracy.High
+            : Location.Accuracy.BestForNavigation;
         const loc = await Location.getCurrentPositionAsync({
-          accuracy: Location.Accuracy.Balanced,
+          accuracy,
         });
         const res = await AttendanceService.checkOut(
           todayAttendance.id,

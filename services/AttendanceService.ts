@@ -5,7 +5,6 @@ import { apiFetch as centralApiFetch } from "../utils/apiHelper";
 import { API_BASE_URL } from "../constants/api";
 import { cacheManager } from "./CacheManager";
 import { siteResolver } from "./SiteResolver";
-import { v4 as uuidv4 } from "uuid";
 import { db, attendanceLogs } from "../database";
 import { and, eq, desc } from "drizzle-orm";
 
@@ -33,6 +32,7 @@ const normalizeAttendanceLog = (log: any): AttendanceLog | null => {
 
   return {
     ...log,
+    site_code: log.site_code ?? "",
     check_in_time: ci ? ci.toISOString() : undefined,
     check_out_time: co ? co.toISOString() : undefined,
   } as AttendanceLog;
@@ -107,7 +107,9 @@ export interface Site {
   latitude?: number;
   longitude?: number;
   distance?: number;
+  distanceMeters?: number;
   inRange?: boolean;
+  isWithinRange?: boolean;
   radius?: number;
 }
 
@@ -135,6 +137,8 @@ export interface LocationValidationResult {
   allowedSites: Site[];
   allSites?: Site[];
   nearestSite?: Site;
+  resolvedSiteCode?: string | null;
+  userLocation?: { latitude: number; longitude: number } | null;
   message: string;
 }
 
@@ -232,8 +236,10 @@ export const AttendanceService = {
     longitude?: number,
   ): Promise<LocationValidationResult> {
     const params = new URLSearchParams();
-    if (latitude) params.append("latitude", latitude.toString());
-    if (longitude) params.append("longitude", longitude.toString());
+    if (latitude != null && longitude != null) {
+      params.append("latitude", String(latitude));
+      params.append("longitude", String(longitude));
+    }
 
     const result = await apiFetch(
       `/api/attendance/validate-location/${userId}?${params.toString()}`,
@@ -376,12 +382,12 @@ export const AttendanceService = {
   },
 
   /**
-   * Check in to a site.
-   * When offline, enqueues via CacheManager and returns an optimistic log.
+   * Check in. Requires network; server resolves site from GPS for non-WFH.
+   * `siteCode` may be null for WFH when not on a geofenced site.
    */
   async checkIn(
     userId: string,
-    siteCode: string,
+    siteCode: string | null,
     latitude?: number,
     longitude?: number,
     address?: string,
@@ -389,7 +395,8 @@ export const AttendanceService = {
     success: boolean;
     data?: AttendanceLog;
     error?: string;
-    isOffline?: boolean;
+    nearestSite?: Site;
+    userLocation?: { latitude: number; longitude: number };
   }> {
     const result = await apiFetch("/api/attendance/check-in", {
       method: "POST",
@@ -403,57 +410,27 @@ export const AttendanceService = {
     });
 
     if (result.success && result.data) {
-      logger.activity("PUNCH_IN", "ATTENDANCE", `User punched in at ${siteCode}`, {
-        site_code: siteCode,
-        attendance_id: result.data.id,
-        offline: false,
-      });
+      logger.activity(
+        "PUNCH_IN",
+        "ATTENDANCE",
+        `User punched in at ${siteCode ?? "(no site)"}`,
+        {
+          site_code: siteCode,
+          attendance_id: result.data.id,
+          offline: false,
+        },
+      );
 
       // Write new attendance log to local cache so that getTodayAttendance()
       // returns fresh data immediately on the next read.
       await cacheManager.write("attendance", [result.data]).catch(() => {});
     }
 
-    if (!result.success && result.isNetworkError) {
-      // Queue locally via CacheManager and return optimistic log
-      const timestamp = new Date().toISOString();
-      const localId = uuidv4();
-      await cacheManager.enqueue({
-        entity_type: "attendance_check_in",
-        operation: "create",
-        payload: {
-          id: localId,
-          user_id: userId,
-          site_code: siteCode,
-          check_in_time: timestamp,
-          latitude,
-          longitude,
-          address,
-        },
-      });
-
-      logger.activity("PUNCH_IN", "ATTENDANCE", `User punched in at ${siteCode} (Offline)`, {
-        site_code: siteCode,
-        offline: true,
-      });
-
-      const optimisticLog: AttendanceLog = {
-        id: localId,
-        user_id: userId,
-        site_code: siteCode,
-        date: getISTDateString(),
-        check_in_time: timestamp,
-        status: "Present",
-      };
-      return { success: true, data: optimisticLog, isOffline: true };
-    }
-
     return result;
   },
 
   /**
-   * Check out from attendance.
-   * When offline, enqueues via CacheManager and returns success.
+   * Check out from attendance. Requires network (no offline queue).
    */
   async checkOut(
     attendanceId: string,
@@ -467,7 +444,6 @@ export const AttendanceService = {
     error?: string;
     isEarlyCheckout?: boolean;
     hoursWorked?: string;
-    isOffline?: boolean;
   }> {
     const result = await apiFetch(`/api/attendance/${attendanceId}/check-out`, {
       method: "POST",
@@ -490,29 +466,6 @@ export const AttendanceService = {
       if (result.data) {
         await cacheManager.write("attendance", [result.data]).catch(() => {});
       }
-    }
-
-    if (!result.success && result.isNetworkError) {
-      const timestamp = new Date().toISOString();
-      await cacheManager.enqueue({
-        entity_type: "attendance_check_out",
-        operation: "update",
-        payload: {
-          id: attendanceId,
-          check_out_time: timestamp,
-          latitude,
-          longitude,
-          address,
-          remarks,
-        },
-      });
-
-      logger.activity("PUNCH_OUT", "ATTENDANCE", "User punched out (Offline)", {
-        attendance_id: attendanceId,
-        offline: true,
-      });
-
-      return { success: true, isOffline: true };
     }
 
     return result;

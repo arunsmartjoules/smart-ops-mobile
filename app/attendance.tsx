@@ -16,47 +16,46 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import NetInfo from "@react-native-community/netinfo";
 import {
+  AlertTriangle,
   ArrowLeft,
-  Clock,
-  MapPin,
   Calendar,
   ChevronRight,
+  Clock,
   LogIn,
   LogOut,
-  AlertTriangle,
   Map as LucideMap,
+  MapPin,
+  WifiOff,
   X,
 } from "lucide-react-native";
 import { router, useFocusEffect } from "expo-router";
 import * as Location from "expo-location";
 import { useAuth } from "@/contexts/AuthContext";
-import AttendanceService, {
+import {
+  AttendanceService,
   type AttendanceLog,
   type Site,
-  type LocationValidationResult,
   getISTDateString,
 } from "@/services/AttendanceService";
-import { db, userSites } from "@/database";
-import { eq } from "drizzle-orm";
-import { syncManager } from "@/services/SyncManager";
-import logger from "@/utils/logger";
-import { format, differenceInMinutes, parseISO } from "date-fns";
+import appLogger from "@/utils/logger";
+import { format } from "date-fns";
 import { useNetworkStatus } from "@/hooks/useNetworkStatus";
-import { WifiOff } from "lucide-react-native";
 import Skeleton from "@/components/Skeleton";
+
+/** Reuse cached foreground location reads for this long (ms). */
+const LOCATION_FRESHNESS_MS = 5 * 60 * 1000;
 
 // --- Memoized Components ---
 
-const HistoryItem = React.memo(
-  ({
-    log,
-    currentTime,
-    getDuration,
-  }: {
-    log: AttendanceLog;
-    currentTime: Date;
-    getDuration: (log: AttendanceLog) => string;
-  }) => {
+const HistoryItem = React.memo(function HistoryItem({
+  log,
+  currentTime,
+  getDuration,
+}: {
+  log: AttendanceLog;
+  currentTime: Date;
+  getDuration: (log: AttendanceLog) => string;
+}) {
     const hasMissedCheckout = useMemo(() => {
       if (log.check_out_time || log.status === "Leave" || !log.check_in_time)
         return false;
@@ -161,10 +160,9 @@ const HistoryItem = React.memo(
         )}
       </View>
     );
-  },
-);
+});
 
-const AttendanceHistorySkeleton = React.memo(() => {
+const AttendanceHistorySkeleton = React.memo(function AttendanceHistorySkeleton() {
   return (
     <View className="gap-3">
       {[1, 2, 3, 4, 5].map((i) => (
@@ -223,39 +221,64 @@ const AttendanceHistorySkeleton = React.memo(() => {
   );
 });
 
-const SiteItem = React.memo(
-  ({ site, onSelect }: { site: Site; onSelect: (code: string) => void }) => {
-    const handleSelect = useCallback(() => {
-      onSelect(site.site_code);
-    }, [site.site_code, onSelect]);
+const SiteItem = React.memo(function SiteItem({
+  site,
+  onSelect,
+}: {
+  site: Site;
+  onSelect: (code: string) => void | Promise<void>;
+}) {
+  const handleSelect = useCallback(() => {
+    onSelect(site.site_code);
+  }, [site.site_code, onSelect]);
 
-    return (
-      <TouchableOpacity
-        onPress={handleSelect}
-        className="bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 p-4 rounded-xl mb-3 flex-row items-center"
-      >
-        <View className="w-10 h-10 rounded-full bg-red-100 items-center justify-center mr-3">
-          <LucideMap size={20} color="#dc2626" />
-        </View>
-        <View className="flex-1">
-          <Text className="font-bold text-slate-900 dark:text-slate-100">
-            {site.name}
+  return (
+    <TouchableOpacity
+      onPress={handleSelect}
+      className="bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 p-4 rounded-xl mb-3 flex-row items-center"
+    >
+      <View className="w-10 h-10 rounded-full bg-red-100 items-center justify-center mr-3">
+        <LucideMap size={20} color="#dc2626" />
+      </View>
+      <View className="flex-1">
+        <Text className="font-bold text-slate-900 dark:text-slate-100">
+          {site.name}
+        </Text>
+        <Text className="text-slate-500 dark:text-slate-400 text-xs">
+          {site.address}
+        </Text>
+      </View>
+      {(site.distanceMeters !== undefined || site.distance !== undefined) && (
+        <View className="bg-green-100 px-2 py-1 rounded">
+          <Text className="text-green-700 text-xs font-bold">
+            {site.distanceMeters ?? site.distance}m
           </Text>
-          <Text className="text-slate-500 dark:text-slate-400 text-xs">
-            {site.address}
-          </Text>
         </View>
-        {site.distance !== undefined && (
-          <View className="bg-green-100 px-2 py-1 rounded">
-            <Text className="text-green-700 text-xs font-bold">
-              {site.distance}m
-            </Text>
-          </View>
-        )}
-      </TouchableOpacity>
+      )}
+    </TouchableOpacity>
+  );
+});
+
+function formatLocationFailureMessage(
+  message: string,
+  userLocation?: { latitude: number; longitude: number } | null,
+  nearestSite?: Site,
+) {
+  const parts = [message];
+  if (userLocation) {
+    parts.push(
+      `\nYour location: ${userLocation.latitude.toFixed(6)}, ${userLocation.longitude.toFixed(6)}`,
     );
-  },
-);
+  }
+  if (nearestSite) {
+    const d = nearestSite.distanceMeters ?? nearestSite.distance ?? "?";
+    const r = nearestSite.radius ?? 200;
+    parts.push(
+      `\nNearest site "${nearestSite.name}": about ${d}m away (allowed radius: ${r}m).`,
+    );
+  }
+  return parts.join("");
+}
 
 export default function AttendancePage() {
   const { isConnected } = useNetworkStatus();
@@ -287,13 +310,17 @@ export default function AttendancePage() {
   const [earlyCheckoutHours, setEarlyCheckoutHours] = useState("");
   const [currentTime, setCurrentTime] = useState(new Date());
   const locationRef = React.useRef<Location.LocationObject | null>(null);
+  const pendingPunchCoordsRef = React.useRef<{
+    latitude: number;
+    longitude: number;
+  } | null>(null);
 
   // Safety timer to clear loading no matter what
   useEffect(() => {
     const timer = setTimeout(() => {
       setLoading((prev) => {
         if (prev)
-          logger.debug("Attendance safety timeout triggered", {
+          appLogger.debug("Attendance safety timeout triggered", {
             module: "ATTENDANCE_SCREEN",
           });
         return false;
@@ -377,7 +404,7 @@ export default function AttendancePage() {
         setAttendanceHistory(history.data);
       }
     } catch (error: any) {
-      logger.error("Fetch attendance data error", {
+      appLogger.error("Fetch attendance data error", {
         module: "ATTENDANCE_SCREEN",
         error: error.message,
         userId: userId || candidateUserIds.join(","),
@@ -385,11 +412,10 @@ export default function AttendancePage() {
     } finally {
       setLoading(false);
     }
-  }, [userId, candidateUserIds, isConnected]);
+  }, [userId, candidateUserIds]);
 
   // Track when location was last fetched
   const locationTimestampRef = React.useRef<number>(0);
-  const LOCATION_FRESHNESS_MS = 5 * 60 * 1000; // 5 minutes
 
   useEffect(() => {
     locationRef.current = location;
@@ -450,9 +476,9 @@ export default function AttendancePage() {
           return lastKnown;
         }
 
-        // 4. Fall back to getCurrentPosition with low accuracy for speed
+        // 4. Fall back to getCurrentPosition (balanced for speed when previewing)
         const locationResult = await Location.getCurrentPositionAsync({
-          accuracy: Location.Accuracy.Low,
+          accuracy: Location.Accuracy.Balanced,
         });
         setLocation(locationResult);
         locationTimestampRef.current = Date.now();
@@ -468,7 +494,9 @@ export default function AttendancePage() {
             locationTimestampRef.current = Date.now();
             return lastKnown;
           }
-        } catch (e) {}
+        } catch {
+          /* ignore last-known fallback errors */
+        }
 
         Alert.alert(
           "Location Error",
@@ -481,6 +509,63 @@ export default function AttendancePage() {
     [],
   );
 
+  /** Fresh, higher-accuracy fix for punch in/out (requires network on caller side). */
+  const ensureLocationForPunch = useCallback(async (): Promise<
+    Location.LocationObject | null
+  > => {
+    try {
+      const enabled = await Location.hasServicesEnabledAsync();
+      if (!enabled) {
+        setLocationError("Location services are disabled");
+        Alert.alert(
+          "GPS Disabled",
+          "Please enable GPS/Location services in your device settings.",
+          [{ text: "OK" }],
+        );
+        return null;
+      }
+
+      let { status } = await Location.getForegroundPermissionsAsync();
+      if (status !== "granted") {
+        const permissionResponse =
+          await Location.requestForegroundPermissionsAsync();
+        status = permissionResponse.status;
+      }
+
+      if (status !== "granted") {
+        setLocationError("Permission to access location was denied");
+        Alert.alert(
+          "Permission Required",
+          "Location permission is required to mark attendance. Please allow access in settings.",
+          [{ text: "OK" }],
+        );
+        return null;
+      }
+
+      const accuracy =
+        Platform.OS === "android"
+          ? Location.Accuracy.High
+          : Location.Accuracy.BestForNavigation;
+
+      const locationResult = await Location.getCurrentPositionAsync({
+        accuracy,
+      });
+      setLocation(locationResult);
+      locationTimestampRef.current = Date.now();
+      locationRef.current = locationResult;
+      setLocationError(null);
+      return locationResult;
+    } catch (error: any) {
+      console.log("Location error (punch):", error);
+      Alert.alert(
+        "Location Error",
+        "Could not fetch an accurate location for attendance. Please try again in an open area.",
+      );
+      setLocationError("Could not fetch location");
+      return null;
+    }
+  }, []);
+
   useFocusEffect(
     useCallback(() => {
       // Preview builds may carry stale cached auth user shape; refresh profile silently.
@@ -490,7 +575,7 @@ export default function AttendancePage() {
       fetchData();
       // Always request location regardless of work_location_type
       ensureLocation();
-    }, [user?.user_id, user?.id, refreshProfile, fetchData]),
+    }, [user?.user_id, user?.id, refreshProfile, fetchData, ensureLocation]),
   );
 
   // Update current time every minute for the live timer with AppState handling
@@ -542,7 +627,9 @@ export default function AttendancePage() {
         accuracy: Location.Accuracy.Balanced,
       });
       setLocation(location);
-    } catch (e) {}
+    } catch {
+      /* ignore refresh location errors */
+    }
     setRefreshing(false);
   }, [fetchData]);
 
@@ -551,17 +638,20 @@ export default function AttendancePage() {
 
     setValidatingLocation(true);
     try {
-      // Skip location fetch when offline
-      let currentLoc: Location.LocationObject | null = null;
       const netState = await NetInfo.fetch();
-      const isActuallyOnline = netState.isConnected === true;
+      if (netState.isConnected !== true) {
+        Alert.alert(
+          "No internet connection",
+          "Check-out requires an active internet connection. Please connect and try again.",
+        );
+        setValidatingLocation(false);
+        return;
+      }
 
-      if (isActuallyOnline) {
-        currentLoc = await ensureLocation();
-        if (!currentLoc) {
-          setValidatingLocation(false);
-          return;
-        }
+      const currentLoc = await ensureLocationForPunch();
+      if (!currentLoc) {
+        setValidatingLocation(false);
+        return;
       }
 
       // Optimistic UI: show checkout immediately
@@ -572,22 +662,14 @@ export default function AttendancePage() {
       });
       setValidatingLocation(false);
 
-      // Fire API call (or queue offline)
       const res = await AttendanceService.checkOut(
         todayAttendance.id,
-        currentLoc?.coords.latitude,
-        currentLoc?.coords.longitude,
+        currentLoc.coords.latitude,
+        currentLoc.coords.longitude,
       );
 
       if (res.success) {
-        if (res.isOffline) {
-          Alert.alert(
-            "Checked Out Offline",
-            "Your check-out has been saved and will sync when you're back online.",
-          );
-        } else {
-          Alert.alert("Success", "Checked out successfully!");
-        }
+        Alert.alert("Success", "Checked out successfully!");
         fetchData();
       } else if (res.isEarlyCheckout) {
         // Revert optimistic update — need reason
@@ -611,7 +693,7 @@ export default function AttendancePage() {
       Alert.alert("Error", error.message);
       setValidatingLocation(false);
     }
-  }, [todayAttendance, ensureLocation, fetchData]);
+  }, [todayAttendance, ensureLocationForPunch, fetchData]);
 
   const submitEarlyCheckout = useCallback(async () => {
     if (!checkoutReason.trim()) {
@@ -620,10 +702,22 @@ export default function AttendancePage() {
     }
 
     try {
+      const netState = await NetInfo.fetch();
+      if (netState.isConnected !== true) {
+        Alert.alert(
+          "No internet connection",
+          "Check-out requires an active internet connection.",
+        );
+        return;
+      }
+
+      const loc = await ensureLocationForPunch();
+      if (!loc) return;
+
       const res = await AttendanceService.checkOut(
         todayAttendance!.id,
-        location?.coords.latitude,
-        location?.coords.longitude,
+        loc.coords.latitude,
+        loc.coords.longitude,
         undefined,
         checkoutReason,
       );
@@ -638,12 +732,13 @@ export default function AttendancePage() {
     } catch (error: any) {
       Alert.alert("Error", error.message);
     }
-  }, [todayAttendance, location, checkoutReason, fetchData]);
+  }, [todayAttendance, checkoutReason, fetchData, ensureLocationForPunch]);
 
   const performCheckIn = useCallback(
-    async (siteCode: string) => {
-      // Offline allowed
-      // if (!isConnected) { ... }
+    async (
+      siteCode: string | null,
+      coords?: { latitude: number; longitude: number } | null,
+    ) => {
       if (!userId) {
         Alert.alert(
           "Error",
@@ -651,12 +746,30 @@ export default function AttendancePage() {
         );
         return;
       }
+
+      const netState = await NetInfo.fetch();
+      if (netState.isConnected !== true) {
+        Alert.alert(
+          "No internet connection",
+          "Check-in requires an active internet connection. Please connect and try again.",
+        );
+        return;
+      }
+
+      const c = coords ?? pendingPunchCoordsRef.current;
+      if (!c) {
+        Alert.alert(
+          "Location missing",
+          "Could not determine your location for check-in. Please try again.",
+        );
+        return;
+      }
+
       try {
-        // Optimistic UI update
         const optimisticLog: AttendanceLog = {
           id: `opt-${Date.now()}`,
           user_id: userId,
-          site_code: siteCode,
+          site_code: siteCode ?? "",
           date: getISTDateString(),
           check_in_time: new Date().toISOString(),
           status: "Present",
@@ -666,25 +779,17 @@ export default function AttendancePage() {
         const res = await AttendanceService.checkIn(
           userId,
           siteCode,
-          location?.coords.latitude,
-          location?.coords.longitude,
+          c.latitude,
+          c.longitude,
         );
         if (res.success) {
-          if (res.isOffline) {
-            Alert.alert(
-              "Checked In Offline",
-              "Your check-in has been saved and will sync when you're back online.",
-            );
-          } else {
-            Alert.alert("Success", "Checked in successfully!");
-          }
+          Alert.alert("Success", "Checked in successfully!");
           setIsSiteModalVisible(false);
+          pendingPunchCoordsRef.current = null;
           fetchData();
         } else {
-          // Revert optimistic update on failure
           setTodayAttendance(null);
 
-          // Handle requiresCheckout case
           if ((res as any).requiresCheckout) {
             Alert.alert(
               "Checkout Required",
@@ -695,7 +800,6 @@ export default function AttendancePage() {
                 {
                   text: "Checkout Now",
                   onPress: () => {
-                    // Set the existing attendance and trigger checkout
                     if ((res as any).data) {
                       setTodayAttendance((res as any).data);
                       setTimeout(() => handleCheckOutPress(), 500);
@@ -705,7 +809,13 @@ export default function AttendancePage() {
               ],
             );
           } else {
-            Alert.alert("Failed", res.error || "Check-in failed");
+            const ext = res as any;
+            const msg = formatLocationFailureMessage(
+              ext.error || "Check-in failed",
+              ext.userLocation,
+              ext.nearestSite,
+            );
+            Alert.alert("Failed", msg);
           }
         }
       } catch (error: any) {
@@ -713,7 +823,7 @@ export default function AttendancePage() {
         Alert.alert("Error", error.message);
       }
     },
-    [userId, location, fetchData, isConnected, handleCheckOutPress],
+    [userId, fetchData, handleCheckOutPress],
   );
 
   const handleCheckInPress = useCallback(async () => {
@@ -722,78 +832,69 @@ export default function AttendancePage() {
       return;
     }
 
-    // Offline path — skip location validation, read directly from cache
     if (!isConnected) {
-      const localSiteRows = await db
-        .select()
-        .from(userSites)
-        .where(eq(userSites.user_id, userId))
-        .catch(() => []);
-      const cached = localSiteRows.map((r: any) => ({
-        site_code: r.site_code,
-        name: r.site_name || r.site_code,
-      }));
-      if (cached.length === 1) {
-        performCheckIn(cached[0].site_code);
-      } else if (cached.length > 1) {
-        setAvailableSites(cached);
-        setIsSiteModalVisible(true);
-      } else {
-        // Cache empty — extremely unlikely after first login, but handle gracefully
-        Alert.alert(
-          "No Sites Available",
-          "Site data hasn't loaded yet. Please connect to the internet once to sync your sites.",
-        );
-      }
+      Alert.alert(
+        "No internet connection",
+        "Check-in requires an active internet connection. Please connect and try again.",
+      );
       return;
     }
 
     setValidatingLocation(true);
     try {
-      // Reuse cached location if fresh, otherwise fetch quickly
-      const locToUse = await ensureLocation();
+      const locToUse = await ensureLocationForPunch();
 
       if (!locToUse) {
         setValidatingLocation(false);
         return;
       }
 
+      const punchCoords = {
+        latitude: locToUse.coords.latitude,
+        longitude: locToUse.coords.longitude,
+      };
+      pendingPunchCoordsRef.current = punchCoords;
+
       const validation = await AttendanceService.validateLocation(
         userId,
-        locToUse.coords.latitude,
-        locToUse.coords.longitude,
+        punchCoords.latitude,
+        punchCoords.longitude,
       );
 
       if (validation.isValid) {
         if (validation.isWFH) {
           Alert.alert(
             "Work From Home",
-            "You are checking in as Work From Home. Proceed?",
+            validation.resolvedSiteCode
+              ? `You are within site "${validation.allowedSites.find((s) => s.site_code === validation.resolvedSiteCode)?.name ?? validation.resolvedSiteCode}". Your attendance will record this site. Proceed?`
+              : "You are checking in as Work From Home (no site will be stored unless you are on a site geofence). Proceed?",
             [
               { text: "Cancel", style: "cancel" },
               {
                 text: "Check In",
                 onPress: () =>
-                  performCheckIn(
-                    validation.allowedSites[0]?.site_code || "WFH",
-                  ),
+                  performCheckIn(validation.resolvedSiteCode ?? null, punchCoords),
               },
             ],
           );
         } else if (validation.allowedSites.length === 1) {
-          performCheckIn(validation.allowedSites[0].site_code);
+          performCheckIn(validation.allowedSites[0].site_code, punchCoords);
         } else {
           setAvailableSites(validation.allowedSites);
           setIsSiteModalVisible(true);
         }
       } else {
-        const message = validation.nearestSite
-          ? `You are ${validation.nearestSite.distance}m away from ${validation.nearestSite.name}. Max allowed: ${validation.nearestSite.radius || 500}m.`
-          : validation.message;
-        Alert.alert("Location Validation Failed", message);
+        Alert.alert(
+          "Location Validation Failed",
+          formatLocationFailureMessage(
+            validation.message,
+            validation.userLocation,
+            validation.nearestSite,
+          ),
+        );
       }
     } catch (error: any) {
-      logger.error("Check-in validation error", {
+      appLogger.error("Check-in validation error", {
         module: "ATTENDANCE_SCREEN",
         error: error.message,
         userId,
@@ -802,7 +903,7 @@ export default function AttendancePage() {
     } finally {
       setValidatingLocation(false);
     }
-  }, [userId, isConnected, ensureLocation, performCheckIn]);
+  }, [userId, isConnected, ensureLocationForPunch, performCheckIn]);
 
   // Helper to calculate duration
   const getDuration = useCallback(
@@ -846,7 +947,15 @@ export default function AttendancePage() {
           <View className="bg-amber-500 py-1.5 px-4 flex-row items-center justify-center">
             <WifiOff size={14} color="white" />
             <Text className="text-white text-xs font-bold ml-2">
-              Offline — Check-in/out will sync when connected
+              Offline — Check-in and check-out require internet
+            </Text>
+          </View>
+        )}
+
+        {locationError && (
+          <View className="mx-5 mt-2 mb-1 px-3 py-2 bg-amber-50 dark:bg-amber-950/40 rounded-xl border border-amber-200 dark:border-amber-800">
+            <Text className="text-amber-900 dark:text-amber-200 text-xs">
+              {locationError}
             </Text>
           </View>
         )}
@@ -1228,7 +1337,7 @@ export default function AttendancePage() {
                     <SiteItem
                       key={site.site_code}
                       site={site}
-                      onSelect={performCheckIn}
+                      onSelect={(code) => performCheckIn(code)}
                     />
                   ))}
                 </ScrollView>
