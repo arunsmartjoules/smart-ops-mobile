@@ -329,8 +329,33 @@ export default function ChillerEntry() {
       // Auto-save logic (debounced)
       if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
       
-      // Only auto-save if we have a chiller selection
-      if (next.chillerId) {
+      // Auto-save only for actual reading/content fields, not selector changes.
+      const autoSaveEligibleFields = new Set([
+        "condenserInletTemp",
+        "condenserOutletTemp",
+        "evaporatorInletTemp",
+        "evaporatorOutletTemp",
+        "saturatedCondenserTemp",
+        "saturatedSuctionTemp",
+        "compressorSuctionTemp",
+        "motorTemperature",
+        "setPointCelsius",
+        "dischargePressure",
+        "mainSuctionPressure",
+        "oilPressure",
+        "oilPressureDifference",
+        "condenserInletPressure",
+        "condenserOutletPressure",
+        "evaporatorInletPressure",
+        "evaporatorOutletPressure",
+        "load",
+        "inlineBtuMeter",
+        "remarks",
+        "attachment",
+      ]);
+
+      // Only auto-save if we have a chiller selection and user updated an eligible field.
+      if (next.chillerId && autoSaveEligibleFields.has(field)) {
         autoSaveTimerRef.current = setTimeout(() => {
           handleSubmission("In-progress", undefined, next);
         }, 1500); // 1.5s delay for technical logs
@@ -413,9 +438,11 @@ export default function ChillerEntry() {
       }
 
       setSignatureModalVisible(false);
-      Alert.alert("Success", `Reading ${status.toLowerCase()} successfully`, [
-        { text: "OK", onPress: () => router.back() },
-      ]);
+      if (status === "Completed") {
+        Alert.alert("Success", "Reading completed successfully", [
+          { text: "OK", onPress: () => router.back() },
+        ]);
+      }
     } catch (error: any) {
       Alert.alert("Error", error.message || "Failed to save reading");
     } finally {
