@@ -114,7 +114,7 @@ export default function Profile() {
       icon: Info,
       label: "App Version",
       color: "#8b5cf6",
-      value: "1.0.45 (Beta)",
+      value: "1.0.46 (Beta)",
     },
     {
       icon: ArrowUpCircle,

@@ -235,25 +235,51 @@ const TaskRow = React.memo(
           />
         </View>
 
-        {/* Remarks & Image Row */}
+        {/* Remarks & Image Row — two explicit actions (camera + gallery) */}
         <View style={styles.actionRow}>
-          <TouchableOpacity
-            onPress={() => onImageChange(item.id, "MENU")}
-            style={[
-              styles.imageBtn,
-              isDark && { backgroundColor: "#1e293b", borderColor: "#334155" },
-            ]}
-            disabled={isUploading}
-          >
-            {isUploading ? (
+          {isUploading ? (
+            <View
+              style={[
+                styles.imageBtn,
+                styles.imagePickRow,
+                isDark && { backgroundColor: "#1e293b", borderColor: "#334155" },
+              ]}
+            >
               <ActivityIndicator size="small" color="#3b82f6" />
-            ) : (
-              <Camera size={14} color={isDark ? "#94a3b8" : "#64748b"} />
-            )}
-            <Text style={[styles.imageBtnText, isDark && { color: "#94a3b8" }]}>
-              {isUploading ? "Uploading..." : "Add Image"}
-            </Text>
-          </TouchableOpacity>
+              <Text style={[styles.imageBtnText, isDark && { color: "#94a3b8" }]}>
+                Uploading...
+              </Text>
+            </View>
+          ) : (
+            <View style={styles.imagePickRow}>
+              <TouchableOpacity
+                onPress={() => onImageChange(item.id, "CAMERA")}
+                style={[
+                  styles.imageBtn,
+                  styles.imageBtnHalf,
+                  isDark && { backgroundColor: "#1e293b", borderColor: "#334155" },
+                ]}
+              >
+                <Camera size={14} color={isDark ? "#94a3b8" : "#64748b"} />
+                <Text style={[styles.imageBtnText, isDark && { color: "#94a3b8" }]}>
+                  Camera
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => onImageChange(item.id, "LIBRARY")}
+                style={[
+                  styles.imageBtn,
+                  styles.imageBtnHalf,
+                  isDark && { backgroundColor: "#1e293b", borderColor: "#334155" },
+                ]}
+              >
+                <ImagePlus size={14} color={isDark ? "#94a3b8" : "#64748b"} />
+                <Text style={[styles.imageBtnText, isDark && { color: "#94a3b8" }]}>
+                  Gallery
+                </Text>
+              </TouchableOpacity>
+            </View>
+          )}
 
           {(item.remarks_mandatory || response?.response_value) && (
             <View style={{ flex: 1 }}>
@@ -1660,6 +1686,13 @@ const styles = StyleSheet.create({
     gap: 12,
     marginTop: 12,
   },
+  imagePickRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    flex: 1,
+    minWidth: 0,
+  },
   imageBtn: {
     flexDirection: "row",
     alignItems: "center",
@@ -1670,6 +1703,11 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     borderWidth: 1,
     borderColor: "#e2e8f0",
+  },
+  imageBtnHalf: {
+    flex: 1,
+    justifyContent: "center",
+    minWidth: 0,
   },
   imageBtnText: {
     fontSize: 12,
