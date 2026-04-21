@@ -802,6 +802,12 @@ export default function PreventiveMaintenance() {
     [],
   );
 
+  const dateRangePreview = useMemo(() => {
+    const from = safeFormat(currentDate, "d MMM yyyy");
+    const to = safeFormat(toDate, "d MMM yyyy");
+    return `Date: ${from} - ${to}`;
+  }, [currentDate, toDate]);
+
   return (
     <View className="flex-1 bg-slate-50 dark:bg-slate-950">
       <SafeAreaView style={styles.flex} edges={["top"]}>
@@ -871,6 +877,12 @@ export default function PreventiveMaintenance() {
                 </View>
               </TouchableOpacity>
             </View>
+          </View>
+
+          <View className="mb-2 self-start px-3 py-1 rounded-full bg-red-50 dark:bg-red-950/30 border border-red-100 dark:border-red-900/40">
+            <Text className="text-[11px] font-semibold text-red-700 dark:text-red-300">
+              {dateRangePreview}
+            </Text>
           </View>
 
           <View className="flex-row gap-2 mb-3">

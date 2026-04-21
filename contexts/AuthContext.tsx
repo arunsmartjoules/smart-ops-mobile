@@ -28,8 +28,14 @@ import {
 } from "firebase/auth";
 import { syncEngine } from "../services/SyncEngine";
 import siteResolver from "../services/SiteResolver";
+import {
+  clearStoredAuthToken,
+  getStoredAuthToken,
+  setStoredAuthToken,
+} from "../services/AuthTokenManager";
 import { API_BASE_URL } from "../constants/api";
 import { fetchWithTimeout } from "../utils/apiHelper";
+import { cachedAuthUserMatchesFirebaseSession } from "../utils/authUserCacheMatch";
 import { clearDatabase } from "@/database";
 
 const BACKEND_URL = API_BASE_URL;
@@ -66,6 +72,11 @@ interface AuthUser {
   work_location_type?: "WHF" | "WFH" | null;
   department?: string;
   designation?: string;
+  phone?: string;
+  site_code?: string;
+  /** ISO or backend string, for offline "Joined" display */
+  created_at?: string;
+  date_of_joining?: string;
 }
 
 interface AuthContextType {
@@ -118,23 +129,49 @@ export const useAuth = () => {
   return context;
 };
 
+function pickOptionalString(value: unknown): string | undefined {
+  if (value == null || value === "") return undefined;
+  if (typeof value === "string") return value;
+  if (value instanceof Date) return value.toISOString();
+  return String(value);
+}
+
 /** Map a Firebase user + optional profile data into our AuthUser shape */
 function mapFirebaseUser(
   firebaseUser: FirebaseUser,
-  profile?: Partial<AuthUser>,
+  profile?: Partial<AuthUser> & {
+    id?: string;
+    mobile?: string;
+    date_of_joining?: unknown;
+    created_at?: unknown;
+  },
 ): AuthUser {
   const normalized = normalizeEmail(profile?.email || firebaseUser.email);
-  const backendUserId = String(profile?.user_id || profile?.id || "").trim();
+  const backendUserId = String(
+    (profile as { user_id?: string } | undefined)?.user_id ||
+      (profile as { id?: string } | undefined)?.id ||
+      "",
+  ).trim();
+  const display = firebaseUser.displayName ?? "";
+  const wltRaw = profile?.work_location_type;
+  const workLocationType: AuthUser["work_location_type"] =
+    wltRaw == null || String(wltRaw).trim() === ""
+      ? null
+      : (String(wltRaw) as NonNullable<AuthUser["work_location_type"]>);
   return {
     id: backendUserId,
     user_id: backendUserId,
     email: normalized,
-    name: profile?.name ?? firebaseUser.displayName ?? "",
-    full_name: profile?.full_name ?? firebaseUser.displayName ?? "",
+    name: profile?.name ?? display,
+    full_name: profile?.full_name ?? profile?.name ?? display,
     role: profile?.role ?? "",
-    work_location_type: profile?.work_location_type ?? null,
+    work_location_type: workLocationType,
     department: profile?.department ?? "",
     designation: profile?.designation ?? "",
+    phone: profile?.phone || profile?.mobile,
+    site_code: profile?.site_code,
+    created_at: pickOptionalString(profile?.created_at),
+    date_of_joining: pickOptionalString(profile?.date_of_joining),
   };
 }
 
@@ -215,23 +252,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
 
       const cached = await AsyncStorage.getItem("auth_user");
       if (cached) {
-        const parsed = JSON.parse(cached);
-        if (
-          normalizeEmail(parsed?.email) === normalizedEmail &&
-          parsed?.user_id
-        ) {
+        const parsed = JSON.parse(cached) as AuthUser;
+        if (cachedAuthUserMatchesFirebaseSession(firebaseUser.email, parsed)) {
           setUser(parsed);
           return parsed;
         }
       }
 
-      // Keep session alive, but do not attach UUID-based identity fallback.
+      // Keep session alive, but do not clobber a known good user.
       const mapped = mapFirebaseUser(firebaseUser, {
         user_id: "",
         id: "",
         email: normalizedEmail,
       });
-      setUser(mapped);
+      setUser((prev) => (prev?.user_id ? prev : mapped));
       return null;
     },
     [],
@@ -251,7 +285,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         );
         const idToken = await firebaseUser.getIdToken();
         setToken(idToken);
-        await AsyncStorage.setItem("firebase-token", idToken);
+        await setStoredAuthToken(idToken);
 
         let releasedLoadingEarly = false;
         let earlyCachedUser: AuthUser | null = null;
@@ -259,11 +293,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
           const cached = await AsyncStorage.getItem("auth_user");
           if (cached) {
             const parsed = JSON.parse(cached) as AuthUser;
-            if (
-              normalizeEmail(parsed?.email) ===
-                normalizeEmail(firebaseUser.email) &&
-              String(parsed?.user_id || "").trim()
-            ) {
+            if (cachedAuthUserMatchesFirebaseSession(firebaseUser.email, parsed)) {
               earlyCachedUser = parsed;
               setUser(parsed);
               setIsLoading(false);
@@ -322,7 +352,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         setToken(null);
         setUser(null);
         setIsEmailVerified(false);
-        await AsyncStorage.removeItem("firebase-token");
+        await clearStoredAuthToken();
         setIsLoading(false);
       }
     });
@@ -509,7 +539,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const signOut = useCallback(async () => {
     try {
-      const activeToken = (await AsyncStorage.getItem("firebase-token")) || token;
+      const activeToken = (await getStoredAuthToken()) || token;
       if (activeToken) {
         await unregisterPushToken(activeToken).catch(() => {});
       }
@@ -609,18 +639,39 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const refreshProfile = useCallback(async () => {
     if (!auth.currentUser) return;
-    const idToken = await auth.currentUser.getIdToken(true);
+    let idToken: string;
+    try {
+      // Avoid forcing a network round-trip; offline still uses a cached ID token.
+      idToken = await auth.currentUser.getIdToken(false);
+    } catch (e: any) {
+      const stored = await getStoredAuthToken();
+      if (!stored) {
+        logger.warn("refreshProfile: could not get id token", {
+          module: "AUTH_CONTEXT",
+          error: e?.message,
+        });
+        return;
+      }
+      idToken = stored;
+    }
     setToken(idToken);
-    const refreshed = await fetchAndSetProfile(auth.currentUser, idToken);
-    if (refreshed?.user_id) {
-      syncEngine.initialize(refreshed.user_id).catch(() => {});
-      siteResolver.initialize(refreshed.user_id).catch(() => {});
+    try {
+      const refreshed = await fetchAndSetProfile(auth.currentUser, idToken);
+      if (refreshed?.user_id) {
+        syncEngine.initialize(refreshed.user_id).catch(() => {});
+        siteResolver.initialize(refreshed.user_id).catch(() => {});
+      }
+    } catch (e: any) {
+      logger.warn("refreshProfile: profile fetch error (state unchanged)", {
+        module: "AUTH_CONTEXT",
+        error: e?.message,
+      });
     }
   }, [fetchAndSetProfile]);
 
   const changePassword = useCallback(async (password: string) => {
     try {
-      const idToken = await AsyncStorage.getItem("firebase-token");
+      const idToken = await getStoredAuthToken();
       if (!idToken) return { error: "Not authenticated" };
 
       const res = await fetchWithTimeout(`${BACKEND_URL}/api/auth/change-password`, {

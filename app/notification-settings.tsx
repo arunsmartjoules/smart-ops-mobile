@@ -31,6 +31,8 @@ export default function NotificationSettingsPage() {
     useState(true);
   const [ticketNotificationsEnabled, setTicketNotificationsEnabled] =
     useState(true);
+  const [incidentNotificationsEnabled, setIncidentNotificationsEnabled] =
+    useState(true);
   const [hasSystemPermission, setHasSystemPermission] = useState(false);
   const [debugToken, setDebugToken] = useState<string | null>(null);
   const [regStatus, setRegStatus] = useState<any>(null);
@@ -76,6 +78,9 @@ export default function NotificationSettingsPage() {
         );
         setTicketNotificationsEnabled(
           result.data.ticket_notifications_enabled ?? true
+        );
+        setIncidentNotificationsEnabled(
+          result.data.incident_notifications_enabled ?? true
         );
       }
     } catch (error: any) {
@@ -139,6 +144,9 @@ export default function NotificationSettingsPage() {
           setTicketNotificationsEnabled(
             result.data.ticket_notifications_enabled ?? ticketNotificationsEnabled,
           );
+          setIncidentNotificationsEnabled(
+            result.data.incident_notifications_enabled ?? incidentNotificationsEnabled,
+          );
         }
       } catch (error: any) {
         setAttendanceNotificationsEnabled(previousValue);
@@ -154,7 +162,7 @@ export default function NotificationSettingsPage() {
         setSaving(false);
       }
     },
-    [attendanceNotificationsEnabled, hasSystemPermission, ticketNotificationsEnabled, token]
+    [attendanceNotificationsEnabled, hasSystemPermission, ticketNotificationsEnabled, incidentNotificationsEnabled, token]
   );
 
   const handleToggleTicketNotifications = useCallback(
@@ -200,6 +208,9 @@ export default function NotificationSettingsPage() {
           setTicketNotificationsEnabled(
             result.data.ticket_notifications_enabled ?? value,
           );
+          setIncidentNotificationsEnabled(
+            result.data.incident_notifications_enabled ?? incidentNotificationsEnabled,
+          );
         }
       } catch (error: any) {
         setTicketNotificationsEnabled(previousValue);
@@ -215,7 +226,61 @@ export default function NotificationSettingsPage() {
         setSaving(false);
       }
     },
-    [attendanceNotificationsEnabled, hasSystemPermission, ticketNotificationsEnabled, token]
+    [attendanceNotificationsEnabled, hasSystemPermission, ticketNotificationsEnabled, incidentNotificationsEnabled, token]
+  );
+
+  const handleToggleIncidentNotifications = useCallback(
+    async (value: boolean) => {
+      if (!hasSystemPermission && value) {
+        const granted = await requestNotificationPermissions();
+        setHasSystemPermission(granted);
+        if (!granted) {
+          Alert.alert(
+            "Permission Required",
+            "Enable notifications to receive incident alerts.",
+            [{ text: "OK" }]
+          );
+          return;
+        }
+      }
+
+      const previousValue = incidentNotificationsEnabled;
+      setIncidentNotificationsEnabled(value);
+      if (!token) return;
+
+      try {
+        setSaving(true);
+        const result = await updateNotificationPreferences(token, {
+          incident_notifications_enabled: value,
+        });
+        if (!result.success) {
+          setIncidentNotificationsEnabled(previousValue);
+          Alert.alert(
+            "Update Failed",
+            result.error || "Could not update incident notification preference.",
+          );
+        } else if (result.data) {
+          setAttendanceNotificationsEnabled(
+            result.data.attendance_notifications_enabled ?? attendanceNotificationsEnabled,
+          );
+          setTicketNotificationsEnabled(
+            result.data.ticket_notifications_enabled ?? ticketNotificationsEnabled,
+          );
+          setIncidentNotificationsEnabled(
+            result.data.incident_notifications_enabled ?? value,
+          );
+        }
+      } catch (error: any) {
+        setIncidentNotificationsEnabled(previousValue);
+        Alert.alert(
+          "Update Failed",
+          error.message || "Could not update incident notification preference.",
+        );
+      } finally {
+        setSaving(false);
+      }
+    },
+    [attendanceNotificationsEnabled, hasSystemPermission, incidentNotificationsEnabled, ticketNotificationsEnabled, token]
   );
 
   return (
@@ -351,6 +416,41 @@ export default function NotificationSettingsPage() {
                     trackColor={{ false: "#cbd5e1", true: "#fed7aa" }}
                     thumbColor={
                       ticketNotificationsEnabled ? "#f59e0b" : "#f1f5f9"
+                    }
+                  />
+                </View>
+              </View>
+
+              {/* Incident Notifications */}
+              <View
+                className="bg-white dark:bg-slate-900 rounded-2xl p-4 mb-4"
+                style={{
+                  shadowColor: "#000",
+                  shadowOffset: { width: 0, height: 2 },
+                  shadowOpacity: 0.05,
+                  shadowRadius: 8,
+                  elevation: 2,
+                }}
+              >
+                <View className="flex-row items-center">
+                  <View className="w-10 h-10 rounded-full bg-yellow-50 dark:bg-yellow-900/20 items-center justify-center mr-3">
+                    <Bell size={20} color="#ca8a04" />
+                  </View>
+                  <View className="flex-1">
+                    <Text className="text-slate-900 dark:text-slate-50 font-semibold text-base">
+                      Incident Notifications
+                    </Text>
+                    <Text className="text-slate-500 dark:text-slate-400 text-sm">
+                      Get notified when incidents are created or status changes
+                    </Text>
+                  </View>
+                  <Switch
+                    value={incidentNotificationsEnabled}
+                    onValueChange={handleToggleIncidentNotifications}
+                    disabled={saving}
+                    trackColor={{ false: "#cbd5e1", true: "#fef08a" }}
+                    thumbColor={
+                      incidentNotificationsEnabled ? "#ca8a04" : "#f1f5f9"
                     }
                   />
                 </View>

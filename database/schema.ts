@@ -30,6 +30,37 @@ export const tickets = sqliteTable("tickets", {
   updated_at: real("updated_at").notNull(),
 });
 
+export const incidents = sqliteTable("incidents", {
+  id: text("id").primaryKey(),
+  incident_id: text("incident_id").notNull(),
+  source: text("source").notNull(),
+  ticket_id: text("ticket_id"),
+  site_code: text("site_code").notNull(),
+  asset_location: text("asset_location"),
+  raised_by: text("raised_by"),
+  incident_created_time: real("incident_created_time").notNull(),
+  incident_updated_time: real("incident_updated_time"),
+  incident_resolved_time: real("incident_resolved_time"),
+  fault_symptom: text("fault_symptom").notNull(),
+  fault_type: text("fault_type").notNull(),
+  severity: text("severity").notNull(),
+  operating_condition: text("operating_condition"),
+  immediate_action_taken: text("immediate_action_taken"),
+  attachments: text("attachments"),
+  rca_attachments: text("rca_attachments"),
+  remarks: text("remarks"),
+  status: text("status").notNull(),
+  rca_status: text("rca_status").notNull(),
+  assigned_by: text("assigned_by"),
+  assignment_type: text("assignment_type"),
+  vendor_tagged: text("vendor_tagged"),
+  rca_maker: text("rca_maker"),
+  rca_checker: text("rca_checker"),
+  assigned_to: text("assigned_to"),
+  created_at: real("created_at").notNull(),
+  updated_at: real("updated_at").notNull(),
+});
+
 // ─── Ticket Updates (local write queue) ──────────────────────────────────────
 
 export const ticketUpdates = sqliteTable("ticket_updates", {

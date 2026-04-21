@@ -35,6 +35,19 @@ export function applyNotificationNavigation(
     return true;
   }
 
+  if (data?.incident_id) {
+    nav({
+      pathname: "/(tabs)/incidents",
+      params: {
+        incidentId: String(data.incident_id),
+        ...(data.site_code != null && data.site_code !== ""
+          ? { siteCode: String(data.site_code) }
+          : {}),
+      },
+    });
+    return true;
+  }
+
   if (
     data?.screen === "attendance" ||
     String(data?.type || "").includes("attendance")

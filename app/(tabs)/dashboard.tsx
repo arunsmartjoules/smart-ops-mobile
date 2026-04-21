@@ -434,6 +434,7 @@ export default function Dashboard() {
   const [earlyCheckoutReason, setEarlyCheckoutReason] = useState("");
   const [showEarlyCheckoutModal, setShowEarlyCheckoutModal] = useState(false);
   const [sites, setSites] = useState<Site[]>([]);
+  const [currentSiteLabel, setCurrentSiteLabel] = useState<string>("");
 
   // Ticket Detail Modal State
   const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null);
@@ -546,15 +547,26 @@ export default function Dashboard() {
           .select()
           .from(userSites)
           .where(eq(userSites.user_id, userId))
-          .catch(() => [] as { id: string; user_id: string; site_id: string | null; site_code: string; site_name: string }[]),
+          .catch(
+            () =>
+              [] as {
+                id: string;
+                user_id: string;
+                site_id: string | null;
+                site_code: string;
+                site_name: string;
+              }[],
+          ),
         AsyncStorage.getItem(`last_site_${userId}`).catch(() => null),
       ]);
 
       // Map local userSites rows to the Site shape expected by the rest of the component
-      const cachedSitesList: Site[] = localSiteRows.map((row: { site_code: string; site_name: string }) => ({
-        site_code: row.site_code,
-        name: row.site_name,
-      }));
+      const cachedSitesList: Site[] = localSiteRows.map(
+        (row: { site_code: string; site_name: string }) => ({
+          site_code: row.site_code,
+          name: row.site_name,
+        }),
+      );
 
       if (cachedSitesList.length > 0) {
         setSites(cachedSitesList);
@@ -570,7 +582,7 @@ export default function Dashboard() {
       // Load cached tickets and logs immediately for instant UI
       if (cachedSitesList.length > 0) {
         const siteCode = cachedSitesList[0].site_code;
-        
+
         // Load cached tickets
         const cachedTicketResult = await TicketsService.getTickets(siteCode, {
           status: "Open",
@@ -579,7 +591,7 @@ export default function Dashboard() {
 
         if (cachedTicketResult?.success && cachedTicketResult.data) {
           const allTickets: PendingItem[] = [];
-          cachedTicketResult.data.slice(0, 5).forEach((t: Ticket) => {
+          cachedTicketResult.data.slice(0, 10).forEach((t: Ticket) => {
             allTickets.push({
               id: t.id,
               title: t.title,
@@ -607,7 +619,7 @@ export default function Dashboard() {
               new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
             );
           });
-          
+
           setPendingTickets(allTickets);
         }
 
@@ -641,7 +653,7 @@ export default function Dashboard() {
         setPendingTempRH(toItems("Temp RH", "/temp-rh", "Temp RH"));
         setPendingWater(toItems("Water", "/water", "Water"));
         setPendingChemical(toItems("Chemical Dosing", "/chemical", "Chemical"));
-        
+
         // Show cached data immediately
         setLoadingPending(false);
       }
@@ -656,7 +668,7 @@ export default function Dashboard() {
           isActuallyOnline,
           userId,
         });
-        
+
         const [attData, freshSites] = await Promise.all([
           AttendanceService.getTodayAttendance(userId, true).catch((e) => {
             console.error("[Dashboard] Attendance fetch failed:", e);
@@ -691,7 +703,7 @@ export default function Dashboard() {
 
         const allTickets: PendingItem[] = [];
         if (ticketResult?.success && ticketResult.data) {
-          ticketResult.data.slice(0, 5).forEach((t: Ticket) => {
+          ticketResult.data.slice(0, 10).forEach((t: Ticket) => {
             allTickets.push({
               id: t.id,
               title: t.title,
@@ -762,7 +774,14 @@ export default function Dashboard() {
       setLoadingAttendance(false);
       setLoadingPending(false);
     }
-  }, [user, todayAttendance, pendingTickets.length, pendingTempRH.length, pendingWater.length, pendingChemical.length]); // Keep refresh behavior while avoiding cold-start skeleton on every fetch
+  }, [
+    user,
+    todayAttendance,
+    pendingTickets.length,
+    pendingTempRH.length,
+    pendingWater.length,
+    pendingChemical.length,
+  ]); // Keep refresh behavior while avoiding cold-start skeleton on every fetch
 
   const loadAreasAndCategories = useCallback(async () => {
     if (sites.length === 0) return;
@@ -853,11 +872,17 @@ export default function Dashboard() {
       return;
     }
     if (needsAreaAndCategory && !updateArea.trim()) {
-      Alert.alert("Required", "Please select an area before updating the ticket.");
+      Alert.alert(
+        "Required",
+        "Please select an area before updating the ticket.",
+      );
       return;
     }
     if (needsAreaAndCategory && !updateCategory.trim()) {
-      Alert.alert("Required", "Please select a category before updating the ticket.");
+      Alert.alert(
+        "Required",
+        "Please select a category before updating the ticket.",
+      );
       return;
     }
 
@@ -953,9 +978,12 @@ export default function Dashboard() {
           );
 
           if (uploadRes.success && uploadRes.url) {
-            await TicketsService.addLineItem(selectedTicket.id || selectedTicket.ticket_no, {
-              image_url: uploadRes.url,
-            });
+            await TicketsService.addLineItem(
+              selectedTicket.id || selectedTicket.ticket_no,
+              {
+                image_url: uploadRes.url,
+              },
+            );
           }
         }
 
@@ -984,6 +1012,108 @@ export default function Dashboard() {
     [],
   );
   const navigateToProfile = useCallback(() => router.push("/app-settings"), []);
+
+  // Detect which site the user is currently near (or WFH / Away)
+  const detectCurrentSite = useCallback(async () => {
+    const uid = user?.user_id || user?.id;
+    if (!uid) return;
+    const updateSiteLabel = (nextLabel: string) => {
+      setCurrentSiteLabel((prev) => (prev === nextLabel ? prev : nextLabel));
+    };
+    try {
+      let { status } = await Location.getForegroundPermissionsAsync();
+      if (status !== "granted") {
+        const permissionResponse =
+          await Location.requestForegroundPermissionsAsync();
+        status = permissionResponse.status;
+      }
+
+      let latitude: number | undefined;
+      let longitude: number | undefined;
+
+      if (status === "granted") {
+        const lastKnown = await Location.getLastKnownPositionAsync();
+        if (lastKnown) {
+          latitude = lastKnown.coords.latitude;
+          longitude = lastKnown.coords.longitude;
+        } else {
+          try {
+            const accuracy =
+              Platform.OS === "android"
+                ? Location.Accuracy.High
+                : Location.Accuracy.BestForNavigation;
+            const current = await Location.getCurrentPositionAsync({
+              accuracy,
+            });
+            latitude = current.coords.latitude;
+            longitude = current.coords.longitude;
+          } catch (locationError) {
+            logger.warn(
+              "Dashboard site detection: current location unavailable",
+              {
+                module: "DASHBOARD",
+                error: locationError,
+                userId: uid,
+              },
+            );
+          }
+        }
+      }
+
+      const validation = await AttendanceService.validateLocation(
+        uid,
+        latitude,
+        longitude,
+      );
+      if (validation.isWFH) {
+        // WFH user who is also on-site
+        if (validation.resolvedSiteCode && validation.allowedSites.length > 0) {
+          const site = validation.allowedSites.find(
+            (s) => s.site_code === validation.resolvedSiteCode,
+          );
+          updateSiteLabel(site?.name || validation.resolvedSiteCode);
+        } else {
+          updateSiteLabel("WFH");
+        }
+      } else if (validation.isValid && validation.allowedSites.length > 0) {
+        updateSiteLabel(
+          validation.allowedSites[0]?.name ||
+            validation.allowedSites[0]?.site_code ||
+            "",
+        );
+      } else if (latitude == null || longitude == null) {
+        updateSiteLabel("Location unavailable");
+      } else {
+        updateSiteLabel("Away from site");
+      }
+    } catch (error) {
+      logger.warn("Dashboard site detection failed", {
+        module: "DASHBOARD",
+        error,
+        userId: uid,
+      });
+      updateSiteLabel("Could not load site");
+    }
+  }, [user?.user_id, user?.id]);
+
+  // Run site detection on mount + focus
+  useEffect(() => {
+    detectCurrentSite();
+  }, [detectCurrentSite]);
+
+  // Refresh current site every 15 seconds.
+  useEffect(() => {
+    const interval = setInterval(() => {
+      detectCurrentSite();
+    }, 15000);
+    return () => clearInterval(interval);
+  }, [detectCurrentSite]);
+
+  useFocusEffect(
+    useCallback(() => {
+      detectCurrentSite();
+    }, [detectCurrentSite]),
+  );
 
   const handleQuickCheckIn = async () => {
     const uid = user?.user_id || user?.id;
@@ -1024,8 +1154,8 @@ export default function Dashboard() {
       }
 
       const siteCode = validation.isWFH
-        ? validation.resolvedSiteCode ?? null
-        : validation.allowedSites[0]?.site_code ?? null;
+        ? (validation.resolvedSiteCode ?? null)
+        : (validation.allowedSites[0]?.site_code ?? null);
 
       if (!validation.isWFH && !siteCode) {
         Alert.alert(
@@ -1160,14 +1290,20 @@ export default function Dashboard() {
   }, [todayAttendance]);
 
   const getStatusSubtext = useMemo(() => {
-    if (!todayAttendance) return "Tap To Start Shift";
+    if (!todayAttendance) return "--";
     if (todayAttendance.check_out_time) {
-      return `Out: ${format(new Date(todayAttendance.check_out_time), "h:mm a")}`;
+      // Show total duration for completed shifts
+      if (!todayAttendance.check_in_time) return "--";
+      const start = new Date(todayAttendance.check_in_time);
+      const end = new Date(todayAttendance.check_out_time);
+      const minutes = Math.floor((end.getTime() - start.getTime()) / 60000);
+      if (isNaN(minutes) || minutes < 0) return "0h 0m";
+      return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
     }
 
-    if (!todayAttendance.check_in_time) return "In: --";
+    if (!todayAttendance.check_in_time) return "--";
     const start = new Date(todayAttendance.check_in_time);
-    if (isNaN(start.getTime())) return "In: --";
+    if (isNaN(start.getTime())) return "--";
 
     let end: Date;
     const todayStr = getISTDateString(currentTime);
@@ -1181,7 +1317,7 @@ export default function Dashboard() {
     }
 
     const minutes = Math.floor((end.getTime() - start.getTime()) / 60000);
-    if (isNaN(minutes) || minutes < 0) return "In: 0h 0m";
+    if (isNaN(minutes) || minutes < 0) return "0h 0m";
 
     const hours = Math.floor(minutes / 60);
     const mins = minutes % 60;
@@ -1208,7 +1344,6 @@ export default function Dashboard() {
         {/* Header Section */}
         <View className="px-6 pt-6 pb-4 flex-row items-center justify-between">
           <View>
-            
             <Text className="text-slate-900 dark:text-slate-50 text-2xl font-black tracking-tight">
               Site Overview
             </Text>
@@ -1218,7 +1353,7 @@ export default function Dashboard() {
           </TouchableOpacity>
         </View>
 
-        {/* Premium Attendance Section */}
+        {/* Attendance Card */}
         <View className="px-6 mb-4">
           <TouchableOpacity
             onPress={navigateToAttendance}
@@ -1232,15 +1367,15 @@ export default function Dashboard() {
               elevation: 3,
             }}
           >
-            {/* Top Bar: Site Identity */}
-            <View className="p-4 flex-row items-center justify-between border-b border-slate-50 dark:border-slate-800/50">
+            {/* Row 1: Name + Status Pill */}
+            <View className="p-4 pb-3 flex-row items-center justify-between">
               <View className="flex-row items-center flex-1 pr-4">
                 <View className="w-10 h-10 rounded-xl bg-red-50 dark:bg-red-950/20 items-center justify-center border border-red-100 dark:border-red-900/50 mr-3">
                   <Zap size={20} color="#dc2626" />
                 </View>
                 <View className="flex-1">
                   <Text className="text-slate-400 dark:text-slate-500 text-[8px] font-bold uppercase tracking-[0.1em] mb-0.5">
-                    Welcome back
+                    {format(new Date(), "EEEE, dd MMM yyyy")}
                   </Text>
                   <Text
                     className="text-slate-900 dark:text-slate-50 text-base font-black leading-tight"
@@ -1251,7 +1386,7 @@ export default function Dashboard() {
                 </View>
               </View>
 
-              {/* Glassmorphism Status Pill */}
+              {/* Status Pill */}
               <View
                 className={`flex-row items-center px-3 py-1.5 rounded-full border ${getStatusBorderColor}`}
                 style={{
@@ -1285,8 +1420,53 @@ export default function Dashboard() {
               </View>
             </View>
 
-            {/* Bottom Bar: Action & Time */}
-            <View className="p-3 bg-slate-50/50 dark:bg-white/5 flex-row items-center justify-between">
+            {/* Row 2: Site Location */}
+            {currentSiteLabel !== "" && (
+              <View className="px-4 pb-3 flex-row items-center">
+                <MapPin size={12} color="#64748b" />
+                <Text className="text-slate-500 dark:text-slate-400 text-xs font-bold ml-1.5">
+                  {currentSiteLabel}
+                </Text>
+              </View>
+            )}
+
+            {/* Row 3: Check-in / Check-out / Duration info */}
+            <View className="mx-4 mb-3 flex-row items-center rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-700/50 overflow-hidden">
+              {/* Check In */}
+              <View className="flex-1 py-2.5 px-3 items-center border-r border-slate-100 dark:border-slate-700/50">
+                <Text className="text-[8px] font-bold uppercase text-slate-400 dark:text-slate-500 tracking-wider mb-1">
+                  Check In
+                </Text>
+                <Text className="text-xs font-black text-slate-800 dark:text-slate-200">
+                  {todayAttendance?.check_in_time
+                    ? format(new Date(todayAttendance.check_in_time), "h:mm a")
+                    : "--:--"}
+                </Text>
+              </View>
+              {/* Check Out */}
+              <View className="flex-1 py-2.5 px-3 items-center border-r border-slate-100 dark:border-slate-700/50">
+                <Text className="text-[8px] font-bold uppercase text-slate-400 dark:text-slate-500 tracking-wider mb-1">
+                  Check Out
+                </Text>
+                <Text className="text-xs font-black text-slate-800 dark:text-slate-200">
+                  {todayAttendance?.check_out_time
+                    ? format(new Date(todayAttendance.check_out_time), "h:mm a")
+                    : "--:--"}
+                </Text>
+              </View>
+              {/* Duration */}
+              <View className="flex-1 py-2.5 px-3 items-center">
+                <Text className="text-[8px] font-bold uppercase text-slate-400 dark:text-slate-500 tracking-wider mb-1">
+                  Duration
+                </Text>
+                <Text className="text-xs font-black text-slate-800 dark:text-slate-200">
+                  {getStatusSubtext}
+                </Text>
+              </View>
+            </View>
+
+            {/* Row 4: Punch Button */}
+            <View className="p-3 pt-0 flex-row items-center justify-between">
               <TouchableOpacity
                 onPress={(e) => {
                   e.stopPropagation();
@@ -1296,7 +1476,7 @@ export default function Dashboard() {
                     handleQuickCheckOut();
                   }
                 }}
-                className="px-6 py-2.5 rounded-xl flex-row items-center shadow-sm bg-red-600"
+                className="flex-1 py-3 rounded-xl flex-row items-center justify-center shadow-sm bg-red-600"
               >
                 {validatingLocation ? (
                   <ActivityIndicator size="small" color="white" />
@@ -1315,143 +1495,11 @@ export default function Dashboard() {
                   </>
                 )}
               </TouchableOpacity>
-
-              <View className="items-end">
-                <Text className="text-slate-400 dark:text-slate-500 text-[8px] font-bold uppercase mb-0.5">
-                  Shift Duration
-                </Text>
-                <View className="flex-row items-center">
-                  <ShieldCheck size={12} color="#64748b" className="mr-1" />
-                  <Text className="text-slate-700 dark:text-slate-200 font-black text-xs">
-                    {getStatusSubtext}
-                  </Text>
-                </View>
-              </View>
             </View>
           </TouchableOpacity>
         </View>
 
-        {sites.length > 0 && (
-          <>
-            <View className="px-6 mb-3">
-              <Text className="text-slate-900 dark:text-slate-50 text-base font-black">
-                Pending Site logs
-              </Text>
-            </View>
-
-            <View className="px-6 mb-6 flex-row gap-2">
-              {loadingPending
-                ? // Skeletons while loading
-                  [1, 2, 3].map((i) => (
-                    <View
-                      key={i}
-                      className="flex-1 bg-white dark:bg-slate-900 rounded-2xl p-3 border border-slate-100 dark:border-slate-800"
-                    >
-                      <Skeleton
-                        width={32}
-                        height={32}
-                        borderRadius={8}
-                        style={{ marginBottom: 16 }}
-                      />
-                      <Skeleton
-                        width={40}
-                        height={20}
-                        borderRadius={4}
-                        style={{ marginBottom: 6 }}
-                      />
-                      <Skeleton width={60} height={10} borderRadius={2} />
-                    </View>
-                  ))
-                : // Actual data once loaded
-                  (() => {
-                    const navSiteCode =
-                      sites.length > 0 ? sites[0].site_code : "";
-                    return (
-                      <>
-                        <LogCountCard
-                          icon={ThermometerSun}
-                          count={pendingTempRH.length}
-                          label="Temp & RH"
-                          color="#f59e0b"
-                          bgColor="rgba(245, 158, 11, 0.1)"
-                          onPress={() =>
-                            router.push({
-                              pathname: "/history/site-history",
-                              params: {
-                                logName: "Temp RH",
-                                siteCode: navSiteCode,
-                                status: "Open",
-                              },
-                            } as any)
-                          }
-                        />
-                        <LogCountCard
-                          icon={Droplets}
-                          count={pendingWater.length}
-                          label="Water"
-                          color="#3b82f6"
-                          bgColor="rgba(59, 130, 246, 0.1)"
-                          onPress={() =>
-                            router.push({
-                              pathname: "/history/site-history",
-                              params: {
-                                logName: "Water",
-                                siteCode: navSiteCode,
-                                status: "Open",
-                              },
-                            } as any)
-                          }
-                        />
-                        <LogCountCard
-                          icon={Beaker}
-                          count={pendingChemical.length}
-                          label="Chemical"
-                          color="#ec4899"
-                          bgColor="rgba(236, 72, 153, 0.1)"
-                          onPress={() =>
-                            router.push({
-                              pathname: "/history/site-history",
-                              params: {
-                                logName: "Chemical Dosing",
-                                siteCode: navSiteCode,
-                                status: "Open",
-                              },
-                            } as any)
-                          }
-                        />
-                      </>
-                    );
-                  })()}
-            </View>
-          </>
-        )}
-        {!loadingPending && isConnected && sites.length === 0 && (
-          <View className="px-6 mb-6">
-            <View className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 items-center">
-              <Text className="text-slate-900 dark:text-slate-50 font-bold">
-                No sites synced yet
-              </Text>
-              <TouchableOpacity
-                onPress={() => fetchData()}
-                className="mt-3 bg-red-600 px-4 py-2 rounded-xl"
-              >
-                <Text className="text-white font-bold">Retry Server Sync</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        )}
-        <ScrollView
-          className="flex-1"
-          contentContainerStyle={{ paddingBottom: 100 }}
-          showsVerticalScrollIndicator={false}
-          refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={onRefresh}
-              tintColor="#dc2626"
-            />
-          }
-        >
+        <View className="flex-1">
           {/* Pending Tickets Section */}
           <View className="px-6 mb-3">
             <View className="flex-row items-center justify-between">
@@ -1467,45 +1515,58 @@ export default function Dashboard() {
           </View>
 
           {/* Pending Tickets List Section */}
-          <View className="px-6 mb-6">
-            {loadingPending ? (
-              <View className="gap-2">
-                {[1, 2].map((i) => (
-                  <View
-                    key={i}
-                    className="h-14 bg-white dark:bg-slate-900 rounded-2xl border border-slate-50 dark:border-slate-800 flex-row items-center px-4"
-                  >
-                    <Skeleton width={32} height={32} borderRadius={8} />
-                    <View className="ml-3 flex-1">
-                      <Skeleton
-                        width="60%"
-                        height={12}
-                        borderRadius={4}
-                        style={{ marginBottom: 6 }}
-                      />
-                      <Skeleton width="40%" height={8} borderRadius={2} />
+          <ScrollView
+            className="flex-1"
+            contentContainerStyle={{ paddingBottom: 100 }}
+            showsVerticalScrollIndicator={false}
+            refreshControl={
+              <RefreshControl
+                refreshing={refreshing}
+                onRefresh={onRefresh}
+                tintColor="#dc2626"
+              />
+            }
+          >
+            <View className="px-6 mb-6">
+              {loadingPending ? (
+                <View className="gap-2">
+                  {[1, 2].map((i) => (
+                    <View
+                      key={i}
+                      className="h-14 bg-white dark:bg-slate-900 rounded-2xl border border-slate-50 dark:border-slate-800 flex-row items-center px-4"
+                    >
+                      <Skeleton width={32} height={32} borderRadius={8} />
+                      <View className="ml-3 flex-1">
+                        <Skeleton
+                          width="60%"
+                          height={12}
+                          borderRadius={4}
+                          style={{ marginBottom: 6 }}
+                        />
+                        <Skeleton width="40%" height={8} borderRadius={2} />
+                      </View>
                     </View>
-                  </View>
-                ))}
-              </View>
-            ) : pendingTickets.length > 0 ? (
-              pendingTickets.map((item) => (
-                <PendingItemRow
-                  key={item.id}
-                  item={item}
-                  onPress={() => handleTicketPress(item)}
-                  showPriority={false}
-                />
-              ))
-            ) : (
-              <View className="py-2 items-center">
-                <Text className="text-slate-400 text-[10px] font-bold">
-                  No pending tickets
-                </Text>
-              </View>
-            )}
-          </View>
-        </ScrollView>
+                  ))}
+                </View>
+              ) : pendingTickets.length > 0 ? (
+                pendingTickets.map((item) => (
+                  <PendingItemRow
+                    key={item.id}
+                    item={item}
+                    onPress={() => handleTicketPress(item)}
+                    showPriority={false}
+                  />
+                ))
+              ) : (
+                <View className="py-2 items-center">
+                  <Text className="text-slate-400 text-[10px] font-bold">
+                    No pending tickets
+                  </Text>
+                </View>
+              )}
+            </View>
+          </ScrollView>
+        </View>
 
         <TicketDetailModal
           visible={isDetailVisible}

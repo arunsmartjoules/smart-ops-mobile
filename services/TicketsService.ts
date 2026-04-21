@@ -67,8 +67,18 @@ const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
       }
 
       if (result.status === 401) {
-        // Silent sign-out: avoid intrusive alerts for token issues
-        data.error = "No token provided";
+        // Preserve server error (Invalid token, Token expired, etc.); optional fallback
+        if (data.error === undefined || data.error === null || data.error === "") {
+          data.error = "Unauthorized";
+        }
+        if (__DEV__) {
+          logger.debug("Tickets API 401", {
+            module: "TICKETS_SERVICE",
+            endpoint,
+            error: data.error,
+          });
+        }
+        // Silent sign-out on any 401 from API
         authEvents.emitUnauthorized();
       }
     }

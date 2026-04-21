@@ -15,6 +15,7 @@ import TicketDetailInfo from "./TicketDetailInfo";
 import TicketDetailStatusUpdate from "./TicketDetailStatusUpdate";
 import TicketLineItems from "./TicketLineItems";
 import { useTheme } from "@/contexts/ThemeContext";
+import type { TicketIncidentDraft } from "@/constants/incidentFormOptions";
 
 interface TicketDetailModalProps {
   visible: boolean;
@@ -44,6 +45,10 @@ interface TicketDetailModalProps {
   loadMoreAreas?: () => void;
   hasMoreAreas?: boolean;
   loadingMoreAreas?: boolean;
+  createIncidentFromTicket?: boolean;
+  setCreateIncidentFromTicket?: (v: boolean) => void;
+  incidentDraft?: TicketIncidentDraft;
+  setIncidentDraft?: React.Dispatch<React.SetStateAction<TicketIncidentDraft>>;
 }
 
 const TicketDetailModal = React.memo(
@@ -75,6 +80,10 @@ const TicketDetailModal = React.memo(
     loadMoreAreas,
     hasMoreAreas,
     loadingMoreAreas,
+    createIncidentFromTicket,
+    setCreateIncidentFromTicket,
+    incidentDraft,
+    setIncidentDraft,
   }: TicketDetailModalProps) => {
     const isDirty = React.useMemo(() => {
       if (!ticket) return false;
@@ -90,7 +99,8 @@ const TicketDetailModal = React.memo(
         updateCategory !== originalCategory ||
         beforeTemp.trim() !== "" ||
         afterTemp.trim() !== "" ||
-        Boolean(attachmentUri)
+        Boolean(attachmentUri) ||
+        Boolean(createIncidentFromTicket)
       );
     }, [
       ticket,
@@ -101,6 +111,7 @@ const TicketDetailModal = React.memo(
       beforeTemp,
       afterTemp,
       attachmentUri,
+      createIncidentFromTicket,
     ]);
 
     const { height: windowHeight } = useWindowDimensions();
@@ -171,6 +182,10 @@ const TicketDetailModal = React.memo(
                     loadMoreAreas={loadMoreAreas}
                     hasMoreAreas={hasMoreAreas}
                     loadingMoreAreas={loadingMoreAreas}
+                    createIncidentFromTicket={createIncidentFromTicket}
+                    setCreateIncidentFromTicket={setCreateIncidentFromTicket}
+                    incidentDraft={incidentDraft}
+                    setIncidentDraft={setIncidentDraft}
                   />
 
                   {/* Comments & Timeline */}

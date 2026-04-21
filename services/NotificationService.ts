@@ -159,7 +159,19 @@ const postPushTokenRegistration = async ({
 
   if (response.status === 401) {
     authEvents.emitUnauthorized();
-    return { success: false, error: "No token provided", statusCode: 401 };
+    let message = "Unauthorized";
+    try {
+      const body = (await response.json()) as { error?: string };
+      if (typeof body?.error === "string" && body.error.length > 0) {
+        message = body.error;
+      }
+    } catch {
+      // keep default
+    }
+    if (__DEV__) {
+      logger.debug("Push register-token 401", { error: message });
+    }
+    return { success: false, error: message, statusCode: 401 };
   }
 
   let data: any = null;
@@ -498,7 +510,16 @@ export const getNotificationPreferences = async (authToken: string) => {
     );
 
     if (response.status === 401) {
-      return { success: false, error: "No token provided" };
+      let message = "Unauthorized";
+      try {
+        const body = (await response.json()) as { error?: string };
+        if (typeof body?.error === "string" && body.error.length > 0) {
+          message = body.error;
+        }
+      } catch {
+        // keep default
+      }
+      return { success: false, error: message };
     }
 
     const data = await response.json();
@@ -520,6 +541,7 @@ export const updateNotificationPreferences = async (
   preferences: {
     attendance_notifications_enabled?: boolean;
     ticket_notifications_enabled?: boolean;
+    incident_notifications_enabled?: boolean;
   },
 ) => {
   try {
@@ -536,7 +558,16 @@ export const updateNotificationPreferences = async (
     );
 
     if (response.status === 401) {
-      return { success: false, error: "No token provided" };
+      let message = "Unauthorized";
+      try {
+        const body = (await response.json()) as { error?: string };
+        if (typeof body?.error === "string" && body.error.length > 0) {
+          message = body.error;
+        }
+      } catch {
+        // keep default
+      }
+      return { success: false, error: message };
     }
 
     const data = await response.json();

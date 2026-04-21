@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import {
   View,
   Text,
@@ -50,6 +50,8 @@ interface ResponseMap {
 }
 
 const MULTIPLE_CHOICE_OPTIONS = ["Done", "Not Done"];
+const isMeasureTask = (taskName?: string | null) =>
+  !!taskName && taskName.toLowerCase().includes("measure");
 
 /** Checklist row image: menu, direct camera/library, or null to remove */
 type ChecklistImageAction = "MENU" | "CAMERA" | "LIBRARY" | null;
@@ -89,6 +91,11 @@ const TaskRow = React.memo(
   }) => {
     const isDark = useColorScheme() === "dark";
     const isDone = response?.response_value === "Done";
+    const readingsRequired = isMeasureTask(item.task_name);
+    const isReadingsMissing =
+      readingsRequired &&
+      !!response?.response_value &&
+      (!response?.readings || !response.readings.trim());
     const fieldType = item.field_type || "Multiple Choice";
 
     return (
@@ -199,6 +206,10 @@ const TaskRow = React.memo(
             keyboardType={fieldType === "Number" ? "decimal-pad" : "default"}
             style={[
               styles.textInput,
+              isReadingsMissing &&
+                (isDark
+                  ? styles.requiredReadingsInputDark
+                  : styles.requiredReadingsInput),
               isDark && {
                 backgroundColor: "#0f172a",
                 borderColor: "#334155",
@@ -216,12 +227,16 @@ const TaskRow = React.memo(
               { color: isDark ? "#94a3b8" : "#64748b" },
             ]}
           >
-            Readings
+            {readingsRequired ? "Readings *" : "Readings"}
           </Text>
           <TextInput
             value={response?.readings || ""}
             onChangeText={(val) => onResponseChange(item.id, "readings", val)}
-            placeholder="Enter readings if applicable..."
+            placeholder={
+              readingsRequired
+                ? "Enter readings (required for this task)..."
+                : "Enter readings if applicable..."
+            }
             placeholderTextColor={isDark ? "#64748b" : "#94a3b8"}
             keyboardType="decimal-pad"
             style={[
@@ -242,11 +257,16 @@ const TaskRow = React.memo(
               style={[
                 styles.imageBtn,
                 styles.imagePickRow,
-                isDark && { backgroundColor: "#1e293b", borderColor: "#334155" },
+                isDark && {
+                  backgroundColor: "#1e293b",
+                  borderColor: "#334155",
+                },
               ]}
             >
               <ActivityIndicator size="small" color="#3b82f6" />
-              <Text style={[styles.imageBtnText, isDark && { color: "#94a3b8" }]}>
+              <Text
+                style={[styles.imageBtnText, isDark && { color: "#94a3b8" }]}
+              >
                 Uploading...
               </Text>
             </View>
@@ -257,26 +277,26 @@ const TaskRow = React.memo(
                 style={[
                   styles.imageBtn,
                   styles.imageBtnHalf,
-                  isDark && { backgroundColor: "#1e293b", borderColor: "#334155" },
+                  isDark && {
+                    backgroundColor: "#1e293b",
+                    borderColor: "#334155",
+                  },
                 ]}
               >
                 <Camera size={14} color={isDark ? "#94a3b8" : "#64748b"} />
-                <Text style={[styles.imageBtnText, isDark && { color: "#94a3b8" }]}>
-                  Camera
-                </Text>
               </TouchableOpacity>
               <TouchableOpacity
                 onPress={() => onImageChange(item.id, "LIBRARY")}
                 style={[
                   styles.imageBtn,
                   styles.imageBtnHalf,
-                  isDark && { backgroundColor: "#1e293b", borderColor: "#334155" },
+                  isDark && {
+                    backgroundColor: "#1e293b",
+                    borderColor: "#334155",
+                  },
                 ]}
               >
                 <ImagePlus size={14} color={isDark ? "#94a3b8" : "#64748b"} />
-                <Text style={[styles.imageBtnText, isDark && { color: "#94a3b8" }]}>
-                  Gallery
-                </Text>
               </TouchableOpacity>
             </View>
           )}
@@ -327,13 +347,11 @@ const TaskRow = React.memo(
                         Alert.alert("Replace photo", "Choose a source", [
                           {
                             text: "Take photo",
-                            onPress: () =>
-                              onImageChange(item.id, "CAMERA"),
+                            onPress: () => onImageChange(item.id, "CAMERA"),
                           },
                           {
                             text: "Choose from gallery",
-                            onPress: () =>
-                              onImageChange(item.id, "LIBRARY"),
+                            onPress: () => onImageChange(item.id, "LIBRARY"),
                           },
                           { text: "Cancel", style: "cancel" },
                         ]),
@@ -744,7 +762,8 @@ export default function PMExecutionScreen() {
               await processPickedUri(result.assets[0].uri);
             }
           } else {
-            const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+            const perm =
+              await ImagePicker.requestMediaLibraryPermissionsAsync();
             if (!perm.granted) {
               Alert.alert(
                 "Permission Required",
@@ -991,10 +1010,29 @@ export default function PMExecutionScreen() {
     };
   }, []);
 
+  const missingMeasureReadings = useMemo(
+    () =>
+      checklistItems.filter((item) => {
+        if (!isMeasureTask(item.task_name)) return false;
+        const resp = responses[item.id];
+        // Only enforce after the task has a response (completion already requires all answered).
+        if (!resp?.response_value) return false;
+        return !resp.readings || !resp.readings.trim();
+      }),
+    [checklistItems, responses],
+  );
+
   const handleComplete = useCallback(
     async (signature: string) => {
       if (!signature) {
         Alert.alert("Required", "Please provide a signature.");
+        return;
+      }
+      if (missingMeasureReadings.length > 0) {
+        Alert.alert(
+          "Readings Required",
+          "Please enter readings for all tasks containing 'Measure' before completing.",
+        );
         return;
       }
 
@@ -1019,7 +1057,7 @@ export default function PMExecutionScreen() {
         setSaving(false);
       }
     },
-    [handleSave],
+    [handleSave, missingMeasureReadings.length],
   );
 
   // ── FlatList setup ────────────────────────────────────────────────────────
@@ -1106,6 +1144,7 @@ export default function PMExecutionScreen() {
   const canComplete =
     total > 0 &&
     answered === total &&
+    missingMeasureReadings.length === 0 &&
     !!instance?.before_image &&
     !!instance?.after_image;
 
@@ -1671,6 +1710,16 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     fontSize: 13,
     color: "#0f172a",
+  },
+  requiredReadingsInput: {
+    borderColor: "#ef4444",
+    borderWidth: 1.5,
+    backgroundColor: "#fef2f2",
+  },
+  requiredReadingsInputDark: {
+    borderColor: "#f87171",
+    borderWidth: 1.5,
+    backgroundColor: "#450a0a",
   },
   inputLabel: {
     fontSize: 11,

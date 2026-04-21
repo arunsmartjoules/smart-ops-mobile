@@ -7,9 +7,19 @@ import {
   ScrollView,
   Platform,
 } from "react-native";
-import { X, Calendar, Check } from "lucide-react-native";
+import { X, Calendar } from "lucide-react-native";
 import DateTimePicker from "@react-native-community/datetimepicker";
-import { format } from "date-fns";
+import {
+  format,
+  startOfWeek,
+  endOfWeek,
+  startOfMonth,
+  endOfMonth,
+  startOfYear,
+  endOfYear,
+  subMonths,
+  subYears,
+} from "date-fns";
 import SearchableSelect from "../SearchableSelect";
 
 interface LogFilterModalProps {
@@ -39,6 +49,7 @@ const LogFilterModal = ({
 }: LogFilterModalProps) => {
   const [showStartPicker, setShowStartPicker] = React.useState(false);
   const [showEndPicker, setShowEndPicker] = React.useState(false);
+  const [activePreset, setActivePreset] = React.useState<string | null>(null);
 
   const onStartChange = (event: any, selectedDate?: Date) => {
     setShowStartPicker(Platform.OS === "ios");
@@ -60,10 +71,77 @@ const LogFilterModal = ({
     }));
   }, [availableSites]);
 
+  const quickRanges = React.useMemo(() => {
+    const now = new Date();
+    return [
+      {
+        key: "this_week",
+        label: "This Week",
+        getRange: () => ({
+          from: startOfWeek(now, { weekStartsOn: 1 }),
+          to: endOfWeek(now, { weekStartsOn: 1 }),
+        }),
+      },
+      {
+        key: "this_month",
+        label: "This Month",
+        getRange: () => ({
+          from: startOfMonth(now),
+          to: endOfMonth(now),
+        }),
+      },
+      {
+        key: "last_month",
+        label: "Last Month",
+        getRange: () => {
+          const d = subMonths(now, 1);
+          return { from: startOfMonth(d), to: endOfMonth(d) };
+        },
+      },
+      {
+        key: "last_3_months",
+        label: "Last 3 Months",
+        getRange: () => ({
+          from: startOfMonth(subMonths(now, 2)),
+          to: endOfMonth(now),
+        }),
+      },
+      {
+        key: "last_6_months",
+        label: "Last 6 Months",
+        getRange: () => ({
+          from: startOfMonth(subMonths(now, 5)),
+          to: endOfMonth(now),
+        }),
+      },
+      {
+        key: "this_year",
+        label: "This Year",
+        getRange: () => ({
+          from: startOfYear(now),
+          to: endOfYear(now),
+        }),
+      },
+      {
+        key: "last_year",
+        label: "Last Year",
+        getRange: () => {
+          const d = subYears(now, 1);
+          return { from: startOfYear(d), to: endOfYear(d) };
+        },
+      },
+    ] as const;
+  }, []);
+
   if (!visible) return null;
 
   return (
-    <Modal visible={visible} animationType="slide" transparent={true} statusBarTranslucent={true}>
+    <Modal
+      visible={visible}
+      animationType="slide"
+      transparent={true}
+      statusBarTranslucent={true}
+    >
       <View className="flex-1 bg-black/60 justify-end">
         <View className="bg-white dark:bg-slate-900 rounded-t-3xl p-6 max-h-[85%] border-t border-slate-100 dark:border-slate-800">
           <View className="flex-row items-center justify-between mb-6">
@@ -86,34 +164,42 @@ const LogFilterModal = ({
                   Quick Presets
                 </Text>
                 <View className="flex-row flex-wrap gap-2">
-                  {[
-                    { label: "Today", days: 0 },
-                    { label: "Last 7 Days", days: 7 },
-                    { label: "Last 30 Days", days: 30 },
-                  ].map((preset) => (
-                    <TouchableOpacity
-                      key={preset.label}
-                      onPress={() => {
-                        const from = new Date();
-                        from.setDate(from.getDate() - preset.days);
-                        from.setHours(0, 0, 0, 0);
-                        setFromDate(from);
-                        setToDate(new Date());
-                      }}
-                      className="px-4 py-2 rounded-xl border border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-800"
-                      style={{
-                        shadowColor: "#000",
-                        shadowOffset: { width: 0, height: 1 },
-                        shadowOpacity: 0.05,
-                        shadowRadius: 2,
-                        elevation: 1,
-                      }}
-                    >
-                      <Text className="text-slate-600 dark:text-slate-400 text-xs font-bold">
-                        {preset.label}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
+                  {quickRanges.map((preset) => {
+                    const isActive = activePreset === preset.key;
+                    return (
+                      <TouchableOpacity
+                        key={preset.key}
+                        onPress={() => {
+                          const { from, to } = preset.getRange();
+                          setFromDate(from);
+                          setToDate(to);
+                          setActivePreset(preset.key);
+                        }}
+                        className={`px-3.5 py-2 rounded-xl border ${
+                          isActive
+                            ? "bg-red-50 dark:bg-red-950/30 border-red-200 dark:border-red-900/60"
+                            : "border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-800"
+                        }`}
+                        style={{
+                          shadowColor: "#000",
+                          shadowOffset: { width: 0, height: 1 },
+                          shadowOpacity: 0.05,
+                          shadowRadius: 2,
+                          elevation: 1,
+                        }}
+                      >
+                        <Text
+                          className={`text-xs font-bold ${
+                            isActive
+                              ? "text-red-700 dark:text-red-400"
+                              : "text-slate-600 dark:text-slate-400"
+                          }`}
+                        >
+                          {preset.label}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
                 </View>
               </View>
 
@@ -138,7 +224,10 @@ const LogFilterModal = ({
                 </Text>
                 <View className="flex-row gap-2">
                   <TouchableOpacity
-                    onPress={() => setShowStartPicker(true)}
+                    onPress={() => {
+                      setActivePreset(null);
+                      setShowStartPicker(true);
+                    }}
                     className="flex-1 bg-slate-50 dark:bg-slate-800 rounded-xl p-3 border border-slate-100 dark:border-slate-800 flex-row items-center"
                   >
                     <Calendar size={14} color="#dc2626" />
@@ -153,7 +242,10 @@ const LogFilterModal = ({
                   </TouchableOpacity>
 
                   <TouchableOpacity
-                    onPress={() => setShowEndPicker(true)}
+                    onPress={() => {
+                      setActivePreset(null);
+                      setShowEndPicker(true);
+                    }}
                     className="flex-1 bg-slate-50 dark:bg-slate-800 rounded-xl p-3 border border-slate-100 dark:border-slate-800 flex-row items-center"
                   >
                     <Calendar size={14} color="#dc2626" />
@@ -197,6 +289,7 @@ const LogFilterModal = ({
                 onPress={() => {
                   setFromDate(null);
                   setToDate(null);
+                  setActivePreset(null);
                 }}
                 className="flex-1 bg-slate-100 dark:bg-slate-800 py-4 rounded-xl items-center"
               >

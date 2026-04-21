@@ -2,6 +2,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Platform } from "react-native";
 
 import { API_BASE_URL } from "../constants/api";
+import { getValidAuthToken } from "../services/AuthTokenManager";
 
 const BACKEND_URL = API_BASE_URL;
 
@@ -153,7 +154,7 @@ export const logger = {
   ) {
     void (async () => {
       try {
-      const token = await AsyncStorage.getItem("firebase-token");
+        const token = await getValidAuthToken(60 * 1000);
         // If no token AND not an auth-related activity, skip
         if (!token && module !== "AUTH") return;
 
@@ -206,7 +207,7 @@ export const logger = {
    */
   async flushActivityQueue(): Promise<void> {
     try {
-      const token = await AsyncStorage.getItem("firebase-token");
+      const token = await getValidAuthToken(60 * 1000);
       if (!token) return;
 
       const queueRaw = await AsyncStorage.getItem("@activity_log_queue");
@@ -247,7 +248,7 @@ export const logger = {
     metadata: any,
   ): Promise<void> {
     try {
-      const token = await AsyncStorage.getItem("firebase-token");
+      const token = await getValidAuthToken(60 * 1000);
       if (!token && module !== "AUTH") return;
       
       const headers: Record<string, string> = {

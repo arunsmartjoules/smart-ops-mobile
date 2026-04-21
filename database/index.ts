@@ -44,6 +44,36 @@ function init() {
           created_at REAL NOT NULL,
           updated_at REAL NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS incidents (
+          id TEXT PRIMARY KEY,
+          incident_id TEXT NOT NULL,
+          source TEXT NOT NULL,
+          ticket_id TEXT,
+          site_code TEXT NOT NULL,
+          asset_location TEXT,
+          raised_by TEXT,
+          incident_created_time REAL NOT NULL,
+          incident_updated_time REAL,
+          incident_resolved_time REAL,
+          fault_symptom TEXT NOT NULL,
+          fault_type TEXT NOT NULL,
+          severity TEXT NOT NULL,
+          operating_condition TEXT,
+          immediate_action_taken TEXT,
+          attachments TEXT,
+          rca_attachments TEXT,
+          remarks TEXT,
+          status TEXT NOT NULL,
+          rca_status TEXT NOT NULL,
+          assigned_by TEXT,
+          assignment_type TEXT,
+          vendor_tagged TEXT,
+          rca_maker TEXT,
+          rca_checker TEXT,
+          assigned_to TEXT,
+          created_at REAL NOT NULL,
+          updated_at REAL NOT NULL
+        );
         CREATE TABLE IF NOT EXISTS ticket_updates (
           id TEXT PRIMARY KEY,
           ticket_id TEXT NOT NULL,
@@ -175,6 +205,7 @@ function init() {
         CREATE INDEX IF NOT EXISTS idx_chiller_readings_lookup ON chiller_readings (site_code, date_shift, log_id);
         CREATE INDEX IF NOT EXISTS idx_chiller_readings_status ON chiller_readings (status);
         CREATE INDEX IF NOT EXISTS idx_tickets_site ON tickets (site_code, status);
+        CREATE INDEX IF NOT EXISTS idx_incidents_site ON incidents (site_code, status, rca_status);
         CREATE INDEX IF NOT EXISTS idx_activities_user ON activities (user_id, created_at);
         CREATE TABLE IF NOT EXISTS pm_checklist_master (
           id TEXT PRIMARY KEY,
@@ -276,6 +307,7 @@ function init() {
       "ALTER TABLE tickets ADD COLUMN due_date REAL",
       "ALTER TABLE tickets ADD COLUMN closed_at REAL",
       "ALTER TABLE pm_instances ADD COLUMN completed_on REAL",
+      "ALTER TABLE incidents ADD COLUMN rca_attachments TEXT",
     ];
 
     for (const migration of columnMigrations) {
@@ -331,6 +363,7 @@ export function ensureSiteLogsSchema() {
 // Re-export schema tables for convenient imports
 export {
   tickets,
+  incidents,
   ticketUpdates,
   areas,
   categories,
@@ -363,6 +396,7 @@ export async function clearDatabase() {
     
     const tables = [
       "tickets",
+      "incidents",
       "ticket_updates",
       "areas",
       "categories",

@@ -14,14 +14,19 @@ const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
     let response = await centralApiFetch(`${BACKEND_URL}${endpoint}`, options);
 
     if (response.status === 401) {
-      // Silent sign-out: avoid intrusive alerts for token issues
+      try {
+        const errData = (await response.clone().json()) as { error?: string };
+        if (__DEV__) {
+          logger.debug("PM instance API 401", {
+            module: "PM_INSTANCE_SERVICE",
+            endpoint,
+            error: errData?.error,
+          });
+        }
+      } catch {
+        // ignore parse errors
+      }
       authEvents.emitUnauthorized();
-      // Return a dummy response to prevent further processing
-      return {
-        ok: false,
-        status: 401,
-        json: async () => ({ success: false, error: "No token provided" }),
-      } as Response;
     }
 
     return response;

@@ -7,6 +7,7 @@ import {
   Activity,
   ListChecks,
   Ticket,
+  AlertTriangle,
   User,
 } from "lucide-react-native";
 import { useTheme } from "@/contexts/ThemeContext";
@@ -102,6 +103,26 @@ export default function TabLayout() {
             <Ticket
               size={22}
               color={focused ? "#ef4444" : color}
+              strokeWidth={focused ? 2.5 : 2}
+            />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="incidents"
+        options={{
+          title: "Incident",
+          tabBarButton: (props) => (
+            <AnimatedTabBarButton
+              {...props}
+              activeColor="#dc2626"
+              inactiveColor={isDark ? "#64748b" : "#94a3b8"}
+            />
+          ),
+          tabBarIcon: ({ color, focused }) => (
+            <AlertTriangle
+              size={22}
+              color={focused ? "#dc2626" : color}
               strokeWidth={focused ? 2.5 : 2}
             />
           ),

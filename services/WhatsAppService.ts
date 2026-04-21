@@ -11,9 +11,20 @@ const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
     let response = await centralApiFetch(`${BACKEND_URL}${endpoint}`, options);
 
     if (response.status === 401) {
-      // Silent sign-out: avoid intrusive alerts for token issues
       authEvents.emitUnauthorized();
-      return { ok: false, error: "No token provided" };
+      let message = "Unauthorized";
+      try {
+        const body = (await response.json()) as { error?: string };
+        if (typeof body?.error === "string" && body.error.length > 0) {
+          message = body.error;
+        }
+      } catch {
+        // keep default
+      }
+      if (__DEV__) {
+        logger.debug("WhatsApp API 401", { endpoint, error: message });
+      }
+      return { ok: false, error: message };
     }
 
     const result = await response.json();

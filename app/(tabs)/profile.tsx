@@ -114,7 +114,7 @@ export default function Profile() {
       icon: Info,
       label: "App Version",
       color: "#8b5cf6",
-      value: "1.0.46 (Beta)",
+      value: "1.0.5 (Beta)",
     },
     {
       icon: ArrowUpCircle,
@@ -217,8 +217,14 @@ export default function Profile() {
                       Joined
                     </Text>
                     <Text className="text-slate-900 dark:text-slate-50 text-xs font-medium">
-                      {(user as any)?.created_at
-                        ? format(new Date((user as any).created_at), "MMM yyyy")
+                      {user?.created_at || user?.date_of_joining
+                        ? format(
+                            new Date(
+                              (user.created_at ||
+                                user.date_of_joining) as string,
+                            ),
+                            "MMM yyyy",
+                          )
                         : "N/A"}
                     </Text>
                   </View>

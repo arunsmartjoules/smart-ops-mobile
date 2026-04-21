@@ -79,17 +79,20 @@ const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
   try {
     let response = await centralApiFetch(`${BACKEND_URL}${endpoint}`, options);
 
-    if (!response.ok) {
-      if (response.status === 401) {
-        // Silent sign-out: avoid intrusive alerts for token issues
-        const result = { success: false, error: "No token provided" };
-        authEvents.emitUnauthorized();
-        return {
-          ok: false,
-          status: 401,
-          json: async () => result,
-        } as Response;
+    if (!response.ok && response.status === 401) {
+      try {
+        const errData = (await response.clone().json()) as { error?: string };
+        if (__DEV__) {
+          logger.debug("SiteLog API 401", {
+            module: "SITE_LOG_SERVICE",
+            endpoint,
+            error: errData?.error,
+          });
+        }
+      } catch {
+        // ignore parse errors
       }
+      authEvents.emitUnauthorized();
     }
 
     return response;

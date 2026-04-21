@@ -33,7 +33,12 @@ import { useSites } from "@/hooks/useSites";
 import { db, tickets as ticketsTable, areas, categories } from "@/database";
 import { eq, desc } from "drizzle-orm";
 import logger from "@/utils/logger";
+import { v4 as uuidv4 } from "uuid";
 import TicketDetailModal from "@/components/TicketDetailModal";
+import {
+  DEFAULT_TICKET_INCIDENT_DRAFT,
+  type TicketIncidentDraft,
+} from "@/constants/incidentFormOptions";
 import AdvancedFilterModal from "@/components/AdvancedFilterModal";
 import { WhatsAppService } from "@/services/WhatsAppService";
 import TicketItem from "@/components/TicketItem";
@@ -68,6 +73,17 @@ const getLocalDayEndMs = (dateStr: string | null) => {
   return new Date(year, month - 1, day, 23, 59, 59, 999).getTime();
 };
 
+const formatPreviewDate = (dateStr: string | null) => {
+  if (!dateStr) return "Any";
+  const [year, month, day] = dateStr.slice(0, 10).split("-").map(Number);
+  if (!year || !month || !day) return "Any";
+  return new Date(year, month - 1, day).toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+};
+
 const toApiStartDate = (dateStr: string | null) => {
   const ms = getLocalDayStartMs(dateStr);
   return ms == null ? undefined : new Date(ms).toISOString();
@@ -76,6 +92,13 @@ const toApiStartDate = (dateStr: string | null) => {
 const toApiEndDate = (dateStr: string | null) => {
   const ms = getLocalDayEndMs(dateStr);
   return ms == null ? undefined : new Date(ms).toISOString();
+};
+
+const toLocalYmd = (date: Date) => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 };
 
 const AREA_PAGE_SIZE = 50;
@@ -114,6 +137,14 @@ export default function Tickets() {
   const selectedSiteCode = selectedSite?.site_code ?? "";
   const siteName = selectedSite?.site_name ?? selectedSite?.site_code ?? "Select Site";
 
+  const today = useMemo(() => new Date(), []);
+  const thisMonthStart = useMemo(
+    () => new Date(today.getFullYear(), today.getMonth(), 1),
+    [today],
+  );
+  const defaultFromDate = useMemo(() => toLocalYmd(thisMonthStart), [thisMonthStart]);
+  const defaultToDate = useMemo(() => toLocalYmd(today), [today]);
+
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -132,10 +163,14 @@ export default function Tickets() {
   const [searchQuery, setSearchQuery] = useState("");
   const [showFiltersModal, setShowFiltersModal] = useState(false);
   const [tempSearch, setTempSearch] = useState("");
-  const [fromDate, setFromDate] = useState<string | null>(null);
-  const [toDate, setToDate] = useState<string | null>(null);
-  const [tempFromDate, setTempFromDate] = useState<string | null>(null);
-  const [tempToDate, setTempToDate] = useState<string | null>(null);
+  const [fromDate, setFromDate] = useState<string | null>(defaultFromDate);
+  const [toDate, setToDate] = useState<string | null>(defaultToDate);
+  const [tempFromDate, setTempFromDate] = useState<string | null>(defaultFromDate);
+  const [tempToDate, setTempToDate] = useState<string | null>(defaultToDate);
+  const dateRangePreview = useMemo(
+    () => `Date: ${formatPreviewDate(fromDate)} - ${formatPreviewDate(toDate)}`,
+    [fromDate, toDate],
+  );
 
   // Detail Modal
   const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null);
@@ -148,6 +183,17 @@ export default function Tickets() {
   const [beforeTemp, setBeforeTemp] = useState("");
   const [afterTemp, setAfterTemp] = useState("");
   const [attachmentUri, setAttachmentUri] = useState("");
+  const [createIncidentFromTicket, setCreateIncidentFromTicket] = useState(false);
+  const [incidentDraft, setIncidentDraft] = useState<TicketIncidentDraft>(DEFAULT_TICKET_INCIDENT_DRAFT);
+
+  const resetIncidentDraft = useCallback(() => {
+    setIncidentDraft({ ...DEFAULT_TICKET_INCIDENT_DRAFT });
+  }, []);
+
+  const onCreateIncidentFromTicketChange = useCallback((v: boolean) => {
+    setCreateIncidentFromTicket(v);
+    if (!v) resetIncidentDraft();
+  }, [resetIncidentDraft]);
 
   // Area and Category options for dropdowns
   const [areaOptions, setAreaOptions] = useState<SelectOption[]>([]);
@@ -162,7 +208,9 @@ export default function Tickets() {
   // Memoized callbacks to prevent unnecessary re-renders
   const handleCloseDetail = useCallback(() => {
     setIsDetailVisible(false);
-  }, []);
+    setCreateIncidentFromTicket(false);
+    resetIncidentDraft();
+  }, [resetIncidentDraft]);
 
   const handleCloseFilters = useCallback(() => {
     setShowFiltersModal(false);
@@ -617,8 +665,10 @@ export default function Tickets() {
     setAfterTemp("");
     setAttachmentUri("");
     setAreaSearchQuery("");
+    setCreateIncidentFromTicket(false);
+    resetIncidentDraft();
     setIsDetailVisible(true);
-  }, []);
+  }, [resetIncidentDraft]);
 
   const params = useLocalSearchParams<{
     ticketId?: string | string[];
@@ -722,8 +772,10 @@ export default function Tickets() {
     setUpdateCategory(ticket.category || "");
     setAttachmentUri("");
     setAreaSearchQuery("");
+    setCreateIncidentFromTicket(false);
+    resetIncidentDraft();
     setIsDetailVisible(true);
-  }, []);
+  }, [resetIncidentDraft]);
 
   const renderTicketItem = useCallback(
     ({ item }: { item: Ticket }) => (
@@ -777,12 +829,39 @@ export default function Tickets() {
       return;
     }
 
+    if (createIncidentFromTicket) {
+      if (!incidentDraft.fault_type) {
+        Alert.alert("Required", "Please select fault type for the incident.");
+        return;
+      }
+      if (!incidentDraft.operating_condition) {
+        Alert.alert("Required", "Please select operating condition for the incident.");
+        return;
+      }
+    }
+
     const payload: any = {
       status: updateStatus,
       internal_remarks: updateRemarks,
       area_asset: updateArea || selectedTicket.area_asset,
       category: updateCategory || selectedTicket.category,
     };
+    if (createIncidentFromTicket) {
+      payload.create_incident = true;
+      payload.incident_payload = {
+        source: "Tickets",
+        asset_location: updateArea || selectedTicket.area_asset || "",
+        fault_symptom: selectedTicket.title || "",
+        fault_type: incidentDraft.fault_type,
+        severity: incidentDraft.severity,
+        operating_condition: incidentDraft.operating_condition,
+        immediate_action_taken:
+          incidentDraft.immediate_action_taken.trim() || updateRemarks.trim() || "",
+        attachments: incidentDraft.incidentAttachments,
+        remarks: incidentDraft.incidentRemarks.trim() || undefined,
+        client_request_id: uuidv4(),
+      };
+    }
 
     if (beforeTemp.trim() !== "") payload.before_temp = parseFloat(beforeTemp);
     if (afterTemp.trim() !== "") payload.after_temp = parseFloat(afterTemp);
@@ -840,6 +919,14 @@ export default function Tickets() {
           }
 
           Alert.alert("Success", "Ticket updated successfully");
+          if (createIncidentFromTicket) {
+            setCreateIncidentFromTicket(false);
+            resetIncidentDraft();
+            router.push({
+              pathname: "/(tabs)/incidents",
+              params: { status: "Inprogress" },
+            });
+          }
           if (updateStatus === "Resolved") setIsDetailVisible(false);
           
           setSelectedTicket(optimisticTicket);
@@ -869,6 +956,14 @@ export default function Tickets() {
         }
 
         Alert.alert("Saved Offline", "Update saved and will sync when online.");
+        if (createIncidentFromTicket) {
+          setCreateIncidentFromTicket(false);
+          resetIncidentDraft();
+          router.push({
+            pathname: "/(tabs)/incidents",
+            params: { status: "Inprogress" },
+          });
+        }
         if (updateStatus === "Resolved") setIsDetailVisible(false);
         setSelectedTicket(optimisticTicket);
         setUpdateRemarks("");
@@ -931,6 +1026,11 @@ export default function Tickets() {
                 <Filter size={20} color={fromDate ? "#dc2626" : (isDark ? "#dc2626" : "#64748b")} />
               </TouchableOpacity>
             </View>
+          </View>
+          <View className="mb-2 self-start px-3 py-1 rounded-full bg-red-50 dark:bg-red-950/30 border border-red-100 dark:border-red-900/40">
+            <Text className="text-[11px] font-semibold text-red-700 dark:text-red-300">
+              {dateRangePreview}
+            </Text>
           </View>
         </View>
 
@@ -1026,6 +1126,10 @@ export default function Tickets() {
             loadMoreAreas={handleLoadMoreAreas}
             hasMoreAreas={hasMoreAreas}
             loadingMoreAreas={loadingMoreAreas}
+            createIncidentFromTicket={createIncidentFromTicket}
+            setCreateIncidentFromTicket={onCreateIncidentFromTicketChange}
+            incidentDraft={incidentDraft}
+            setIncidentDraft={setIncidentDraft}
           />
         )}
       </SafeAreaView>

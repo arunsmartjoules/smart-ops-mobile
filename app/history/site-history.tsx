@@ -271,7 +271,17 @@ export default function SiteHistory() {
     siteCode: string;
     logName: string; // "Temp RH", "Water", etc.
     status?: string;
+    fromDate?: string;
+    toDate?: string;
   }>();
+
+  const parseDateParam = useCallback((value?: string) => {
+    if (!value) return null;
+    const ms = Number(value);
+    if (!Number.isFinite(ms)) return null;
+    const parsed = new Date(ms);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }, []);
 
   const [logs, setLogs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -283,8 +293,8 @@ export default function SiteHistory() {
 
   // Filtering states
   const [siteCode, setSiteCode] = useState<string>(params.siteCode || "");
-  const [fromDate, setFromDate] = useState<Date | null>(null);
-  const [toDate, setToDate] = useState<Date | null>(null);
+  const [fromDate, setFromDate] = useState<Date | null>(() => parseDateParam(params.fromDate));
+  const [toDate, setToDate] = useState<Date | null>(() => parseDateParam(params.toDate));
   const [selectedStatus, setSelectedStatus] = useState<string>("all");
   const [resolvedNames, setResolvedNames] = useState<Map<string, string>>(
     new Map(),
@@ -293,6 +303,15 @@ export default function SiteHistory() {
   useEffect(() => {
     loadSites();
   }, []);
+
+  useEffect(() => {
+    setSiteCode(params.siteCode || "");
+    setFromDate(parseDateParam(params.fromDate));
+    setToDate(parseDateParam(params.toDate));
+    setSelectedStatus("all");
+    setSelectedShift("");
+    setSearchQuery("");
+  }, [params.siteCode, params.fromDate, params.toDate, parseDateParam]);
 
   const fetchLocalLogs = useCallback(async (showLoadingSpinner = true) => {
     try {
@@ -388,15 +407,6 @@ export default function SiteHistory() {
 
   const filteredLogs = useMemo(() => {
     let filtered = logs;
-
-    if (selectedStatus !== "all") {
-      filtered = filtered.filter((log) => {
-        let logStatus = log.status || "Completed";
-        if (logStatus.toLowerCase() === "pending") logStatus = "Open";
-        return logStatus.toLowerCase() === selectedStatus.toLowerCase();
-      });
-    }
-
     if (selectedShift) {
       filtered = filtered.filter((log) =>
         (log.remarks || "").includes(selectedShift),
@@ -426,7 +436,40 @@ export default function SiteHistory() {
     }
 
     return filtered;
-  }, [logs, selectedStatus, searchQuery, selectedShift]);
+  }, [logs, searchQuery, selectedShift]);
+
+  const statusSummary = useMemo(() => {
+    return filteredLogs.reduce(
+      (acc, log) => {
+        let logStatus = (log.status || "Completed").toLowerCase();
+        if (logStatus === "pending") logStatus = "open";
+
+        if (logStatus === "open") acc.open += 1;
+        else if (logStatus === "inprogress") acc.inprogress += 1;
+        else acc.resolved += 1;
+        return acc;
+      },
+      { open: 0, inprogress: 0, resolved: 0 },
+    );
+  }, [filteredLogs]);
+
+  const displayLogs = useMemo(() => {
+    if (selectedStatus === "all") return filteredLogs;
+    return filteredLogs.filter((log) => {
+      let logStatus = (log.status || "Completed").toLowerCase();
+      if (logStatus === "pending") logStatus = "open";
+      return logStatus === selectedStatus.toLowerCase();
+    });
+  }, [filteredLogs, selectedStatus]);
+
+  const selectedPreviewItems = useMemo(() => {
+    const items: string[] = [];
+    if (siteCode) items.push(`Site: ${siteCode}`);
+    if (fromDate) items.push(`From: ${format(fromDate, "dd MMM yyyy")}`);
+    if (toDate) items.push(`To: ${format(toDate, "dd MMM yyyy")}`);
+    if (selectedShift) items.push(`Shift: ${selectedShift}`);
+    return items;
+  }, [siteCode, fromDate, toDate, selectedShift]);
 
   const handleDelete = useCallback(
     async (item: any) => {
@@ -566,8 +609,81 @@ export default function SiteHistory() {
             </View>
           </View>
 
-          {/* Search Bar */}
-          <View className="flex-row items-center bg-slate-50 dark:bg-slate-800 rounded-2xl px-4 py-2 border border-slate-100 dark:border-slate-800">
+          {/* Selected Filters Preview (modal filters: site, dates, shift) */}
+          {selectedPreviewItems.length > 0 && (
+            <View className="mt-2 flex-row flex-wrap gap-2">
+              {selectedPreviewItems.map((item) => (
+                <View
+                  key={item}
+                  className="px-2.5 py-1 rounded-full bg-slate-100 dark:bg-slate-800"
+                >
+                  <Text className="text-[10px] font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wide">
+                    {item}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          )}
+
+          {/* Status summary cards — tap to filter; tap again to show all */}
+          <View className="mt-3 flex-row gap-2">
+            {(
+              [
+                {
+                  key: "open",
+                  label: "Open",
+                  filterValue: "Open" as const,
+                  value: statusSummary.open,
+                },
+                {
+                  key: "inprogress",
+                  label: "In progress",
+                  filterValue: "Inprogress" as const,
+                  value: statusSummary.inprogress,
+                },
+                {
+                  key: "resolved",
+                  label: "Resolved",
+                  filterValue: "Completed" as const,
+                  value: statusSummary.resolved,
+                },
+              ] as const
+            ).map((card) => {
+              const isActive = selectedStatus === card.filterValue;
+              return (
+                <TouchableOpacity
+                  key={card.key}
+                  activeOpacity={0.85}
+                  onPress={() => {
+                    setSelectedStatus((prev) =>
+                      prev === card.filterValue ? "all" : card.filterValue,
+                    );
+                  }}
+                  className={`flex-1 rounded-xl px-3 py-2.5 border ${
+                    isActive
+                      ? "bg-red-50 dark:bg-red-950/40 border-red-200 dark:border-red-900/60"
+                      : "bg-slate-50 dark:bg-slate-800 border-slate-100 dark:border-slate-700"
+                  }`}
+                >
+                  <Text className="text-lg font-bold text-slate-900 dark:text-slate-50">
+                    {card.value}
+                  </Text>
+                  <Text
+                    className={`text-[10px] font-bold uppercase tracking-wider ${
+                      isActive
+                        ? "text-red-700 dark:text-red-400"
+                        : "text-slate-500 dark:text-slate-400"
+                    }`}
+                  >
+                    {card.label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+
+          {/* Search — below status cards */}
+          <View className="mt-3 flex-row items-center bg-slate-50 dark:bg-slate-800 rounded-2xl px-4 py-2 border border-slate-100 dark:border-slate-800">
             <Search size={18} color="#94a3b8" />
             <TextInput
               placeholder="Search by date, user, or remarks..."
@@ -587,7 +703,7 @@ export default function SiteHistory() {
 
           {/* Shift Quick Filters */}
           {params.logName?.toLowerCase()?.includes("temp") && (
-            <View className="mt-4">
+            <View className="mt-3">
               <ScrollView
                 horizontal
                 showsHorizontalScrollIndicator={false}
@@ -624,44 +740,6 @@ export default function SiteHistory() {
               </ScrollView>
             </View>
           )}
-
-          {/* Quick Status Filters */}
-          <View className="mt-4">
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={{ paddingRight: 20 }}
-            >
-              {[
-                { label: "All", value: "all" },
-                { label: "Open", value: "Open" },
-                { label: "In Progress", value: "Inprogress" },
-                { label: "Completed", value: "Completed" },
-              ].map((status) => (
-                <TouchableOpacity
-                  key={status.value}
-                  onPress={() => {
-                    setSelectedStatus(status.value);
-                  }}
-                  className={`mr-2 px-4 py-2 rounded-full border ${
-                    selectedStatus === status.value
-                      ? "bg-red-600 border-red-600"
-                      : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800"
-                  }`}
-                >
-                  <Text
-                    className={`text-sm font-bold ${
-                      selectedStatus === status.value
-                        ? "text-white"
-                        : "text-slate-500"
-                    }`}
-                  >
-                    {status.label}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-          </View>
         </View>
 
         {loading ? (
@@ -681,7 +759,7 @@ export default function SiteHistory() {
           </View>
         ) : (
           <FlashList
-            data={filteredLogs}
+            data={displayLogs}
             keyExtractor={(item) => item.id}
             renderItem={renderHistoryItem}
             contentContainerStyle={{ padding: 20, paddingBottom: 150 }}
@@ -711,6 +789,7 @@ export default function SiteHistory() {
                   onPress={() => {
                     setSearchQuery("");
                     setSelectedShift("");
+                    setSelectedStatus("all");
                     setFromDate(null);
                     setToDate(null);
                     setSiteCode(params.siteCode || "");

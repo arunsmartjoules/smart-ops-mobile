@@ -1,5 +1,12 @@
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import logger from "./logger";
+import { authEvents } from "./authEvents";
+import { auth } from "@/services/firebase";
+import {
+  forceRefreshAuthToken,
+  getStoredAuthToken,
+  getValidAuthToken,
+  isSessionRevokedError,
+} from "../services/AuthTokenManager";
 
 /**
  * Enhanced fetch with timeout support
@@ -41,9 +48,13 @@ export const apiFetch = async (
   customTimeout?: number
 ): Promise<Response> => {
   try {
-    const token = await AsyncStorage.getItem("firebase-token");
-    
-    return fetchWithTimeout(url, {
+    let token = await getValidAuthToken();
+    if (!token) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      token = await getStoredAuthToken();
+    }
+
+    let response = await fetchWithTimeout(url, {
       ...options,
       headers: {
         "Content-Type": "application/json",
@@ -51,6 +62,57 @@ export const apiFetch = async (
         ...options.headers,
       },
     }, customTimeout);
+
+    // One-time silent token refresh/retry for expired/invalid Firebase tokens.
+    if (response.status === 401 && auth.currentUser) {
+      try {
+        let shouldRetry = true;
+        try {
+          const body = await response.clone().json();
+          const responseErr = String(body?.error || "").toLowerCase();
+          if (responseErr.includes("revoked") || responseErr.includes("disabled")) {
+            shouldRetry = false;
+            authEvents.emitUnauthorized("session_revoked");
+          }
+        } catch {
+          // Ignore parse failures and proceed with retry decision.
+        }
+
+        if (shouldRetry) {
+          const refreshedToken = await forceRefreshAuthToken();
+          if (!refreshedToken) return response;
+
+          logger.info("token_refreshed", { module: "API_HELPER", url });
+          response = await fetchWithTimeout(
+            url,
+            {
+              ...options,
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${refreshedToken}`,
+                ...options.headers,
+              },
+            },
+            customTimeout,
+          );
+        }
+      } catch (refreshError) {
+        if (isSessionRevokedError(refreshError)) {
+          authEvents.emitUnauthorized("session_revoked");
+        }
+        logger.warn("Token refresh before retry failed", {
+          module: "API_HELPER",
+          url,
+          action: "token_refresh_failed",
+          error:
+            refreshError instanceof Error
+              ? refreshError.message
+              : String(refreshError),
+        });
+      }
+    }
+
+    return response;
   } catch (error) {
     logger.error(`apiFetch failure: ${url}`, { error });
     throw error;

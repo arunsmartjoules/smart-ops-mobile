@@ -52,15 +52,9 @@
       [
         "expo-splash-screen",
         {
-          "image": "./assets/images/Jouleops-spash-screen.png",
-          "imageWidth": 280,
-          "resizeMode": "contain",
-          "backgroundColor": "#ffffff",
+          "backgroundColor": "#b91c1c",
           "dark": {
-            "image": "./assets/images/Jouleops-spash-screen.png",
-            "imageWidth": 280,
-            "resizeMode": "contain",
-            "backgroundColor": "#ffffff"
+            "backgroundColor": "#b91c1c"
           }
         }
       ],

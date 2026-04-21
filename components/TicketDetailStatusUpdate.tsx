@@ -1,10 +1,17 @@
-import React from "react";
-import { View, Text, TouchableOpacity, TextInput, Image, Alert } from "react-native";
+import React, { useMemo } from "react";
+import { View, Text, TouchableOpacity, TextInput, Image, Alert, ScrollView } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 import { Camera, Image as ImageIcon, X } from "lucide-react-native";
 import { type SelectOption } from "./SearchableSelect";
 import FullscreenPicker from "./FullscreenPicker";
 import { type Ticket } from "@/services/TicketsService";
+import {
+  DEFAULT_TICKET_INCIDENT_DRAFT,
+  FAULT_TYPE_OPTIONS,
+  OPERATING_CONDITION_OPTIONS,
+  SEVERITY_OPTIONS,
+  type TicketIncidentDraft,
+} from "@/constants/incidentFormOptions";
 
 const STATUS_THEME: Record<
   string,
@@ -72,6 +79,10 @@ interface TicketDetailStatusUpdateProps {
   loadMoreAreas?: () => void;
   hasMoreAreas?: boolean;
   loadingMoreAreas?: boolean;
+  createIncidentFromTicket?: boolean;
+  setCreateIncidentFromTicket?: (v: boolean) => void;
+  incidentDraft?: TicketIncidentDraft;
+  setIncidentDraft?: React.Dispatch<React.SetStateAction<TicketIncidentDraft>>;
 }
 
 const TicketDetailStatusUpdate = ({
@@ -98,7 +109,24 @@ const TicketDetailStatusUpdate = ({
   loadMoreAreas,
   hasMoreAreas,
   loadingMoreAreas,
+  createIncidentFromTicket = false,
+  setCreateIncidentFromTicket,
+  incidentDraft = DEFAULT_TICKET_INCIDENT_DRAFT,
+  setIncidentDraft,
 }: TicketDetailStatusUpdateProps) => {
+  const incidentFaultTypeOptions = useMemo(
+    () => FAULT_TYPE_OPTIONS.map((value) => ({ value, label: value })),
+    [],
+  );
+  const incidentSeverityOptions = useMemo(
+    () => SEVERITY_OPTIONS.map((value) => ({ value, label: value })),
+    [],
+  );
+  const incidentOperatingOptions = useMemo(
+    () => OPERATING_CONDITION_OPTIONS.map((value) => ({ value, label: value })),
+    [],
+  );
+
   const statuses = [
     "Inprogress",
     "Hold",
@@ -158,6 +186,59 @@ const TicketDetailStatusUpdate = ({
     } catch {
       Alert.alert("Error", "Unable to open the camera.");
     }
+  };
+
+  const pickIncidentAttachmentsFromGallery = async () => {
+    if (!setIncidentDraft) return;
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ["images"],
+        allowsMultipleSelection: true,
+        quality: 0.7,
+        selectionLimit: 8,
+      });
+      if (!result.canceled) {
+        const uris = result.assets.map((a) => a.uri).filter(Boolean);
+        setIncidentDraft((prev) => ({
+          ...prev,
+          incidentAttachments: [...prev.incidentAttachments, ...uris],
+        }));
+      }
+    } catch {
+      Alert.alert("Error", "Unable to open the image library.");
+    }
+  };
+
+  const captureIncidentPhoto = async () => {
+    if (!setIncidentDraft) return;
+    try {
+      const { status } = await ImagePicker.requestCameraPermissionsAsync();
+      if (status !== "granted") {
+        Alert.alert("Permission Required", "Camera permission is required to take photos.");
+        return;
+      }
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ["images"],
+        allowsEditing: true,
+        quality: 0.7,
+      });
+      if (!result.canceled && result.assets?.[0]?.uri) {
+        setIncidentDraft((prev) => ({
+          ...prev,
+          incidentAttachments: [...prev.incidentAttachments, result.assets[0].uri],
+        }));
+      }
+    } catch {
+      Alert.alert("Error", "Unable to open the camera.");
+    }
+  };
+
+  const removeIncidentAttachment = (uri: string) => {
+    if (!setIncidentDraft) return;
+    setIncidentDraft((prev) => ({
+      ...prev,
+      incidentAttachments: prev.incidentAttachments.filter((x) => x !== uri),
+    }));
   };
 
   return (
@@ -474,6 +555,136 @@ const TicketDetailStatusUpdate = ({
           ) : null}
         </View>
       )}
+
+      {ticket.status === "Open" && setCreateIncidentFromTicket ? (
+        <TouchableOpacity
+          onPress={() => setCreateIncidentFromTicket(!createIncidentFromTicket)}
+          style={{ marginTop: 12, flexDirection: "row", alignItems: "center", gap: 10 }}
+        >
+          <View
+            style={{
+              width: 20,
+              height: 20,
+              borderRadius: 6,
+              borderWidth: 1.5,
+              borderColor: createIncidentFromTicket ? "#dc2626" : "#94a3b8",
+              backgroundColor: createIncidentFromTicket ? "#dc2626" : "transparent",
+            }}
+          />
+          <Text className="text-slate-700 dark:text-slate-200 text-sm font-semibold">
+            Create Incident from this ticket update
+          </Text>
+        </TouchableOpacity>
+      ) : null}
+
+      {ticket.status === "Open" && createIncidentFromTicket && setIncidentDraft ? (
+        <View
+          className="mt-3 rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/80 p-3"
+          style={{ gap: 12 }}
+        >
+          <Text className="text-slate-600 dark:text-slate-400 text-xs leading-5">
+            {"Incident will use this ticket's site, selected area, and ticket title. Fill the fields below."}
+          </Text>
+
+          <FullscreenPicker
+            label="Fault Type *"
+            placeholder="Select fault type"
+            options={incidentFaultTypeOptions}
+            value={incidentDraft.fault_type}
+            onChange={(value) => setIncidentDraft((prev) => ({ ...prev, fault_type: value }))}
+          />
+          <FullscreenPicker
+            label="Severity *"
+            placeholder="Select severity"
+            options={incidentSeverityOptions}
+            value={incidentDraft.severity}
+            onChange={(value) =>
+              setIncidentDraft((prev) => ({
+                ...prev,
+                severity: value as TicketIncidentDraft["severity"],
+              }))
+            }
+          />
+          <FullscreenPicker
+            label="Operating Condition *"
+            placeholder="Select operating condition"
+            options={incidentOperatingOptions}
+            value={incidentDraft.operating_condition}
+            onChange={(value) => setIncidentDraft((prev) => ({ ...prev, operating_condition: value }))}
+          />
+
+          <View>
+            <Text className="text-slate-700 dark:text-slate-300 font-semibold text-sm mb-2">
+              Immediate action taken
+            </Text>
+            <TextInput
+              placeholder="Describe immediate action (optional if ticket remarks cover it)"
+              placeholderTextColor="#94a3b8"
+              value={incidentDraft.immediate_action_taken}
+              onChangeText={(v) => setIncidentDraft((prev) => ({ ...prev, immediate_action_taken: v }))}
+              multiline
+              textAlignVertical="top"
+              numberOfLines={4}
+              className="border border-slate-300 dark:border-slate-600 rounded-xl px-3 py-3 text-slate-900 dark:text-slate-50 min-h-[96px]"
+            />
+          </View>
+
+          <View>
+            <Text className="text-slate-700 dark:text-slate-300 font-semibold text-sm mb-2">
+              Incident remarks (optional)
+            </Text>
+            <TextInput
+              placeholder="Notes stored on the incident record"
+              placeholderTextColor="#94a3b8"
+              value={incidentDraft.incidentRemarks}
+              onChangeText={(v) => setIncidentDraft((prev) => ({ ...prev, incidentRemarks: v }))}
+              multiline
+              textAlignVertical="top"
+              numberOfLines={3}
+              className="border border-slate-300 dark:border-slate-600 rounded-xl px-3 py-3 text-slate-900 dark:text-slate-50 min-h-[72px]"
+            />
+          </View>
+
+          <View>
+            <Text className="text-slate-700 dark:text-slate-300 font-semibold text-sm mb-2">Attachments</Text>
+            <View className="flex-row gap-2 mb-2">
+              <TouchableOpacity
+                onPress={captureIncidentPhoto}
+                className="px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-600 flex-row items-center"
+              >
+                <Camera size={16} color="#64748b" />
+                <Text className="ml-2 text-slate-700 dark:text-slate-200 text-xs font-semibold">Camera</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={pickIncidentAttachmentsFromGallery}
+                className="px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-600 flex-row items-center"
+              >
+                <ImageIcon size={16} color="#64748b" />
+                <Text className="ml-2 text-slate-700 dark:text-slate-200 text-xs font-semibold">Gallery</Text>
+              </TouchableOpacity>
+            </View>
+            {incidentDraft.incidentAttachments.length > 0 ? (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                <View className="flex-row gap-2">
+                  {incidentDraft.incidentAttachments.map((uri) => (
+                    <View key={uri} className="relative">
+                      <Image source={{ uri }} style={{ width: 72, height: 72, borderRadius: 12 }} />
+                      <TouchableOpacity
+                        onPress={() => removeIncidentAttachment(uri)}
+                        className="absolute -top-1 -right-1 w-6 h-6 rounded-full bg-black/70 items-center justify-center"
+                      >
+                        <X size={14} color="#fff" />
+                      </TouchableOpacity>
+                    </View>
+                  ))}
+                </View>
+              </ScrollView>
+            ) : (
+              <Text className="text-slate-500 dark:text-slate-400 text-xs">No attachments selected</Text>
+            )}
+          </View>
+        </View>
+      ) : null}
     </View>
   );
 };

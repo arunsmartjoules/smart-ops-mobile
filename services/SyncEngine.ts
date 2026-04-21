@@ -22,6 +22,7 @@ import cacheManager, { DataDomain } from "./CacheManager";
 import { SiteLogService } from "./SiteLogService";
 import PMService from "./PMService";
 import logger from "../utils/logger";
+import { getValidAuthToken } from "./AuthTokenManager";
 
 // ─── Background Fetch Task ────────────────────────────────────────────────────
 
@@ -33,7 +34,7 @@ export const BACKGROUND_SYNC_TASK = "BACKGROUND_SYNC_TASK";
  */
 TaskManager.defineTask(BACKGROUND_SYNC_TASK, async () => {
   try {
-    const token = await AsyncStorage.getItem("firebase-token");
+    const token = await getValidAuthToken();
     const userJson = await AsyncStorage.getItem("auth_user");
     const user = userJson ? JSON.parse(userJson) : null;
 
@@ -103,6 +104,7 @@ interface DomainSyncHandler {
 
 const TTL = {
   tickets: 10 * 60 * 1000,
+  incidents: 10 * 60 * 1000,
   site_logs: 10 * 60 * 1000,
   pm_instances: 5 * 60 * 1000,
   attendance: 5 * 60 * 1000,
@@ -198,6 +200,61 @@ class SyncEngineImpl implements SyncEngine {
             updated_at: Date.now(),
           }));
           await cacheManager.write("tickets", records);
+        }
+      },
+    },
+
+    // Priority 1.5: incidents
+    {
+      domain: "incidents",
+      ttlMs: TTL.incidents,
+      sync: async (_userId: string) => {
+        const sites = await cacheManager.read<{ site_code: string }>("sites");
+        const siteCodes = sites.length > 0
+          ? [...new Set(sites.map((s) => s.site_code))]
+          : ["all"];
+
+        for (const siteCode of siteCodes) {
+          const response = await apiFetch(`/api/incidents?site_code=${encodeURIComponent(siteCode)}&limit=100`);
+          if (!response.ok) continue;
+          const result = await response.json();
+          const records = (result.data || []).map((i: any) => ({
+            id: i.id,
+            incident_id: i.incident_id || "",
+            source: i.source || "Incident",
+            ticket_id: i.ticket_id || null,
+            site_code: i.site_code || siteCode,
+            asset_location: i.asset_location || null,
+            raised_by: i.raised_by || null,
+            incident_created_time: i.incident_created_time
+              ? new Date(i.incident_created_time).getTime()
+              : Date.now(),
+            incident_updated_time: i.incident_updated_time
+              ? new Date(i.incident_updated_time).getTime()
+              : null,
+            incident_resolved_time: i.incident_resolved_time
+              ? new Date(i.incident_resolved_time).getTime()
+              : null,
+            fault_symptom: i.fault_symptom || "",
+            fault_type: i.fault_type || "Others",
+            severity: i.severity || "Moderate",
+            operating_condition: i.operating_condition || null,
+            immediate_action_taken: i.immediate_action_taken || null,
+            attachments: JSON.stringify(i.attachments || []),
+            rca_attachments: JSON.stringify(i.rca_attachments || []),
+            remarks: i.remarks || null,
+            status: i.status || "Open",
+            rca_status: i.rca_status || "Open",
+            assigned_by: i.assigned_by || null,
+            assignment_type: i.assignment_type || null,
+            vendor_tagged: i.vendor_tagged || null,
+            rca_maker: i.rca_maker || null,
+            rca_checker: i.rca_checker || null,
+            assigned_to: JSON.stringify(i.assigned_to || []),
+            created_at: i.created_at ? new Date(i.created_at).getTime() : Date.now(),
+            updated_at: i.updated_at ? new Date(i.updated_at).getTime() : Date.now(),
+          }));
+          await cacheManager.write("incidents", records);
         }
       },
     },
@@ -734,6 +791,22 @@ class SyncEngineImpl implements SyncEngine {
     } else if (entity_type === "attendance_check_in") {
       endpoint = "/api/attendance/check-in";
       method = "POST";
+    } else if (entity_type === "incident_create") {
+      endpoint = "/api/incidents";
+      method = "POST";
+    } else if (entity_type === "incident_update") {
+      endpoint = `/api/incidents/${payload.id}`;
+      method = "PUT";
+    } else if (entity_type === "incident_status_update") {
+      endpoint = `/api/incidents/${payload.id}/status`;
+      method = "PATCH";
+    } else if (entity_type === "incident_rca_status_update") {
+      endpoint = `/api/incidents/${payload.id}/rca-status`;
+      method = "PATCH";
+    } else if (entity_type === "incident_attachment_add") {
+      endpoint = `/api/incidents/${payload.id}/attachments`;
+      method = "POST";
+      body = JSON.stringify({ attachment: payload.attachment });
     } else if (entity_type === "attendance_check_out") {
       const attendanceId = payload.attendance_id || payload.id;
       endpoint = `/api/attendance/${attendanceId}/check-out`;

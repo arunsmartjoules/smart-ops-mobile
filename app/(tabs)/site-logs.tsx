@@ -1,9 +1,10 @@
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import {
   View,
   Text,
   TouchableOpacity,
   Modal,
+  ScrollView,
   useColorScheme,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -49,7 +50,6 @@ export default function SiteLogs() {
   const fetchLogsRef = useRef<((targetSite: string) => Promise<void>) | null>(null);
   const [shiftModalVisible, setShiftModalVisible] = useState(false);
   const [shiftCounts, setShiftCounts] = useState<Record<string, number>>({ A: 0, B: 0, C: 0 });
-  const [chillerDailyPending, setChillerDailyPending] = useState(0);
   const { isConnected } = useNetworkStatus();
   const prePullInFlightRef = useRef(false);
 
@@ -58,6 +58,13 @@ export default function SiteLogs() {
   const { sites: availableSites, selectedSite, selectSite, refresh: refreshSites } = useSites(userId);
   const siteCode = selectedSite?.site_code ?? null;
   const siteName = selectedSite?.site_name ?? selectedSite?.site_code ?? "Select Site";
+  const dateRangePreview = useMemo(() => {
+    const fmt = (d: Date | null) =>
+      d
+        ? d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })
+        : "Any";
+    return `Date: ${fmt(fromDate)} - ${fmt(toDate)}`;
+  }, [fromDate, toDate]);
 
   // Safety timer to clear loading no matter what
   useEffect(() => {
@@ -102,14 +109,12 @@ export default function SiteLogs() {
       }
 
       // Fetch open/inprogress/pending counts from backend + local progress in parallel
-      const [counts, progress, dailyChillerPending] = await Promise.all([
+      const [counts, progress] = await Promise.all([
         siteLogService.getOpenCounts(targetSite),
         siteLogService.getCategoryProgress(targetSite, fromDate, toDate),
-        siteLogService.getTodayChillerDailyPendingCount(targetSite),
       ]);
       setOpenCounts(counts);
       setLogProgress(progress);
-      setChillerDailyPending(dailyChillerPending);
     } catch (e) {
       console.error(e);
     } finally {
@@ -300,58 +305,12 @@ export default function SiteLogs() {
             </View>
           </View>
 
-          {/* Stats Bar */}
-          <View className="flex-row gap-2">
-            {loading
-              ? [1, 2, 3, 4].map((i) => (
-                  <Skeleton
-                    key={i}
-                    height={80}
-                    style={{ flex: 1, borderRadius: 12 }}
-                  />
-                ))
-              : categories.map((cat) => {
-                  const progress = logProgress[getLogName(cat.title)] || {
-                    total: 0,
-                    completed: 0,
-                  };
-                  // For Temp/Water/Chemical: show open+inprogress+pending count from backend
-                  // For Chiller: show pending (12 - completedToday) for IST today
-                  const displayCount =
-                    cat.id === "chiller"
-                      ? chillerDailyPending
-                      : openCounts[getLogName(cat.title)] ??
-                        Math.max(0, progress.total - progress.completed);
-                  return (
-                    <View
-                      key={cat.id}
-                      className="flex-1 bg-white dark:bg-slate-900 rounded-xl p-3"
-                      style={{
-                        shadowColor: "#000",
-                        shadowOffset: { width: 0, height: 1 },
-                        shadowOpacity: 0.05,
-                        shadowRadius: 4,
-                        elevation: 2,
-                      }}
-                    >
-                      <View
-                        className={`w-8 h-8 rounded-lg items-center justify-center mb-2 ${cat.bg}`}
-                      >
-                        <cat.icon size={16} color={cat.accent} />
-                      </View>
-                      <Text className="text-xl font-bold text-slate-900 dark:text-slate-50">
-                        {displayCount}
-                      </Text>
-                      <Text
-                        className="text-slate-400 dark:text-slate-500 text-[10px] font-bold uppercase tracking-tight"
-                        numberOfLines={1}
-                      >
-                        {cat.id === "chiller" ? "Pending" : (cat.shortTitle || cat.title)}
-                      </Text>
-                    </View>
-                  );
-                })}
+          <View className="mb-2 self-start px-3 py-1 rounded-full bg-red-50 dark:bg-red-950/30 border border-red-100 dark:border-red-900/40">
+            <Text className="text-[11px] font-semibold text-red-700 dark:text-red-300">
+              {dateRangePreview}
+            </Text>
           </View>
+
         </View>
 
         <View className="flex-1 px-5 pt-6 pb-6">
@@ -373,26 +332,36 @@ export default function SiteLogs() {
           )}
           {loading ? (
             <View className="flex-1">
-              <Text className="text-slate-900 dark:text-slate-50 font-bold text-sm mb-2">
-                Log Categories
+              <Text className="text-slate-500 dark:text-slate-400 text-[11px] font-bold uppercase tracking-widest mb-2">
+                Log categories
               </Text>
-              <View className="flex-1 gap-2">
+              <ScrollView
+                className="flex-1"
+                showsVerticalScrollIndicator={false}
+                keyboardShouldPersistTaps="handled"
+                contentContainerStyle={{ gap: 10, paddingBottom: 8 }}
+              >
                 {[1, 2, 3, 4].map((i) => (
                   <Skeleton
                     key={i}
-                    height={112}
+                    height={100}
                     style={{ borderRadius: 16 }}
                   />
                 ))}
-              </View>
+              </ScrollView>
             </View>
           ) : (
             <View className="flex-1">
-              <Text className="text-slate-900 dark:text-slate-50 font-bold text-sm mb-2">
-                Log Categories
+              <Text className="text-slate-500 dark:text-slate-400 text-[11px] font-bold uppercase tracking-widest mb-2">
+                Log categories
               </Text>
 
-              <View className="flex-1 gap-2">
+              <ScrollView
+                className="flex-1"
+                showsVerticalScrollIndicator={false}
+                keyboardShouldPersistTaps="handled"
+                contentContainerStyle={{ gap: 10, paddingBottom: 8 }}
+              >
                 {categories.map((item) => {
                   const progress = logProgress[getLogName(item.title)] || {
                     total: 0,
@@ -407,67 +376,73 @@ export default function SiteLogs() {
                   return (
                     <View
                       key={item.id}
-                      className="bg-white dark:bg-slate-900 rounded-xl p-3"
+                      className="bg-white dark:bg-slate-900 rounded-2xl p-3.5 border border-slate-100 dark:border-slate-800"
                       style={{
-                        flex: 1,
-                        minHeight: 0,
                         shadowColor: "#000",
                         shadowOffset: { width: 0, height: 1 },
-                        shadowOpacity: 0.05,
-                        shadowRadius: 4,
+                        shadowOpacity: 0.06,
+                        shadowRadius: 6,
                         elevation: 2,
                       }}
                     >
-                      <View className="flex-row items-center mb-2">
+                      <View className="flex-row items-center">
                         <View
-                          className={`w-8 h-8 rounded-lg items-center justify-center mr-2 ${item.bg}`}
+                          className={`w-10 h-10 rounded-xl items-center justify-center mr-3 ${item.bg}`}
                         >
-                          <item.icon size={18} color={item.accent} />
+                          <item.icon size={20} color={item.accent} />
                         </View>
 
-                        <View className="flex-1">
-                          <View className="flex-row justify-between items-center">
-                            <Text className="text-slate-900 dark:text-slate-50 font-bold text-sm" numberOfLines={1}>
+                        <View className="flex-1 min-w-0">
+                          <View className="flex-row justify-between items-start gap-2">
+                            <Text
+                              className="text-slate-900 dark:text-slate-50 font-bold text-[15px] flex-shrink"
+                              numberOfLines={2}
+                            >
                               {item.title}
                             </Text>
                             {item.id === "chiller" ? (
                               progress.completed > 0 && (
-                                <View className="px-2 py-0.5 rounded-md bg-teal-100 dark:bg-teal-900/30">
+                                <View className="px-2 py-0.5 rounded-lg bg-teal-100 dark:bg-teal-900/30 shrink-0">
                                   <Text className="text-[10px] font-bold text-teal-700 dark:text-teal-400">
-                                    {progress.completed} Logged
+                                    {progress.completed} logged
                                   </Text>
                                 </View>
                               )
                             ) : (
                               progress.total > 0 && (
                                 <View
-                                  className={`px-2 py-0.5 rounded-md ${
+                                  className={`px-2 py-0.5 rounded-lg shrink-0 ${
                                     pending === 0
-                                      ? "bg-green-100"
-                                      : "bg-red-50"
+                                      ? "bg-emerald-100 dark:bg-emerald-900/25"
+                                      : "bg-red-50 dark:bg-red-950/40"
                                   }`}
                                 >
                                   <Text
                                     className={`text-[10px] font-bold ${
-                                      pending === 0 ? "text-green-700" : "text-red-600"
+                                      pending === 0
+                                        ? "text-emerald-800 dark:text-emerald-400"
+                                        : "text-red-600 dark:text-red-400"
                                     }`}
                                     numberOfLines={1}
                                   >
                                     {pending === 0
-                                      ? "All Done"
-                                      : `${pending} Pending`}
+                                      ? "All done"
+                                      : `${pending} pending`}
                                   </Text>
                                 </View>
                               )
                             )}
                           </View>
-                          <Text className="text-slate-400 text-[10px] mt-0.5" numberOfLines={1}>
+                          <Text
+                            className="text-slate-400 dark:text-slate-500 text-xs mt-1"
+                            numberOfLines={1}
+                          >
                             {item.subtitle}
                           </Text>
                         </View>
                       </View>
 
-                      <View className="flex-row gap-2 mt-auto">
+                      <View className="flex-row gap-2 mt-3 pt-3 border-t border-slate-100 dark:border-slate-800">
                         <TouchableOpacity
                           onPress={() => {
                             if (!siteCode) return;
@@ -527,6 +502,8 @@ export default function SiteLogs() {
                               params: {
                                 siteCode,
                                 logName: getLogName(item.title),
+                                fromDate: fromDate ? String(fromDate.getTime()) : "",
+                                toDate: toDate ? String(toDate.getTime()) : "",
                               },
                             })
                           }
@@ -545,7 +522,7 @@ export default function SiteLogs() {
                     </View>
                   );
                 })}
-              </View>
+              </ScrollView>
             </View>
           )}
         </View>

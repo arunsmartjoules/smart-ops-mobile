@@ -12,6 +12,7 @@ import { v4 as uuidv4 } from "uuid";
 import {
   db,
   tickets,
+  incidents,
   siteLogs,
   chillerReadings,
   pmInstances,
@@ -33,6 +34,7 @@ import logger from "@/utils/logger";
 
 export type DataDomain =
   | "tickets"
+  | "incidents"
   | "site_logs"
   | "chiller_readings"
   | "pm_instances"
@@ -46,6 +48,7 @@ export type DataDomain =
 
 export const ALL_DOMAINS: DataDomain[] = [
   "tickets",
+  "incidents",
   "site_logs",
   "chiller_readings",
   "pm_instances",
@@ -67,6 +70,11 @@ export interface CacheQuery {
 export interface OfflineQueueItem {
   entity_type:
     | "ticket_update"
+    | "incident_create"
+    | "incident_update"
+    | "incident_status_update"
+    | "incident_rca_status_update"
+    | "incident_attachment_add"
     | "ticket_line_item"
     | "attendance_check_in"
     | "attendance_check_out"
@@ -97,6 +105,7 @@ export interface OfflineQueueRow extends OfflineQueueItem {
 function getTable(domain: DataDomain) {
   switch (domain) {
     case "tickets":          return tickets;
+    case "incidents":        return incidents;
     case "site_logs":        return siteLogs;
     case "chiller_readings": return chillerReadings;
     case "pm_instances":     return pmInstances;
