@@ -35,6 +35,7 @@ import { eq, desc } from "drizzle-orm";
 import logger from "@/utils/logger";
 import { v4 as uuidv4 } from "uuid";
 import TicketDetailModal from "@/components/TicketDetailModal";
+import { isTempMandatoryCategory } from "@/components/TicketDetailStatusUpdate";
 import {
   DEFAULT_TICKET_INCIDENT_DRAFT,
   type TicketIncidentDraft,
@@ -661,8 +662,16 @@ export default function Tickets() {
     setUpdateRemarks(getInitialUpdateRemarks(ticket, defaultStatus));
     setUpdateArea(ticket.area_asset || "");
     setUpdateCategory(ticket.category || "");
-    setBeforeTemp("");
-    setAfterTemp("");
+    setBeforeTemp(
+      ticket.before_temp != null && !Number.isNaN(Number(ticket.before_temp))
+        ? String(ticket.before_temp)
+        : "",
+    );
+    setAfterTemp(
+      ticket.after_temp != null && !Number.isNaN(Number(ticket.after_temp))
+        ? String(ticket.after_temp)
+        : "",
+    );
     setAttachmentUri("");
     setAreaSearchQuery("");
     setCreateIncidentFromTicket(false);
@@ -770,6 +779,16 @@ export default function Tickets() {
     setUpdateRemarks("");
     setUpdateArea(ticket.area_asset || "");
     setUpdateCategory(ticket.category || "");
+    setBeforeTemp(
+      ticket.before_temp != null && !Number.isNaN(Number(ticket.before_temp))
+        ? String(ticket.before_temp)
+        : "",
+    );
+    setAfterTemp(
+      ticket.after_temp != null && !Number.isNaN(Number(ticket.after_temp))
+        ? String(ticket.after_temp)
+        : "",
+    );
     setAttachmentUri("");
     setAreaSearchQuery("");
     setCreateIncidentFromTicket(false);
@@ -827,6 +846,31 @@ export default function Tickets() {
     if (needsAreaAndCategory && !updateCategory.trim()) {
       Alert.alert("Required", "Please select a category before updating the ticket.");
       return;
+    }
+    if (needsAreaAndCategory) {
+      const effectiveCategory = (
+        updateCategory.trim() ||
+        selectedTicket.category ||
+        ""
+      ).trim();
+      if (isTempMandatoryCategory(effectiveCategory)) {
+        const bt = beforeTemp.trim();
+        const at = afterTemp.trim();
+        if (!bt || !at) {
+          Alert.alert(
+            "Required",
+            "Please enter before and after temperature for this category.",
+          );
+          return;
+        }
+        if (Number.isNaN(parseFloat(bt)) || Number.isNaN(parseFloat(at))) {
+          Alert.alert(
+            "Required",
+            "Before and after temperature must be valid numbers.",
+          );
+          return;
+        }
+      }
     }
 
     if (createIncidentFromTicket) {

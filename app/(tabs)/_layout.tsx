@@ -1,6 +1,6 @@
 // @ts-nocheck
 import React, { useState, useEffect } from "react";
-import { Platform, View } from "react-native";
+import { Platform, View, Text } from "react-native";
 import { Tabs } from "expo-router";
 import {
   LayoutDashboard,
@@ -40,6 +40,23 @@ export default function TabLayout() {
           backgroundColor: isDark ? "#0f172a" : "#f8fafc",
         },
         tabBarShowLabel: true,
+        tabBarLabel: ({ color, children }) => (
+          <Text
+            allowFontScaling={false}
+            numberOfLines={1}
+            style={{
+              color,
+              fontSize: 9,
+              fontWeight: "700",
+              marginTop: -4,
+              marginBottom: 4,
+              textTransform: "uppercase",
+              letterSpacing: 0.2,
+            }}
+          >
+            {String(children)}
+          </Text>
+        ),
         tabBarStyle: {
           backgroundColor: isDark ? "#0f172a" : "#ffffff",
           borderTopWidth: 0,
@@ -52,13 +69,8 @@ export default function TabLayout() {
           shadowRadius: 16,
           elevation: 25,
         },
-        tabBarLabelStyle: {
-          fontSize: 10,
-          fontWeight: "700",
-          marginTop: -4,
-          marginBottom: 4,
-          textTransform: "uppercase",
-          letterSpacing: 0.5,
+        tabBarItemStyle: {
+          paddingHorizontal: 0,
         },
       }}
     >

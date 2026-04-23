@@ -59,6 +59,7 @@ import TicketsService, { type Ticket } from "@/services/TicketsService";
 import { API_BASE_URL } from "@/constants/api";
 import TicketItem from "@/components/TicketItem";
 import TicketDetailModal from "@/components/TicketDetailModal";
+import { isTempMandatoryCategory } from "@/components/TicketDetailStatusUpdate";
 import { type SelectOption } from "@/components/SearchableSelect";
 import SiteLogService from "@/services/SiteLogService";
 import logger from "@/utils/logger";
@@ -849,8 +850,16 @@ export default function Dashboard() {
           setUpdateRemarks(getInitialUpdateRemarks(ticket, defaultStatus));
           setUpdateArea(ticket.area_asset || "");
           setUpdateCategory(ticket.category || "");
-          setBeforeTemp("");
-          setAfterTemp("");
+          setBeforeTemp(
+            ticket.before_temp != null && !Number.isNaN(Number(ticket.before_temp))
+              ? String(ticket.before_temp)
+              : "",
+          );
+          setAfterTemp(
+            ticket.after_temp != null && !Number.isNaN(Number(ticket.after_temp))
+              ? String(ticket.after_temp)
+              : "",
+          );
           setAttachmentUri("");
           setIsDetailVisible(true);
         }
@@ -884,6 +893,31 @@ export default function Dashboard() {
         "Please select a category before updating the ticket.",
       );
       return;
+    }
+    if (needsAreaAndCategory) {
+      const effectiveCategory = (
+        updateCategory.trim() ||
+        selectedTicket.category ||
+        ""
+      ).trim();
+      if (isTempMandatoryCategory(effectiveCategory)) {
+        const bt = beforeTemp.trim();
+        const at = afterTemp.trim();
+        if (!bt || !at) {
+          Alert.alert(
+            "Required",
+            "Please enter before and after temperature for this category.",
+          );
+          return;
+        }
+        if (Number.isNaN(parseFloat(bt)) || Number.isNaN(parseFloat(at))) {
+          Alert.alert(
+            "Required",
+            "Before and after temperature must be valid numbers.",
+          );
+          return;
+        }
+      }
     }
 
     const payload: any = {

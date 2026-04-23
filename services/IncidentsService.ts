@@ -1,7 +1,7 @@
 import NetInfo from "@react-native-community/netinfo";
 import { db, incidents as incidentsTable } from "@/database";
 import { and, desc, eq, gte, lte } from "drizzle-orm";
-import cacheManager from "./CacheManager";
+import CacheManager from "./CacheManager";
 import { apiFetch as centralApiFetch } from "../utils/apiHelper";
 import { API_BASE_URL } from "../constants/api";
 
@@ -27,8 +27,9 @@ async function incidentMutation(
   try {
     const response = await centralApiFetch(`${API_BASE_URL}${path}`, init);
     const data = await response.json().catch(() => ({}));
-    const enqueueable =
-      !response.ok && (response.status >= 500 || response.status === 0);
+    // Queue only for real network-level failures (status 0 / thrown fetch).
+    // Server errors (4xx/5xx) should surface to user, not be marked "offline".
+    const enqueueable = !response.ok && response.status === 0;
     return { ok: response.ok, status: response.status, data, enqueueable };
   } catch {
     return { ok: false, status: 0, data: {}, enqueueable: true };
@@ -117,7 +118,7 @@ export const IncidentsService = {
         created_at: i.created_at ? new Date(i.created_at).getTime() : Date.now(),
         updated_at: i.updated_at ? new Date(i.updated_at).getTime() : Date.now(),
       }));
-      await cacheManager.write("incidents", records);
+      await CacheManager.write("incidents", records);
     }
     return result;
   },
@@ -128,37 +129,22 @@ export const IncidentsService = {
 
   async createIncident(payload: any) {
     try {
-      const netState = await NetInfo.fetch();
+      const { ok, data, enqueueable } = await incidentMutation("/api/incidents", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
 
-      if (netState.isConnected) {
-        const { ok, data, enqueueable } = await incidentMutation("/api/incidents", {
-          method: "POST",
-          body: JSON.stringify(payload),
-        });
+      if (normalizeMutationSuccess(data, ok)) {
+        return data?.success === true ? data : { ...data, success: true };
+      }
 
-        if (normalizeMutationSuccess(data, ok)) {
-          return data?.success === true ? data : { ...data, success: true };
-        }
-
-        if (enqueueable) {
-          await cacheManager.enqueue({
-            entity_type: "incident_create",
-            operation: "create",
-            payload,
-          });
-          return {
-            success: false,
-            queued: true,
-            error: "Offline: Incident queued for sync.",
-          };
-        }
-
+      if (!enqueueable) {
         return data?.success === false
           ? data
           : { success: false, error: data?.error || "Failed to create incident" };
       }
 
-      await cacheManager.enqueue({
+      await CacheManager.enqueue({
         entity_type: "incident_create",
         operation: "create",
         payload,
@@ -169,7 +155,7 @@ export const IncidentsService = {
         error: "Offline: Incident queued for sync.",
       };
     } catch {
-      await cacheManager.enqueue({
+      await CacheManager.enqueue({
         entity_type: "incident_create",
         operation: "create",
         payload,
@@ -189,7 +175,7 @@ export const IncidentsService = {
     try {
       const netState = await NetInfo.fetch();
       if (!netState.isConnected) {
-        await cacheManager.enqueue({
+        await CacheManager.enqueue({
           entity_type: "incident_update",
           operation: "update",
           payload: queuePayload,
@@ -207,7 +193,7 @@ export const IncidentsService = {
       }
 
       if (enqueueable) {
-        await cacheManager.enqueue({
+        await CacheManager.enqueue({
           entity_type: "incident_update",
           operation: "update",
           payload: queuePayload,
@@ -218,7 +204,7 @@ export const IncidentsService = {
         ? data
         : { success: false, error: data?.error || "Failed to update incident" };
     } catch {
-      await cacheManager.enqueue({
+      await CacheManager.enqueue({
         entity_type: "incident_update",
         operation: "update",
         payload: queuePayload,
@@ -240,7 +226,7 @@ export const IncidentsService = {
     try {
       const netState = await NetInfo.fetch();
       if (!netState.isConnected) {
-        await cacheManager.enqueue({
+        await CacheManager.enqueue({
           entity_type: "incident_status_update",
           operation: "update",
           payload: queuePayload,
@@ -258,7 +244,7 @@ export const IncidentsService = {
       }
 
       if (enqueueable) {
-        await cacheManager.enqueue({
+        await CacheManager.enqueue({
           entity_type: "incident_status_update",
           operation: "update",
           payload: queuePayload,
@@ -269,7 +255,7 @@ export const IncidentsService = {
         ? data
         : { success: false, error: data?.error || "Failed to update status" };
     } catch {
-      await cacheManager.enqueue({
+      await CacheManager.enqueue({
         entity_type: "incident_status_update",
         operation: "update",
         payload: queuePayload,
@@ -289,7 +275,7 @@ export const IncidentsService = {
     try {
       const netState = await NetInfo.fetch();
       if (!netState.isConnected) {
-        await cacheManager.enqueue({
+        await CacheManager.enqueue({
           entity_type: "incident_rca_status_update",
           operation: "update",
           payload: queuePayload,
@@ -307,7 +293,7 @@ export const IncidentsService = {
       }
 
       if (enqueueable) {
-        await cacheManager.enqueue({
+        await CacheManager.enqueue({
           entity_type: "incident_rca_status_update",
           operation: "update",
           payload: queuePayload,
@@ -318,7 +304,7 @@ export const IncidentsService = {
         ? data
         : { success: false, error: data?.error || "Failed to update RCA status" };
     } catch {
-      await cacheManager.enqueue({
+      await CacheManager.enqueue({
         entity_type: "incident_rca_status_update",
         operation: "update",
         payload: queuePayload,
@@ -334,7 +320,7 @@ export const IncidentsService = {
     try {
       const netState = await NetInfo.fetch();
       if (!netState.isConnected) {
-        await cacheManager.enqueue({
+        await CacheManager.enqueue({
           entity_type: "incident_attachment_add",
           operation: "update",
           payload: queuePayload,
@@ -352,7 +338,7 @@ export const IncidentsService = {
       }
 
       if (enqueueable) {
-        await cacheManager.enqueue({
+        await CacheManager.enqueue({
           entity_type: "incident_attachment_add",
           operation: "update",
           payload: queuePayload,
@@ -363,7 +349,7 @@ export const IncidentsService = {
         ? data
         : { success: false, error: data?.error || "Failed to add attachment" };
     } catch {
-      await cacheManager.enqueue({
+      await CacheManager.enqueue({
         entity_type: "incident_attachment_add",
         operation: "update",
         payload: queuePayload,

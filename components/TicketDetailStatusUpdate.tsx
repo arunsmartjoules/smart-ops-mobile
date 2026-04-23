@@ -13,6 +13,15 @@ import {
   type TicketIncidentDraft,
 } from "@/constants/incidentFormOptions";
 
+/** Categories where before/after temperature fields are required (Inprogress / Resolved). */
+export const AREA_TEMPERATURE_COMPLAINTS_CATEGORY = "Area Temperature Complaints";
+export const AREA_RH_COMPLAINTS_CATEGORY = "Area RH Complaints";
+
+export const isTempMandatoryCategory = (category: string) =>
+  [AREA_TEMPERATURE_COMPLAINTS_CATEGORY, AREA_RH_COMPLAINTS_CATEGORY].includes(
+    category.trim(),
+  );
+
 const STATUS_THEME: Record<
   string,
   { bg: string; activeBg: string; text: string; activeText: string }
@@ -149,6 +158,14 @@ const TicketDetailStatusUpdate = ({
   );
   const showAreaAndCategory =
     updateStatus === "Inprogress" || updateStatus === "Resolved";
+  const effectiveCategory = (
+    updateCategory.trim() ||
+    ticket.category ||
+    ""
+  ).trim();
+  const mandatoryTempsForCategory =
+    showAreaAndCategory &&
+    isTempMandatoryCategory(effectiveCategory);
 
   const pickImage = async () => {
     try {
@@ -370,6 +387,9 @@ const TicketDetailStatusUpdate = ({
               }}
             >
               Before Temp (°C)
+              {mandatoryTempsForCategory ? (
+                <Text style={{ color: "#dc2626" }}> *</Text>
+              ) : null}
             </Text>
             <TextInput
               style={{
@@ -401,6 +421,9 @@ const TicketDetailStatusUpdate = ({
               }}
             >
               After Temp (°C)
+              {mandatoryTempsForCategory ? (
+                <Text style={{ color: "#dc2626" }}> *</Text>
+              ) : null}
             </Text>
             <TextInput
               style={{

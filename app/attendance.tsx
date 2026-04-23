@@ -1069,6 +1069,16 @@ export default function AttendancePage() {
                 >
                   {user?.email || ""}
                 </Text>
+                <Text
+                  className="text-white/80 text-[11px] font-semibold mt-1"
+                  numberOfLines={1}
+                >
+                  {todayAttendance?.site_name
+                    ? `Site: ${todayAttendance.site_name}`
+                    : todayAttendance?.site_code
+                      ? `Site: ${todayAttendance.site_code}`
+                      : "Site: WFH / Off-site"}
+                </Text>
               </View>
               {todayAttendance && (
                 <View className="bg-white/20 px-3 py-1.5 rounded-xl border border-white/20">

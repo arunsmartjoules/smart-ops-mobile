@@ -270,7 +270,7 @@ export default function IncidentDetailModal({
                 options={assigneeOptions}
                 value={assignedTo}
                 onChange={setAssignedTo}
-                disabled={restrictResolvedEdits}
+                disabled={!canEditMeta || restrictResolvedEdits}
               />
 
               {incident.status !== "Resolved" || nextStatus === "Inprogress" ? (

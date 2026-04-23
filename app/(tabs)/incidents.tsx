@@ -231,6 +231,7 @@ export default function IncidentsTab() {
     incident_created_time: new Date(),
     assigned_to: "",
   });
+  const currentUserId = user?.user_id || user?.id || "";
 
   const siteOptions = useMemo<SelectOption[]>(
     () =>
@@ -345,10 +346,10 @@ export default function IncidentsTab() {
       immediate_action_taken: "",
       attachments: [],
       incident_created_time: new Date(),
-      assigned_to: "",
+      assigned_to: currentUserId,
     });
     setAssetSearchQuery("");
-  }, [selectedSiteCode]);
+  }, [currentUserId, selectedSiteCode]);
 
   const loadAssets = useCallback(
     async (siteCode: string) => {
@@ -390,6 +391,14 @@ export default function IncidentsTab() {
       loadSiteUsers(form.site_code);
     }
   }, [creating, form.site_code, selectedSiteCode, loadAssets, loadSiteUsers]);
+
+  useEffect(() => {
+    if (!creating || canEditMeta) return;
+    if (!currentUserId) return;
+    if (form.assigned_to !== currentUserId) {
+      setForm((prev) => ({ ...prev, assigned_to: currentUserId }));
+    }
+  }, [creating, canEditMeta, currentUserId, form.assigned_to]);
 
   const pickFromGallery = useCallback(async () => {
     const result = await ImagePicker.launchImageLibraryAsync({
@@ -845,7 +854,10 @@ export default function IncidentsTab() {
         />
 
         <TouchableOpacity
-          onPress={() => setCreating(true)}
+          onPress={() => {
+            resetCreateForm();
+            setCreating(true);
+          }}
           className="absolute right-6 bottom-8 w-14 h-14 rounded-full bg-red-600 items-center justify-center"
         >
           <Plus color="#fff" size={24} />
@@ -989,6 +1001,7 @@ export default function IncidentsTab() {
                   options={siteUserOptions}
                   value={form.assigned_to}
                   onChange={(value) => setForm((prev) => ({ ...prev, assigned_to: value }))}
+                  disabled={!canEditMeta}
                 />
                 <View className="mb-4">
                   <Text className="text-slate-700 dark:text-slate-300 font-semibold text-sm mb-2">

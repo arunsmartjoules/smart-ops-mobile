@@ -12,7 +12,9 @@ import { type Ticket } from "@/services/TicketsService";
 import { type SelectOption } from "./SearchableSelect";
 import TicketDetailHeader from "./TicketDetailHeader";
 import TicketDetailInfo from "./TicketDetailInfo";
-import TicketDetailStatusUpdate from "./TicketDetailStatusUpdate";
+import TicketDetailStatusUpdate, {
+  isTempMandatoryCategory,
+} from "./TicketDetailStatusUpdate";
 import TicketLineItems from "./TicketLineItems";
 import { useTheme } from "@/contexts/ThemeContext";
 import type { TicketIncidentDraft } from "@/constants/incidentFormOptions";
@@ -91,6 +93,15 @@ const TicketDetailModal = React.memo(
       const originalRemarks = ticket.internal_remarks || "";
       const originalArea = ticket.area_asset || "";
       const originalCategory = ticket.category || "";
+      const effectiveCategory = (
+        updateCategory.trim() ||
+        ticket.category ||
+        ""
+      ).trim();
+      const mandatoryTempsIncomplete =
+        (updateStatus === "Inprogress" || updateStatus === "Resolved") &&
+        isTempMandatoryCategory(effectiveCategory) &&
+        (!beforeTemp.trim() || !afterTemp.trim());
 
       return (
         updateStatus !== ticket.status ||
@@ -100,7 +111,8 @@ const TicketDetailModal = React.memo(
         beforeTemp.trim() !== "" ||
         afterTemp.trim() !== "" ||
         Boolean(attachmentUri) ||
-        Boolean(createIncidentFromTicket)
+        Boolean(createIncidentFromTicket) ||
+        mandatoryTempsIncomplete
       );
     }, [
       ticket,

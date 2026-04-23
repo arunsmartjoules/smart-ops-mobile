@@ -11,8 +11,34 @@ const productionUrl = "https://3.110.174.185.sslip.io";
 // For physical devices, use your computer's local IP (e.g. 192.168.x.x).
 const devUrl = Platform.OS === "android" ? "http://192.168.31.134:3420" : "http://localhost:3420";
 
-export const API_BASE_URL =
-  process.env.EXPO_PUBLIC_BACKEND_URL || (__DEV__ ? devUrl : productionUrl);
+const envUrl = process.env.EXPO_PUBLIC_BACKEND_URL?.trim();
+
+const isPrivateOrLocalHost = (urlString: string) => {
+  try {
+    const host = new URL(urlString).hostname.toLowerCase();
+    if (host === "localhost" || host === "127.0.0.1") return true;
+    if (host.startsWith("10.")) return true;
+    if (host.startsWith("192.168.")) return true;
+    if (host.startsWith("172.")) {
+      const second = Number(host.split(".")[1] || "0");
+      if (second >= 16 && second <= 31) return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+};
+
+const resolveApiBaseUrl = () => {
+  if (__DEV__) return envUrl || devUrl;
+  if (!envUrl) return productionUrl;
+
+  // Safety guard: prevent preview/production builds from pointing to local LAN URLs.
+  if (isPrivateOrLocalHost(envUrl)) return productionUrl;
+  return envUrl;
+};
+
+export const API_BASE_URL = resolveApiBaseUrl();
 export const API_URL = `${API_BASE_URL}/api`;
 
 // Timeouts (in milliseconds)
