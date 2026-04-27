@@ -28,11 +28,13 @@ import SearchableSelect, {
   type SelectOption,
 } from "@/components/SearchableSelect";
 import { TicketsService, type Ticket } from "@/services/TicketsService";
+import { ticketsRealtimeService, type TicketRealtimeEvent } from "@/services/TicketsRealtimeService";
 import { AttendanceService, type Site } from "@/services/AttendanceService";
 import { useSites } from "@/hooks/useSites";
 import { db, tickets as ticketsTable, areas, categories } from "@/database";
 import { eq, desc } from "drizzle-orm";
 import logger from "@/utils/logger";
+import cacheManager from "@/services/CacheManager";
 import { v4 as uuidv4 } from "uuid";
 import TicketDetailModal from "@/components/TicketDetailModal";
 import { isTempMandatoryCategory } from "@/components/TicketDetailStatusUpdate";
@@ -126,6 +128,33 @@ const firstParam = (v: string | string[] | undefined): string | undefined => {
   if (Array.isArray(v)) return v[0];
   return v;
 };
+
+const normalizeRealtimeTicket = (source: any): Ticket => ({
+  id: source.id,
+  ticket_no: source.ticket_no || source.ticket_number || "",
+  title: source.title || "",
+  description: source.description || source.internal_remarks || "",
+  status: source.status || "Open",
+  site_code: source.site_code || "",
+  site_name: source.site_name || source.site || undefined,
+  created_at: source.created_at
+    ? new Date(source.created_at).toISOString()
+    : new Date().toISOString(),
+  due_date: source.due_date || undefined,
+  location: source.location || source.area_asset || source.area || "",
+  area_asset: source.area_asset || source.area || "",
+  category: source.category || "",
+  internal_remarks: source.internal_remarks || source.description || "",
+  customer_inputs: source.customer_inputs || undefined,
+  assigned_to: source.assigned_to || "",
+  created_user: source.created_user || source.created_by || "",
+  priority: source.priority || "",
+  responded_at: source.responded_at || undefined,
+  resolved_at: source.resolved_at || undefined,
+  contact_number: source.contact_number || undefined,
+  before_temp: source.before_temp ?? null,
+  after_temp: source.after_temp ?? null,
+});
 
 export default function Tickets() {
   const { user, isLoading } = useAuth();
@@ -612,6 +641,16 @@ export default function Tickets() {
   // This ensures data is fresh when returning to focus or every 60s
   useAutoSync(resetAndFetch, [selectedSiteCode]);
 
+  useEffect(() => {
+    return () => {
+      if (statsRefreshTimerRef.current) {
+        clearTimeout(statsRefreshTimerRef.current);
+        statsRefreshTimerRef.current = null;
+      }
+      ticketsRealtimeService.disconnect();
+    };
+  }, []);
+
   const clearFilters = useCallback(() => {
     setSearchQuery("");
     setTempSearch("");
@@ -687,6 +726,138 @@ export default function Tickets() {
   const siteCodeNorm = firstParam(params.siteCode);
   const deepLinkFetchGen = useRef(0);
   const deepLinkAttemptedFor = useRef<string | null>(null);
+  const latestFiltersRef = useRef({
+    statusFilter,
+    priorityFilter,
+    searchQuery,
+    fromDate,
+    toDate,
+    selectedSiteCode,
+  });
+  const recentEventIdsRef = useRef<string[]>([]);
+  const statsRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    latestFiltersRef.current = {
+      statusFilter,
+      priorityFilter,
+      searchQuery,
+      fromDate,
+      toDate,
+      selectedSiteCode,
+    };
+  }, [statusFilter, priorityFilter, searchQuery, fromDate, toDate, selectedSiteCode]);
+
+  const matchesCurrentFilters = useCallback((ticket: Ticket) => {
+    const current = latestFiltersRef.current;
+    if (!ticket?.id) return false;
+    if (current.selectedSiteCode && current.selectedSiteCode !== "all" && ticket.site_code !== current.selectedSiteCode) {
+      return false;
+    }
+    if (current.statusFilter && current.statusFilter !== "All" && ticket.status !== current.statusFilter) {
+      return false;
+    }
+    if (current.priorityFilter && current.priorityFilter !== "All" && ticket.priority !== current.priorityFilter) {
+      return false;
+    }
+    const createdAtMs = parseCreatedAtMs(ticket.created_at);
+    const fromMs = getLocalDayStartMs(current.fromDate);
+    const toMs = getLocalDayEndMs(current.toDate);
+    if ((fromMs != null || toMs != null) && createdAtMs == null) return false;
+    if (fromMs != null && createdAtMs != null && createdAtMs < fromMs) return false;
+    if (toMs != null && createdAtMs != null && createdAtMs > toMs) return false;
+    const normalizedSearch = current.searchQuery.trim().toLowerCase();
+    if (!normalizedSearch) return true;
+    const hay = [
+      ticket.ticket_no,
+      ticket.title,
+      ticket.description,
+      ticket.category,
+      ticket.location,
+      ticket.status,
+      ticket.priority,
+      ticket.assigned_to,
+      ticket.created_user,
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+    return hay.includes(normalizedSearch);
+  }, []);
+
+  const mergeRealtimeTicket = useCallback((incoming: Ticket) => {
+    setTickets((prev) => {
+      const idx = prev.findIndex((t) => t.id === incoming.id);
+      const shouldShow = matchesCurrentFilters(incoming);
+      if (idx === -1) {
+        if (!shouldShow) return prev;
+        return [incoming, ...prev];
+      }
+      if (!shouldShow) {
+        return [...prev.slice(0, idx), ...prev.slice(idx + 1)];
+      }
+      const existing = prev[idx];
+      const existingUpdated = Date.parse(existing.responded_at || existing.resolved_at || existing.created_at || "");
+      const incomingUpdated = Date.parse(incoming.responded_at || incoming.resolved_at || incoming.created_at || "");
+      if (!Number.isNaN(existingUpdated) && !Number.isNaN(incomingUpdated) && incomingUpdated < existingUpdated) {
+        return prev;
+      }
+      const next = [...prev];
+      next[idx] = { ...existing, ...incoming };
+      return next;
+    });
+  }, [matchesCurrentFilters]);
+
+  const handleRealtimeEvent = useCallback(async (event: TicketRealtimeEvent) => {
+    if (!event?.event_id || !event?.ticket_id) return;
+    if (event.site_code !== latestFiltersRef.current.selectedSiteCode) return;
+
+    if (recentEventIdsRef.current.includes(event.event_id)) return;
+    recentEventIdsRef.current.push(event.event_id);
+    if (recentEventIdsRef.current.length > 200) {
+      recentEventIdsRef.current = recentEventIdsRef.current.slice(-150);
+    }
+
+    // Avoid stomping optimistic/offline local changes that are still queued.
+    const pending = await cacheManager.getPendingQueueItemsByType("ticket_update");
+    const hasPendingForTicket = pending.some((row) => {
+      const queuedId = String(row.payload?.ticket_id || "");
+      return queuedId === event.ticket_id;
+    });
+    if (hasPendingForTicket) return;
+
+    const ticketRes = await TicketsService.getTicketById(event.ticket_id);
+    if (ticketRes?.success && ticketRes?.data) {
+      mergeRealtimeTicket(normalizeRealtimeTicket(ticketRes.data));
+      if (statsRefreshTimerRef.current) clearTimeout(statsRefreshTimerRef.current);
+      statsRefreshTimerRef.current = setTimeout(() => {
+        void fetchStats();
+      }, 300);
+    }
+  }, [fetchStats, mergeRealtimeTicket]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!selectedSiteCode || !ticketsRealtimeService.isEnabled()) {
+        return () => {};
+      }
+      void ticketsRealtimeService.connect({
+        siteCode: selectedSiteCode,
+        onEvent: handleRealtimeEvent,
+        onStateChange: (state) => {
+          logger.debug("Tickets realtime connection state", {
+            module: "TICKETS",
+            state,
+            siteCode: selectedSiteCode,
+          });
+        },
+      });
+
+      return () => {
+        ticketsRealtimeService.disconnect();
+      };
+    }, [selectedSiteCode, handleRealtimeEvent]),
+  );
 
   useEffect(() => {
     if (!ticketIdNorm) {

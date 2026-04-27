@@ -1523,8 +1523,8 @@ export default function Dashboard() {
                     )}
                     <Text className="text-white text-[11px] font-black uppercase ml-2 tracking-wide">
                       {!todayAttendance || todayAttendance.check_out_time
-                        ? "Punch In"
-                        : "Punch Out"}
+                        ? "Start Day"
+                        : "End Day"}
                     </Text>
                   </>
                 )}

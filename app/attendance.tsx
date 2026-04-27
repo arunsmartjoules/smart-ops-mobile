@@ -871,7 +871,7 @@ export default function AttendancePage() {
             [
               { text: "Cancel", style: "cancel" },
               {
-                text: "Check In",
+                text: "Start Day",
                 onPress: () =>
                   performCheckIn(validation.resolvedSiteCode ?? null, punchCoords),
               },
@@ -1165,7 +1165,7 @@ export default function AttendancePage() {
                     <>
                       <MapPin size={18} color="#2563eb" strokeWidth={2.5} />
                       <Text className="text-blue-700 font-black ml-2 tracking-tight">
-                        PUNCH IN NOW
+                        START DAY
                       </Text>
                     </>
                   )}
@@ -1187,7 +1187,7 @@ export default function AttendancePage() {
                 >
                   <LogOut size={18} color="white" strokeWidth={2.5} />
                   <Text className="text-white font-black ml-2 tracking-tight">
-                    PUNCH OUT
+                    END DAY
                   </Text>
                 </TouchableOpacity>
               ) : (
@@ -1212,7 +1212,7 @@ export default function AttendancePage() {
                     <>
                       <MapPin size={18} color="white" strokeWidth={2.5} />
                       <Text className="text-white font-black ml-2 tracking-tight">
-                        NEW PUNCH IN
+                        START DAY
                       </Text>
                     </>
                   )}

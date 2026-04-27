@@ -1,6 +1,29 @@
 import { storage } from "./firebase";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
-import logger from "@/utils/logger";
+import appLogger from "@/utils/logger";
+
+const MIME_BY_EXTENSION: Record<string, string> = {
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  png: "image/png",
+  webp: "image/webp",
+  gif: "image/gif",
+  heic: "image/heic",
+  heif: "image/heif",
+  pdf: "application/pdf",
+  doc: "application/msword",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  xls: "application/vnd.ms-excel",
+  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  txt: "text/plain",
+  csv: "text/csv",
+};
+
+const getContentType = (filePathOrUri: string): string => {
+  const noQuery = filePathOrUri.split("?")[0] || filePathOrUri;
+  const ext = (noQuery.split(".").pop() || "").toLowerCase();
+  return MIME_BY_EXTENSION[ext] || "application/octet-stream";
+};
 
 export const StorageService = {
   /**
@@ -14,7 +37,7 @@ export const StorageService = {
   ): Promise<string | null> {
     let blob: any = null;
     try {
-      logger.info(`Uploading file to Firebase Storage: ${filePath}`, {
+      appLogger.info(`Uploading file to Firebase Storage: ${filePath}`, {
         module: "STORAGE_SERVICE",
       });
 
@@ -27,7 +50,7 @@ export const StorageService = {
           resolve(xhr.response);
         };
         xhr.onerror = function (e) {
-          logger.error("Network request failed for local file access", {
+          appLogger.error("Network request failed for local file access", {
             module: "STORAGE_SERVICE",
             error: e,
           });
@@ -40,10 +63,11 @@ export const StorageService = {
 
       // 2. Create storage reference
       const storageRef = ref(storage, filePath);
+      const contentType = getContentType(filePath || fileUri);
 
       // 3. Upload the blob directly using uploadBytes
       await uploadBytes(storageRef, blob, {
-        contentType: "image/jpeg",
+        contentType,
       });
 
       // 4. Get Download URL
@@ -51,7 +75,7 @@ export const StorageService = {
 
       return publicUrl;
     } catch (error: any) {
-      logger.error("Firebase Storage upload failed", {
+      appLogger.error("Firebase Storage upload failed", {
         module: "STORAGE_SERVICE",
         error: error.message,
       });

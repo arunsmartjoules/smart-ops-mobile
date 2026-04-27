@@ -2,7 +2,7 @@
   "expo": {
     "name": "Jouleops",
     "slug": "smart-ops",
-    "version": "1.0.4",
+    "version": "1.0.6",
     "orientation": "portrait",
     "icon": "./assets/images/jouleops-icon.png",
     "scheme": "jouleops",
@@ -53,8 +53,10 @@
         "expo-splash-screen",
         {
           "backgroundColor": "#b91c1c",
+          "image": "./assets/images/Jouleops-spash-screen.png",
           "dark": {
-            "backgroundColor": "#b91c1c"
+            "backgroundColor": "#b91c1c",
+            "image": "./assets/images/Jouleops-spash-screen.png"
           }
         }
       ],

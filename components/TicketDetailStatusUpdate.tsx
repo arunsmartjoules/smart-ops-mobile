@@ -166,6 +166,8 @@ const TicketDetailStatusUpdate = ({
   const mandatoryTempsForCategory =
     showAreaAndCategory &&
     isTempMandatoryCategory(effectiveCategory);
+  const beforeTempMissing = mandatoryTempsForCategory && !beforeTemp.trim();
+  const afterTempMissing = mandatoryTempsForCategory && !afterTemp.trim();
 
   const pickImage = async () => {
     try {
@@ -394,6 +396,7 @@ const TicketDetailStatusUpdate = ({
             <TextInput
               style={{
                 borderWidth: 1,
+                borderColor: beforeTempMissing ? "#dc2626" : undefined,
                 borderRadius: 12,
                 padding: 12,
                 fontWeight: "600",
@@ -428,6 +431,7 @@ const TicketDetailStatusUpdate = ({
             <TextInput
               style={{
                 borderWidth: 1,
+                borderColor: afterTempMissing ? "#dc2626" : undefined,
                 borderRadius: 12,
                 padding: 12,
                 fontWeight: "600",

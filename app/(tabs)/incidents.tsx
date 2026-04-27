@@ -28,6 +28,7 @@ import IncidentStats from "@/components/IncidentStats";
 import IncidentTopFilters from "@/components/IncidentTopFilters";
 import IncidentDetailModal from "@/components/IncidentDetailModal";
 import { IncidentsService } from "@/services/IncidentsService";
+import { StorageService } from "@/services/StorageService";
 import FullscreenPicker from "@/components/FullscreenPicker";
 import { type SelectOption } from "@/components/SearchableSelect";
 import { TicketsService } from "@/services/TicketsService";
@@ -70,10 +71,19 @@ function parseIncidentAttachments(raw: unknown): string[] {
       const o = item as Record<string, unknown>;
       if (typeof o.uri === "string" && o.uri) out.push(o.uri);
       else if (typeof o.url === "string" && o.url) out.push(o.url);
+      else if (typeof o.downloadUrl === "string" && o.downloadUrl) out.push(o.downloadUrl);
+      else if (typeof o.file_url === "string" && o.file_url) out.push(o.file_url);
+      else if (typeof o.path === "string" && o.path) out.push(o.path);
     }
   }
   return out;
 }
+
+const getFileExtension = (uri: string) => {
+  const noQuery = uri.split("?")[0] || "";
+  const maybeExt = noQuery.split(".").pop() || "";
+  return maybeExt.replace(/[^a-zA-Z0-9]/g, "").toLowerCase() || "bin";
+};
 
 function parseAssignedTo(raw: unknown): { firstValue: string; display: string } {
   const list: string[] = [];
@@ -253,6 +263,11 @@ export default function IncidentsTab() {
   );
 
   const fetchGenRef = useRef(0);
+  const incidentsCountRef = useRef(0);
+
+  useEffect(() => {
+    incidentsCountRef.current = incidents.length;
+  }, [incidents.length]);
 
   const fetchData = useCallback(async (reason: "filter" | "refresh" | "background" = "filter") => {
     if (!selectedSiteCode) {
@@ -263,7 +278,7 @@ export default function IncidentsTab() {
     }
 
     const requestGen = ++fetchGenRef.current;
-    const hasVisibleData = incidents.length > 0;
+    const hasVisibleData = incidentsCountRef.current > 0;
     const shouldShowBlockingLoader = !hasVisibleData && reason !== "background";
 
     if (shouldShowBlockingLoader) {
@@ -297,7 +312,26 @@ export default function IncidentsTab() {
     setLoading(false);
     setIsSwitchingFilters(false);
     setRefreshing(false);
-  }, [selectedSiteCode, statusFilter, rcaFilter, search, fromDate, toDate, incidents.length]);
+  }, [selectedSiteCode, statusFilter, rcaFilter, search, fromDate, toDate]);
+
+  const uploadUrisToStorage = useCallback(
+    async (uris: string[], siteCode: string, folder: "incident" | "rca") => {
+      if (!isConnected || uris.length === 0) return uris;
+      const uploaded: string[] = [];
+      for (let i = 0; i < uris.length; i += 1) {
+        const uri = uris[i];
+        const ext = getFileExtension(uri);
+        const path = `incidents/${siteCode || "unknown"}/${folder}/${Date.now()}_${i}_${uuidv4()}.${ext}`;
+        const remoteUrl = await StorageService.uploadFile("jouleops-attachments", path, uri);
+        if (!remoteUrl) {
+          throw new Error("Failed to upload one or more files to Firebase Storage.");
+        }
+        uploaded.push(remoteUrl);
+      }
+      return uploaded;
+    },
+    [isConnected],
+  );
 
   useEffect(() => {
     void fetchData("filter");
@@ -473,6 +507,14 @@ export default function IncidentsTab() {
     }
 
     setSubmitting(true);
+    let uploadedAttachments: string[];
+    try {
+      uploadedAttachments = await uploadUrisToStorage(form.attachments, form.site_code, "incident");
+    } catch (error: any) {
+      setSubmitting(false);
+      Alert.alert("Upload failed", error?.message || "Could not upload attachments to cloud storage.");
+      return;
+    }
     const payload = {
       ...form,
       source: "Incident",
@@ -482,6 +524,7 @@ export default function IncidentsTab() {
       status: "Open",
       rca_status: "Open",
       assigned_to: form.assigned_to,
+      attachments: uploadedAttachments,
       ...(canEditMeta ? { incident_created_time: form.incident_created_time.toISOString() } : {}),
       client_request_id: uuidv4(),
     };
@@ -549,7 +592,10 @@ export default function IncidentsTab() {
     }
 
     const hasStatusChange = Boolean(nextStatus);
-    const hasRcaChange = canEditRca && updateRcaStatus !== selectedIncident.rca_status;
+    const hasRcaStatusChange = canEditRca && updateRcaStatus !== selectedIncident.rca_status;
+    const hasRcaCheckerChange = canEditRca && detailRcaChecker !== String(selectedIncident.rca_checker || "");
+    const hasNewRcaAttachments = canEditRca && detailPendingRcaAttachments.length > 0;
+    const hasRcaChange = hasRcaStatusChange || hasRcaCheckerChange || hasNewRcaAttachments;
     const hasNewAttachments = detailPendingAttachments.length > 0;
     const hasRemarkChange = updateRemarks.trim() !== String(selectedIncident.remarks || "").trim();
     const prevCreatedMs = selectedIncident.incident_created_time
@@ -611,11 +657,25 @@ export default function IncidentsTab() {
         }
       }
 
-      if (canEditRca && updateRcaStatus !== selectedIncident.rca_status) {
+      if (canEditRca && hasRcaChange) {
+        const existingRca = parseIncidentAttachments(selectedIncident.rca_attachments);
+        let uploadedRca: string[] = [];
+        try {
+          uploadedRca = await uploadUrisToStorage(
+            detailPendingRcaAttachments,
+            selectedIncident.site_code,
+            "rca",
+          );
+        } catch (error: any) {
+          Alert.alert("Upload failed", error?.message || "Could not upload RCA files to cloud storage.");
+          setIsUpdatingIncident(false);
+          return;
+        }
+        const mergedRca = [...existingRca, ...uploadedRca];
         const rcaRes = await IncidentsService.updateRcaStatus(selectedIncident.id, {
           rca_status: updateRcaStatus,
           rca_checker: detailRcaChecker || undefined,
-          rca_attachments: detailPendingRcaAttachments.length > 0 ? detailPendingRcaAttachments : undefined,
+          rca_attachments: mergedRca,
         });
         if (!rcaRes?.success && !rcaRes?.queued) {
           Alert.alert("Error", rcaRes?.error || "Failed to update RCA status");
@@ -626,7 +686,19 @@ export default function IncidentsTab() {
 
       if (detailPendingAttachments.length > 0) {
         const existing = parseIncidentAttachments(selectedIncident.attachments);
-        const merged = [...existing, ...detailPendingAttachments];
+        let uploaded: string[] = [];
+        try {
+          uploaded = await uploadUrisToStorage(
+            detailPendingAttachments,
+            selectedIncident.site_code,
+            "incident",
+          );
+        } catch (error: any) {
+          Alert.alert("Upload failed", error?.message || "Could not upload attachments to cloud storage.");
+          setIsUpdatingIncident(false);
+          return;
+        }
+        const merged = [...existing, ...uploaded];
         const attRes = await IncidentsService.updateIncident(selectedIncident.id, {
           attachments: merged,
         });
@@ -644,7 +716,11 @@ export default function IncidentsTab() {
       setDetailPendingAttachments([]);
       setDetailPendingRcaAttachments([]);
       setDetailCreatedAt(null);
-      await fetchData();
+      if (nextStatus && statusFilter !== nextStatus) {
+        setStatusFilter(nextStatus);
+      } else {
+        await fetchData("refresh");
+      }
     } finally {
       setIsUpdatingIncident(false);
     }
@@ -662,7 +738,9 @@ export default function IncidentsTab() {
     detailResolvedAt,
     detailRcaChecker,
     canEditMeta,
+    statusFilter,
     fetchData,
+    uploadUrisToStorage,
   ]);
 
   const renderCard = ({ item }: { item: IncidentItem }) => (

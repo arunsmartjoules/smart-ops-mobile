@@ -12,10 +12,14 @@ import {
   TouchableOpacity,
   View,
   useColorScheme,
+  Linking,
 } from "react-native";
 import * as ImagePicker from "expo-image-picker";
-import { Camera, Image as ImageIcon, X } from "lucide-react-native";
-import DateTimePicker, { DateTimePickerAndroid } from "@react-native-community/datetimepicker";
+import * as DocumentPicker from "expo-document-picker";
+import { Camera, FileText, Image as ImageIcon, X } from "lucide-react-native";
+import DateTimePicker, {
+  DateTimePickerAndroid,
+} from "@react-native-community/datetimepicker";
 import FullscreenPicker from "./FullscreenPicker";
 import { type SelectOption } from "./SearchableSelect";
 
@@ -58,6 +62,23 @@ const RCA_OPTIONS: ("Open" | "RCA Under Review" | "RCA Submitted")[] = [
   "RCA Under Review",
   "RCA Submitted",
 ];
+
+const isImageUri = (uri: string) => {
+  const lower = uri.toLowerCase();
+  return (
+    lower.startsWith("file://") ||
+    lower.startsWith("content://") ||
+    [".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".heic", ".heif"].some(
+      (ext) => lower.includes(ext),
+    )
+  );
+};
+
+const getFileName = (uri: string) => {
+  const noQuery = uri.split("?")[0] || uri;
+  const parts = noQuery.split("/");
+  return parts[parts.length - 1] || "attachment";
+};
 
 export default function IncidentDetailModal({
   visible,
@@ -139,8 +160,34 @@ export default function IncidentDetailModal({
     [setPendingAttachments],
   );
 
+  const pickRcaDocuments = useCallback(async () => {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        multiple: true,
+        type: [
+          "image/*",
+          "application/pdf",
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          "application/msword",
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          "application/vnd.ms-excel",
+        ],
+        copyToCacheDirectory: true,
+      });
+      if (result.canceled) return;
+      const uris = result.assets.map((a) => a.uri).filter(Boolean);
+      if (uris.length > 0) {
+        setPendingRcaAttachments((prev) => [...prev, ...uris]);
+      }
+    } catch {
+      Alert.alert("Error", "Unable to open file picker.");
+    }
+  }, [setPendingRcaAttachments]);
+
   const [pickerVisible, setPickerVisible] = React.useState(false);
-  const [pickerTarget, setPickerTarget] = React.useState<"created" | "responded" | "resolved">("responded");
+  const [pickerTarget, setPickerTarget] = React.useState<
+    "created" | "responded" | "resolved"
+  >("responded");
 
   const openDateTimePicker = (target: "created" | "responded" | "resolved") => {
     const now = new Date();
@@ -157,10 +204,10 @@ export default function IncidentDetailModal({
     if (Platform.OS === "android") {
       const base =
         target === "created"
-          ? (createdAt || now)
+          ? createdAt || now
           : target === "responded"
-            ? (respondedAt || now)
-            : (resolvedAt || now);
+            ? respondedAt || now
+            : resolvedAt || now;
       DateTimePickerAndroid.open({
         value: base,
         mode: "date",
@@ -190,7 +237,12 @@ export default function IncidentDetailModal({
   const restrictResolvedEdits = isResolved && !canEditRca;
 
   return (
-    <Modal visible={visible} transparent animationType="slide" statusBarTranslucent>
+    <Modal
+      visible={visible}
+      transparent
+      animationType="slide"
+      statusBarTranslucent
+    >
       <KeyboardAvoidingView
         className="flex-1"
         behavior={Platform.OS === "ios" ? "padding" : "height"}
@@ -199,9 +251,13 @@ export default function IncidentDetailModal({
         <View className="flex-1 justify-end bg-black/55">
           <View className="bg-white dark:bg-slate-900 rounded-t-[36px] px-[22px] pt-[14px] pb-[18px] h-[92%] min-h-[420px]">
             <View className="flex-row items-center justify-between mb-3">
-              <Text className="text-slate-900 dark:text-slate-50 text-lg font-black">Incident Details</Text>
+              <Text className="text-slate-900 dark:text-slate-50 text-lg font-black">
+                Incident Details
+              </Text>
               <TouchableOpacity onPress={onClose} className="px-2 py-1">
-                <Text className="text-slate-500 dark:text-slate-300 font-bold text-base">Close</Text>
+                <Text className="text-slate-500 dark:text-slate-300 font-bold text-base">
+                  Close
+                </Text>
               </TouchableOpacity>
             </View>
 
@@ -211,13 +267,21 @@ export default function IncidentDetailModal({
               contentContainerStyle={{ paddingBottom: 20 }}
             >
               <View className="bg-slate-50 dark:bg-slate-800 rounded-xl p-4 mb-3">
-                <Text className="text-slate-900 dark:text-slate-50 font-bold text-[15px]">{incident.fault_symptom}</Text>
-                <Text className="text-slate-600 dark:text-slate-300 text-xs mt-1">Asset: {incident.asset_location || "-"}</Text>
-                <Text className="text-slate-600 dark:text-slate-300 text-xs mt-1">Status: {incident.status}</Text>
+                <Text className="text-slate-900 dark:text-slate-50 font-bold text-[15px]">
+                  {incident.fault_symptom}
+                </Text>
+                <Text className="text-slate-600 dark:text-slate-300 text-xs mt-1">
+                  Asset: {incident.asset_location || "-"}
+                </Text>
+                <Text className="text-slate-600 dark:text-slate-300 text-xs mt-1">
+                  Status: {incident.status}
+                </Text>
               </View>
 
               <View className="mb-3">
-                <Text className="text-slate-700 dark:text-slate-300 text-xs font-bold uppercase mb-2">Incident Created Time</Text>
+                <Text className="text-slate-700 dark:text-slate-300 text-xs font-bold uppercase mb-2">
+                  Incident Created Time
+                </Text>
                 <TouchableOpacity
                   onPress={() => canEditMeta && openDateTimePicker("created")}
                   disabled={!canEditMeta}
@@ -225,22 +289,37 @@ export default function IncidentDetailModal({
                   style={{ opacity: canEditMeta ? 1 : 0.65 }}
                 >
                   <Text className="text-slate-900 dark:text-slate-50">
-                    {(createdAt || new Date(incident.incident_created_time || Date.now())).toLocaleString()}
+                    {(
+                      createdAt ||
+                      new Date(incident.incident_created_time || Date.now())
+                    ).toLocaleString()}
                   </Text>
                 </TouchableOpacity>
               </View>
 
               {!isResolved ? (
                 <View className="mb-3">
-                  <Text className="text-slate-700 dark:text-slate-300 text-xs font-bold uppercase mb-2">Status Transition</Text>
+                  <Text className="text-slate-700 dark:text-slate-300 text-xs font-bold uppercase mb-2">
+                    Status Transition
+                  </Text>
                   <View className="gap-2">
                     {incident.status === "Open" ? (
                       <TouchableOpacity
-                        onPress={() => setNextStatus(nextStatus === "Inprogress" ? null : "Inprogress")}
+                        onPress={() =>
+                          setNextStatus(
+                            nextStatus === "Inprogress" ? null : "Inprogress",
+                          )
+                        }
                         className="flex-row items-center px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800"
                       >
-                        <View className={`w-4 h-4 rounded border mr-2 items-center justify-center ${nextStatus === "Inprogress" ? "bg-red-600 border-red-600" : "border-slate-400 dark:border-slate-500"}`}>
-                          {nextStatus === "Inprogress" ? <Text className="text-white text-[10px] font-black">✓</Text> : null}
+                        <View
+                          className={`w-4 h-4 rounded border mr-2 items-center justify-center ${nextStatus === "Inprogress" ? "bg-red-600 border-red-600" : "border-slate-400 dark:border-slate-500"}`}
+                        >
+                          {nextStatus === "Inprogress" ? (
+                            <Text className="text-white text-[10px] font-black">
+                              ✓
+                            </Text>
+                          ) : null}
                         </View>
                         <Text className="text-slate-700 dark:text-slate-200 text-xs font-bold">
                           Move to Inprogress
@@ -249,11 +328,21 @@ export default function IncidentDetailModal({
                     ) : null}
                     {incident.status === "Inprogress" ? (
                       <TouchableOpacity
-                        onPress={() => setNextStatus(nextStatus === "Resolved" ? null : "Resolved")}
+                        onPress={() =>
+                          setNextStatus(
+                            nextStatus === "Resolved" ? null : "Resolved",
+                          )
+                        }
                         className="flex-row items-center px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800"
                       >
-                        <View className={`w-4 h-4 rounded border mr-2 items-center justify-center ${nextStatus === "Resolved" ? "bg-red-600 border-red-600" : "border-slate-400 dark:border-slate-500"}`}>
-                          {nextStatus === "Resolved" ? <Text className="text-white text-[10px] font-black">✓</Text> : null}
+                        <View
+                          className={`w-4 h-4 rounded border mr-2 items-center justify-center ${nextStatus === "Resolved" ? "bg-red-600 border-red-600" : "border-slate-400 dark:border-slate-500"}`}
+                        >
+                          {nextStatus === "Resolved" ? (
+                            <Text className="text-white text-[10px] font-black">
+                              ✓
+                            </Text>
+                          ) : null}
                         </View>
                         <Text className="text-slate-700 dark:text-slate-200 text-xs font-bold">
                           Move to Resolved
@@ -275,9 +364,13 @@ export default function IncidentDetailModal({
 
               {incident.status !== "Resolved" || nextStatus === "Inprogress" ? (
                 <View className="mb-3">
-                  <Text className="text-slate-700 dark:text-slate-300 text-xs font-bold uppercase mb-2">Incident Responded Time</Text>
+                  <Text className="text-slate-700 dark:text-slate-300 text-xs font-bold uppercase mb-2">
+                    Incident Responded Time
+                  </Text>
                   <TouchableOpacity
-                    onPress={() => canEditMeta && openDateTimePicker("responded")}
+                    onPress={() =>
+                      canEditMeta && openDateTimePicker("responded")
+                    }
                     disabled={!canEditMeta}
                     className="border border-slate-300 dark:border-slate-700 rounded-xl px-3 py-3"
                     style={{ opacity: canEditMeta ? 1 : 0.65 }}
@@ -289,11 +382,15 @@ export default function IncidentDetailModal({
                 </View>
               ) : null}
 
-              {(incident.status === "Inprogress" || nextStatus === "Resolved") ? (
+              {incident.status === "Inprogress" || nextStatus === "Resolved" ? (
                 <View className="mb-3">
-                  <Text className="text-slate-700 dark:text-slate-300 text-xs font-bold uppercase mb-2">Incident Resolved Time</Text>
+                  <Text className="text-slate-700 dark:text-slate-300 text-xs font-bold uppercase mb-2">
+                    Incident Resolved Time
+                  </Text>
                   <TouchableOpacity
-                    onPress={() => canEditMeta && openDateTimePicker("resolved")}
+                    onPress={() =>
+                      canEditMeta && openDateTimePicker("resolved")
+                    }
                     disabled={!canEditMeta}
                     className="border border-slate-300 dark:border-slate-700 rounded-xl px-3 py-3 mb-3"
                     style={{ opacity: canEditMeta ? 1 : 0.65 }}
@@ -302,7 +399,9 @@ export default function IncidentDetailModal({
                       {(resolvedAt || new Date()).toLocaleString()}
                     </Text>
                   </TouchableOpacity>
-                  <Text className="text-slate-700 dark:text-slate-300 text-xs font-bold uppercase mb-2">Remarks *</Text>
+                  <Text className="text-slate-700 dark:text-slate-300 text-xs font-bold uppercase mb-2">
+                    Remarks *
+                  </Text>
                   <TextInput
                     value={remarks}
                     onChangeText={setRemarks}
@@ -317,7 +416,9 @@ export default function IncidentDetailModal({
 
               {isResolved ? (
                 <View className="mb-3">
-                  <Text className="text-slate-700 dark:text-slate-300 text-xs font-bold uppercase mb-2">Remarks</Text>
+                  <Text className="text-slate-700 dark:text-slate-300 text-xs font-bold uppercase mb-2">
+                    Remarks
+                  </Text>
                   <TextInput
                     value={remarks}
                     onChangeText={setRemarks}
@@ -331,19 +432,34 @@ export default function IncidentDetailModal({
               ) : null}
 
               <View className="mb-3">
-                <Text className="text-slate-700 dark:text-slate-300 text-xs font-bold uppercase mb-2">Attachments</Text>
-                <Text className="text-slate-500 dark:text-slate-400 text-xs mb-2">
-                  New photos are saved to the same incident attachments list when you tap Update.
+                <Text className="text-slate-700 dark:text-slate-300 text-xs font-bold uppercase mb-2">
+                  Attachments
                 </Text>
-                {(existingAttachmentUrls.length > 0 || pendingAttachments.length > 0) ? (
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false} className="mb-3">
+                <Text className="text-slate-500 dark:text-slate-400 text-xs mb-2">
+                  New photos are saved to the same incident attachments list
+                  when you tap Update.
+                </Text>
+                {existingAttachmentUrls.length > 0 ||
+                pendingAttachments.length > 0 ? (
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    className="mb-3"
+                  >
                     <View className="flex-row gap-2">
                       {existingAttachmentUrls.map((uri) => (
-                        <Image key={`e-${uri}`} source={{ uri }} style={{ width: 72, height: 72, borderRadius: 12 }} />
+                        <Image
+                          key={`e-${uri}`}
+                          source={{ uri }}
+                          style={{ width: 72, height: 72, borderRadius: 12 }}
+                        />
                       ))}
                       {pendingAttachments.map((uri) => (
                         <View key={`p-${uri}`} className="relative">
-                          <Image source={{ uri }} style={{ width: 72, height: 72, borderRadius: 12 }} />
+                          <Image
+                            source={{ uri }}
+                            style={{ width: 72, height: 72, borderRadius: 12 }}
+                          />
                           <TouchableOpacity
                             onPress={() => removePending(uri)}
                             className="absolute -top-1 -right-1 w-6 h-6 rounded-full bg-black/70 items-center justify-center"
@@ -355,7 +471,9 @@ export default function IncidentDetailModal({
                     </View>
                   </ScrollView>
                 ) : (
-                  <Text className="text-slate-500 dark:text-slate-400 text-xs mb-3">No attachments yet</Text>
+                  <Text className="text-slate-500 dark:text-slate-400 text-xs mb-3">
+                    No attachments yet
+                  </Text>
                 )}
                 <View className="flex-row gap-2">
                   <TouchableOpacity
@@ -363,20 +481,26 @@ export default function IncidentDetailModal({
                     className="px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 flex-row items-center"
                   >
                     <Camera size={16} color={iconMuted} />
-                    <Text className="ml-2 text-slate-700 dark:text-slate-200 text-xs font-semibold">Camera</Text>
+                    <Text className="ml-2 text-slate-700 dark:text-slate-200 text-xs font-semibold">
+                      Camera
+                    </Text>
                   </TouchableOpacity>
                   <TouchableOpacity
                     onPress={pickFromGallery}
                     className="px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 flex-row items-center"
                   >
                     <ImageIcon size={16} color={iconMuted} />
-                    <Text className="ml-2 text-slate-700 dark:text-slate-200 text-xs font-semibold">Gallery</Text>
+                    <Text className="ml-2 text-slate-700 dark:text-slate-200 text-xs font-semibold">
+                      Gallery
+                    </Text>
                   </TouchableOpacity>
                 </View>
               </View>
 
               <View className="mb-2">
-                <Text className="text-slate-700 dark:text-slate-300 text-xs font-bold uppercase mb-2">RCA Status</Text>
+                <Text className="text-slate-700 dark:text-slate-300 text-xs font-bold uppercase mb-2">
+                  RCA Status
+                </Text>
                 {canEditRca ? (
                   <>
                     <View className="flex-row gap-2 mb-3">
@@ -386,7 +510,9 @@ export default function IncidentDetailModal({
                           onPress={() => setRcaStatus(opt)}
                           className={`px-3 py-2 rounded-xl ${rcaStatus === opt ? "bg-red-600" : "bg-slate-100 dark:bg-slate-800"}`}
                         >
-                          <Text className={`${rcaStatus === opt ? "text-white" : "text-slate-700 dark:text-slate-200"} text-xs font-semibold`}>
+                          <Text
+                            className={`${rcaStatus === opt ? "text-white" : "text-slate-700 dark:text-slate-200"} text-xs font-semibold`}
+                          >
                             {opt}
                           </Text>
                         </TouchableOpacity>
@@ -400,18 +526,72 @@ export default function IncidentDetailModal({
                       onChange={setRcaChecker}
                     />
                     <View className="mb-3">
-                      <Text className="text-slate-700 dark:text-slate-300 text-xs font-bold uppercase mb-2">RCA Attachments</Text>
-                      {(existingRcaAttachmentUrls.length > 0 || pendingRcaAttachments.length > 0) ? (
-                        <ScrollView horizontal showsHorizontalScrollIndicator={false} className="mb-3">
+                      <Text className="text-slate-700 dark:text-slate-300 text-xs font-bold uppercase mb-2">
+                        RCA Attachments
+                      </Text>
+                      {existingRcaAttachmentUrls.length > 0 ||
+                      pendingRcaAttachments.length > 0 ? (
+                        <ScrollView
+                          horizontal
+                          showsHorizontalScrollIndicator={false}
+                          className="mb-3"
+                        >
                           <View className="flex-row gap-2">
-                            {existingRcaAttachmentUrls.map((uri) => (
-                              <Image key={`er-${uri}`} source={{ uri }} style={{ width: 72, height: 72, borderRadius: 12 }} />
-                            ))}
+                            {existingRcaAttachmentUrls.map((uri) =>
+                              isImageUri(uri) ? (
+                                <Image
+                                  key={`er-${uri}`}
+                                  source={{ uri }}
+                                  style={{
+                                    width: 72,
+                                    height: 72,
+                                    borderRadius: 12,
+                                  }}
+                                />
+                              ) : (
+                                <TouchableOpacity
+                                  key={`er-${uri}`}
+                                  onPress={() => void Linking.openURL(uri)}
+                                  className="w-[150px] h-[72px] rounded-xl border border-slate-300 dark:border-slate-700 px-2 py-2 flex-row items-center bg-slate-50 dark:bg-slate-800"
+                                >
+                                  <FileText size={16} color={iconMuted} />
+                                  <Text
+                                    className="ml-2 text-xs text-slate-700 dark:text-slate-200 flex-1"
+                                    numberOfLines={2}
+                                  >
+                                    {getFileName(uri)}
+                                  </Text>
+                                </TouchableOpacity>
+                              ),
+                            )}
                             {pendingRcaAttachments.map((uri) => (
                               <View key={`pr-${uri}`} className="relative">
-                                <Image source={{ uri }} style={{ width: 72, height: 72, borderRadius: 12 }} />
+                                {isImageUri(uri) ? (
+                                  <Image
+                                    source={{ uri }}
+                                    style={{
+                                      width: 72,
+                                      height: 72,
+                                      borderRadius: 12,
+                                    }}
+                                  />
+                                ) : (
+                                  <View className="w-[150px] h-[72px] rounded-xl border border-slate-300 dark:border-slate-700 px-2 py-2 flex-row items-center bg-slate-50 dark:bg-slate-800">
+                                    <FileText size={16} color={iconMuted} />
+                                    <Text
+                                      className="ml-2 text-xs text-slate-700 dark:text-slate-200 flex-1"
+                                      numberOfLines={2}
+                                    >
+                                      {getFileName(uri)}
+                                    </Text>
+                                  </View>
+                                )}
                                 <TouchableOpacity
-                                  onPress={() => setPendingRcaAttachments((prev) => prev.filter((u) => u !== uri))}
+                                  onPress={() =>
+                                    setPendingRcaAttachments((prev) =>
+                                      prev.filter((u) => u !== uri),
+                                    )
+                                  }
                                   className="absolute -top-1 -right-1 w-6 h-6 rounded-full bg-black/70 items-center justify-center"
                                 >
                                   <X size={14} color="#fff" />
@@ -424,34 +604,74 @@ export default function IncidentDetailModal({
                       <View className="flex-row gap-2">
                         <TouchableOpacity
                           onPress={async () => {
-                            const p = await ImagePicker.requestCameraPermissionsAsync();
-                            if (p.status !== "granted") return Alert.alert("Permission required", "Camera permission is required.");
-                            const r = await ImagePicker.launchCameraAsync({ mediaTypes: ["images"], allowsEditing: true, quality: 0.7 });
-                            if (!r.canceled && r.assets?.[0]?.uri) setPendingRcaAttachments((prev) => [...prev, r.assets[0].uri]);
+                            const p =
+                              await ImagePicker.requestCameraPermissionsAsync();
+                            if (p.status !== "granted")
+                              return Alert.alert(
+                                "Permission required",
+                                "Camera permission is required.",
+                              );
+                            const r = await ImagePicker.launchCameraAsync({
+                              mediaTypes: ["images"],
+                              allowsEditing: true,
+                              quality: 0.7,
+                            });
+                            if (!r.canceled && r.assets?.[0]?.uri)
+                              setPendingRcaAttachments((prev) => [
+                                ...prev,
+                                r.assets[0].uri,
+                              ]);
                           }}
                           className="px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 flex-row items-center"
                         >
                           <Camera size={16} color={iconMuted} />
-                          <Text className="ml-2 text-slate-700 dark:text-slate-200 text-xs font-semibold">Camera</Text>
+                          <Text className="ml-2 text-slate-700 dark:text-slate-200 text-xs font-semibold">
+                            Camera
+                          </Text>
                         </TouchableOpacity>
                         <TouchableOpacity
                           onPress={async () => {
-                            const r = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ["images"], allowsMultipleSelection: true, quality: 0.7, selectionLimit: 8 });
+                            const r = await ImagePicker.launchImageLibraryAsync(
+                              {
+                                mediaTypes: ["images"],
+                                allowsMultipleSelection: true,
+                                quality: 0.7,
+                                selectionLimit: 8,
+                              },
+                            );
                             if (!r.canceled) {
-                              const uris = r.assets.map((a) => a.uri).filter(Boolean);
-                              setPendingRcaAttachments((prev) => [...prev, ...uris]);
+                              const uris = r.assets
+                                .map((a) => a.uri)
+                                .filter(Boolean);
+                              setPendingRcaAttachments((prev) => [
+                                ...prev,
+                                ...uris,
+                              ]);
                             }
                           }}
                           className="px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 flex-row items-center"
                         >
                           <ImageIcon size={16} color={iconMuted} />
-                          <Text className="ml-2 text-slate-700 dark:text-slate-200 text-xs font-semibold">Gallery</Text>
+                          <Text className="ml-2 text-slate-700 dark:text-slate-200 text-xs font-semibold">
+                            Gallery
+                          </Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          onPress={pickRcaDocuments}
+                          className="px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 flex-row items-center"
+                        >
+                          <FileText size={16} color={iconMuted} />
+                          <Text className="ml-2 text-slate-700 dark:text-slate-200 text-xs font-semibold">
+                            Files
+                          </Text>
                         </TouchableOpacity>
                       </View>
                     </View>
                   </>
                 ) : (
-                  <Text className="text-slate-600 dark:text-slate-300 text-sm">{rcaStatus}</Text>
+                  <Text className="text-slate-600 dark:text-slate-300 text-sm">
+                    {rcaStatus}
+                  </Text>
                 )}
               </View>
             </ScrollView>
@@ -460,10 +680,10 @@ export default function IncidentDetailModal({
               <DateTimePicker
                 value={
                   pickerTarget === "created"
-                    ? (createdAt || new Date())
+                    ? createdAt || new Date()
                     : pickerTarget === "responded"
-                      ? (respondedAt || new Date())
-                      : (resolvedAt || new Date())
+                      ? respondedAt || new Date()
+                      : resolvedAt || new Date()
                 }
                 mode="datetime"
                 maximumDate={new Date()}
@@ -471,7 +691,10 @@ export default function IncidentDetailModal({
                   setPickerVisible(false);
                   if (!d) return;
                   if (d.getTime() > Date.now()) {
-                    Alert.alert("Invalid time", "Future date/time is not allowed.");
+                    Alert.alert(
+                      "Invalid time",
+                      "Future date/time is not allowed.",
+                    );
                     return;
                   }
                   if (pickerTarget === "created") setCreatedAt(d);
@@ -483,14 +706,29 @@ export default function IncidentDetailModal({
 
             <TouchableOpacity
               onPress={onSubmit}
-              disabled={isUpdating || ((incident.status === "Open" || incident.status === "Inprogress") && !nextStatus)}
+              disabled={
+                isUpdating ||
+                ((incident.status === "Open" ||
+                  incident.status === "Inprogress") &&
+                  !nextStatus)
+              }
               className="bg-red-600 rounded-xl py-3 mt-1"
-              style={{ opacity: (isUpdating || ((incident.status === "Open" || incident.status === "Inprogress") && !nextStatus)) ? 0.55 : 1 }}
+              style={{
+                opacity:
+                  isUpdating ||
+                  ((incident.status === "Open" ||
+                    incident.status === "Inprogress") &&
+                    !nextStatus)
+                    ? 0.55
+                    : 1,
+              }}
             >
               {isUpdating ? (
                 <ActivityIndicator color="#fff" size="small" />
               ) : (
-                <Text className="text-white text-center font-black">Update Incident</Text>
+                <Text className="text-white text-center font-black">
+                  Update Incident
+                </Text>
               )}
             </TouchableOpacity>
           </View>
