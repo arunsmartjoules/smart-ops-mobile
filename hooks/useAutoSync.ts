@@ -6,6 +6,8 @@ interface AutoSyncOptions {
   interval?: number; // Polling interval in ms (default: 60s)
   throttle?: number; // Minimum time between syncs in ms (default: 15s)
   enabled?: boolean; // Whether sync is enabled (default: true)
+  /** When false, tab focus does not call onSync (interval + app foreground still apply). */
+  syncOnFocus?: boolean;
 }
 
 /**
@@ -24,7 +26,7 @@ export function useAutoSync(
   dependencies: any[] = [],
   options: AutoSyncOptions = {}
 ) {
-  const { interval = 60000, throttle = 15000, enabled = true } = options;
+  const { interval = 60000, throttle = 15000, enabled = true, syncOnFocus = true } = options;
   const lastSyncRef = useRef<number>(0);
   const syncRef = useRef(onSync);
   const isFocusedRef = useRef(false);
@@ -50,11 +52,13 @@ export function useAutoSync(
   useFocusEffect(
     useCallback(() => {
       isFocusedRef.current = true;
-      triggerSync(true); // Force sync on focus to ensure fresh data
+      if (syncOnFocus) {
+        triggerSync(true); // Force sync on focus to ensure fresh data
+      }
       return () => {
         isFocusedRef.current = false;
       };
-    }, [triggerSync])
+    }, [triggerSync, syncOnFocus])
   );
 
   // 2. Sync on App States (Foregrounded)

@@ -251,6 +251,11 @@ export default function Tickets() {
   }, []);
 
   const lastRequestedPageRef = React.useRef(0);
+  const ticketsRef = useRef<Ticket[]>(tickets);
+  ticketsRef.current = tickets;
+  const refreshingRef = useRef(refreshing);
+  refreshingRef.current = refreshing;
+  const resetInFlightRef = useRef(false);
 
   // Enrich tickets with site name and code
   const enrichedTickets = useMemo(() => {
@@ -431,102 +436,106 @@ export default function Tickets() {
   }, []);
 
   const fetchTickets = useCallback(
-    async (p: number, reset = false) => {
+    async (p: number, reset = false, opts?: { silent?: boolean }) => {
+      const silent = opts?.silent === true;
       if (!selectedSiteCode) {
-        setLoading(false);
+        if (!silent) setLoading(false);
         return;
       }
 
       let hasLocalData = false;
-      const hasRenderedTickets = tickets.length > 0;
+      const hasRenderedTickets = ticketsRef.current.length > 0;
 
       if (reset) {
-        try {
-          const localTickets = await db
-            .select()
-            .from(ticketsTable)
-            .where(
-              selectedSiteCode !== "all"
-                ? eq(ticketsTable.site_code, selectedSiteCode)
-                : undefined,
-            )
-            .orderBy(desc(ticketsTable.created_at));
+        resetInFlightRef.current = true;
+        if (!silent) {
+          try {
+            const localTickets = await db
+              .select()
+              .from(ticketsTable)
+              .where(
+                selectedSiteCode !== "all"
+                  ? eq(ticketsTable.site_code, selectedSiteCode)
+                  : undefined,
+              )
+              .orderBy(desc(ticketsTable.created_at));
 
-          const normalizedSearch = searchQuery.trim().toLowerCase();
-          const fromDateMs = getLocalDayStartMs(fromDate);
-          const toDateMs = getLocalDayEndMs(toDate);
-          const filteredLocalTickets = localTickets.filter((t) => {
-            if (statusFilter && statusFilter !== "All" && t.status !== statusFilter) {
-              return false;
-            }
+            const normalizedSearch = searchQuery.trim().toLowerCase();
+            const fromDateMs = getLocalDayStartMs(fromDate);
+            const toDateMs = getLocalDayEndMs(toDate);
+            const filteredLocalTickets = localTickets.filter((t) => {
+              if (statusFilter && statusFilter !== "All" && t.status !== statusFilter) {
+                return false;
+              }
 
-            if (priorityFilter && priorityFilter !== "All" && t.priority !== priorityFilter) {
-              return false;
-            }
+              if (priorityFilter && priorityFilter !== "All" && t.priority !== priorityFilter) {
+                return false;
+              }
 
-            const createdAtMs = parseCreatedAtMs(t.created_at);
-            if ((fromDateMs != null || toDateMs != null) && createdAtMs == null) return false;
-            if (fromDateMs != null && createdAtMs != null && createdAtMs < fromDateMs) return false;
-            if (toDateMs != null && createdAtMs != null && createdAtMs > toDateMs) return false;
+              const createdAtMs = parseCreatedAtMs(t.created_at);
+              if ((fromDateMs != null || toDateMs != null) && createdAtMs == null) return false;
+              if (fromDateMs != null && createdAtMs != null && createdAtMs < fromDateMs) return false;
+              if (toDateMs != null && createdAtMs != null && createdAtMs > toDateMs) return false;
 
-            if (!normalizedSearch) return true;
+              if (!normalizedSearch) return true;
 
-            const searchHaystack = [
-              t.ticket_number,
-              t.title,
-              t.description,
-              t.category,
-              t.area,
-              t.status,
-              t.priority,
-              t.assigned_to,
-              t.created_by,
-            ].filter(Boolean).join(" ").toLowerCase();
+              const searchHaystack = [
+                t.ticket_number,
+                t.title,
+                t.description,
+                t.category,
+                t.area,
+                t.status,
+                t.priority,
+                t.assigned_to,
+                t.created_by,
+              ].filter(Boolean).join(" ").toLowerCase();
 
-            return searchHaystack.includes(normalizedSearch);
-          });
-
-          if (filteredLocalTickets.length > 0) {
-            hasLocalData = true;
-            const formattedTickets = filteredLocalTickets.map((t) => {
-              let isoDate = new Date().toISOString();
-              try {
-                if (t.created_at) {
-                  const d = new Date(Number(t.created_at));
-                  if (!isNaN(d.getTime())) isoDate = d.toISOString();
-                }
-              } catch {}
-
-              return {
-                id: t.id,
-                ticket_no: t.ticket_number,
-                title: t.title,
-                description: t.description || "",
-                status: t.status,
-                priority: t.priority,
-                category: t.category || "",
-                location: t.area || "",
-                area_asset: t.area || "",
-                internal_remarks: t.description || "",
-                assigned_to: t.assigned_to || "",
-                created_user: t.created_by,
-                site_code: t.site_code,
-                created_at: isoDate,
-              };
+              return searchHaystack.includes(normalizedSearch);
             });
 
-            setTickets(formattedTickets);
-            setLoading(false);
-          }
-        } catch (err: any) {
-          logger.warn("Error loading tickets from local DB", {
-            module: "TICKETS",
-            error: err.message || String(err),
-          });
-        }
+            if (filteredLocalTickets.length > 0) {
+              hasLocalData = true;
+              const formattedTickets = filteredLocalTickets.map((t) => {
+                let isoDate = new Date().toISOString();
+                try {
+                  if (t.created_at) {
+                    const d = new Date(Number(t.created_at));
+                    if (!isNaN(d.getTime())) isoDate = d.toISOString();
+                  }
+                } catch {}
 
-        if (!hasLocalData && !refreshing && !hasRenderedTickets) {
-          setLoading(true);
+                return {
+                  id: t.id,
+                  ticket_no: t.ticket_number,
+                  title: t.title,
+                  description: t.description || "",
+                  status: t.status,
+                  priority: t.priority,
+                  category: t.category || "",
+                  location: t.area || "",
+                  area_asset: t.area || "",
+                  internal_remarks: t.description || "",
+                  assigned_to: t.assigned_to || "",
+                  created_user: t.created_by,
+                  site_code: t.site_code,
+                  created_at: isoDate,
+                };
+              });
+
+              setTickets(formattedTickets);
+              setLoading(false);
+            }
+          } catch (err: any) {
+            logger.warn("Error loading tickets from local DB", {
+              module: "TICKETS",
+              error: err.message || String(err),
+            });
+          }
+
+          if (!hasLocalData && !refreshingRef.current && !hasRenderedTickets) {
+            setLoading(true);
+          }
         }
       } else {
         setIsFetchingMore(true);
@@ -534,10 +543,11 @@ export default function Tickets() {
 
       const netState = await NetInfo.fetch();
       if (!netState.isConnected) {
-        setLoading(false);
+        if (!silent) setLoading(false);
         setIsFetchingMore(false);
         setRefreshing(false);
         setHasMore(false);
+        if (reset) resetInFlightRef.current = false;
         return;
       }
 
@@ -575,9 +585,12 @@ export default function Tickets() {
         logger.warn("fetchTickets error", { module: "TICKETS", error });
         setHasMore(false);
       } finally {
-        setLoading(false);
+        if (!silent) {
+          setLoading(false);
+        }
         setIsFetchingMore(false);
         setRefreshing(false);
+        if (reset) resetInFlightRef.current = false;
       }
     },
     [
@@ -587,8 +600,6 @@ export default function Tickets() {
       searchQuery,
       fromDate,
       toDate,
-      refreshing,
-      tickets.length,
     ],
   );
 
@@ -599,6 +610,15 @@ export default function Tickets() {
     lastRequestedPageRef.current = 0;
     fetchTickets(1, true);
   }, [fetchTickets]);
+
+  /** Background refresh: no loading skeleton / list flash (realtime + filters handle primary UX). */
+  const silentRefreshTickets = useCallback(() => {
+    setPage(1);
+    setHasMore(true);
+    lastRequestedPageRef.current = 0;
+    void fetchTickets(1, true, { silent: true });
+    void fetchStats();
+  }, [fetchTickets, fetchStats]);
 
   // Sync Logic - triggered on filter changes
   useEffect(() => {
@@ -637,9 +657,12 @@ export default function Tickets() {
     }
   }, [selectedSiteCode, loadCategories]);
 
-  // Auto-sync for tickets (Handles Focus, AppState, and 60s Polling)
-  // This ensures data is fresh when returning to focus or every 60s
-  useAutoSync(resetAndFetch, [selectedSiteCode]);
+  // Periodic catch-up only: avoid focus + filter effect double-fetch and loading flicker (SSE + manual pull refresh).
+  useAutoSync(silentRefreshTickets, [selectedSiteCode], {
+    interval: 120000,
+    throttle: 45000,
+    syncOnFocus: false,
+  });
 
   useEffect(() => {
     return () => {
@@ -663,7 +686,8 @@ export default function Tickets() {
   }, []);
 
   const handleLoadMore = useCallback(() => {
-    if (!hasMore || isFetchingMore || loading) return;
+    if (!hasMore || isFetchingMore || loading || refreshing) return;
+    if (resetInFlightRef.current) return;
 
     const nextPage = page + 1;
     if (nextPage <= lastRequestedPageRef.current) return;
@@ -671,7 +695,7 @@ export default function Tickets() {
     lastRequestedPageRef.current = nextPage;
     setPage(nextPage);
     fetchTickets(nextPage);
-  }, [hasMore, isFetchingMore, loading, page, fetchTickets]);
+  }, [hasMore, isFetchingMore, loading, refreshing, page, fetchTickets]);
 
   const onRefresh = () => {
     setRefreshing(true);
@@ -1249,7 +1273,12 @@ export default function Tickets() {
           </View>
         </View>
 
-        <TicketStats stats={stats} loading={loading} currentStatus={statusFilter} onStatusChange={setStatusFilter} />
+        <TicketStats
+          stats={stats}
+          loading={loading && tickets.length === 0}
+          currentStatus={statusFilter}
+          onStatusChange={setStatusFilter}
+        />
         <TicketFilters statusFilter={statusFilter} setStatusFilter={setStatusFilter} />
 
         <View className="flex-1">

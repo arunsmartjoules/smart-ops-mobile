@@ -81,7 +81,9 @@ class TicketsRealtimeService {
       headers: {
         Authorization: `Bearer ${token}`,
       },
-      timeout: 25000,
+      // Keep stream alive indefinitely; backend heartbeat drives liveliness.
+      timeout: 0,
+      timeoutBeforeConnection: 0,
       pollingInterval: 0,
     });
 
@@ -99,6 +101,12 @@ class TicketsRealtimeService {
       if (!this.manualStop) {
         this.scheduleReconnect("stream_error");
       }
+    });
+
+    (this.source as any).addEventListener("done", () => {
+      if (this.manualStop) return;
+      this.onStateChange?.("error");
+      this.scheduleReconnect("stream_done");
     });
 
     (this.source as any).addEventListener("ticket_created", (event: any) => this.handleEvent(event));
