@@ -359,7 +359,7 @@ export const LogEntryModule = ({ type, siteCode: initialSiteCode, onBack }: LogE
         return {
           id: task.id, 
           site_code: siteCode,
-          executor_id: user?.id || user?.user_id,
+          executor_id: user?.employee_code || user?.id || user?.user_id,
           log_name: logName,
           task_name: task.name,
           scheduled_date: scheduledDate,

@@ -26,6 +26,8 @@ import {
   Zap,
   Ticket,
   Trash2,
+  Upload,
+  ChevronRight,
 } from "lucide-react-native";
 import { router } from "expo-router";
 import { openDatabaseSync } from "expo-sqlite";
@@ -294,6 +296,25 @@ export default function AppSettings() {
                   <Trash2 size={16} color="#dc2626" />
                 </TouchableOpacity>
               </View>
+
+              {/* Recovery Tools */}
+              <TouchableOpacity
+                onPress={() => router.push("/restore-data")}
+                className="bg-white dark:bg-slate-900 rounded-2xl mt-5 p-4 border border-slate-200 dark:border-slate-800 flex-row items-center"
+              >
+                <View className="w-10 h-10 rounded-xl bg-orange-50 dark:bg-orange-950/30 items-center justify-center mr-3">
+                  <Upload size={18} color="#f97316" />
+                </View>
+                <View className="flex-1">
+                  <Text className="text-slate-900 dark:text-slate-50 font-bold text-sm">
+                    Restore Local Data
+                  </Text>
+                  <Text className="text-slate-400 dark:text-slate-500 text-xs mt-0.5">
+                    Push site_logs from this device to the backend
+                  </Text>
+                </View>
+                <ChevronRight size={18} color="#94a3b8" />
+              </TouchableOpacity>
 
               {/* Table List Header */}
               <View className="flex-row items-center justify-between mt-5 mb-1">

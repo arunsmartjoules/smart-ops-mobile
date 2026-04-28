@@ -156,6 +156,34 @@ interface ISiteLogService {
   pullLogMaster(): Promise<void>;
   getLogMaster(logName: string): Promise<any[]>;
   runCleanup(): Promise<void>;
+  restoreLocalSiteLogs(options: RestoreLocalSiteLogsOptions): Promise<RestoreLocalSiteLogsResult>;
+}
+
+export interface RestoreLocalSiteLogsOptions {
+  siteCode: string;
+  fromDate: string; // YYYY-MM-DD inclusive
+  toDate: string;   // YYYY-MM-DD inclusive
+  logName?: string; // canonical mobile category, e.g. "Water"
+  dryRun: boolean;
+}
+
+export interface RestoreLocalSiteLogsFailure {
+  localId: string;
+  action: "create" | "update";
+  error: string;
+}
+
+export interface RestoreLocalSiteLogsResult {
+  dryRun: boolean;
+  scanned: number;        // local rows considered
+  serverFound: number;    // server rows fetched in the same range
+  toCreate: number;
+  toUpdate: number;
+  skipped: number;        // server already has equivalent data
+  created: number;        // POST succeeded (0 if dryRun)
+  updated: number;        // PUT succeeded (0 if dryRun)
+  failed: number;
+  errors: RestoreLocalSiteLogsFailure[];
 }
 
 /**
@@ -192,15 +220,25 @@ const _fetchLogs = async (
     if (options.scheduledDate) {
       conditions.push(eq(siteLogs.scheduled_date, options.scheduledDate));
     } else if (options.fromDate || options.toDate) {
-      const toDateStr = (ms: number) => new Date(ms).toISOString().slice(0, 10);
+      // scheduled_date is stored as YYYY-MM-DD in the user's local calendar
+      // (pullSiteLogs converts incoming UTC midnight to IST before storing).
+      // Build the bound from local date components, NOT toISOString — that
+      // returns UTC and would shift the window by a day in any non-UTC zone.
+      const toLocalDateStr = (ms: number) => {
+        const d = new Date(ms);
+        const yyyy = d.getFullYear();
+        const mm = String(d.getMonth() + 1).padStart(2, "0");
+        const dd = String(d.getDate()).padStart(2, "0");
+        return `${yyyy}-${mm}-${dd}`;
+      };
       if (options.fromDate) {
         conditions.push(
-          gte(siteLogs.scheduled_date, toDateStr(options.fromDate)),
+          gte(siteLogs.scheduled_date, toLocalDateStr(options.fromDate)),
         );
       }
       if (options.toDate) {
         conditions.push(
-          lte(siteLogs.scheduled_date, toDateStr(options.toDate)),
+          lte(siteLogs.scheduled_date, toLocalDateStr(options.toDate)),
         );
       }
     }
@@ -1600,6 +1638,190 @@ export const SiteLogService: ISiteLogService = {
     } catch (error) {
       return [];
     }
+  },
+
+  /**
+   * Push local site_logs rows to the backend for a given site/date range
+   * to recover data that exists on this device but is missing on the server.
+   *
+   * Matches local rows to server rows on (scheduled_date, task_name) within
+   * the same site/log_name, since the server has no unique constraint and
+   * local ids may not match (POST drops client ids, so historical syncs
+   * created server-side ids that diverge from the local UUIDs).
+   */
+  async restoreLocalSiteLogs(
+    options: RestoreLocalSiteLogsOptions,
+  ): Promise<RestoreLocalSiteLogsResult> {
+    const { siteCode, fromDate, toDate, logName, dryRun } = options;
+    const result: RestoreLocalSiteLogsResult = {
+      dryRun,
+      scanned: 0,
+      serverFound: 0,
+      toCreate: 0,
+      toUpdate: 0,
+      skipped: 0,
+      created: 0,
+      updated: 0,
+      failed: 0,
+      errors: [],
+    };
+
+    if (!siteCode) throw new Error("siteCode is required");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(fromDate)) throw new Error("fromDate must be YYYY-MM-DD");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(toDate)) throw new Error("toDate must be YYYY-MM-DD");
+    if (fromDate > toDate) throw new Error("fromDate must be <= toDate");
+
+    const normalizedLogName = logName ? normalizeLogName(logName) : null;
+
+    const localConditions: any[] = [
+      eq(siteLogs.site_code, siteCode),
+      gte(siteLogs.scheduled_date, fromDate),
+      lte(siteLogs.scheduled_date, toDate),
+    ];
+    if (normalizedLogName) {
+      localConditions.push(eq(siteLogs.log_name, normalizedLogName));
+    }
+
+    const localRows = await db
+      .select()
+      .from(siteLogs)
+      .where(and(...localConditions));
+    result.scanned = localRows.length;
+
+    if (localRows.length === 0) return result;
+
+    let serverRows: any[] = [];
+    let url = `/api/site-logs/site/${encodeURIComponent(siteCode)}?limit=2000&scheduled_date_from=${fromDate}&scheduled_date_to=${toDate}`;
+    if (normalizedLogName) {
+      url += `&log_name=${encodeURIComponent(normalizedLogName)}`;
+    }
+    try {
+      const response = await apiFetch(url);
+      if (!response.ok) {
+        throw new Error(`GET ${url} → ${response.status}`);
+      }
+      const json = await response.json();
+      serverRows = json.data || [];
+    } catch (err: any) {
+      throw new Error(`Failed to fetch server rows: ${err?.message || String(err)}`);
+    }
+    result.serverFound = serverRows.length;
+
+    const serverDateOnly = (raw: any): string | null => {
+      if (!raw) return null;
+      if (typeof raw === "string" && /^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+      const d = new Date(raw);
+      if (isNaN(d.getTime())) return null;
+      // Server returns DATE as midnight-UTC; shift to IST for the calendar day.
+      const ist = new Date(d.getTime() + 5.5 * 60 * 60 * 1000);
+      return ist.toISOString().slice(0, 10);
+    };
+    const contentKey = (logNameVal: string | null, scheduledDate: string | null, taskName: string | null) =>
+      `${(logNameVal || "").toLowerCase().trim()}|${scheduledDate || ""}|${(taskName || "").toLowerCase().trim()}`;
+
+    const serverById = new Map<string, any>();
+    const serverByContent = new Map<string, any>();
+    for (const sr of serverRows) {
+      serverById.set(sr.id, sr);
+      const k = contentKey(normalizeLogName(sr.log_name), serverDateOnly(sr.scheduled_date), sr.task_name);
+      if (!serverByContent.has(k)) serverByContent.set(k, sr);
+    }
+
+    const isFilledServerRow = (sr: any): boolean => {
+      if ((sr.status || "").toLowerCase() !== "completed") return false;
+      const hasReading = sr.tds != null || sr.ph != null || sr.hardness != null
+        || sr.temperature != null || sr.rh != null
+        || (sr.chemical_dosing && String(sr.chemical_dosing).trim() !== "");
+      return hasReading;
+    };
+
+    const buildPayload = (local: any) => ({
+      site_code: local.site_code,
+      executor_id: local.executor_id || null,
+      log_name: local.log_name,
+      task_name: local.task_name || null,
+      scheduled_date: local.scheduled_date,
+      temperature: local.temperature,
+      rh: local.rh,
+      tds: local.tds,
+      ph: local.ph,
+      hardness: local.hardness,
+      chemical_dosing: local.chemical_dosing,
+      remarks: local.remarks,
+      main_remarks: local.main_remarks,
+      signature: local.signature,
+      attachment: local.attachment,
+      status: local.status || "Completed",
+      assigned_to: local.assigned_to || null,
+    });
+
+    for (const local of localRows) {
+      const k = contentKey(local.log_name, local.scheduled_date, local.task_name);
+      const matchById = serverById.get(local.id);
+      const matchByContent = matchById || serverByContent.get(k);
+
+      if (matchByContent && isFilledServerRow(matchByContent)) {
+        result.skipped++;
+        continue;
+      }
+
+      const action: "create" | "update" = matchByContent ? "update" : "create";
+      if (action === "update") result.toUpdate++;
+      else result.toCreate++;
+
+      if (dryRun) continue;
+
+      try {
+        if (action === "update") {
+          const targetId = matchByContent.id;
+          const r = await apiFetch(`/api/site-logs/${encodeURIComponent(targetId)}`, {
+            method: "PUT",
+            body: JSON.stringify(buildPayload(local)),
+          });
+          if (!r.ok) {
+            const text = await r.text().catch(() => "");
+            throw new Error(`PUT ${targetId} → ${r.status} ${text.slice(0, 200)}`);
+          }
+          result.updated++;
+        } else {
+          const r = await apiFetch(`/api/site-logs`, {
+            method: "POST",
+            body: JSON.stringify(buildPayload(local)),
+          });
+          if (!r.ok) {
+            const text = await r.text().catch(() => "");
+            throw new Error(`POST → ${r.status} ${text.slice(0, 200)}`);
+          }
+          result.created++;
+        }
+      } catch (err: any) {
+        result.failed++;
+        result.errors.push({
+          localId: local.id,
+          action,
+          error: err?.message || String(err),
+        });
+      }
+    }
+
+    logger.info("restoreLocalSiteLogs complete", {
+      module: "SITE_LOG_SERVICE",
+      siteCode,
+      fromDate,
+      toDate,
+      logName: normalizedLogName,
+      dryRun,
+      scanned: result.scanned,
+      serverFound: result.serverFound,
+      toCreate: result.toCreate,
+      toUpdate: result.toUpdate,
+      skipped: result.skipped,
+      created: result.created,
+      updated: result.updated,
+      failed: result.failed,
+    });
+
+    return result;
   },
 
   /**

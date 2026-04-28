@@ -392,7 +392,7 @@ export default function ChillerEntry() {
 
       const payload = {
         siteCode: selectedSite,
-        executorId: user?.user_id || user?.id || "unknown",
+        executorId: user?.employee_code || user?.user_id || user?.id || "unknown",
         chillerId: assetName,
         equipmentId: currentFormData.chillerId,
         assetName: assetName,

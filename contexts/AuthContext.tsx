@@ -74,6 +74,7 @@ interface AuthUser {
   designation?: string;
   phone?: string;
   site_code?: string;
+  employee_code?: string;
   /** ISO or backend string, for offline "Joined" display */
   created_at?: string;
   date_of_joining?: string;
@@ -170,6 +171,7 @@ function mapFirebaseUser(
     designation: profile?.designation ?? "",
     phone: profile?.phone || profile?.mobile,
     site_code: profile?.site_code,
+    employee_code: profile?.employee_code,
     created_at: pickOptionalString(profile?.created_at),
     date_of_joining: pickOptionalString(profile?.date_of_joining),
   };

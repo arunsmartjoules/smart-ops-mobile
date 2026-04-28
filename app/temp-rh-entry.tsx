@@ -156,7 +156,7 @@ export default function TempRHEntry() {
       } else {
         await SiteLogService.saveSiteLog({
           siteCode: params.siteCode,
-          executorId: user?.user_id || user?.id || "unknown",
+          executorId: user?.employee_code || user?.user_id || user?.id || "unknown",
           assignedTo: user?.name || user?.user_id || "unknown",
           logName: "Temp RH",
           taskName: params.areaName,
@@ -217,7 +217,7 @@ export default function TempRHEntry() {
         // Create new log
         await SiteLogService.saveSiteLog({
           siteCode: params.siteCode,
-          executorId: user?.user_id || user?.id || "unknown",
+          executorId: user?.employee_code || user?.user_id || user?.id || "unknown",
           assignedTo: user?.name || user?.user_id || "unknown",
           logName: "Temp RH",
           taskName: params.areaName,

@@ -29,6 +29,17 @@ import {
 } from "lucide-react-native";
 import SiteLogService from "@/services/SiteLogService";
 import { format } from "date-fns";
+
+// Parse YYYY-MM-DD as a local-calendar date (no UTC shift) and format it.
+const formatScheduledDate = (raw: string | null | undefined) => {
+  if (!raw) return "—";
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(raw);
+  if (!m) return raw;
+  return format(
+    new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])),
+    "dd MMM yyyy",
+  );
+};
 import LogFilterModal from "@/components/sitelogs/LogFilterModal";
 import AttendanceService, { type Site } from "@/services/AttendanceService";
 import { useAuth } from "@/contexts/AuthContext";
@@ -103,10 +114,10 @@ const HistoryItem = memo(
                       ),
                       "dd MMM, HH:mm",
                     )
-                  : format(
+                  : `${formatScheduledDate(item.scheduled_date)} • ${format(
                       new Date(item.created_at || item.createdAt),
                       "HH:mm",
-                    )}{" "}
+                    )}`}{" "}
                 • {resolvedName || item.executor_id || "Unknown"}
               </Text>
             </View>

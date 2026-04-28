@@ -150,7 +150,7 @@ export default function ChemicalEntry() {
       } else {
         await SiteLogService.saveSiteLog({
           siteCode: params.siteCode,
-          executorId: user?.user_id || user?.id || "unknown",
+          executorId: user?.employee_code || user?.user_id || user?.id || "unknown",
           assignedTo: user?.name || user?.user_id || "unknown",
           logName: "Chemical Dosing",
           taskName: params.areaName,
@@ -198,7 +198,7 @@ export default function ChemicalEntry() {
       } else {
         await SiteLogService.saveSiteLog({
           siteCode: params.siteCode,
-          executorId: user?.user_id || user?.id || "unknown",
+          executorId: user?.employee_code || user?.user_id || user?.id || "unknown",
           assignedTo: user?.name || user?.user_id || "unknown",
           logName: "Chemical Dosing",
           taskName: params.areaName,
