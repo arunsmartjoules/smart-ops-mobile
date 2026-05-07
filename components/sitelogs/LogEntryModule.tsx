@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from "react";
+import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { 
   View, 
   Text, 
@@ -19,6 +19,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useAuth } from "@/contexts/AuthContext";
 import { SiteConfigService, TaskItem } from "@/services/SiteConfigService";
 import { SiteLogService } from "@/services/SiteLogService";
+import syncEngine from "@/services/SyncEngine";
 import { UnifiedLogItem } from "./UnifiedLogItem";
 import { DateNavBar } from "./DateNavBar";
 import SignaturePad from "@/components/SignaturePad";
@@ -203,13 +204,22 @@ export const LogEntryModule = ({ type, siteCode: initialSiteCode, onBack }: LogE
   }, [logValues, signature, editId]);
 
   const updateValue = (taskId: string, field: string, val: string) => {
-    setLogValues(prev => ({
+    setLogValues((prev) => ({
       ...prev,
       [taskId]: {
         ...(prev[taskId] || {}),
-        [field]: val
-      }
+        [field]: val,
+      },
     }));
+
+    // Schedule debounced auto-save for this specific task.
+    const existing = autoSaveTimers.current.get(taskId);
+    if (existing) clearTimeout(existing);
+    const timer = setTimeout(() => {
+      autoSaveTimers.current.delete(taskId);
+      autoSaveTaskRef.current(taskId).catch(() => {});
+    }, AUTO_SAVE_DEBOUNCE_MS);
+    autoSaveTimers.current.set(taskId, timer);
   };
 
   // Filtered Tasks
@@ -239,17 +249,174 @@ export const LogEntryModule = ({ type, siteCode: initialSiteCode, onBack }: LogE
     [logValues, type],
   );
 
+  // ── Auto-save ────────────────────────────────────────────────────────────
+  // After the user stops typing for AUTO_SAVE_DEBOUNCE_MS, persist that
+  // task's row to local SQLite and enqueue it for background sync.
+  // SyncEngine handles offline → online transitions and flushes the queue;
+  // each PUT triggers Fieldproxy sync via the backend controller.
+  const AUTO_SAVE_DEBOUNCE_MS = 600;
+  const autoSaveTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(
+    new Map(),
+  );
+
+  const autoSaveTask = useCallback(
+    async (taskId: string) => {
+      if (!siteCode) return;
+      const val = logValues[taskId];
+      if (!val) return;
+      const task = tasks.find((t) => t.id === taskId);
+      if (!task) return;
+
+      // Skip if no field has a value yet — nothing to save.
+      const hasData =
+        type === "Chemical"
+          ? !!val.dosing
+          : type === "Water"
+            ? !!(
+                (val.tds && String(val.tds).trim()) ||
+                (val.ph && String(val.ph).trim()) ||
+                (val.hardness && String(val.hardness).trim())
+              )
+            : !!(
+                (val.temp && String(val.temp).trim()) ||
+                (val.rh && String(val.rh).trim())
+              );
+      if (!hasData) return;
+
+      const status = isTaskComplete(taskId) ? "Completed" : "Inprogress";
+      const shiftLabel =
+        shift === "A" ? " (1/3)" : shift === "B" ? " (2/3)" : shift === "C" ? " (3/3)" : "";
+
+      // In edit mode there's exactly one row; use updateSiteLog so we don't
+      // overwrite the original signature and assigned_to.
+      if (isEditMode && editId) {
+        try {
+          if (type === "Chemical") {
+            await SiteLogService.updateSiteLog(editId, {
+              chemicalDosing: val.dosing || null,
+              mainRemarks: val.mainRemarks || null,
+              remarks: (task.meta?.remarks || "") + shiftLabel,
+              attachment: val.attachment || null,
+              status,
+            });
+          } else if (type === "Water") {
+            await SiteLogService.updateSiteLog(editId, {
+              tds: val.tds && String(val.tds).trim() ? parseFloat(val.tds) : null,
+              ph: val.ph && String(val.ph).trim() ? parseFloat(val.ph) : null,
+              hardness:
+                val.hardness && String(val.hardness).trim()
+                  ? parseFloat(val.hardness)
+                  : null,
+              mainRemarks: val.mainRemarks || null,
+              remarks: (task.meta?.remarks || "") + shiftLabel,
+              attachment: val.attachment || null,
+              status,
+            });
+          } else {
+            await SiteLogService.updateSiteLog(editId, {
+              temperature:
+                val.temp && String(val.temp).trim() ? parseFloat(val.temp) : null,
+              rh: val.rh && String(val.rh).trim() ? parseFloat(val.rh) : null,
+              mainRemarks: val.mainRemarks || null,
+              remarks: (task.meta?.remarks || "") + shiftLabel,
+              attachment: val.attachment || null,
+              status,
+            });
+          }
+        } catch {
+          // Silent — SyncEngine retries from offline_queue.
+        }
+        return;
+      }
+
+      // Bulk-screen path: upsert this single task.
+      const payload = {
+        id: task.id,
+        site_code: siteCode,
+        executor_id: user?.employee_code || user?.id || user?.user_id,
+        log_name: logName,
+        task_name: task.name,
+        scheduled_date: scheduledDate,
+        status,
+        main_remarks: val.mainRemarks || null,
+        remarks: (task.meta?.remarks || "") + shiftLabel,
+        ...(type === "Chemical" ? { chemical_dosing: val.dosing } : {}),
+        ...(type === "Water"
+          ? {
+              tds:
+                val.tds && String(val.tds).trim() ? parseFloat(val.tds) : null,
+              ph: val.ph && String(val.ph).trim() ? parseFloat(val.ph) : null,
+              hardness:
+                val.hardness && String(val.hardness).trim()
+                  ? parseFloat(val.hardness)
+                  : null,
+            }
+          : {}),
+        ...(type === "TempRH"
+          ? {
+              temperature:
+                val.temp && String(val.temp).trim() ? parseFloat(val.temp) : null,
+              rh: val.rh && String(val.rh).trim() ? parseFloat(val.rh) : null,
+            }
+          : {}),
+        attachment: val.attachment,
+      };
+
+      try {
+        await SiteLogService.saveBulkSiteLogs([payload as any]);
+      } catch {
+        // Silent — local save + queue happens regardless; SyncEngine retries.
+      }
+      // Kick the sync engine so the queue flushes immediately when online,
+      // instead of waiting up to 15 minutes for the periodic interval.
+      // syncNow() is internally debounced — concurrent calls share one promise.
+      syncEngine.syncNow().catch(() => {});
+    },
+    [
+      logValues,
+      tasks,
+      type,
+      shift,
+      siteCode,
+      scheduledDate,
+      user,
+      logName,
+      isTaskComplete,
+      isEditMode,
+      editId,
+    ],
+  );
+
+  // Always-fresh ref so debounced timers see the latest closure.
+  const autoSaveTaskRef = useRef(autoSaveTask);
+  useEffect(() => {
+    autoSaveTaskRef.current = autoSaveTask;
+  }, [autoSaveTask]);
+
+  // On unmount, clear pending timers and flush any queued saves immediately.
+  useEffect(() => {
+    return () => {
+      const pending = Array.from(autoSaveTimers.current.entries());
+      autoSaveTimers.current.clear();
+      pending.forEach(([taskId, timer]) => {
+        clearTimeout(timer);
+        autoSaveTaskRef.current(taskId).catch(() => {});
+      });
+    };
+  }, []);
+
   const allScheduledTasksComplete =
     tasks.length > 0 && tasks.every((task) => isTaskComplete(task.id));
-
-  useEffect(() => {
-    if (type !== "Chemical" || isEditMode) return;
-  }, [allScheduledTasksComplete, isEditMode, isTaskComplete, searchQuery.length, tasks, type]);
 
   // Submission
   const handleSubmit = async (signatureOverride?: string) => {
     if (!siteCode) return;
     const effectiveSignature = signatureOverride || signature;
+
+    // Cancel any in-flight auto-save timers so the signed Submit PUT can't
+    // be silently overwritten by an unsigned debounced auto-save firing late.
+    autoSaveTimers.current.forEach((t) => clearTimeout(t));
+    autoSaveTimers.current.clear();
     
     if (!isEditMode && tasks.length === 0) {
       Alert.alert("No Data", "No scheduled logs are available for this selection.");

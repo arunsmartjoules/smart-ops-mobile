@@ -30,7 +30,7 @@ import {
 } from "lucide-react-native";
 import { useNetworkStatus } from "@/hooks/useNetworkStatus";
 import { useSites } from "@/hooks/useSites";
-import { startOfDay, endOfDay, addDays } from "date-fns";
+import { startOfDay, endOfDay, addDays, startOfMonth, endOfMonth } from "date-fns";
 import loggerUtil from "@/utils/logger";
 import Skeleton from "@/components/Skeleton";
 
@@ -43,8 +43,10 @@ export default function SiteLogs() {
   >({});
   const [openCounts, setOpenCounts] = useState<Record<string, number>>({});
   const [filterVisible, setFilterVisible] = useState(false);
-  const [fromDate, setFromDate] = useState<Date | null>(startOfDay(new Date()));
-  const [toDate, setToDate] = useState<Date | null>(endOfDay(new Date()));
+  // Main Logs screen defaults to "this month". Entry screens still default
+  // to today (they don't read these state values — they use today directly).
+  const [fromDate, setFromDate] = useState<Date | null>(startOfMonth(new Date()));
+  const [toDate, setToDate] = useState<Date | null>(endOfMonth(new Date()));
   const lastSyncRef = React.useRef<Record<string, number>>({});
   const refreshingRef = useRef(false);
   const fetchLogsRef = useRef<((targetSite: string) => Promise<void>) | null>(null);
@@ -88,9 +90,13 @@ export default function SiteLogs() {
 
       if (shouldSync) {
         try {
-          const fromDateObj = startOfDay(addDays(new Date(), -7));
-          const toDateObj = endOfDay(addDays(new Date(), 7));
-          
+          // Prefetch covers the user's selected filter range, with a ±7-day
+          // minimum so the cache stays useful even when the filter is narrow.
+          const minFrom = startOfDay(addDays(new Date(), -7));
+          const minTo = endOfDay(addDays(new Date(), 7));
+          const fromDateObj = fromDate && fromDate < minFrom ? fromDate : minFrom;
+          const toDateObj = toDate && toDate > minTo ? toDate : minTo;
+
           await Promise.all([
             siteLogService.pullSiteLogs(targetSite, {
               fromDate: fromDateObj.getTime(),
@@ -140,8 +146,10 @@ export default function SiteLogs() {
 
       prePullInFlightRef.current = true;
       try {
-        const fromDateObj = startOfDay(addDays(new Date(), -7));
-        const toDateObj = endOfDay(addDays(new Date(), 7));
+        const minFrom = startOfDay(addDays(new Date(), -7));
+        const minTo = endOfDay(addDays(new Date(), 7));
+        const fromDateObj = fromDate && fromDate < minFrom ? fromDate : minFrom;
+        const toDateObj = toDate && toDate > minTo ? toDate : minTo;
         await Promise.all([
           siteLogService.pullSiteLogs(targetSite, {
             fromDate: fromDateObj.getTime(),
@@ -158,7 +166,7 @@ export default function SiteLogs() {
         prePullInFlightRef.current = false;
       }
     },
-    [isConnected],
+    [isConnected, fromDate, toDate],
   );
 
   const handleHeaderManualRefresh = useCallback(async () => {
@@ -417,7 +425,7 @@ export default function SiteLogs() {
                                       : "bg-red-50 dark:bg-red-950/40"
                                   }`}
                                 >
-                                  <Text
+                                  {/* <Text
                                     className={`text-[10px] font-bold ${
                                       pending === 0
                                         ? "text-emerald-800 dark:text-emerald-400"
@@ -428,7 +436,7 @@ export default function SiteLogs() {
                                     {pending === 0
                                       ? "All done"
                                       : `${pending} pending`}
-                                  </Text>
+                                  </Text> */}
                                 </View>
                               )
                             )}

@@ -397,26 +397,18 @@ export const SiteLogService: ISiteLogService = {
           },
         });
 
-      // 3. Enqueue for Sync
+      // 3. Try immediate API sync first; only enqueue on transient failure.
+      // Pre-enqueueing then re-POSTing on next syncNow caused duplicate rows
+      // for the create path (backend strips client id and generates its own,
+      // so the queue retry creates a second row). PUT is idempotent so this
+      // change is just an efficiency win there; POST is the real fix.
       for (const record of recordsToInsert) {
         const isExisting = existingIdSet.has(record.id);
-        await cacheManager.enqueue({
-          entity_type: isExisting ? "site_log_update" : "site_log_create",
-          operation: isExisting ? "update" : "create",
-          payload: {
-            ...record,
-            scheduled_date: record.scheduled_date,
-          },
-        });
-      }
-
-      // 4. Best-effort immediate API sync (online path).
-      // Existing scheduled rows should be PUT, new rows should be POST.
-      for (const record of recordsToInsert) {
-        const isExisting = existingIdSet.has(record.id);
+        let shouldRetryFromQueue = false;
         try {
+          let response: Response;
           if (isExisting) {
-            const response = await apiFetch(`/api/site-logs/${record.id}`, {
+            response = await apiFetch(`/api/site-logs/${record.id}`, {
               method: "PUT",
               body: JSON.stringify({
                 temperature: record.temperature,
@@ -434,23 +426,41 @@ export const SiteLogService: ISiteLogService = {
                 scheduled_date: record.scheduled_date,
               }),
             });
-            if (!response.ok) {
-              throw new Error(`PUT /api/site-logs/${record.id} failed: ${response.status}`);
-            }
           } else {
-            const response = await apiFetch("/api/site-logs", {
+            response = await apiFetch("/api/site-logs", {
               method: "POST",
               body: JSON.stringify(record),
             });
-            if (!response.ok) {
-              throw new Error(`POST /api/site-logs failed: ${response.status}`);
+          }
+          if (!response.ok) {
+            if (response.status >= 500) {
+              shouldRetryFromQueue = true;
+            } else {
+              const text = await response.text().catch(() => "");
+              logger.warn(
+                `saveBulkSiteLogs: backend ${response.status} (${isExisting ? "PUT" : "POST"}): ${text.slice(0, 200)}`,
+                { module: "SITE_LOG_SERVICE", id: record.id },
+              );
             }
           }
-        } catch {
-          logger.debug("saveBulkSiteLogs: immediate API sync failed, queued for retry", {
+        } catch (err: any) {
+          shouldRetryFromQueue = true;
+          logger.debug("saveBulkSiteLogs: network error, queuing for retry", {
             module: "SITE_LOG_SERVICE",
             id: record.id,
             mode: isExisting ? "update" : "create",
+            error: err?.message,
+          });
+        }
+
+        if (shouldRetryFromQueue) {
+          await cacheManager.enqueue({
+            entity_type: isExisting ? "site_log_update" : "site_log_create",
+            operation: isExisting ? "update" : "create",
+            payload: {
+              ...record,
+              scheduled_date: record.scheduled_date,
+            },
           });
         }
       }
@@ -634,7 +644,9 @@ export const SiteLogService: ISiteLogService = {
 
     await db.insert(chillerReadings).values({
       id,
-      log_id: data.logId || id,
+      // Leave empty when caller does not provide one; backend now generates
+      // canonical CH-YYYYMMDD-#### identifiers during create.
+      log_id: data.logId || "",
       site_code: data.siteCode,
       executor_id: data.executorId,
       chiller_id: data.chillerId || null,
@@ -692,22 +704,42 @@ export const SiteLogService: ISiteLogService = {
       },
     );
 
-    // Enqueue for offline sync
-    await cacheManager.enqueue({
-      entity_type: "chiller_reading_create",
-      operation: "create",
-      payload: record,
-    });
-
-    // Best-effort API call
+    // Try the immediate POST first. Only enqueue if it fails transiently —
+    // otherwise the queue would re-POST on the next syncNow and the backend
+    // (which generates its own row id and ignores the client's) would create
+    // a duplicate row. Backend 4xx errors are NOT retried because the same
+    // payload would just keep failing.
+    let shouldRetryFromQueue = false;
     try {
-      await apiFetch("/api/chiller-readings", {
+      const response = await apiFetch("/api/chiller-readings", {
         method: "POST",
         body: JSON.stringify(record),
       });
-    } catch {
-      logger.debug("saveChillerReading: API call failed, will sync later", {
+      if (!response.ok) {
+        if (response.status >= 500) {
+          shouldRetryFromQueue = true;
+        } else {
+          const text = await response.text().catch(() => "");
+          logger.warn(
+            `saveChillerReading: backend ${response.status}: ${text.slice(0, 200)}`,
+            { module: "SITE_LOG_SERVICE", id: record.id },
+          );
+        }
+      }
+    } catch (err: any) {
+      shouldRetryFromQueue = true;
+      logger.debug("saveChillerReading: network error, queuing for retry", {
         module: "SITE_LOG_SERVICE",
+        id: record.id,
+        error: err?.message,
+      });
+    }
+
+    if (shouldRetryFromQueue) {
+      await cacheManager.enqueue({
+        entity_type: "chiller_reading_create",
+        operation: "create",
+        payload: record,
       });
     }
 

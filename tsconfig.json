@@ -5,6 +5,7 @@
     "jsx": "react-jsx",
     "moduleResolution": "bundler",
     "baseUrl": ".",
+    "ignoreDeprecations": "5.0",
     "skipLibCheck": true,
     "experimentalDecorators": true,
     "emitDecoratorMetadata": true,

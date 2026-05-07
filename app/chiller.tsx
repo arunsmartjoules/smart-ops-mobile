@@ -97,6 +97,11 @@ export default function ChillerEntry() {
   const [loadingDailyProgress, setLoadingDailyProgress] = useState(false);
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const formDataRef = useRef(formData);
+  // Tracks the id of the in-progress reading row this session is writing to.
+  // First save creates the row; subsequent auto-saves UPDATE the same row
+  // instead of creating a new one. Cleared when the reading is Completed
+  // or the user picks a different chiller (= a different reading entirely).
+  const currentReadingIdRef = useRef<string | null>(null);
 
   const isEditMode = !!(params.editId || params.id);
   const targetId = (params.editId || params.id || "") as string;
@@ -325,7 +330,13 @@ export default function ChillerEntry() {
   const updateField = (field: string, value: string) => {
     setFormData((prev) => {
       const next = { ...prev, [field]: value };
-      
+
+      // If the user picks a different chiller, drop the in-progress row pointer
+      // so we create a new row for the new asset instead of overwriting the old.
+      if (field === "chillerId" && prev.chillerId && value !== prev.chillerId) {
+        currentReadingIdRef.current = null;
+      }
+
       // Auto-save logic (debounced)
       if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
       
@@ -390,9 +401,8 @@ export default function ChillerEntry() {
       const selectedAsset = assets.find((a) => a.value === currentFormData.chillerId);
       const assetName = selectedAsset?.label || currentFormData.chillerId;
 
-      const payload = {
+      const basePayload = {
         siteCode: selectedSite,
-        executorId: user?.employee_code || user?.user_id || user?.id || "unknown",
         chillerId: assetName,
         equipmentId: currentFormData.chillerId,
         assetName: assetName,
@@ -425,15 +435,34 @@ export default function ChillerEntry() {
           : new Date().getTime(),
         attachments: currentFormData.attachment,
       };
+      const createPayload = {
+        ...basePayload,
+        // Set executor only on first create; updates should preserve creator.
+        executorId: user?.employee_code || user?.user_id || user?.id || "unknown",
+      };
 
       if (isEditMode) {
         const targetId = (params.editId || params.id) as string;
-        await SiteLogService.updateChillerReading(targetId, payload);
+        await SiteLogService.updateChillerReading(targetId, basePayload);
+      } else if (currentReadingIdRef.current) {
+        // First save already created the row this session — keep updating it.
+        // Without this the chiller's per-keystroke auto-save creates a new
+        // backend row each time, leading to dozens of duplicates per shift.
+        await SiteLogService.updateChillerReading(
+          currentReadingIdRef.current,
+          basePayload,
+        );
       } else {
-        await SiteLogService.saveChillerReading(payload);
+        const created = await SiteLogService.saveChillerReading(createPayload);
+        if (created?.id) {
+          currentReadingIdRef.current = created.id;
+        }
       }
 
       if (status === "Completed") {
+        // Reading session is done — next save (e.g. for another shift or
+        // chiller) should start a fresh row.
+        currentReadingIdRef.current = null;
         await loadDailyProgress(true);
       }
 

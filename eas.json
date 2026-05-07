@@ -14,7 +14,7 @@
       "channel": "preview",
       "node": "22.11.0",
       "env": {
-        "EXPO_PUBLIC_BACKEND_URL": "https://3.110.174.185.sslip.io",
+        "EXPO_PUBLIC_BACKEND_URL": "https://api-jouleops.smartjoules.org",
         "EXPO_PUBLIC_FIREBASE_API_KEY": "AIzaSyC2aHsudx0TvfTBj1aV-IZ0cA6b8ohG6Zk",
         "EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN": "jouleops.firebaseapp.com",
         "EXPO_PUBLIC_FIREBASE_PROJECT_ID": "jouleops",
@@ -27,7 +27,7 @@
       "autoIncrement": true,
       "node": "22.11.0",
       "env": {
-        "EXPO_PUBLIC_BACKEND_URL": "https://3.110.174.185.sslip.io",
+        "EXPO_PUBLIC_BACKEND_URL": "https://api-jouleops.smartjoules.org",
         "EXPO_PUBLIC_FIREBASE_API_KEY": "AIzaSyC2aHsudx0TvfTBj1aV-IZ0cA6b8ohG6Zk",
         "EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN": "jouleops.firebaseapp.com",
         "EXPO_PUBLIC_FIREBASE_PROJECT_ID": "jouleops",
