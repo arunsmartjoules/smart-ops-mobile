@@ -20,6 +20,11 @@ import { useAuth } from "@/contexts/AuthContext";
 import { SiteConfigService, TaskItem } from "@/services/SiteConfigService";
 import { SiteLogService } from "@/services/SiteLogService";
 import syncEngine from "@/services/SyncEngine";
+import {
+  recordLogActivityEvent,
+  recordLogActivityStartOnce,
+  uiShiftToLabel,
+} from "@/services/LogActivityMasterService";
 import { UnifiedLogItem } from "./UnifiedLogItem";
 import { DateNavBar } from "./DateNavBar";
 import SignaturePad from "@/components/SignaturePad";
@@ -65,6 +70,10 @@ export const LogEntryModule = ({ type, siteCode: initialSiteCode, onBack }: LogE
       : type === "Water"
         ? "Water Monitoring"
         : "Chemical Dosing";
+  // Fieldproxy log_activity_master uses these canonical labels; "Water
+  // Monitoring" doesn't exist there, FP rows are stored as "Water".
+  const activityLogType =
+    type === "TempRH" ? "Temp RH" : type === "Water" ? "Water" : "Chemical Dosing";
   // Load Sites
   useEffect(() => {
     const loadSites = async () => {
@@ -211,6 +220,21 @@ export const LogEntryModule = ({ type, siteCode: initialSiteCode, onBack }: LogE
         [field]: val,
       },
     }));
+
+    // Fire a one-shot Start event the first time this task receives input.
+    // recordLogActivityStartOnce dedupes per session and is best-effort —
+    // failures must not block the existing offline-first flow.
+    if (val && String(val).trim().length > 0 && siteCode) {
+      recordLogActivityStartOnce({
+        action: "start",
+        site_id: siteCode,
+        log_type: activityLogType,
+        due_date: scheduledDate,
+        shift_label: uiShiftToLabel(shift),
+        executor_id: user?.employee_code || user?.id || user?.user_id || null,
+        assigned_to: user?.name || user?.user_id || null,
+      }).catch(() => {});
+    }
 
     // Schedule debounced auto-save for this specific task.
     const existing = autoSaveTimers.current.get(taskId);
@@ -507,6 +531,38 @@ export const LogEntryModule = ({ type, siteCode: initialSiteCode, onBack }: LogE
           });
         }
 
+        // Edit-mode finish: mirror to log_activity_master + Fieldproxy
+        // when the user submits a Completed entry. Skipped silently if the
+        // backend can't resolve the row.
+        const editVal = logValues[task.id] || {};
+        const editIsCompleted =
+          type === "Chemical"
+            ? !!editVal.dosing
+            : type === "Water"
+              ? !!(
+                  (editVal.tds && String(editVal.tds).trim()) ||
+                  (editVal.ph && String(editVal.ph).trim()) ||
+                  (editVal.hardness && String(editVal.hardness).trim())
+                )
+              : !!(
+                  editVal.temp &&
+                  String(editVal.temp).trim() &&
+                  editVal.rh &&
+                  String(editVal.rh).trim()
+                );
+        if (editIsCompleted && siteCode) {
+          recordLogActivityEvent({
+            action: "finish",
+            site_id: siteCode,
+            log_type: activityLogType,
+            due_date: scheduledDate,
+            shift_label: uiShiftToLabel(shift),
+            executor_id: user?.employee_code || user?.id || user?.user_id || null,
+            assigned_to: user?.name || user?.user_id || null,
+            enddatetime: new Date().toISOString(),
+          }).catch(() => {});
+        }
+
         Alert.alert("Success", "Log updated successfully!", [
           { text: "OK", onPress: () => onBack() },
         ]);
@@ -543,11 +599,36 @@ export const LogEntryModule = ({ type, siteCode: initialSiteCode, onBack }: LogE
       }).filter(Boolean);
 
       await SiteLogService.saveBulkSiteLogs(payload as any);
-      
+
+      // Mark each completed task as Finished in log_activity_master (DB + FP)
+      // so the row's enddatetime + executor_id + status reflect the user's
+      // submission. Best-effort — already-saved local + queue is the source
+      // of truth for the field data; this just keeps activity master in sync.
+      try {
+        const finishShiftLabel = uiShiftToLabel(shift);
+        const finishCalls = (payload as any[])
+          .filter((p) => p && p.status === "Completed")
+          .map((p) =>
+            recordLogActivityEvent({
+              action: "finish",
+              site_id: p.site_code,
+              log_type: activityLogType,
+              due_date: p.scheduled_date,
+              shift_label: finishShiftLabel,
+              executor_id: p.executor_id,
+              assigned_to: user?.name || user?.user_id || null,
+              enddatetime: new Date().toISOString(),
+            }),
+          );
+        await Promise.allSettled(finishCalls);
+      } catch {
+        // Silent — server cron will reconcile with FP next 1AM IST tick.
+      }
+
       // Clear Draft
       const draftKey = `draft_${type.toLowerCase()}_${siteCode}_${user?.id}_${scheduledDate}${shift ? `_${shift}` : ""}`;
       await AsyncStorage.removeItem(draftKey);
-      
+
       Alert.alert("Success", "Logs submitted successfully!", [
         { text: "OK", onPress: () => loadTasks() }
       ]);
