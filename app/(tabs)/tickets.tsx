@@ -1073,6 +1073,10 @@ export default function Tickets() {
         Alert.alert("Required", "Please select fault type for the incident.");
         return;
       }
+      if (!incidentDraft.severity) {
+        Alert.alert("Required", "Please select severity for the incident.");
+        return;
+      }
       if (!incidentDraft.operating_condition) {
         Alert.alert("Required", "Please select operating condition for the incident.");
         return;

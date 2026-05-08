@@ -24,7 +24,7 @@ export const OPERATING_CONDITION_OPTIONS = [
 
 export type TicketIncidentDraft = {
   fault_type: string;
-  severity: IncidentSeverityOption;
+  severity: IncidentSeverityOption | "";
   operating_condition: string;
   immediate_action_taken: string;
   incidentAttachments: string[];
@@ -32,9 +32,9 @@ export type TicketIncidentDraft = {
 };
 
 export const DEFAULT_TICKET_INCIDENT_DRAFT: TicketIncidentDraft = {
-  fault_type: "Others",
-  severity: "Moderate",
-  operating_condition: "Stopped",
+  fault_type: "",
+  severity: "",
+  operating_condition: "",
   immediate_action_taken: "",
   incidentAttachments: [],
   incidentRemarks: "",

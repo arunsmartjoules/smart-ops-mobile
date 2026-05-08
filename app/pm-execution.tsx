@@ -73,6 +73,11 @@ const TaskRow = React.memo(
     onPreview,
     isUploading,
     isCompleted,
+    showRequiredErrors,
+    missingEvidenceImage,
+    missingRemarks,
+    missingResponse,
+    missingReadings,
     style,
   }: {
     item: PMChecklistItemRow;
@@ -87,15 +92,22 @@ const TaskRow = React.memo(
     onPreview: (uri: string) => void;
     isUploading?: boolean;
     isCompleted?: boolean;
+    showRequiredErrors?: boolean;
+    missingEvidenceImage?: boolean;
+    missingRemarks?: boolean;
+    missingResponse?: boolean;
+    missingReadings?: boolean;
     style?: any;
   }) => {
     const isDark = useColorScheme() === "dark";
     const isDone = response?.response_value === "Done";
     const readingsRequired = isMeasureTask(item.task_name);
-    const isReadingsMissing =
-      readingsRequired &&
-      !!response?.response_value &&
-      (!response?.readings || !response.readings.trim());
+    const isReadingsMissing = Boolean(
+      missingReadings ??
+      (readingsRequired &&
+        !!response?.response_value &&
+        (!response?.readings || !response.readings.trim())),
+    );
     const fieldType = item.field_type || "Multiple Choice";
 
     return (
@@ -162,6 +174,12 @@ const TaskRow = React.memo(
                   }
                   style={[
                     styles.choiceBtn,
+                    showRequiredErrors &&
+                      missingResponse &&
+                      !selected &&
+                      (isDark
+                        ? styles.requiredFieldBorderDark
+                        : styles.requiredFieldBorder),
                     {
                       backgroundColor: selected
                         ? selColor
@@ -206,6 +224,11 @@ const TaskRow = React.memo(
             keyboardType={fieldType === "Number" ? "decimal-pad" : "default"}
             style={[
               styles.textInput,
+              showRequiredErrors &&
+                missingResponse &&
+                (isDark
+                  ? styles.requiredFieldBorderDark
+                  : styles.requiredFieldBorder),
               isReadingsMissing &&
                 (isDark
                   ? styles.requiredReadingsInputDark
@@ -241,6 +264,11 @@ const TaskRow = React.memo(
             keyboardType="decimal-pad"
             style={[
               styles.textInput,
+              showRequiredErrors &&
+                isReadingsMissing &&
+                (isDark
+                  ? styles.requiredReadingsInputDark
+                  : styles.requiredReadingsInput),
               isDark && {
                 backgroundColor: "#0f172a",
                 borderColor: "#334155",
@@ -277,6 +305,11 @@ const TaskRow = React.memo(
                 style={[
                   styles.imageBtn,
                   styles.imageBtnHalf,
+                  showRequiredErrors &&
+                    missingEvidenceImage &&
+                    (isDark
+                      ? styles.requiredFieldBorderDark
+                      : styles.requiredFieldBorder),
                   isDark && {
                     backgroundColor: "#1e293b",
                     borderColor: "#334155",
@@ -290,6 +323,11 @@ const TaskRow = React.memo(
                 style={[
                   styles.imageBtn,
                   styles.imageBtnHalf,
+                  showRequiredErrors &&
+                    missingEvidenceImage &&
+                    (isDark
+                      ? styles.requiredFieldBorderDark
+                      : styles.requiredFieldBorder),
                   isDark && {
                     backgroundColor: "#1e293b",
                     borderColor: "#334155",
@@ -312,6 +350,11 @@ const TaskRow = React.memo(
                 placeholderTextColor={isDark ? "#64748b" : "#94a3b8"}
                 style={[
                   styles.remarksInput,
+                  showRequiredErrors &&
+                    missingRemarks &&
+                    (isDark
+                      ? styles.requiredFieldBorderDark
+                      : styles.requiredFieldBorder),
                   isDark && {
                     backgroundColor: "#0f172a",
                     borderColor: "#334155",
@@ -452,6 +495,7 @@ export default function PMExecutionScreen() {
     {},
   );
   const [previewImageUrl, setPreviewImageUrl] = useState<string | null>(null);
+  const [completionAttempted, setCompletionAttempted] = useState(false);
   const isDark = useColorScheme() === "dark";
 
   const bgColor = isDark ? "#020617" : "#f8fafc";
@@ -1022,17 +1066,110 @@ export default function PMExecutionScreen() {
     [checklistItems, responses],
   );
 
+  const missingMandatoryValidation = useMemo(() => {
+    const missingResponses: string[] = [];
+    const missingReadingsByTask = new Set<string>();
+    const missingRemarksByTask = new Set<string>();
+    const missingImagesByTask = new Set<string>();
+    const byItemId: Record<
+      string,
+      {
+        missingResponse: boolean;
+        missingReadings: boolean;
+        missingRemarks: boolean;
+        missingImage: boolean;
+      }
+    > = {};
+
+    for (const item of checklistItems) {
+      const response = responses[item.id];
+      const taskName = item.task_name || "Unnamed task";
+      const missingResponse = !response?.response_value;
+      const missingReadings =
+        isMeasureTask(item.task_name) &&
+        !!response?.response_value &&
+        !String(response?.readings || "").trim();
+      const missingRemarks =
+        Boolean((item as any).remarks_mandatory) &&
+        !String(response?.remarks || "").trim();
+      const missingImage =
+        Boolean((item as any).image_mandatory) &&
+        !String(response?.image_url || "").trim();
+
+      if (missingResponse) missingResponses.push(taskName);
+      if (missingReadings) missingReadingsByTask.add(taskName);
+      if (missingRemarks) missingRemarksByTask.add(taskName);
+      if (missingImage) missingImagesByTask.add(taskName);
+      byItemId[item.id] = {
+        missingResponse,
+        missingReadings,
+        missingRemarks,
+        missingImage,
+      };
+    }
+
+    const missingBeforeImage = !instance?.before_image;
+    const missingAfterImage = !instance?.after_image;
+
+    return {
+      missingResponses,
+      missingReadings: Array.from(missingReadingsByTask),
+      missingRemarks: Array.from(missingRemarksByTask),
+      missingImages: Array.from(missingImagesByTask),
+      missingBeforeImage,
+      missingAfterImage,
+      byItemId,
+      hasAny:
+        missingResponses.length > 0 ||
+        missingReadingsByTask.size > 0 ||
+        missingRemarksByTask.size > 0 ||
+        missingImagesByTask.size > 0 ||
+        missingBeforeImage ||
+        missingAfterImage,
+    };
+  }, [checklistItems, instance?.after_image, instance?.before_image, responses]);
+
+  const showCompletionBlockedPopup = useCallback(() => {
+    const lines: string[] = [];
+    if (missingMandatoryValidation.missingResponses.length > 0) {
+      lines.push(`- ${missingMandatoryValidation.missingResponses.length} task(s) not answered`);
+    }
+    if (missingMandatoryValidation.missingReadings.length > 0) {
+      lines.push(
+        `- ${missingMandatoryValidation.missingReadings.length} task(s) missing required readings`,
+      );
+    }
+    if (missingMandatoryValidation.missingRemarks.length > 0) {
+      lines.push(
+        `- ${missingMandatoryValidation.missingRemarks.length} task(s) missing mandatory remarks`,
+      );
+    }
+    if (missingMandatoryValidation.missingImages.length > 0) {
+      lines.push(
+        `- ${missingMandatoryValidation.missingImages.length} task(s) missing mandatory images`,
+      );
+    }
+    if (missingMandatoryValidation.missingBeforeImage) {
+      lines.push("- Before image is missing");
+    }
+    if (missingMandatoryValidation.missingAfterImage) {
+      lines.push("- After image is missing");
+    }
+    Alert.alert(
+      "Cannot complete PM",
+      `Please complete all mandatory fields before completion.\n\n${lines.join("\n")}`,
+    );
+  }, [missingMandatoryValidation]);
+
   const handleComplete = useCallback(
     async (signature: string) => {
       if (!signature) {
         Alert.alert("Required", "Please provide a signature.");
         return;
       }
-      if (missingMeasureReadings.length > 0) {
-        Alert.alert(
-          "Readings Required",
-          "Please enter readings for all tasks containing 'Measure' before completing.",
-        );
+      if (missingMandatoryValidation.hasAny) {
+        setCompletionAttempted(true);
+        showCompletionBlockedPopup();
         return;
       }
 
@@ -1052,12 +1189,16 @@ export default function PMExecutionScreen() {
         ]);
       } catch (err) {
         logger.error("Failed to complete PM", { error: err });
-        Alert.alert("Error", "Failed to complete. Please try again.");
+        const apiErrorMessage =
+          (err as any)?.response?.error ||
+          (err as any)?.message ||
+          "Failed to complete. Please try again.";
+        Alert.alert("Error", apiErrorMessage);
       } finally {
         setSaving(false);
       }
     },
-    [handleSave, missingMeasureReadings.length],
+    [handleSave, missingMandatoryValidation.hasAny, showCompletionBlockedPopup],
   );
 
   // ── FlatList setup ────────────────────────────────────────────────────────
@@ -1072,6 +1213,11 @@ export default function PMExecutionScreen() {
         onPreview={setPreviewImageUrl}
         isUploading={uploadingItems[item.id]}
         isCompleted={instance?.status === "Completed"}
+        showRequiredErrors={completionAttempted}
+        missingEvidenceImage={missingMandatoryValidation.byItemId[item.id]?.missingImage}
+        missingRemarks={missingMandatoryValidation.byItemId[item.id]?.missingRemarks}
+        missingResponse={missingMandatoryValidation.byItemId[item.id]?.missingResponse}
+        missingReadings={missingMandatoryValidation.byItemId[item.id]?.missingReadings}
         style={{ backgroundColor: cardBg, borderColor: borderColor }}
       />
     ),
@@ -1268,6 +1414,9 @@ export default function PMExecutionScreen() {
               }}
               style={[
                 styles.compactEvidenceBtn,
+                completionAttempted &&
+                  !instance?.before_image &&
+                  (isDark ? styles.requiredFieldBorderDark : styles.requiredFieldBorder),
                 {
                   backgroundColor: isDark ? "#1e293b" : "#f8fafc",
                   borderColor: isDark ? "#334155" : "#e2e8f0",
@@ -1318,6 +1467,9 @@ export default function PMExecutionScreen() {
               }}
               style={[
                 styles.compactEvidenceBtn,
+                completionAttempted &&
+                  !instance?.after_image &&
+                  (isDark ? styles.requiredFieldBorderDark : styles.requiredFieldBorder),
                 {
                   backgroundColor: isDark ? "#1e293b" : "#f8fafc",
                   borderColor: isDark ? "#334155" : "#e2e8f0",
@@ -1394,8 +1546,14 @@ export default function PMExecutionScreen() {
           >
             <View style={styles.footerBtns}>
               <TouchableOpacity
-                onPress={() => setShowCompletionModal(true)}
-                disabled={!canComplete}
+                onPress={() => {
+                  setCompletionAttempted(true);
+                  if (!canComplete || missingMandatoryValidation.hasAny) {
+                    showCompletionBlockedPopup();
+                    return;
+                  }
+                  setShowCompletionModal(true);
+                }}
                 style={[
                   styles.footerBtn,
                   {
@@ -1410,7 +1568,7 @@ export default function PMExecutionScreen() {
                 <Text
                   style={[
                     styles.footerBtnText,
-                    { color: canComplete ? "#fff" : "#94a3b8" },
+                    { color: canComplete && !missingMandatoryValidation.hasAny ? "#fff" : "#94a3b8" },
                   ]}
                 >
                   Complete
@@ -1717,6 +1875,16 @@ const styles = StyleSheet.create({
     backgroundColor: "#fef2f2",
   },
   requiredReadingsInputDark: {
+    borderColor: "#f87171",
+    borderWidth: 1.5,
+    backgroundColor: "#450a0a",
+  },
+  requiredFieldBorder: {
+    borderColor: "#ef4444",
+    borderWidth: 1.5,
+    backgroundColor: "#fef2f2",
+  },
+  requiredFieldBorderDark: {
     borderColor: "#f87171",
     borderWidth: 1.5,
     backgroundColor: "#450a0a",

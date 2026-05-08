@@ -585,7 +585,27 @@ const TicketDetailStatusUpdate = ({
 
       {ticket.status === "Open" && setCreateIncidentFromTicket ? (
         <TouchableOpacity
-          onPress={() => setCreateIncidentFromTicket(!createIncidentFromTicket)}
+          onPress={() => {
+            if (createIncidentFromTicket) {
+              setCreateIncidentFromTicket(false);
+              return;
+            }
+            Alert.alert(
+              "Create Incident",
+              "Do you want to incident/breakdown for this ticket?",
+              [
+                {
+                  text: "No",
+                  style: "cancel",
+                  onPress: () => setCreateIncidentFromTicket(false),
+                },
+                {
+                  text: "Yes",
+                  onPress: () => setCreateIncidentFromTicket(true),
+                },
+              ],
+            );
+          }}
           style={{ marginTop: 12, flexDirection: "row", alignItems: "center", gap: 10 }}
         >
           <View
