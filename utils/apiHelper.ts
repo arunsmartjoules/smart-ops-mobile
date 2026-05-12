@@ -14,7 +14,7 @@ import {
 export const fetchWithTimeout = async (
   url: string,
   options: RequestInit = {},
-  timeout = 10000,
+  timeout = 5000,
 ): Promise<Response> => {
   const controller = new AbortController();
   const id = setTimeout(() => {

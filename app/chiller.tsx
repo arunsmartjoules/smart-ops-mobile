@@ -97,11 +97,21 @@ export default function ChillerEntry() {
   const [loadingDailyProgress, setLoadingDailyProgress] = useState(false);
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const formDataRef = useRef(formData);
-  // Tracks the id of the in-progress reading row this session is writing to.
-  // First save creates the row; subsequent auto-saves UPDATE the same row
+  // Tracks the row id of the in-progress reading and the chiller it belongs
+  // to. First save creates the row; subsequent auto-saves UPDATE the same row
   // instead of creating a new one. Cleared when the reading is Completed
   // or the user picks a different chiller (= a different reading entirely).
-  const currentReadingIdRef = useRef<string | null>(null);
+  // Storing chillerId alongside id prevents an in-flight create from claiming
+  // the slot after the user switched chillers mid-session.
+  const currentReadingRef = useRef<{ id: string; chillerId: string } | null>(
+    null,
+  );
+  // Single-flight gate for handleSubmission. Without this, a slow create POST
+  // would let the next debounced auto-save run before currentReadingRef was
+  // populated, and both would call saveChillerReading() — producing a fresh
+  // row per concurrent save. Serializing means later submissions await the
+  // current one and see the populated ref, falling through to update.
+  const inFlightSaveRef = useRef<Promise<void> | null>(null);
 
   const isEditMode = !!(params.editId || params.id);
   const targetId = (params.editId || params.id || "") as string;
@@ -334,7 +344,7 @@ export default function ChillerEntry() {
       // If the user picks a different chiller, drop the in-progress row pointer
       // so we create a new row for the new asset instead of overwriting the old.
       if (field === "chillerId" && prev.chillerId && value !== prev.chillerId) {
-        currentReadingIdRef.current = null;
+        currentReadingRef.current = null;
       }
 
       // Auto-save logic (debounced)
@@ -396,86 +406,116 @@ export default function ChillerEntry() {
       return;
     }
 
-    try {
-      setSaving(true);
-      const selectedAsset = assets.find((a) => a.value === currentFormData.chillerId);
-      const assetName = selectedAsset?.label || currentFormData.chillerId;
+    // Serialize concurrent saves so currentReadingRef is observed AFTER any
+    // in-flight create has populated it. Otherwise a second auto-save that
+    // races the first create would also create, duplicating the row.
+    while (inFlightSaveRef.current) {
+      try {
+        await inFlightSaveRef.current;
+      } catch {
+        // Previous save's error is its own to surface; we still proceed.
+      }
+    }
 
-      const basePayload = {
-        siteCode: selectedSite,
-        chillerId: assetName,
-        equipmentId: currentFormData.chillerId,
-        assetName: assetName,
-        assetType: selectedAsset?.description || "Chiller",
-        condenserInletTemp: parseFloat(currentFormData.condenserInletTemp),
-        condenserOutletTemp: parseFloat(currentFormData.condenserOutletTemp),
-        evaporatorInletTemp: parseFloat(currentFormData.evaporatorInletTemp),
-        evaporatorOutletTemp: parseFloat(currentFormData.evaporatorOutletTemp),
-        saturatedCondenserTemp: parseFloat(currentFormData.saturatedCondenserTemp),
-        saturatedSuctionTemp: parseFloat(currentFormData.saturatedSuctionTemp),
-        compressorSuctionTemp: parseFloat(currentFormData.compressorSuctionTemp),
-        motorTemperature: parseFloat(currentFormData.motorTemperature),
-        setPointCelsius: parseFloat(currentFormData.setPointCelsius),
-        dischargePressure: parseFloat(currentFormData.dischargePressure),
-        mainSuctionPressure: parseFloat(currentFormData.mainSuctionPressure),
-        oilPressure: parseFloat(currentFormData.oilPressure),
-        oilPressureDifference: parseFloat(currentFormData.oilPressureDifference),
-        condenserInletPressure: parseFloat(currentFormData.condenserInletPressure),
-        condenserOutletPressure: parseFloat(currentFormData.condenserOutletPressure),
-        evaporatorInletPressure: parseFloat(currentFormData.evaporatorInletPressure),
-        evaporatorOutletPressure: parseFloat(currentFormData.evaporatorOutletPressure),
-        compressorLoadPercentage: parseFloat(currentFormData.load),
-        inlineBtuMeter: parseFloat(currentFormData.inlineBtuMeter),
-        remarks: currentFormData.remarks,
-        assignedTo: user?.full_name || user?.name || "unknown",
-        signature: finalSignature,
-        status: status,
-        readingTime: params.readingTime
-          ? parseInt(params.readingTime)
-          : new Date().getTime(),
-        attachments: currentFormData.attachment,
-      };
-      const createPayload = {
-        ...basePayload,
-        // Set executor only on first create; updates should preserve creator.
-        executorId: user?.employee_code || user?.user_id || user?.id || "unknown",
-      };
+    const run = async () => {
+      try {
+        setSaving(true);
+        const selectedAsset = assets.find((a) => a.value === currentFormData.chillerId);
+        const assetName = selectedAsset?.label || currentFormData.chillerId;
 
-      if (isEditMode) {
-        const targetId = (params.editId || params.id) as string;
-        await SiteLogService.updateChillerReading(targetId, basePayload);
-      } else if (currentReadingIdRef.current) {
-        // First save already created the row this session — keep updating it.
-        // Without this the chiller's per-keystroke auto-save creates a new
-        // backend row each time, leading to dozens of duplicates per shift.
-        await SiteLogService.updateChillerReading(
-          currentReadingIdRef.current,
-          basePayload,
-        );
-      } else {
-        const created = await SiteLogService.saveChillerReading(createPayload);
-        if (created?.id) {
-          currentReadingIdRef.current = created.id;
+        const basePayload = {
+          siteCode: selectedSite,
+          chillerId: assetName,
+          equipmentId: currentFormData.chillerId,
+          assetName: assetName,
+          assetType: selectedAsset?.description || "Chiller",
+          condenserInletTemp: parseFloat(currentFormData.condenserInletTemp),
+          condenserOutletTemp: parseFloat(currentFormData.condenserOutletTemp),
+          evaporatorInletTemp: parseFloat(currentFormData.evaporatorInletTemp),
+          evaporatorOutletTemp: parseFloat(currentFormData.evaporatorOutletTemp),
+          saturatedCondenserTemp: parseFloat(currentFormData.saturatedCondenserTemp),
+          saturatedSuctionTemp: parseFloat(currentFormData.saturatedSuctionTemp),
+          compressorSuctionTemp: parseFloat(currentFormData.compressorSuctionTemp),
+          motorTemperature: parseFloat(currentFormData.motorTemperature),
+          setPointCelsius: parseFloat(currentFormData.setPointCelsius),
+          dischargePressure: parseFloat(currentFormData.dischargePressure),
+          mainSuctionPressure: parseFloat(currentFormData.mainSuctionPressure),
+          oilPressure: parseFloat(currentFormData.oilPressure),
+          oilPressureDifference: parseFloat(currentFormData.oilPressureDifference),
+          condenserInletPressure: parseFloat(currentFormData.condenserInletPressure),
+          condenserOutletPressure: parseFloat(currentFormData.condenserOutletPressure),
+          evaporatorInletPressure: parseFloat(currentFormData.evaporatorInletPressure),
+          evaporatorOutletPressure: parseFloat(currentFormData.evaporatorOutletPressure),
+          compressorLoadPercentage: parseFloat(currentFormData.load),
+          inlineBtuMeter: parseFloat(currentFormData.inlineBtuMeter),
+          remarks: currentFormData.remarks,
+          assignedTo: user?.full_name || user?.name || "unknown",
+          signature: finalSignature,
+          status: status,
+          readingTime: params.readingTime
+            ? parseInt(params.readingTime)
+            : new Date().getTime(),
+          attachments: currentFormData.attachment,
+        };
+        const createPayload = {
+          ...basePayload,
+          // Set executor only on first create; updates should preserve creator.
+          executorId: user?.employee_code || user?.user_id || user?.id || "unknown",
+        };
+
+        if (isEditMode) {
+          const targetId = (params.editId || params.id) as string;
+          await SiteLogService.updateChillerReading(targetId, basePayload);
+        } else if (
+          currentReadingRef.current?.chillerId === currentFormData.chillerId
+        ) {
+          // First save already created the row this session — keep updating it.
+          // Without this the chiller's per-keystroke auto-save creates a new
+          // backend row each time, leading to dozens of duplicates per shift.
+          // Chiller-id check guards against an in-flight create returning after
+          // the user switched chillers and claiming the slot for the wrong row.
+          await SiteLogService.updateChillerReading(
+            currentReadingRef.current.id,
+            basePayload,
+          );
+        } else {
+          const created = await SiteLogService.saveChillerReading(createPayload);
+          if (created?.id) {
+            currentReadingRef.current = {
+              id: created.id,
+              chillerId: currentFormData.chillerId,
+            };
+          }
         }
-      }
 
-      if (status === "Completed") {
-        // Reading session is done — next save (e.g. for another shift or
-        // chiller) should start a fresh row.
-        currentReadingIdRef.current = null;
-        await loadDailyProgress(true);
-      }
+        if (status === "Completed") {
+          // Reading session is done — next save (e.g. for another shift or
+          // chiller) should start a fresh row.
+          currentReadingRef.current = null;
+          await loadDailyProgress(true);
+        }
 
-      setSignatureModalVisible(false);
-      if (status === "Completed") {
-        Alert.alert("Success", "Reading completed successfully", [
-          { text: "OK", onPress: () => router.back() },
-        ]);
+        setSignatureModalVisible(false);
+        if (status === "Completed") {
+          Alert.alert("Success", "Reading completed successfully", [
+            { text: "OK", onPress: () => router.back() },
+          ]);
+        }
+      } catch (error: any) {
+        Alert.alert("Error", error.message || "Failed to save reading");
+      } finally {
+        setSaving(false);
       }
-    } catch (error: any) {
-      Alert.alert("Error", error.message || "Failed to save reading");
+    };
+
+    const promise = run();
+    inFlightSaveRef.current = promise;
+    try {
+      await promise;
     } finally {
-      setSaving(false);
+      if (inFlightSaveRef.current === promise) {
+        inFlightSaveRef.current = null;
+      }
     }
   };
 

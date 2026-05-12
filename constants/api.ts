@@ -5,7 +5,7 @@
 import { Platform } from "react-native";
 
 // Base URLs
-const productionUrl = "https://3.110.174.185.sslip.io";
+const productionUrl = "https://13.205.42.202.sslip.io";
 
 // For Android: 10.0.2.2 is the emulator's bridge to localhost. 
 // For physical devices, use your computer's local IP (e.g. 192.168.x.x).

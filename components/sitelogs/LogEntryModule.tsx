@@ -231,8 +231,8 @@ export const LogEntryModule = ({ type, siteCode: initialSiteCode, onBack }: LogE
         log_type: activityLogType,
         due_date: scheduledDate,
         shift_label: uiShiftToLabel(shift),
-        executor_id: user?.employee_code || user?.id || user?.user_id || null,
-        assigned_to: user?.name || user?.user_id || null,
+        executor_id: user?.name || null,
+        assigned_to: user?.name || null,
       }).catch(() => {});
     }
 
@@ -357,7 +357,7 @@ export const LogEntryModule = ({ type, siteCode: initialSiteCode, onBack }: LogE
       const payload = {
         id: task.id,
         site_code: siteCode,
-        executor_id: user?.employee_code || user?.id || user?.user_id,
+        executor_id: user?.name || null,
         log_name: logName,
         task_name: task.name,
         scheduled_date: scheduledDate,
@@ -557,8 +557,8 @@ export const LogEntryModule = ({ type, siteCode: initialSiteCode, onBack }: LogE
             log_type: activityLogType,
             due_date: scheduledDate,
             shift_label: uiShiftToLabel(shift),
-            executor_id: user?.employee_code || user?.id || user?.user_id || null,
-            assigned_to: user?.name || user?.user_id || null,
+            executor_id: user?.name || null,
+            assigned_to: user?.name || null,
             enddatetime: new Date().toISOString(),
           }).catch(() => {});
         }
@@ -580,9 +580,9 @@ export const LogEntryModule = ({ type, siteCode: initialSiteCode, onBack }: LogE
         const shiftLabel = shift === "A" ? " (1/3)" : shift === "B" ? " (2/3)" : shift === "C" ? " (3/3)" : "";
         
         return {
-          id: task.id, 
+          id: task.id,
           site_code: siteCode,
-          executor_id: user?.employee_code || user?.id || user?.user_id,
+          executor_id: user?.name || null,
           log_name: logName,
           task_name: task.name,
           scheduled_date: scheduledDate,

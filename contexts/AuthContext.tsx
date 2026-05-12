@@ -285,9 +285,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         setIsEmailVerified(
           getEffectiveEmailVerified(firebaseUser, shouldSkipVerification),
         );
-        const idToken = await firebaseUser.getIdToken();
-        setToken(idToken);
-        await setStoredAuthToken(idToken);
+        // Firebase's getIdToken() can hang on slow networks while it tries to
+        // refresh. Race it with a short timeout and fall back to the stored
+        // token so the splash never blocks UI on a flaky connection.
+        // Crucially: never clobber the existing token with empty — that would
+        // bounce an authenticated user to sign-in (effective auto-logout).
+        const idToken =
+          (await Promise.race<string | null>([
+            firebaseUser.getIdToken(false).catch(() => null),
+            new Promise<string | null>((resolve) =>
+              setTimeout(() => resolve(null), 3000),
+            ),
+          ])) || (await getStoredAuthToken());
+        if (idToken) {
+          setToken(idToken);
+          await setStoredAuthToken(idToken);
+        }
 
         let releasedLoadingEarly = false;
         let earlyCachedUser: AuthUser | null = null;
@@ -306,12 +319,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
           // ignore malformed cache
         }
 
-        const userProfile = await fetchAndSetProfile(firebaseUser, idToken);
+        // No token available (timeout + no stored): keep the user signed in
+        // with whatever cached profile we have and skip the network bootstrap.
+        // Sync/profile will retry once connectivity returns.
+        const userProfile = idToken
+          ? await fetchAndSetProfile(firebaseUser, idToken)
+          : null;
 
         const bootstrapUserId =
           userProfile?.user_id || earlyCachedUser?.user_id || "";
 
-        if (bootstrapUserId) {
+        if (bootstrapUserId && idToken) {
           const logEmail =
             userProfile?.email ||
             earlyCachedUser?.email ||

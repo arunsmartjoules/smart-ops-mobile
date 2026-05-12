@@ -178,6 +178,12 @@ export default function Tickets() {
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+
+  // Safety net: never let the skeleton outlive a slow/stalled fetch.
+  useEffect(() => {
+    const t = setTimeout(() => setLoading(false), 6000);
+    return () => clearTimeout(t);
+  }, []);
   const [assets, setAssets] = useState<any[]>([]);
   const [stats, setStats] = useState<any>(null);
 
@@ -1127,96 +1133,87 @@ export default function Tickets() {
           updateStatus === "Resolved" ? nowIso : selectedTicket.resolved_at,
       };
 
-      const netState = await NetInfo.fetch();
-      if (netState.isConnected) {
-        const res = await TicketsService.updateTicket(selectedTicket.id || selectedTicket.ticket_no, payload);
-        if (res.success) {
-          WhatsAppService.sendStatusUpdate(optimisticTicket, updateStatus, updateRemarks).catch((e: any) =>
-            logger.warn("Failed WhatsApp notification", { error: e })
-          );
+      // Always call updateTicket — it writes to local DB + enqueues + attempts
+      // API. The result tells us whether the API confirmed; on network failure
+      // the local write is already done so we must NOT show an error to the user.
+      const res = await TicketsService.updateTicket(
+        selectedTicket.id || selectedTicket.ticket_no,
+        payload,
+      );
 
-          if (attachmentUri) {
-            const uploadRes = await TicketsService.uploadImage(
-              attachmentUri,
-              selectedTicket.id || selectedTicket.ticket_no,
-            );
+      const apiConfirmed = res.success === true;
+      const queuedOffline =
+        !apiConfirmed && (res.isNetworkError === true || res.queued === true);
 
-            if (uploadRes.success && uploadRes.url) {
-              const lineItemRes = await TicketsService.addLineItem(
-                selectedTicket.id || selectedTicket.ticket_no,
-                { image_url: uploadRes.url },
-              );
+      if (apiConfirmed) {
+        WhatsAppService.sendStatusUpdate(
+          optimisticTicket,
+          updateStatus,
+          updateRemarks,
+        ).catch((e: any) =>
+          logger.warn("Failed WhatsApp notification", { error: e }),
+        );
+      }
 
-              if (!lineItemRes.success && !lineItemRes.queued) {
-                Alert.alert(
-                  "Partial Success",
-                  "Ticket updated, but the image attachment could not be added.",
-                );
-              }
-            } else {
-              Alert.alert(
-                "Partial Success",
-                "Ticket updated, but the image attachment could not be uploaded.",
-              );
-            }
-          }
+      if (attachmentUri && (apiConfirmed || queuedOffline)) {
+        const uploadRes = await TicketsService.uploadImage(
+          attachmentUri,
+          selectedTicket.id || selectedTicket.ticket_no,
+        );
 
-          Alert.alert("Success", "Ticket updated successfully");
-          if (createIncidentFromTicket) {
-            setCreateIncidentFromTicket(false);
-            resetIncidentDraft();
-            router.push({
-              pathname: "/(tabs)/incidents",
-              params: { status: "Inprogress" },
-            });
-          }
-          if (updateStatus === "Resolved") setIsDetailVisible(false);
-          
-          setSelectedTicket(optimisticTicket);
-          setUpdateRemarks("");
-          setBeforeTemp("");
-          setAfterTemp("");
-          setAttachmentUri("");
-          fetchStats();
-          resetAndFetch();
-        } else {
-          Alert.alert("Error", res.error || "Failed to update ticket");
-        }
-      } else {
-        await TicketsService.updateTicket(selectedTicket.id || selectedTicket.ticket_no, payload);
-
-        if (attachmentUri) {
-          const uploadRes = await TicketsService.uploadImage(
-            attachmentUri,
+        if (uploadRes.success && uploadRes.url) {
+          await TicketsService.addLineItem(
             selectedTicket.id || selectedTicket.ticket_no,
-          );
-
-          if (uploadRes.success && uploadRes.url) {
-            await TicketsService.addLineItem(selectedTicket.id || selectedTicket.ticket_no, {
-              image_url: uploadRes.url,
-            });
-          }
+            { image_url: uploadRes.url },
+          ).catch(() => {});
         }
+      }
 
-        Alert.alert("Saved Offline", "Update saved and will sync when online.");
-        if (createIncidentFromTicket) {
-          setCreateIncidentFromTicket(false);
-          resetIncidentDraft();
-          router.push({
-            pathname: "/(tabs)/incidents",
-            params: { status: "Inprogress" },
-          });
-        }
-        if (updateStatus === "Resolved") setIsDetailVisible(false);
-        setSelectedTicket(optimisticTicket);
-        setUpdateRemarks("");
-        setBeforeTemp("");
-        setAfterTemp("");
-        setAttachmentUri("");
+      if (apiConfirmed) {
+        Alert.alert("Success", "Ticket updated successfully");
+      } else if (queuedOffline) {
+        // Local DB updated + queued for sync — don't alarm the user.
+        Alert.alert(
+          "Saved",
+          "Update saved. It will sync automatically when your connection is stable.",
+        );
+      } else {
+        // True server/validation error — surface it.
+        Alert.alert("Error", res.error || "Failed to update ticket");
+        return;
+      }
+
+      if (createIncidentFromTicket) {
+        setCreateIncidentFromTicket(false);
+        resetIncidentDraft();
+        router.push({
+          pathname: "/(tabs)/incidents",
+          params: { status: "Inprogress" },
+        });
+      }
+      if (updateStatus === "Resolved") setIsDetailVisible(false);
+
+      setSelectedTicket(optimisticTicket);
+      setUpdateRemarks("");
+      setBeforeTemp("");
+      setAfterTemp("");
+      setAttachmentUri("");
+      // Only re-sync from server when the API confirmed our write. When the
+      // update was queued offline, the server still holds the stale row — a
+      // refetch here would upsert the cache and stomp the optimistic status
+      // (e.g. revert a freshly-set "Resolved" back to "Open"). The SyncEngine
+      // flush will trigger a refetch once the queue drains.
+      if (apiConfirmed) {
+        fetchStats();
         resetAndFetch();
       }
     } catch (error: any) {
-      Alert.alert("Error", error.message);
+      // Local write already happened inside updateTicket; treat thrown errors
+      // the same as network failures — the queue will retry.
+      Alert.alert(
+        "Saved",
+        "Update saved. It will sync automatically when your connection is stable.",
+      );
     } finally {
       setIsUpdating(false);
     }

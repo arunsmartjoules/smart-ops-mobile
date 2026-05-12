@@ -339,6 +339,12 @@ export default function PreventiveMaintenance() {
   const [showFiltersModal, setShowFiltersModal] = useState(false);
   const [serverStats, setServerStats] = useState<any>(null);
 
+  // Safety net: never let the skeleton outlive a slow/stalled fetch.
+  useEffect(() => {
+    const t = setTimeout(() => setLoading(false), 6000);
+    return () => clearTimeout(t);
+  }, []);
+
   // Pagination State
   const [offset, setOffset] = useState(0);
   const [loadingMore, setLoadingMore] = useState(false);

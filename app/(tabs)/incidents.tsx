@@ -176,6 +176,12 @@ export default function IncidentsTab() {
   const [loading, setLoading] = useState(true);
   const [isSwitchingFilters, setIsSwitchingFilters] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+
+  // Safety net: never let the skeleton outlive a slow/stalled fetch.
+  useEffect(() => {
+    const t = setTimeout(() => setLoading(false), 6000);
+    return () => clearTimeout(t);
+  }, []);
   const initialStatus =
     (Array.isArray(params.status) ? params.status[0] : params.status) === "Inprogress"
       ? "Inprogress"

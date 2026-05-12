@@ -12,9 +12,10 @@ import {
 } from "lucide-react-native";
 import { useTheme } from "@/contexts/ThemeContext";
 import { AnimatedTabBarButton } from "@/components/AnimatedTabBarButton";
+import { SiteAccessGate } from "@/components/SiteAccessGate";
 import UpdateService from "@/services/UpdateService";
 
-export default function TabLayout() {
+function TabsContent() {
   const { isDark } = useTheme();
   const [hasUpdate, setHasUpdate] = useState(false);
 
@@ -209,5 +210,13 @@ export default function TabLayout() {
         }}
       />
     </Tabs>
+  );
+}
+
+export default function TabLayout() {
+  return (
+    <SiteAccessGate>
+      <TabsContent />
+    </SiteAccessGate>
   );
 }

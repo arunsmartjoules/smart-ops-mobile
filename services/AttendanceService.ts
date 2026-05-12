@@ -7,6 +7,7 @@ import { cacheManager } from "./CacheManager";
 import { siteResolver } from "./SiteResolver";
 import { db, attendanceLogs } from "../database";
 import { and, eq, desc } from "drizzle-orm";
+import { v4 as uuidv4 } from "uuid";
 
 const BACKEND_URL = API_BASE_URL;
 
@@ -247,6 +248,37 @@ export const AttendanceService = {
     if (result.success) {
       return result.data;
     }
+
+    // Network failure → allow the punch to proceed offline. The check-in will
+    // be queued with GPS coords; the server validates the geofence at sync
+    // time. Without this fallback the user would be blocked on flaky networks.
+    if (result.isNetworkError) {
+      const cachedSites = siteResolver.getSites();
+      logger.warn("validateLocation offline — falling through to offline punch", {
+        module: "ATTENDANCE_SERVICE",
+        userId,
+        cachedSiteCount: cachedSites.length,
+      });
+      return {
+        isValid: true,
+        isWFH: true,
+        allowedSites: cachedSites.map((s: any) => ({
+          site_code: s.site_code,
+          name: s.site_name || s.name || s.site_code,
+          site_name: s.site_name || s.name || s.site_code,
+          latitude: s.latitude,
+          longitude: s.longitude,
+          radius: s.radius,
+        })) as Site[],
+        resolvedSiteCode: null,
+        message: "Offline — will validate on sync.",
+        userLocation:
+          latitude != null && longitude != null
+            ? { latitude, longitude }
+            : null,
+      };
+    }
+
     logger.error("Location validation logic failure", {
       module: "ATTENDANCE_SERVICE",
       userId,
@@ -395,18 +427,23 @@ export const AttendanceService = {
     success: boolean;
     data?: AttendanceLog;
     error?: string;
+    queued?: boolean;
     nearestSite?: Site;
     userLocation?: { latitude: number; longitude: number };
   }> {
+    const payload = {
+      user_id: userId,
+      site_code: siteCode,
+      latitude,
+      longitude,
+      address,
+      client_request_id: uuidv4(),
+      punched_at: new Date().toISOString(),
+    };
+
     const result = await apiFetch("/api/attendance/check-in", {
       method: "POST",
-      body: JSON.stringify({
-        user_id: userId,
-        site_code: siteCode,
-        latitude,
-        longitude,
-        address,
-      }),
+      body: JSON.stringify(payload),
     });
 
     if (result.success && result.data) {
@@ -420,17 +457,54 @@ export const AttendanceService = {
           offline: false,
         },
       );
-
-      // Write new attendance log to local cache so that getTodayAttendance()
-      // returns fresh data immediately on the next read.
       await cacheManager.write("attendance", [result.data]).catch(() => {});
+      return result;
+    }
+
+    // Network failure → queue and write an optimistic local record so the user
+    // is not blocked. Server validation errors (e.g. out of geofence) are
+    // surfaced as-is and not queued.
+    if (result.isNetworkError) {
+      const optimistic: AttendanceLog = {
+        id: `opt-${payload.client_request_id}`,
+        user_id: userId,
+        site_code: siteCode ?? "",
+        date: getISTDateString(),
+        check_in_time: payload.punched_at,
+        check_in_latitude: latitude,
+        check_in_longitude: longitude,
+        check_in_address: address,
+        status: "Present",
+      };
+      await cacheManager
+        .write("attendance", [optimistic as any])
+        .catch(() => {});
+      await cacheManager
+        .enqueue({
+          entity_type: "attendance_check_in",
+          operation: "create",
+          payload,
+        })
+        .catch(() => {});
+      logger.activity(
+        "PUNCH_IN",
+        "ATTENDANCE",
+        `User punched in OFFLINE at ${siteCode ?? "(no site)"}`,
+        {
+          site_code: siteCode,
+          attendance_id: optimistic.id,
+          offline: true,
+        },
+      );
+      return { success: true, data: optimistic, queued: true };
     }
 
     return result;
   },
 
   /**
-   * Check out from attendance. Requires network (no offline queue).
+   * Check out. If the network is unreachable the request is queued and the
+   * local attendance record is updated optimistically; SyncEngine will retry.
    */
   async checkOut(
     attendanceId: string,
@@ -442,17 +516,22 @@ export const AttendanceService = {
     success: boolean;
     data?: AttendanceLog;
     error?: string;
+    queued?: boolean;
     isEarlyCheckout?: boolean;
     hoursWorked?: string;
   }> {
+    const payload = {
+      attendance_id: attendanceId,
+      latitude,
+      longitude,
+      address,
+      remarks,
+      punched_at: new Date().toISOString(),
+    };
+
     const result = await apiFetch(`/api/attendance/${attendanceId}/check-out`, {
       method: "POST",
-      body: JSON.stringify({
-        latitude,
-        longitude,
-        address,
-        remarks,
-      }),
+      body: JSON.stringify({ latitude, longitude, address, remarks }),
     });
 
     if (result.success) {
@@ -460,12 +539,65 @@ export const AttendanceService = {
         attendance_id: attendanceId,
         offline: false,
       });
-
-      // Write updated attendance log (with check_out_time) back to local cache
-      // so that getTodayAttendance() returns fresh data immediately.
       if (result.data) {
         await cacheManager.write("attendance", [result.data]).catch(() => {});
       }
+      return result;
+    }
+
+    if (result.isNetworkError) {
+      // Update the local record with check_out_time so the UI reflects punch-out
+      // immediately. Pull the existing row and patch it.
+      try {
+        const rows = await db
+          .select()
+          .from(attendanceLogs)
+          .where(eq(attendanceLogs.id, attendanceId))
+          .limit(1);
+        if (rows.length > 0) {
+          await db
+            .update(attendanceLogs)
+            .set({
+              check_out_time: Date.parse(payload.punched_at),
+              check_out_latitude: latitude,
+              check_out_longitude: longitude,
+              check_out_address: address,
+              remarks: remarks ?? rows[0].remarks,
+            })
+            .where(eq(attendanceLogs.id, attendanceId));
+        }
+      } catch (e) {
+        logger.warn("Optimistic check-out local update failed", {
+          module: "ATTENDANCE_SERVICE",
+          error: e,
+        });
+      }
+
+      await cacheManager
+        .enqueue({
+          entity_type: "attendance_check_out",
+          operation: "update",
+          payload,
+        })
+        .catch(() => {});
+
+      logger.activity("PUNCH_OUT", "ATTENDANCE", "User punched out OFFLINE", {
+        attendance_id: attendanceId,
+        offline: true,
+      });
+
+      return {
+        success: true,
+        queued: true,
+        data: {
+          id: attendanceId,
+          user_id: "",
+          site_code: "",
+          date: getISTDateString(),
+          check_out_time: payload.punched_at,
+          status: "Present",
+        } as AttendanceLog,
+      };
     }
 
     return result;

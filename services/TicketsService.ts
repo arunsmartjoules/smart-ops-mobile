@@ -168,6 +168,11 @@ export const TicketsService = {
     const specificTicket = Boolean(ticketNoTrim) || Boolean(complaintIdTrim);
 
     const netState = await NetInfo.fetch();
+    // Treat both "no signal" and "captive portal / no internet" as offline so
+    // we don't sit on a skeleton while a doomed fetch crawls toward timeout.
+    const isOffline =
+      netState.isConnected === false ||
+      netState.isInternetReachable === false;
 
     // 1. Return local data ONLY if not refreshing and on page 1
     if (page === 1 && !refresh) {
@@ -269,7 +274,18 @@ export const TicketsService = {
       }
     }
 
-    // 2. Fallback to API if no local data or requested specific page
+    // 2. Fallback to API if no local data or requested specific page.
+    //    Skip the network round-trip when we already know we're offline —
+    //    otherwise callers wait the full fetchWithTimeout window for nothing.
+    if (isOffline) {
+      return {
+        success: true,
+        data: [],
+        isFromCache: true,
+        isNetworkError: true,
+      };
+    }
+
     const params = new URLSearchParams();
     if (status && !specificTicket) {
       params.append("status", status);

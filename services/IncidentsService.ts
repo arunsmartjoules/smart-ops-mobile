@@ -50,8 +50,12 @@ export const IncidentsService = {
   async getIncidents(siteCode: string, options: any = {}) {
     const { status, rca_status, page = 1, limit = 50, search, fromDate, toDate } = options;
     const net = await NetInfo.fetch();
+    // Treat both "no signal" and "captive portal / no internet" as offline so
+    // slow networks fall back to cache instead of sitting on the skeleton.
+    const isOffline =
+      net.isConnected === false || net.isInternetReachable === false;
 
-    if (!net.isConnected) {
+    if (isOffline) {
       const whereParts: any[] = [eq(incidentsTable.site_code, siteCode)];
       if (status && status !== "All") whereParts.push(eq(incidentsTable.status, status));
       if (fromDate) {

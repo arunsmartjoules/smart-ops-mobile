@@ -638,16 +638,6 @@ export default function AttendancePage() {
 
     setValidatingLocation(true);
     try {
-      const netState = await NetInfo.fetch();
-      if (netState.isConnected !== true) {
-        Alert.alert(
-          "No internet connection",
-          "Check-out requires an active internet connection. Please connect and try again.",
-        );
-        setValidatingLocation(false);
-        return;
-      }
-
       const currentLoc = await ensureLocationForPunch();
       if (!currentLoc) {
         setValidatingLocation(false);
@@ -668,7 +658,14 @@ export default function AttendancePage() {
         currentLoc.coords.longitude,
       );
 
-      if (res.success) {
+      if (res.success && res.queued) {
+        // Saved locally + queued — silently confirm without alarming the user.
+        Alert.alert(
+          "Saved",
+          "Checked out. It will sync automatically when your connection is stable.",
+        );
+        fetchData();
+      } else if (res.success) {
         Alert.alert("Success", "Checked out successfully!");
         fetchData();
       } else if (res.isEarlyCheckout) {
@@ -702,15 +699,6 @@ export default function AttendancePage() {
     }
 
     try {
-      const netState = await NetInfo.fetch();
-      if (netState.isConnected !== true) {
-        Alert.alert(
-          "No internet connection",
-          "Check-out requires an active internet connection.",
-        );
-        return;
-      }
-
       const loc = await ensureLocationForPunch();
       if (!loc) return;
 
@@ -722,7 +710,14 @@ export default function AttendancePage() {
         checkoutReason,
       );
 
-      if (res.success) {
+      if (res.success && res.queued) {
+        setIsCheckoutModalVisible(false);
+        Alert.alert(
+          "Saved",
+          "Checked out. It will sync automatically when your connection is stable.",
+        );
+        fetchData();
+      } else if (res.success) {
         setIsCheckoutModalVisible(false);
         Alert.alert("Success", "Checked out successfully!");
         fetchData();
@@ -743,15 +738,6 @@ export default function AttendancePage() {
         Alert.alert(
           "Error",
           "User session not available. Please sign in again.",
-        );
-        return;
-      }
-
-      const netState = await NetInfo.fetch();
-      if (netState.isConnected !== true) {
-        Alert.alert(
-          "No internet connection",
-          "Check-in requires an active internet connection. Please connect and try again.",
         );
         return;
       }
@@ -782,7 +768,16 @@ export default function AttendancePage() {
           c.latitude,
           c.longitude,
         );
-        if (res.success) {
+        if (res.success && res.queued) {
+          // Saved locally + queued — silently confirm without alarming the user.
+          Alert.alert(
+            "Saved",
+            "Checked in. It will sync automatically when your connection is stable.",
+          );
+          setIsSiteModalVisible(false);
+          pendingPunchCoordsRef.current = null;
+          fetchData();
+        } else if (res.success) {
           Alert.alert("Success", "Checked in successfully!");
           setIsSiteModalVisible(false);
           pendingPunchCoordsRef.current = null;
@@ -829,14 +824,6 @@ export default function AttendancePage() {
   const handleCheckInPress = useCallback(async () => {
     if (!userId) {
       Alert.alert("Error", "User session not available. Please sign in again.");
-      return;
-    }
-
-    if (!isConnected) {
-      Alert.alert(
-        "No internet connection",
-        "Check-in requires an active internet connection. Please connect and try again.",
-      );
       return;
     }
 
@@ -903,7 +890,7 @@ export default function AttendancePage() {
     } finally {
       setValidatingLocation(false);
     }
-  }, [userId, isConnected, ensureLocationForPunch, performCheckIn]);
+  }, [userId, ensureLocationForPunch, performCheckIn]);
 
   // Helper to calculate duration
   const getDuration = useCallback(
@@ -947,7 +934,7 @@ export default function AttendancePage() {
           <View className="bg-amber-500 py-1.5 px-4 flex-row items-center justify-center">
             <WifiOff size={14} color="white" />
             <Text className="text-white text-xs font-bold ml-2">
-              Offline — Check-in and check-out require internet
+              Offline — Punches will sync when connection returns
             </Text>
           </View>
         )}

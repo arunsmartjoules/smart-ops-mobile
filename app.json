@@ -2,7 +2,7 @@
   "expo": {
     "name": "Jouleops",
     "slug": "smart-ops",
-    "version": "1.0.6",
+    "version": "1.0.7",
     "orientation": "portrait",
     "icon": "./assets/images/jouleops-icon.png",
     "scheme": "jouleops",
@@ -72,7 +72,7 @@
         }
       ],
       "expo-task-manager",
-      "expo-background-fetch",
+      "expo-background-task",
       "expo-sqlite",
       [
         "expo-camera",

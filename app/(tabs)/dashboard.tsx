@@ -947,91 +947,65 @@ export default function Dashboard() {
         resolved_at:
           updateStatus === "Resolved" ? nowIso : selectedTicket.resolved_at,
       };
-      const netState = await NetInfo.fetch();
-      if (netState.isConnected) {
-        const res = await TicketsService.updateTicket(
-          selectedTicket.id || selectedTicket.ticket_no,
-          payload,
+      const res = await TicketsService.updateTicket(
+        selectedTicket.id || selectedTicket.ticket_no,
+        payload,
+      );
+
+      const apiConfirmed = res.success === true;
+      const queuedOffline =
+        !apiConfirmed && (res.isNetworkError === true || res.queued === true);
+
+      if (apiConfirmed) {
+        WhatsAppService.sendStatusUpdate(
+          optimisticTicket,
+          updateStatus,
+          updateRemarks,
+        ).catch((e) =>
+          logger.warn("Failed WhatsApp notification", { error: e }),
         );
-        if (res.success) {
-          WhatsAppService.sendStatusUpdate(
-            optimisticTicket,
-            updateStatus,
-            updateRemarks,
-          ).catch((e) =>
-            logger.warn("Failed WhatsApp notification", { error: e }),
-          );
-
-          if (attachmentUri) {
-            const uploadRes = await TicketsService.uploadImage(
-              attachmentUri,
-              selectedTicket.id || selectedTicket.ticket_no,
-            );
-
-            if (uploadRes.success && uploadRes.url) {
-              const lineItemRes = await TicketsService.addLineItem(
-                selectedTicket.id || selectedTicket.ticket_no,
-                { image_url: uploadRes.url },
-              );
-
-              if (!lineItemRes.success && !lineItemRes.queued) {
-                Alert.alert(
-                  "Partial Success",
-                  "Ticket updated, but the image attachment could not be added.",
-                );
-              }
-            } else {
-              Alert.alert(
-                "Partial Success",
-                "Ticket updated, but the image attachment could not be uploaded.",
-              );
-            }
-          }
-
-          Alert.alert("Success", "Ticket updated successfully");
-          setSelectedTicket(optimisticTicket);
-          setUpdateRemarks("");
-          setBeforeTemp("");
-          setAfterTemp("");
-          setAttachmentUri("");
-          setIsDetailVisible(false);
-          fetchData();
-        } else {
-          Alert.alert("Error", res.error || "Failed to update ticket");
-        }
-      } else {
-        await TicketsService.updateTicket(
-          selectedTicket.id || selectedTicket.ticket_no,
-          payload,
-        );
-
-        if (attachmentUri) {
-          const uploadRes = await TicketsService.uploadImage(
-            attachmentUri,
-            selectedTicket.id || selectedTicket.ticket_no,
-          );
-
-          if (uploadRes.success && uploadRes.url) {
-            await TicketsService.addLineItem(
-              selectedTicket.id || selectedTicket.ticket_no,
-              {
-                image_url: uploadRes.url,
-              },
-            );
-          }
-        }
-
-        Alert.alert("Saved Offline", "Update saved and will sync when online.");
-        setSelectedTicket(optimisticTicket);
-        setUpdateRemarks("");
-        setBeforeTemp("");
-        setAfterTemp("");
-        setAttachmentUri("");
-        setIsDetailVisible(false);
-        fetchData();
       }
+
+      if (attachmentUri && (apiConfirmed || queuedOffline)) {
+        const uploadRes = await TicketsService.uploadImage(
+          attachmentUri,
+          selectedTicket.id || selectedTicket.ticket_no,
+        );
+        if (uploadRes.success && uploadRes.url) {
+          await TicketsService.addLineItem(
+            selectedTicket.id || selectedTicket.ticket_no,
+            { image_url: uploadRes.url },
+          ).catch(() => {});
+        }
+      }
+
+      if (apiConfirmed) {
+        Alert.alert("Success", "Ticket updated successfully");
+      } else if (queuedOffline) {
+        Alert.alert(
+          "Saved",
+          "Update saved. It will sync automatically when your connection is stable.",
+        );
+      } else {
+        Alert.alert("Error", res.error || "Failed to update ticket");
+        return;
+      }
+
+      setSelectedTicket(optimisticTicket);
+      setUpdateRemarks("");
+      setBeforeTemp("");
+      setAfterTemp("");
+      setAttachmentUri("");
+      setIsDetailVisible(false);
+      // Only refetch when the server confirmed; a queued-offline update would
+      // otherwise be overwritten by the stale server row on upsert.
+      if (apiConfirmed) fetchData();
     } catch (error: any) {
-      Alert.alert("Error", error.message);
+      // Local DB write already happened — surface as a queued save, not an error.
+      Alert.alert(
+        "Saved",
+        "Update saved. It will sync automatically when your connection is stable.",
+      );
     } finally {
       setIsUpdating(false);
     }
@@ -1152,13 +1126,6 @@ export default function Dashboard() {
   const handleQuickCheckIn = async () => {
     const uid = user?.user_id || user?.id;
     if (!uid) return;
-    if (!isConnected) {
-      Alert.alert(
-        "No internet connection",
-        "Check-in requires an active internet connection.",
-      );
-      return;
-    }
     setValidatingLocation(true);
     try {
       const accuracy =
@@ -1205,7 +1172,13 @@ export default function Dashboard() {
         loc.coords.latitude,
         loc.coords.longitude,
       );
-      if (res.success) {
+      if (res.success && res.queued) {
+        Alert.alert(
+          "Saved",
+          "Checked in. It will sync automatically when your connection is stable.",
+        );
+        fetchData();
+      } else if (res.success) {
         Alert.alert("Success", "Checked in successfully!");
         fetchData();
       } else {
@@ -1228,13 +1201,6 @@ export default function Dashboard() {
 
   const handleQuickCheckOut = async () => {
     if (!todayAttendance?.id) return;
-    if (!isConnected) {
-      Alert.alert(
-        "No internet connection",
-        "Check-out requires an active internet connection.",
-      );
-      return;
-    }
     setValidatingLocation(true);
 
     const performCheckOut = async (remarks?: string) => {
@@ -1254,7 +1220,13 @@ export default function Dashboard() {
           remarks,
         );
 
-        if (res.success) {
+        if (res.success && res.queued) {
+          Alert.alert(
+            "Saved",
+            "Checked out. It will sync automatically when your connection is stable.",
+          );
+          fetchData();
+        } else if (res.success) {
           Alert.alert("Success", "Checked out successfully!");
           fetchData();
         } else if (res.error?.includes("Early checkout")) {

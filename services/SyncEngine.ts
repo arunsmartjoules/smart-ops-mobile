@@ -14,7 +14,7 @@ import NetInfo, { NetInfoState } from "@react-native-community/netinfo";
 import { startOfDay, endOfDay, addDays } from "date-fns";
 import { AppState, AppStateStatus } from "react-native";
 import * as TaskManager from "expo-task-manager";
-import * as BackgroundFetch from "expo-background-fetch";
+import * as BackgroundTask from "expo-background-task";
 import { apiFetch as centralApiFetch } from "../utils/apiHelper";
 import { API_BASE_URL } from "../constants/api";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -42,7 +42,7 @@ TaskManager.defineTask(BACKGROUND_SYNC_TASK, async () => {
       logger.debug("BackgroundSync: skipping task — no active session or token", {
         module: "SYNC_ENGINE",
       });
-      return BackgroundFetch.BackgroundFetchResult.NoData;
+      return BackgroundTask.BackgroundTaskResult.Success;
     }
 
     const userId = user.user_id;
@@ -65,13 +65,13 @@ TaskManager.defineTask(BACKGROUND_SYNC_TASK, async () => {
       module: "SYNC_ENGINE",
       userId,
     });
-    return BackgroundFetch.BackgroundFetchResult.NewData;
+    return BackgroundTask.BackgroundTaskResult.Success;
   } catch (error) {
     logger.error("BackgroundSync: task failed", {
       module: "SYNC_ENGINE",
       error,
     });
-    return BackgroundFetch.BackgroundFetchResult.Failed;
+    return BackgroundTask.BackgroundTaskResult.Failed;
   }
 });
 
@@ -171,12 +171,19 @@ class SyncEngineImpl implements SyncEngine {
     {
       domain: "tickets",
       ttlMs: TTL.tickets,
-      sync: async (userId: string) => {
-        // Fetch tickets for all user sites
+      sync: async (_userId: string) => {
+        // Fetch tickets only for the user's authorized sites. If the user has
+        // no assigned sites, skip the sync entirely — never request "all".
         const sites = await cacheManager.read<{ site_code: string }>("sites");
-        const siteCodes = sites.length > 0
-          ? [...new Set(sites.map((s) => s.site_code))]
-          : ["all"];
+        const siteCodes = [...new Set(sites.map((s) => s.site_code))].filter(
+          (c) => typeof c === "string" && c.length > 0,
+        );
+        if (siteCodes.length === 0) {
+          logger.debug("SyncEngine.tickets: skipped — user has no sites", {
+            module: "SYNC_ENGINE",
+          });
+          return;
+        }
 
         for (const siteCode of siteCodes) {
           const response = await apiFetch(
@@ -210,9 +217,15 @@ class SyncEngineImpl implements SyncEngine {
       ttlMs: TTL.incidents,
       sync: async (_userId: string) => {
         const sites = await cacheManager.read<{ site_code: string }>("sites");
-        const siteCodes = sites.length > 0
-          ? [...new Set(sites.map((s) => s.site_code))]
-          : ["all"];
+        const siteCodes = [...new Set(sites.map((s) => s.site_code))].filter(
+          (c) => typeof c === "string" && c.length > 0,
+        );
+        if (siteCodes.length === 0) {
+          logger.debug("SyncEngine.incidents: skipped — user has no sites", {
+            module: "SYNC_ENGINE",
+          });
+          return;
+        }
 
         for (const siteCode of siteCodes) {
           const response = await apiFetch(`/api/incidents?site_code=${encodeURIComponent(siteCode)}&limit=100`);
@@ -265,9 +278,15 @@ class SyncEngineImpl implements SyncEngine {
       ttlMs: TTL.site_logs,
       sync: async (_userId: string) => {
         const sites = await cacheManager.read<{ site_code: string }>("sites");
-        const siteCodes = sites.length > 0
-          ? [...new Set(sites.map((s) => s.site_code))]
-          : [];
+        const siteCodes = [...new Set(sites.map((s) => s.site_code))].filter(
+          (c) => typeof c === "string" && c.length > 0,
+        );
+        if (siteCodes.length === 0) {
+          logger.debug("SyncEngine.site_logs: skipped — user has no sites", {
+            module: "SYNC_ENGINE",
+          });
+          return;
+        }
 
         // Pull each log type separately to avoid the 500-record limit cutting off any type
         const fromDateObj = startOfDay(addDays(new Date(), -7));
@@ -293,9 +312,15 @@ class SyncEngineImpl implements SyncEngine {
       ttlMs: TTL.pm_instances,
       sync: async (_userId: string) => {
         const sites = await cacheManager.read<{ site_code: string }>("sites");
-        const siteCodes = sites.length > 0
-          ? [...new Set(sites.map((s) => s.site_code))]
-          : [];
+        const siteCodes = [...new Set(sites.map((s) => s.site_code))].filter(
+          (c) => typeof c === "string" && c.length > 0,
+        );
+        if (siteCodes.length === 0) {
+          logger.debug("SyncEngine.pm_instances: skipped — user has no sites", {
+            module: "SYNC_ENGINE",
+          });
+          return;
+        }
 
         const fromDate = new Date();
         fromDate.setDate(fromDate.getDate() - 30);
@@ -352,9 +377,16 @@ class SyncEngineImpl implements SyncEngine {
       ttlMs: TTL.chiller_readings,
       sync: async (_userId: string) => {
         const sites = await cacheManager.read<{ site_code: string }>("sites");
-        const siteCodes = sites.length > 0
-          ? [...new Set(sites.map((s) => s.site_code))]
-          : [];
+        const siteCodes = [...new Set(sites.map((s) => s.site_code))].filter(
+          (c) => typeof c === "string" && c.length > 0,
+        );
+        if (siteCodes.length === 0) {
+          logger.debug(
+            "SyncEngine.chiller_readings: skipped — user has no sites",
+            { module: "SYNC_ENGINE" },
+          );
+          return;
+        }
 
         for (const siteCode of siteCodes) {
           await SiteLogService.pullChillerReadings(siteCode);
@@ -370,10 +402,11 @@ class SyncEngineImpl implements SyncEngine {
       sync: async (_userId: string) => {
         // areas — per site
         const sites = await cacheManager.read<{ site_code: string }>("sites");
-        const siteCodes = sites.length > 0
-          ? [...new Set(sites.map((s) => s.site_code))]
-          : [];
-
+        const siteCodes = [...new Set(sites.map((s) => s.site_code))].filter(
+          (c) => typeof c === "string" && c.length > 0,
+        );
+        // Site-scoped reference data is skipped when no sites are authorized,
+        // but global reference data (categories, log_master) below still runs.
         for (const siteCode of siteCodes) {
           const response = await apiFetch(`/api/assets/site/${siteCode}`);
           if (!response.ok) continue;
@@ -952,10 +985,12 @@ export async function registerBackgroundSyncAsync(): Promise<void> {
       logger.debug("BackgroundSync: task already registered", { module: "SYNC_ENGINE" });
     }
 
-    await BackgroundFetch.registerTaskAsync(BACKGROUND_SYNC_TASK, {
-      minimumInterval: 15 * 60, // 15 minutes (OS minimum)
-      stopOnTerminate: false, // Continue running after app is killed
-      startOnBoot: true, // Start task after device reboot
+    // expo-background-task uses WorkManager (Android) / BGTaskScheduler (iOS);
+    // both persist across reboot by default, so the old startOnBoot/
+    // stopOnTerminate flags from expo-background-fetch are no longer needed.
+    // minimumInterval is now in MINUTES (was seconds).
+    await BackgroundTask.registerTaskAsync(BACKGROUND_SYNC_TASK, {
+      minimumInterval: 15, // 15 minutes (OS minimum)
     });
 
     logger.info("BackgroundSync: task registered successfully", {
