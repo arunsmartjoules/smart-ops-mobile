@@ -48,6 +48,96 @@ const isAttendanceForToday = (log: AttendanceLog | null | undefined) => {
   return getISTDateString(d) === today;
 };
 
+/**
+ * Translate an optimistic attendance id (`opt-${client_request_id}`) into the
+ * real server-side UUID that was assigned when the queued check-in flushed.
+ *
+ * Strategy:
+ *   1. Flush the offline queue so SyncEngine reconciles the optimistic row.
+ *      After reconciliation the local SQLite row will have the server UUID.
+ *   2. Re-read today's active attendance from SQLite. If we find a row with a
+ *      non-`opt-` id and no check_out_time, that's the swapped record.
+ *   3. As a final fallback, hit `/api/attendance/user/{userId}/today` directly.
+ *
+ * Returns `null` if no real id can be found (e.g. still offline and never
+ * synced) so the caller can surface a friendly error.
+ */
+async function resolveOptimisticAttendanceId(
+  optimisticId: string,
+): Promise<string | null> {
+  // 1. Try a queue flush — best path when network is available.
+  try {
+    const { syncEngine } = require("./SyncEngine") as typeof import("./SyncEngine");
+    await syncEngine.flushQueue();
+  } catch (e) {
+    logger.warn("resolveOptimisticAttendanceId: flushQueue failed", {
+      module: "ATTENDANCE_SERVICE",
+      optimisticId,
+      error: e,
+    });
+  }
+
+  // 2. Look for the swapped row in SQLite (active session with a real uuid).
+  try {
+    const rows = await db
+      .select()
+      .from(attendanceLogs)
+      .orderBy(desc(attendanceLogs.check_in_time))
+      .limit(5);
+    const today = getISTDateString();
+    for (const row of rows) {
+      if (!row?.id || row.id.startsWith("opt-")) continue;
+      if (row.check_out_time) continue;
+      if (row.date && row.date !== today) {
+        // Allow cross-day sessions only if they're still within ~17h.
+        const ci = safeDate(row.check_in_time);
+        if (!ci || Date.now() - ci.getTime() > 17 * 60 * 60 * 1000) continue;
+      }
+      return row.id;
+    }
+  } catch (e) {
+    logger.warn("resolveOptimisticAttendanceId: SQLite read failed", {
+      module: "ATTENDANCE_SERVICE",
+      optimisticId,
+      error: e,
+    });
+  }
+
+  // 3. Last-ditch: ask the server directly. We need the user_id, which we
+  // can pull from the cached optimistic row.
+  try {
+    const optRow = await db
+      .select()
+      .from(attendanceLogs)
+      .where(eq(attendanceLogs.id, optimisticId))
+      .limit(1);
+    const userId = optRow[0]?.user_id;
+    if (userId) {
+      const result = await apiFetch(`/api/attendance/user/${userId}/today`);
+      const serverId = result?.success ? result?.data?.id : null;
+      if (typeof serverId === "string" && !serverId.startsWith("opt-")) {
+        // Drop the stale optimistic row and cache the server one so future
+        // reads pick up the real id.
+        try {
+          await db.delete(attendanceLogs).where(eq(attendanceLogs.id, optimisticId));
+        } catch {
+          /* non-fatal */
+        }
+        await cacheManager.write("attendance", [result.data]).catch(() => {});
+        return serverId;
+      }
+    }
+  } catch (e) {
+    logger.warn("resolveOptimisticAttendanceId: server lookup failed", {
+      module: "ATTENDANCE_SERVICE",
+      optimisticId,
+      error: e,
+    });
+  }
+
+  return null;
+}
+
 // Helper for API requests with auth and retry logic
 const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
   const fullUrl = `${BACKEND_URL}${endpoint}`;
@@ -520,8 +610,30 @@ export const AttendanceService = {
     isEarlyCheckout?: boolean;
     hoursWorked?: string;
   }> {
+    // Guard: if the caller passed an optimistic id (offline check-in that
+    // hasn't been reconciled yet), do not POST it to the server — Postgres
+    // will reject it as an invalid uuid. Try to resolve the real id first by
+    // flushing the queue and re-reading today's attendance.
+    let resolvedId = attendanceId;
+    if (typeof attendanceId === "string" && attendanceId.startsWith("opt-")) {
+      const swapped = await resolveOptimisticAttendanceId(attendanceId);
+      if (swapped) {
+        resolvedId = swapped;
+      } else {
+        logger.warn(
+          "checkOut: pending optimistic check-in could not be reconciled",
+          { module: "ATTENDANCE_SERVICE", attendanceId },
+        );
+        return {
+          success: false,
+          error:
+            "Your check-in is still syncing. Please reconnect to the internet and try again in a moment.",
+        };
+      }
+    }
+
     const payload = {
-      attendance_id: attendanceId,
+      attendance_id: resolvedId,
       latitude,
       longitude,
       address,
@@ -529,7 +641,7 @@ export const AttendanceService = {
       punched_at: new Date().toISOString(),
     };
 
-    const result = await apiFetch(`/api/attendance/${attendanceId}/check-out`, {
+    const result = await apiFetch(`/api/attendance/${resolvedId}/check-out`, {
       method: "POST",
       body: JSON.stringify({ latitude, longitude, address, remarks }),
     });
@@ -552,7 +664,7 @@ export const AttendanceService = {
         const rows = await db
           .select()
           .from(attendanceLogs)
-          .where(eq(attendanceLogs.id, attendanceId))
+          .where(eq(attendanceLogs.id, resolvedId))
           .limit(1);
         if (rows.length > 0) {
           await db
@@ -564,7 +676,7 @@ export const AttendanceService = {
               check_out_address: address,
               remarks: remarks ?? rows[0].remarks,
             })
-            .where(eq(attendanceLogs.id, attendanceId));
+            .where(eq(attendanceLogs.id, resolvedId));
         }
       } catch (e) {
         logger.warn("Optimistic check-out local update failed", {
@@ -582,7 +694,7 @@ export const AttendanceService = {
         .catch(() => {});
 
       logger.activity("PUNCH_OUT", "ATTENDANCE", "User punched out OFFLINE", {
-        attendance_id: attendanceId,
+        attendance_id: resolvedId,
         offline: true,
       });
 
@@ -590,7 +702,7 @@ export const AttendanceService = {
         success: true,
         queued: true,
         data: {
-          id: attendanceId,
+          id: resolvedId,
           user_id: "",
           site_code: "",
           date: getISTDateString(),

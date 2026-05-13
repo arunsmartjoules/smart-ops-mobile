@@ -79,7 +79,7 @@ const IncidentStats = ({
           "#3b82f615",
         )}
         {renderCard(
-          "Resolved",
+          "Closed",
           stats.Resolved || 0,
           "Resolved",
           <CheckCircle2 size={16} color="#22c55e" />,

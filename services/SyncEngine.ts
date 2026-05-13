@@ -23,6 +23,8 @@ import { SiteLogService } from "./SiteLogService";
 import PMService from "./PMService";
 import logger from "../utils/logger";
 import { getValidAuthToken } from "./AuthTokenManager";
+import { db, attendanceLogs } from "../database";
+import { eq } from "drizzle-orm";
 
 // ─── Background Fetch Task ────────────────────────────────────────────────────
 
@@ -88,6 +90,8 @@ export interface SyncEngine {
   initialize(userId: string): Promise<void>;
   cleanup(): Promise<void>;
   syncNow(): Promise<void>;
+  /** Flush the offline queue without running domain pulls. */
+  flushQueue(): Promise<void>;
   subscribe(listener: (status: SyncStatus) => void): () => void;
   get status(): SyncStatus;
 }
@@ -608,6 +612,23 @@ class SyncEngineImpl implements SyncEngine {
     return this.syncPromise;
   }
 
+  /**
+   * Flush the offline queue without running domain pulls. Faster than
+   * `syncNow()` when the caller only needs queued mutations to reach the
+   * server (e.g. reconciling an optimistic check-in id before check-out).
+   */
+  async flushQueue(): Promise<void> {
+    // Piggy-back on an in-flight syncNow() if there is one — its first step is
+    // _flushQueue, so by the time it resolves the queue is drained.
+    if (this.syncPromise) {
+      await this.syncPromise;
+      return;
+    }
+    await this._flushQueue();
+    const pendingQueueCount = await cacheManager.getQueueCount();
+    this.setStatus({ pendingQueueCount });
+  }
+
   private async _runSync(): Promise<void> {
     if (!this.userId) {
       logger.warn("SyncEngine.syncNow: no userId, skipping", {
@@ -822,8 +843,11 @@ class SyncEngineImpl implements SyncEngine {
         method = "POST";
       }
     } else if (entity_type === "attendance_check_in") {
-      endpoint = "/api/attendance/check-in";
-      method = "POST";
+      // Handled specially below — needs to reconcile the optimistic local ID
+      // (`opt-${client_request_id}`) with the server-issued UUID so that a
+      // subsequent check-out doesn't post `opt-...` to a Postgres uuid column.
+      await this._processAttendanceCheckIn(payload);
+      return;
     } else if (entity_type === "incident_create") {
       endpoint = "/api/incidents";
       method = "POST";
@@ -924,6 +948,93 @@ class SyncEngineImpl implements SyncEngine {
       err.statusCode = response.status;
       throw err;
     }
+  }
+
+  /**
+   * Flush a queued offline check-in and reconcile the local optimistic row.
+   *
+   * The mobile app writes a placeholder attendance row with id
+   * `opt-${client_request_id}` while offline so the UI can reflect the punch
+   * immediately. When this queue item flushes, the backend issues a real UUID;
+   * we must replace the local row's id with that UUID, otherwise a later
+   * check-out posts `opt-...` to a Postgres uuid column and 500s.
+   */
+  private async _processAttendanceCheckIn(
+    payload: Record<string, any>,
+  ): Promise<void> {
+    const response = await apiFetch("/api/attendance/check-in", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+
+    let parsed: any = null;
+    try {
+      parsed = await response.json();
+    } catch {
+      // Body wasn't JSON; fall through and let the !ok branch throw.
+    }
+
+    // Backend rejects an in-progress double-check-in with 400 + the existing
+    // active row in `data` and `requiresCheckout: true`. That's still a real
+    // server-side row whose UUID we want to adopt — treat it as success for
+    // reconciliation, then dequeue.
+    const requiresCheckout =
+      parsed && parsed.requiresCheckout === true && parsed.data?.id;
+
+    if (!response.ok && !requiresCheckout) {
+      const err: any = new Error(
+        `attendance_check_in API error: ${response.status} ${response.statusText}`,
+      );
+      err.statusCode = response.status;
+      throw err;
+    }
+
+    const serverRecord = parsed?.data;
+    const serverId: string | undefined = serverRecord?.id;
+    const optimisticId =
+      typeof payload.client_request_id === "string"
+        ? `opt-${payload.client_request_id}`
+        : null;
+
+    if (!serverId) {
+      logger.warn(
+        "SyncEngine: attendance_check_in succeeded but response had no data.id; cannot reconcile optimistic row",
+        { module: "SYNC_ENGINE", optimisticId },
+      );
+      return;
+    }
+
+    // Drop the optimistic row first so the server row's UUID can be inserted
+    // cleanly (cacheManager.write upserts by id and would otherwise leave the
+    // opt- row behind). Only delete if the ids actually differ.
+    if (optimisticId && optimisticId !== serverId) {
+      try {
+        await db
+          .delete(attendanceLogs)
+          .where(eq(attendanceLogs.id, optimisticId));
+      } catch (e) {
+        logger.warn("SyncEngine: failed to delete optimistic attendance row", {
+          module: "SYNC_ENGINE",
+          optimisticId,
+          error: e,
+        });
+      }
+    }
+
+    await cacheManager.write("attendance", [serverRecord]).catch((e) => {
+      logger.warn("SyncEngine: failed to write reconciled attendance row", {
+        module: "SYNC_ENGINE",
+        serverId,
+        error: e,
+      });
+    });
+
+    logger.info("SyncEngine: reconciled offline attendance check-in", {
+      module: "SYNC_ENGINE",
+      optimisticId,
+      serverId,
+      requiresCheckout: !!requiresCheckout,
+    });
   }
 
   // ── Event handlers ────────────────────────────────────────────────────────

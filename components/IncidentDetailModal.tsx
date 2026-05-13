@@ -274,7 +274,7 @@ export default function IncidentDetailModal({
                   Asset: {incident.asset_location || "-"}
                 </Text>
                 <Text className="text-slate-600 dark:text-slate-300 text-xs mt-1">
-                  Status: {incident.status}
+                  Status: {incident.status === "Resolved" ? "Closed" : incident.status}
                 </Text>
               </View>
 
@@ -345,7 +345,7 @@ export default function IncidentDetailModal({
                           ) : null}
                         </View>
                         <Text className="text-slate-700 dark:text-slate-200 text-xs font-bold">
-                          Move to Resolved
+                          Move to Closed
                         </Text>
                       </TouchableOpacity>
                     ) : null}

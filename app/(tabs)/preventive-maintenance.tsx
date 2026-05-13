@@ -53,8 +53,8 @@ import {
   addDays,
   startOfDay,
   endOfDay,
-  startOfWeek,
-  endOfWeek,
+  startOfMonth,
+  endOfMonth,
   parseISO,
   isValid,
 } from "date-fns";
@@ -363,21 +363,21 @@ export default function PreventiveMaintenance() {
   const siteName =
     selectedSite?.site_name ?? selectedSite?.site_code ?? "Select Site";
 
-  // Date handling — default to "This Week" (Monday to Sunday)
+  // Date handling — default to the current month (1st → last day)
   const [currentDate, setCurrentDate] = useState(
-    format(startOfWeek(new Date(), { weekStartsOn: 1 }), "yyyy-MM-dd"),
+    format(startOfMonth(new Date()), "yyyy-MM-dd"),
   );
   const [toDate, setToDate] = useState(
-    format(endOfWeek(new Date(), { weekStartsOn: 1 }), "yyyy-MM-dd"),
+    format(endOfMonth(new Date()), "yyyy-MM-dd"),
   );
 
   const [tempSearch, setTempSearch] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [tempFromDate, setTempFromDate] = useState<string | null>(
-    format(startOfWeek(new Date(), { weekStartsOn: 1 }), "yyyy-MM-dd"),
+    format(startOfMonth(new Date()), "yyyy-MM-dd"),
   );
   const [tempToDate, setTempToDate] = useState<string | null>(
-    format(endOfWeek(new Date(), { weekStartsOn: 1 }), "yyyy-MM-dd"),
+    format(endOfMonth(new Date()), "yyyy-MM-dd"),
   );
 
   // QR filter state

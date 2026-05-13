@@ -102,6 +102,7 @@ interface AdvancedFilterModalProps {
   statusFilter?: string;
   setStatusFilter?: (status: string) => void;
   statusOptions?: string[];
+  statusOptionLabels?: Record<string, string>;
   priorityFilter?: string;
   setPriorityFilter?: (priority: string) => void;
   title?: string;
@@ -126,6 +127,7 @@ const AdvancedFilterModal = ({
   statusFilter,
   setStatusFilter,
   statusOptions,
+  statusOptionLabels,
   priorityFilter,
   setPriorityFilter,
   title = "Filter Tickets",
@@ -569,7 +571,7 @@ const AdvancedFilterModal = ({
                               statusFilter === s ? "#dc2626" : textMuted,
                           }}
                         >
-                          {s}
+                          {statusOptionLabels?.[s] || s}
                         </Text>
                       </TouchableOpacity>
                     ))}
