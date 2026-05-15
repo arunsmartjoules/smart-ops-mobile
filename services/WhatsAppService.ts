@@ -6,9 +6,18 @@ import { Ticket } from "./TicketsService";
 
 const BACKEND_URL = API_BASE_URL;
 
+// Backend now queues WHAPI sends and replies fast, but keep a generous
+// timeout as a safety margin so a slow network can't surface a false
+// "failed to send" — the message is durably queued server-side regardless.
+const WHATSAPP_REQUEST_TIMEOUT_MS = 15000;
+
 const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
   try {
-    let response = await centralApiFetch(`${BACKEND_URL}${endpoint}`, options);
+    let response = await centralApiFetch(
+      `${BACKEND_URL}${endpoint}`,
+      options,
+      WHATSAPP_REQUEST_TIMEOUT_MS,
+    );
 
     if (response.status === 401) {
       authEvents.emitUnauthorized();

@@ -216,6 +216,10 @@ export default function Tickets() {
   const [updateArea, setUpdateArea] = useState("");
   const [updateCategory, setUpdateCategory] = useState("");
   const [isUpdating, setIsUpdating] = useState(false);
+  // Synchronous double-submit guard. `isUpdating` is React state set well
+  // after validation; rapid taps re-enter handleUpdateStatus before the
+  // disabled button re-renders, which would spam updateTicket + WhatsApp.
+  const isSubmittingRef = useRef(false);
   const [beforeTemp, setBeforeTemp] = useState("");
   const [afterTemp, setAfterTemp] = useState("");
   const [attachmentUri, setAttachmentUri] = useState("");
@@ -1032,6 +1036,11 @@ export default function Tickets() {
 
   const handleUpdateStatus = async () => {
     if (!selectedTicket) return;
+    // Block concurrent/rapid re-entry synchronously. Validation below is
+    // fully synchronous, so a double-tap can only race at the first await
+    // (TicketsService.updateTicket); setting this before it is sufficient
+    // and avoids having to reset on every early validation return.
+    if (isSubmittingRef.current) return;
 
     const needsRemarks = ["Hold", "Cancelled", "Waiting", "Resolved"].includes(updateStatus);
     const needsAreaAndCategory =
@@ -1119,6 +1128,7 @@ export default function Tickets() {
       payload.assigned_to = user?.full_name || user?.name || "";
     }
 
+    isSubmittingRef.current = true;
     setIsUpdating(true);
     try {
       const nowIso = new Date().toISOString();
@@ -1215,6 +1225,7 @@ export default function Tickets() {
         "Update saved. It will sync automatically when your connection is stable.",
       );
     } finally {
+      isSubmittingRef.current = false;
       setIsUpdating(false);
     }
   };
