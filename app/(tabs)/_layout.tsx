@@ -10,6 +10,7 @@ import {
   AlertTriangle,
   User,
 } from "lucide-react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTheme } from "@/contexts/ThemeContext";
 import { AnimatedTabBarButton } from "@/components/AnimatedTabBarButton";
 import { SiteAccessGate } from "@/components/SiteAccessGate";
@@ -17,7 +18,15 @@ import UpdateService from "@/services/UpdateService";
 
 function TabsContent() {
   const { isDark } = useTheme();
+  const insets = useSafeAreaInsets();
   const [hasUpdate, setHasUpdate] = useState(false);
+
+  // System nav bar (gesture pill or 3-button bar) reports a bottom inset.
+  // Add it on top of the bar's content height so icons/labels are never
+  // hidden behind it. Keep a small floor so devices reporting 0 inset
+  // (most older Android 3-button setups) still get breathing room.
+  const bottomInset = Math.max(insets.bottom, Platform.OS === "ios" ? 28 : 12);
+  const TAB_CONTENT_HEIGHT = Platform.OS === "ios" ? 60 : 64;
 
   useEffect(() => {
     const unsubscribe = UpdateService.subscribe(() => {
@@ -61,9 +70,9 @@ function TabsContent() {
         tabBarStyle: {
           backgroundColor: isDark ? "#0f172a" : "#ffffff",
           borderTopWidth: 0,
-          height: Platform.OS === "ios" ? 88 : 80,
+          height: TAB_CONTENT_HEIGHT + bottomInset,
           paddingTop: 8,
-          paddingBottom: Platform.OS === "ios" ? 28 : 16,
+          paddingBottom: bottomInset,
           shadowColor: "#000",
           shadowOffset: { width: 0, height: -4 },
           shadowOpacity: 0.08,

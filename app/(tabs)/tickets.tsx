@@ -308,6 +308,65 @@ export default function Tickets() {
 
   // ── Data Fetching Logic ──────────────────────────────────────────────────
 
+  // Build the stat counts from the local SQLite mirror so the cards still
+  // populate with no/low network — the operator should not be able to tell
+  // they're offline. Mirrors the same site/date/priority/search filtering
+  // used for the offline ticket list.
+  const computeLocalStats = useCallback(async () => {
+    try {
+      const localTickets = await db
+        .select()
+        .from(ticketsTable)
+        .where(
+          selectedSiteCode !== "all"
+            ? eq(ticketsTable.site_code, selectedSiteCode)
+            : undefined,
+        );
+
+      const normalizedSearch = searchQuery.trim().toLowerCase();
+      const fromDateMs = getLocalDayStartMs(fromDate);
+      const toDateMs = getLocalDayEndMs(toDate);
+
+      const byStatus: Record<string, number> = {};
+      let total = 0;
+
+      for (const t of localTickets) {
+        if (priorityFilter && priorityFilter !== "All" && t.priority !== priorityFilter) {
+          continue;
+        }
+        const createdAtMs = parseCreatedAtMs(t.created_at);
+        if ((fromDateMs != null || toDateMs != null) && createdAtMs == null) continue;
+        if (fromDateMs != null && createdAtMs != null && createdAtMs < fromDateMs) continue;
+        if (toDateMs != null && createdAtMs != null && createdAtMs > toDateMs) continue;
+
+        if (normalizedSearch) {
+          const haystack = [
+            t.ticket_number,
+            t.title,
+            t.description,
+            t.category,
+            t.area,
+            t.status,
+            t.priority,
+            t.assigned_to,
+            t.created_by,
+          ]
+            .filter(Boolean)
+            .join(" ")
+            .toLowerCase();
+          if (!haystack.includes(normalizedSearch)) continue;
+        }
+
+        total += 1;
+        if (t.status) byStatus[t.status] = (byStatus[t.status] || 0) + 1;
+      }
+
+      return { total, byStatus };
+    } catch {
+      return null;
+    }
+  }, [selectedSiteCode, fromDate, toDate, searchQuery, priorityFilter]);
+
   const fetchStats = useCallback(async () => {
     if (!selectedSiteCode) return;
     try {
@@ -320,14 +379,23 @@ export default function Tickets() {
       });
       if (res.success) {
         setStats(res.data);
+        return;
       }
-    } catch (e) {}
+      // Server unreachable (offline) — fall back to the local mirror so the
+      // cards render real counts instead of a perpetual skeleton.
+      const local = await computeLocalStats();
+      if (local) setStats(local);
+    } catch (e) {
+      const local = await computeLocalStats();
+      if (local) setStats(local);
+    }
   }, [
     selectedSiteCode,
     fromDate,
     toDate,
     searchQuery,
     priorityFilter,
+    computeLocalStats,
   ]);
 
   const loadAreaOptions = useCallback(async (
@@ -1179,16 +1247,15 @@ export default function Tickets() {
         }
       }
 
-      if (apiConfirmed) {
+      if (apiConfirmed || queuedOffline) {
+        // Whether the API confirmed or the write was persisted locally and
+        // queued, the operator's change is safe and already reflected in the
+        // UI. Show the exact same confirmation so low/no-network feels
+        // identical to being online — no "offline"/"queued" wording.
         Alert.alert("Success", "Ticket updated successfully");
-      } else if (queuedOffline) {
-        // Local DB updated + queued for sync — don't alarm the user.
-        Alert.alert(
-          "Saved",
-          "Update saved. It will sync automatically when your connection is stable.",
-        );
       } else {
-        // True server/validation error — surface it.
+        // Genuine server/validation rejection (happens regardless of
+        // connectivity) — surface it so the operator can correct the input.
         Alert.alert("Error", res.error || "Failed to update ticket");
         return;
       }
@@ -1201,13 +1268,42 @@ export default function Tickets() {
           params: { status: "Inprogress" },
         });
       }
+      // Inprogress (and other non-terminal) updates leave the modal open for
+      // a follow-up transition; only Resolved closes it, and create-incident
+      // navigates away.
+      const modalStaysOpen =
+        updateStatus !== "Resolved" && !createIncidentFromTicket;
       if (updateStatus === "Resolved") setIsDetailVisible(false);
 
       setSelectedTicket(optimisticTicket);
-      setUpdateRemarks("");
-      setBeforeTemp("");
-      setAfterTemp("");
       setAttachmentUri("");
+
+      if (modalStaysOpen) {
+        // Re-seed the editable fields from the just-saved ticket — same as
+        // opening it fresh — so the operator's entered temperatures/remarks
+        // carry over into the next transition (e.g. Inprogress → Resolved)
+        // instead of blanking out. Also moves the status selection forward,
+        // since the old updateStatus is now filtered out of the chip list.
+        const nextStatus = getDefaultUpdateStatus(optimisticTicket);
+        setUpdateStatus(nextStatus);
+        setUpdateRemarks(getInitialUpdateRemarks(optimisticTicket, nextStatus));
+        setBeforeTemp(
+          optimisticTicket.before_temp != null &&
+            !Number.isNaN(Number(optimisticTicket.before_temp))
+            ? String(optimisticTicket.before_temp)
+            : "",
+        );
+        setAfterTemp(
+          optimisticTicket.after_temp != null &&
+            !Number.isNaN(Number(optimisticTicket.after_temp))
+            ? String(optimisticTicket.after_temp)
+            : "",
+        );
+      } else {
+        setUpdateRemarks("");
+        setBeforeTemp("");
+        setAfterTemp("");
+      }
       // Only re-sync from server when the API confirmed our write. When the
       // update was queued offline, the server still holds the stale row — a
       // refetch here would upsert the cache and stomp the optimistic status
@@ -1218,12 +1314,10 @@ export default function Tickets() {
         resetAndFetch();
       }
     } catch (error: any) {
-      // Local write already happened inside updateTicket; treat thrown errors
-      // the same as network failures — the queue will retry.
-      Alert.alert(
-        "Saved",
-        "Update saved. It will sync automatically when your connection is stable.",
-      );
+      // updateTicket already persisted the change locally and enqueued it;
+      // a throw here means the network attempt failed, which is invisible to
+      // the operator. Show the same success confirmation as the online path.
+      Alert.alert("Success", "Ticket updated successfully");
     } finally {
       isSubmittingRef.current = false;
       setIsUpdating(false);

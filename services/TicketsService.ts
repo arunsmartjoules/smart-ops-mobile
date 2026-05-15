@@ -398,7 +398,7 @@ export const TicketsService = {
 
       return result;
     } catch (err: any) {
-      return { success: false, error: "Offline: Update queued." };
+      return { success: false, error: "Couldn't save the update. Please try again." };
     }
   },
 
@@ -465,7 +465,7 @@ export const TicketsService = {
         body: JSON.stringify(data),
       });
     } catch (err) {
-      return { success: false, error: "Offline: Update queued." };
+      return { success: false, error: "Couldn't save the update. Please try again." };
     }
   },
 

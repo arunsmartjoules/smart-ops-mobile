@@ -77,20 +77,29 @@ const TicketItem = React.memo(
           {/* Header Row: Ticket ID + Site Code & Priority */}
           <View className={`flex-row justify-between items-start ${isCompact ? "mb-2" : "mb-3"}`}>
             {/* Ticket Identity */}
-            <View className={`flex-row items-center bg-slate-50 dark:bg-slate-800 rounded-lg border border-slate-100 dark:border-slate-700 ${isCompact ? "px-2 py-1" : "px-3 py-1.5"}`}>
-              <Text className={`${isCompact ? "text-[10px]" : "text-[11px]"} font-bold text-slate-700 dark:text-slate-300 uppercase tracking-widest`}>
+            <View className={`flex-row items-center flex-shrink mr-2 bg-slate-50 dark:bg-slate-800 rounded-lg border border-slate-100 dark:border-slate-700 ${isCompact ? "px-2 py-1" : "px-3 py-1.5"}`}>
+              <Text
+                className={`${isCompact ? "text-[10px]" : "text-[11px]"} font-bold text-slate-700 dark:text-slate-300 uppercase tracking-widest flex-shrink`}
+                numberOfLines={1}
+              >
                 {item.ticket_no}
               </Text>
               <View className={`${isCompact ? "mx-1.5 w-0.5 h-0.5" : "mx-2 w-1 h-1"} rounded-full bg-slate-300 dark:bg-slate-500`} />
-              <Text className={`${isCompact ? "text-[10px]" : "text-[11px]"} font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest`}>
+              <Text
+                className={`${isCompact ? "text-[10px]" : "text-[11px]"} font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest flex-shrink`}
+                numberOfLines={1}
+              >
                 {item.site_code}
               </Text>
             </View>
 
             {/* Priority Badge */}
             {item.priority && (
-              <View className={`${isCompact ? "px-2 py-1" : "px-2.5 py-1.5"} rounded-lg border ${priorityColors.bg} ${priorityColors.border}`}>
-                <Text className={`font-bold uppercase tracking-wider ${priorityColors.text} ${isCompact ? "text-[9px]" : "text-[10px]"}`}>
+              <View className={`flex-shrink-0 ${isCompact ? "px-1.5 py-1" : "px-2.5 py-1.5"} rounded-lg border ${priorityColors.bg} ${priorityColors.border}`}>
+                <Text
+                  className={`font-bold uppercase tracking-wider ${priorityColors.text} ${isCompact ? "text-[8px]" : "text-[10px]"}`}
+                  numberOfLines={1}
+                >
                   {item.priority}
                 </Text>
               </View>
@@ -135,7 +144,7 @@ const TicketItem = React.memo(
               <View className="flex-row items-center pr-3 border-r border-slate-100 dark:border-slate-800">
                 <Clock size={12} color="#94a3b8" />
                 <Text className="text-slate-500 dark:text-slate-400 text-xs font-semibold ml-1.5 mr-3">
-                  {format(new Date(item.created_at), "MMM d")}
+                  {format(new Date(item.created_at), "MMM d, h:mm a")}
                 </Text>
               </View>
 
@@ -154,7 +163,7 @@ const TicketItem = React.memo(
                 {/* Compact Date only, or minimal info */}
                 <Clock size={10} color="#cbd5e1" />
                 <Text className="text-slate-400 dark:text-slate-500 text-[10px] font-medium ml-1 flex-1">
-                  {format(new Date(item.created_at), "MMM d, yyyy")}
+                  {format(new Date(item.created_at), "MMM d, yyyy • h:mm a")}
                 </Text>
                 {/* Compact Location */}
                 <Text className="text-slate-400 dark:text-slate-500 text-[10px] font-medium ml-2" numberOfLines={1}>
