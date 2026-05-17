@@ -63,7 +63,7 @@ const TicketItem = React.memo(
         onLongPress={handleLongPress}
         delayLongPress={500}
         activeOpacity={0.7}
-        className={`bg-white dark:bg-slate-900 mb-4 border-slate-200 dark:border-slate-800 ${isCompact ? "rounded-2xl" : "rounded-3xl"}`}
+        className={`bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 ${isCompact ? "mb-3 rounded-2xl" : "mb-4 rounded-3xl"}`}
         style={{
           shadowColor: "#000",
           shadowOffset: { width: 0, height: isCompact ? 2 : 6 },
@@ -73,104 +73,88 @@ const TicketItem = React.memo(
           borderWidth: 1,
         }}
       >
-        <View className={isCompact ? "p-3.5" : "p-4 sm:p-5"}>
-          {/* Header Row: Ticket ID + Site Code & Priority */}
-          <View className={`flex-row justify-between items-start ${isCompact ? "mb-2" : "mb-3"}`}>
-            {/* Ticket Identity */}
-            <View className={`flex-row items-center flex-shrink mr-2 bg-slate-50 dark:bg-slate-800 rounded-lg border border-slate-100 dark:border-slate-700 ${isCompact ? "px-2 py-1" : "px-3 py-1.5"}`}>
+        <View className={isCompact ? "p-4" : "p-4 sm:p-5"}>
+          {/* Title (hero) + Status pill */}
+          <View className="flex-row items-start justify-between">
+            {/* Title wrapper — bounded so a long title can wrap freely
+                without ever pushing or resizing the status pill. */}
+            <View className="flex-1 mr-3">
               <Text
-                className={`${isCompact ? "text-[10px]" : "text-[11px]"} font-bold text-slate-700 dark:text-slate-300 uppercase tracking-widest flex-shrink`}
-                numberOfLines={1}
+                className={`text-slate-900 dark:text-slate-50 font-bold ${isCompact ? "text-[15px] leading-5" : "text-lg leading-7"}`}
+                numberOfLines={2}
               >
-                {item.ticket_no}
-              </Text>
-              <View className={`${isCompact ? "mx-1.5 w-0.5 h-0.5" : "mx-2 w-1 h-1"} rounded-full bg-slate-300 dark:bg-slate-500`} />
-              <Text
-                className={`${isCompact ? "text-[10px]" : "text-[11px]"} font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest flex-shrink`}
-                numberOfLines={1}
-              >
-                {item.site_code}
+                {item.title}
               </Text>
             </View>
 
-            {/* Priority Badge */}
-            {item.priority && (
-              <View className={`flex-shrink-0 ${isCompact ? "px-1.5 py-1" : "px-2.5 py-1.5"} rounded-lg border ${priorityColors.bg} ${priorityColors.border}`}>
+            <View
+              className={`flex-row items-center rounded-full flex-shrink-0 ${statusColors.bg} ${isCompact ? "px-2.5 py-1" : "px-3 py-1.5"}`}
+            >
+              <View
+                className="rounded-full mr-1.5 w-1.5 h-1.5"
+                style={{ backgroundColor: statusColors.dot }}
+              />
+              <Text
+                className={`font-bold uppercase tracking-wide ${statusColors.text} ${isCompact ? "text-[9px]" : "text-[10px]"}`}
+              >
+                {item.status}
+              </Text>
+            </View>
+          </View>
+
+          {/* Quiet meta line: #ID · SITE · PRIORITY */}
+          <View className="flex-row items-center mt-1.5">
+            <Text
+              className={`font-bold text-slate-500 dark:text-slate-400 flex-shrink-0 ${isCompact ? "text-[11px]" : "text-xs"}`}
+              numberOfLines={1}
+            >
+              #{item.ticket_no}
+            </Text>
+
+            <View className="w-1 h-1 rounded-full bg-slate-300 dark:bg-slate-600 mx-2" />
+
+            <Text
+              className={`font-medium text-slate-400 dark:text-slate-500 flex-shrink ${isCompact ? "text-[11px]" : "text-xs"}`}
+              numberOfLines={1}
+            >
+              {item.site_code}
+            </Text>
+
+            {item.priority ? (
+              <>
+                <View className="w-1 h-1 rounded-full bg-slate-300 dark:bg-slate-600 mx-2" />
                 <Text
-                  className={`font-bold uppercase tracking-wider ${priorityColors.text} ${isCompact ? "text-[8px]" : "text-[10px]"}`}
+                  className={`font-bold uppercase tracking-wide flex-shrink-0 ${priorityColors.text} ${isCompact ? "text-[10px]" : "text-[11px]"}`}
                   numberOfLines={1}
                 >
                   {item.priority}
                 </Text>
-              </View>
-            )}
+              </>
+            ) : null}
           </View>
 
-          {/* Title & Status - Horizontal if compact, Vertical if full */}
-          <View className={isCompact ? "mb-2.5" : "mb-4 mt-1"}>
+          {/* Footer: created date + time · location (single line) */}
+          <View
+            className={`flex-row items-center border-t border-slate-100 dark:border-slate-800/80 ${isCompact ? "mt-3 pt-2.5" : "mt-3 pt-3"}`}
+          >
+            <Clock size={12} color="#94a3b8" />
             <Text
-              className={`text-slate-900 dark:text-slate-50 font-bold ${isCompact ? "text-base leading-5 mb-1.5" : "text-lg leading-7 mb-2.5"}`}
-              numberOfLines={isCompact ? 1 : 2}
+              className={`text-slate-500 dark:text-slate-400 font-medium ml-1.5 flex-shrink-0 ${isCompact ? "text-[11px]" : "text-xs"}`}
+              numberOfLines={1}
             >
-              {item.title}
+              {format(new Date(item.created_at), "MMM d, yyyy • h:mm a")}
             </Text>
 
-            {/* Status Pill with Dot */}
-            <View className="flex-row items-center self-start">
-              <View className={`flex-row items-center rounded-full ${statusColors.bg} ${isCompact ? "px-2 py-1" : "px-3 py-1.5"}`}>
-                <View className="rounded-full mr-2 w-1.5 h-1.5" style={{ backgroundColor: statusColors.dot }} />
-                <Text className={`font-bold uppercase tracking-widest ${statusColors.text} ${isCompact ? "text-[9px]" : "text-[10px]"}`}>
-                  {item.status}
-                </Text>
-              </View>
-            </View>
+            <View className="w-1 h-1 rounded-full bg-slate-300 dark:bg-slate-600 mx-2 flex-shrink-0" />
+
+            <MapPin size={12} color="#94a3b8" />
+            <Text
+              className={`text-slate-500 dark:text-slate-400 font-medium ml-1.5 flex-1 ${isCompact ? "text-[11px]" : "text-xs"}`}
+              numberOfLines={1}
+            >
+              {item.area_asset || item.location || "General Area"}
+            </Text>
           </View>
-
-          {/* Footer: Details */}
-          {!isCompact ? (
-            <View className="flex-row items-center justify-between pt-4 border-t border-slate-100 dark:border-slate-800/80">
-              {/* Location */}
-              <View className="flex-row flex-1 items-center pr-2">
-                <MapPin size={12} color="#94a3b8" />
-                <Text
-                  className="text-slate-500 dark:text-slate-400 text-xs font-semibold ml-1.5 flex-1"
-                  numberOfLines={1}
-                >
-                  {item.area_asset || item.location || "General Area"}
-                </Text>
-              </View>
-
-              {/* Date */}
-              <View className="flex-row items-center pr-3 border-r border-slate-100 dark:border-slate-800">
-                <Clock size={12} color="#94a3b8" />
-                <Text className="text-slate-500 dark:text-slate-400 text-xs font-semibold ml-1.5 mr-3">
-                  {format(new Date(item.created_at), "MMM d, h:mm a")}
-                </Text>
-              </View>
-
-              {/* Assignee */}
-              <View className="flex-row items-center bg-slate-50 dark:bg-slate-800 px-2.5 py-1 rounded-md ml-3">
-                <Text
-                  className="text-slate-600 dark:text-slate-300 text-[10px] font-bold"
-                  numberOfLines={1}
-                >
-                  {item.assigned_to ? item.assigned_to.split(" ")[0] : "Unassigned"}
-                </Text>
-              </View>
-            </View>
-          ) : (
-             <View className="flex-row items-center pt-2.5 border-t border-slate-100 dark:border-slate-800/80">
-                {/* Compact Date only, or minimal info */}
-                <Clock size={10} color="#cbd5e1" />
-                <Text className="text-slate-400 dark:text-slate-500 text-[10px] font-medium ml-1 flex-1">
-                  {format(new Date(item.created_at), "MMM d, yyyy • h:mm a")}
-                </Text>
-                {/* Compact Location */}
-                <Text className="text-slate-400 dark:text-slate-500 text-[10px] font-medium ml-2" numberOfLines={1}>
-                   {item.area_asset || item.location || "General Area"}
-                </Text>
-             </View>
-          )}
         </View>
       </TouchableOpacity>
     );

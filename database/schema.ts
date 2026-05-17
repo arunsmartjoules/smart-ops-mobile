@@ -76,8 +76,10 @@ export const ticketUpdates = sqliteTable("ticket_updates", {
 export const areas = sqliteTable("areas", {
   id: text("id").primaryKey(),
   site_code: text("site_code").notNull(),
+  asset_id: text("asset_id"),
   asset_name: text("asset_name").notNull(),
   asset_type: text("asset_type"),
+  equipment_type: text("equipment_type"),
   location: text("location"),
   description: text("description"),
   created_at: real("created_at"),

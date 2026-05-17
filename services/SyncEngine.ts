@@ -418,8 +418,10 @@ class SyncEngineImpl implements SyncEngine {
           const records = (result.data || []).map((a: any) => ({
             id: a.id,
             site_code: a.site_code || siteCode,
+            asset_id: a.asset_id ?? null,
             asset_name: a.asset_name || "",
             asset_type: a.asset_type ?? null,
+            equipment_type: a.equipment_type ?? null,
             location: a.location ?? null,
             description: a.description ?? null,
             created_at: a.created_at ? new Date(a.created_at).getTime() : null,

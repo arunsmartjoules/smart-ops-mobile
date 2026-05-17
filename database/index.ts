@@ -84,8 +84,10 @@ function init() {
         CREATE TABLE IF NOT EXISTS areas (
           id TEXT PRIMARY KEY,
           site_code TEXT NOT NULL,
+          asset_id TEXT,
           asset_name TEXT NOT NULL,
           asset_type TEXT,
+          equipment_type TEXT,
           location TEXT,
           description TEXT,
           created_at REAL,
@@ -308,6 +310,8 @@ function init() {
       "ALTER TABLE tickets ADD COLUMN closed_at REAL",
       "ALTER TABLE pm_instances ADD COLUMN completed_on REAL",
       "ALTER TABLE incidents ADD COLUMN rca_attachments TEXT",
+      "ALTER TABLE areas ADD COLUMN asset_id TEXT",
+      "ALTER TABLE areas ADD COLUMN equipment_type TEXT",
     ];
 
     for (const migration of columnMigrations) {
