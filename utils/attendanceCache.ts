@@ -9,6 +9,7 @@
 
 import { cacheManager } from "@/services/CacheManager";
 import { siteResolver, type Site } from "@/services/SiteResolver";
+import { istTodayString } from "@/utils/istDate";
 
 export interface AttendanceLog {
   id?: string;
@@ -53,7 +54,7 @@ export async function getCachedAttendance(
     where: { user_id: userId },
   });
   if (!rows || rows.length === 0) return null;
-  const today = rows.find((r) => r.date === new Date().toISOString().slice(0, 10)) ?? null;
+  const today = rows.find((r) => r.date === istTodayString()) ?? null;
   return {
     today: today ?? null,
     history: rows,

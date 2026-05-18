@@ -287,16 +287,19 @@ const TicketDetailStatusUpdate = ({
           style={{ flex: 1, height: 1 }}
         />
         <Text style={{ color: "#94a3b8", fontSize: 11, fontWeight: "600" }} className="dark:text-slate-500">
-          {ticket.status}
+          Currently · {ticket.status}
         </Text>
       </View>
 
       {/* Status Chips */}
-      <View
-        style={{
-          flexDirection: "row",
-          flexWrap: "wrap",
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={{
           gap: 8,
+          paddingRight: 4,
+        }}
+        style={{
           marginBottom: needsRemarks || showAreaAndCategory ? 16 : 0,
         }}
       >
@@ -316,11 +319,19 @@ const TicketDetailStatusUpdate = ({
                 }
               }}
               activeOpacity={0.7}
+              className={
+                isActive
+                  ? ""
+                  : "bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
+              }
               style={{
-                paddingHorizontal: 16,
+                flexDirection: "row",
+                alignItems: "center",
+                gap: 6,
+                paddingHorizontal: 14,
                 paddingVertical: 9,
                 borderRadius: 10,
-                backgroundColor: isActive ? theme.activeBg : theme.bg,
+                backgroundColor: isActive ? theme.activeBg : undefined,
                 shadowColor: isActive ? theme.activeBg : "transparent",
                 shadowOffset: { width: 0, height: isActive ? 4 : 0 },
                 shadowOpacity: isActive ? 0.3 : 0,
@@ -328,6 +339,14 @@ const TicketDetailStatusUpdate = ({
                 elevation: isActive ? 4 : 0,
               }}
             >
+              <View
+                style={{
+                  width: 6,
+                  height: 6,
+                  borderRadius: 3,
+                  backgroundColor: isActive ? theme.activeText : theme.activeBg,
+                }}
+              />
               <Text
                 style={{
                   fontSize: 12,
@@ -340,7 +359,7 @@ const TicketDetailStatusUpdate = ({
             </TouchableOpacity>
           );
         })}
-      </View>
+      </ScrollView>
 
       {/* Area & Category (for Inprogress / Resolved) */}
       {showAreaAndCategory && (

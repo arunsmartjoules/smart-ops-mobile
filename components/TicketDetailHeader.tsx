@@ -1,16 +1,12 @@
 import React from "react";
 import { View, Text, TouchableOpacity } from "react-native";
-import { X, User } from "lucide-react-native";
+import { X, Flag } from "lucide-react-native";
 import { type Ticket } from "@/services/TicketsService";
-
-const STATUS_THEME: Record<string, { bg: string; text: string }> = {
-  Open: { bg: "#fef2f2", text: "#dc2626" },
-  Inprogress: { bg: "#eff6ff", text: "#2563eb" },
-  Hold: { bg: "#fffbeb", text: "#d97706" },
-  Waiting: { bg: "#f5f3ff", text: "#7c3aed" },
-  Resolved: { bg: "#f0fdf4", text: "#16a34a" },
-  Cancelled: { bg: "#f1f5f9", text: "#64748b" },
-};
+import {
+  getCategoryVisual,
+  getStatusVisual,
+  getPriorityVisual,
+} from "@/utils/ticketVisuals";
 
 interface TicketDetailHeaderProps {
   ticket: Ticket;
@@ -18,7 +14,10 @@ interface TicketDetailHeaderProps {
 }
 
 const TicketDetailHeader = ({ ticket, onClose }: TicketDetailHeaderProps) => {
-  const statusColors = STATUS_THEME[ticket.status] || STATUS_THEME.Open;
+  const status = getStatusVisual(ticket.status);
+  const priority = getPriorityVisual(ticket.priority);
+  const cat = getCategoryVisual(ticket.category);
+  const CatIcon = cat.Icon;
 
   return (
     <>
@@ -30,85 +29,104 @@ const TicketDetailHeader = ({ ticket, onClose }: TicketDetailHeaderProps) => {
           width: 40,
           height: 4,
           borderRadius: 999,
-          marginBottom: 16,
+          marginBottom: 14,
         }}
       />
 
-      {/* Header Row: Ticket No + Status + Close */}
+      {/* Header Row: ID + Status + Priority · Close */}
       <View
         style={{
           flexDirection: "row",
-          alignItems: "center",
+          alignItems: "flex-start",
           justifyContent: "space-between",
-          marginBottom: 14,
+          gap: 8,
         }}
       >
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-          <View
-            className="bg-red-50 dark:bg-red-900/20 px-2.5 py-1 rounded-lg"
-          >
-            <Text
-              className="text-red-600 dark:text-red-400 font-extrabold text-[10px] tracking-tighter"
-            >
-              {ticket.ticket_no}
-            </Text>
-          </View>
+        <View style={{ flex: 1, minWidth: 0 }}>
           <View
             style={{
-              backgroundColor: statusColors.bg,
-              paddingHorizontal: 10,
-              paddingVertical: 5,
-              borderRadius: 8,
+              flexDirection: "row",
+              alignItems: "center",
+              flexWrap: "wrap",
+              gap: 6,
             }}
           >
-            <Text
-              style={{
-                color: statusColors.text,
-                fontWeight: "800",
-                fontSize: 11,
-                letterSpacing: 0.5,
-              }}
+            <View className="bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded-md">
+              <Text className="text-slate-600 dark:text-slate-300 font-bold text-[11px]">
+                {ticket.ticket_no}
+              </Text>
+            </View>
+            <View
+              className="flex-row items-center px-2 py-1 rounded-md"
+              style={{ backgroundColor: status.tint }}
             >
-              {ticket.status || "Unknown"}
-            </Text>
+              <View
+                className="w-1.5 h-1.5 rounded-full mr-1.5"
+                style={{ backgroundColor: status.color }}
+              />
+              <Text
+                className="text-[10px] font-bold uppercase tracking-wide"
+                style={{ color: status.color }}
+              >
+                {status.label}
+              </Text>
+            </View>
+            {priority ? (
+              <View
+                className="flex-row items-center px-2 py-1 rounded-md"
+                style={{ backgroundColor: priority.tint }}
+              >
+                <Flag size={9} color={priority.color} />
+                <Text
+                  className="ml-1 text-[10px] font-bold uppercase tracking-wide"
+                  style={{ color: priority.color }}
+                >
+                  {priority.label}
+                </Text>
+              </View>
+            ) : null}
           </View>
+
+          <Text
+            className="text-slate-900 dark:text-slate-50"
+            style={{
+              fontSize: 18,
+              fontWeight: "800",
+              lineHeight: 24,
+              marginTop: 8,
+              marginBottom: 6,
+            }}
+            numberOfLines={3}
+          >
+            {ticket.title}
+          </Text>
+
+          {ticket.category ? (
+            <View
+              className="flex-row items-center self-start px-2.5 py-1 rounded-md bg-slate-100 dark:bg-slate-800"
+              style={{ maxWidth: "100%" }}
+            >
+              <CatIcon size={12} color={cat.color} />
+              <Text
+                className="ml-1.5 text-slate-500 dark:text-slate-400 text-[11px] font-semibold"
+                numberOfLines={1}
+              >
+                {ticket.category}
+              </Text>
+            </View>
+          ) : null}
         </View>
+
         <TouchableOpacity
           onPress={onClose}
-          className="w-9 h-9 bg-slate-100 dark:bg-slate-800 rounded-xl items-center justify-center"
+          className="w-8 h-8 bg-slate-100 dark:bg-slate-800 rounded-lg items-center justify-center"
+          style={{ marginTop: 2 }}
         >
-          <X size={18} color="#94a3b8" />
+          <X size={16} color="#94a3b8" />
         </TouchableOpacity>
       </View>
 
-      {/* Title */}
-      <Text
-        className="text-slate-900 dark:text-slate-50"
-        style={{
-          fontSize: 20,
-          fontWeight: "800",
-          lineHeight: 26,
-          marginBottom: 4,
-        }}
-        numberOfLines={2}
-      >
-        {ticket.title}
-      </Text>
-
-      {/* Assigned To */}
-      <View
-        style={{
-          flexDirection: "row",
-          alignItems: "center",
-          marginBottom: 16,
-          gap: 6,
-        }}
-      >
-        <User size={12} className="text-slate-400 dark:text-slate-500" color="#94a3b8" />
-        <Text className="text-slate-400 dark:text-slate-500" style={{ fontSize: 12, fontWeight: "600" }}>
-          {ticket.assigned_to || "Unassigned"}
-        </Text>
-      </View>
+      <View style={{ height: 14 }} />
     </>
   );
 };

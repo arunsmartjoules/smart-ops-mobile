@@ -4,8 +4,7 @@ import {
   Text, 
   TouchableOpacity, 
   FlatList, 
-  ActivityIndicator, 
-  TextInput, 
+  ActivityIndicator,
   RefreshControl,
   Alert,
   KeyboardAvoidingView,
@@ -14,7 +13,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useLocalSearchParams } from "expo-router";
-import { Search, ChevronLeft, CheckCircle2, Droplets, FlaskConical, Thermometer, Filter } from "lucide-react-native";
+import { ChevronLeft, CheckCircle2, Droplets, FlaskConical, Thermometer, Save, Info, ListChecks, Clock, Lock } from "lucide-react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useAuth } from "@/contexts/AuthContext";
 import { SiteConfigService, TaskItem } from "@/services/SiteConfigService";
@@ -29,6 +28,7 @@ import { UnifiedLogItem } from "./UnifiedLogItem";
 import { DateNavBar } from "./DateNavBar";
 import SignaturePad from "@/components/SignaturePad";
 import { getISTDateString } from "@/services/AttendanceService";
+import { formatISTDate } from "@/utils/istDate";
 import { db } from "@/database";
 
 interface LogEntryModuleProps {
@@ -62,6 +62,12 @@ export const LogEntryModule = ({ type, siteCode: initialSiteCode, onBack }: LogE
   // Metadata
   const [prevCount, setPrevCount] = useState(0);
   const [nextCount, setNextCount] = useState(0);
+  const [siteName, setSiteName] = useState<string | null>(null);
+  const [shiftPending, setShiftPending] = useState<Record<string, number>>({
+    A: 0,
+    B: 0,
+    C: 0,
+  });
 
   const logName = type === "TempRH" ? "Temp RH" : type === "Water" ? "Water Monitoring" : "Chemical Dosing";
   const screenTitle =
@@ -87,6 +93,20 @@ export const LogEntryModule = ({ type, siteCode: initialSiteCode, onBack }: LogE
     };
     loadSites();
   }, []);
+
+  // Resolve a human site name for the header subtitle.
+  useEffect(() => {
+    if (!siteCode) return;
+    (async () => {
+      try {
+        const sites = await db.query.userSites.findMany();
+        const match = sites.find((s: any) => s.site_code === siteCode);
+        setSiteName(match?.site_name || siteCode);
+      } catch {
+        setSiteName(siteCode);
+      }
+    })();
+  }, [siteCode]);
 
   // Sync Site Selection to AsyncStorage
   useEffect(() => {
@@ -432,6 +452,57 @@ export const LogEntryModule = ({ type, siteCode: initialSiteCode, onBack }: LogE
   const allScheduledTasksComplete =
     tasks.length > 0 && tasks.every((task) => isTaskComplete(task.id));
 
+  const filledCount = useMemo(
+    () => tasks.filter((t) => isTaskComplete(t.id)).length,
+    [tasks, isTaskComplete],
+  );
+  const remainingCount = Math.max(0, tasks.length - filledCount);
+
+  // Per-shift pending counts for the shift tabs (Temp & RH only).
+  useEffect(() => {
+    if (type !== "TempRH" || !siteCode || isEditMode) return;
+    let cancelled = false;
+    Promise.all([
+      SiteConfigService.getPendingCountForDate(siteCode, logName, scheduledDate, "A"),
+      SiteConfigService.getPendingCountForDate(siteCode, logName, scheduledDate, "B"),
+      SiteConfigService.getPendingCountForDate(siteCode, logName, scheduledDate, "C"),
+    ])
+      .then(([a, b, c]) => {
+        if (!cancelled) setShiftPending({ A: a, B: b, C: c });
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [type, siteCode, scheduledDate, logName, isEditMode, tasks.length]);
+
+  const userInitials = useMemo(() => {
+    const n = (user?.name || user?.user_id || "?").trim();
+    const parts = n.split(/\s+/).filter(Boolean);
+    return ((parts[0]?.[0] || "?") + (parts[1]?.[0] || "")).toUpperCase();
+  }, [user]);
+
+  const headerDate = useMemo(() => {
+    try {
+      return formatISTDate(new Date(scheduledDate));
+    } catch {
+      return scheduledDate;
+    }
+  }, [scheduledDate]);
+
+  // Manual save: flush all pending debounced auto-saves immediately.
+  const handleManualSave = useCallback(() => {
+    const pending = Array.from(autoSaveTimers.current.entries());
+    autoSaveTimers.current.clear();
+    pending.forEach(([taskId, timer]) => {
+      clearTimeout(timer);
+      autoSaveTaskRef.current(taskId).catch(() => {});
+    });
+    tasks.forEach((t) => {
+      autoSaveTaskRef.current(t.id).catch(() => {});
+    });
+  }, [tasks]);
+
   // Submission
   const handleSubmit = async (signatureOverride?: string) => {
     if (!siteCode) return;
@@ -639,42 +710,97 @@ export const LogEntryModule = ({ type, siteCode: initialSiteCode, onBack }: LogE
     }
   };
 
+  const accent =
+    type === "TempRH" ? "#ef4444" : type === "Water" ? "#3b82f6" : "#9333ea";
+  const CategoryIcon =
+    type === "TempRH" ? Thermometer : type === "Water" ? Droplets : FlaskConical;
+
   return (
     <SafeAreaView className="flex-1 bg-slate-50 dark:bg-slate-950" edges={["top"]}>
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} className="flex-1">
         {/* Header Section */}
         <View className="px-5 pt-3 pb-3 bg-white dark:bg-slate-900 border-b border-slate-100 dark:border-slate-800">
-          <View className="flex-row items-center justify-between">
-            <TouchableOpacity 
-              onPress={onBack} 
+          <View className="flex-row items-center">
+            <TouchableOpacity
+              onPress={onBack}
               hitSlop={{ top: 20, bottom: 20, left: 20, right: 20 }}
               className="w-10 h-10 rounded-2xl bg-slate-50 dark:bg-slate-800 items-center justify-center"
             >
               <ChevronLeft size={20} color="#0f172a" />
             </TouchableOpacity>
             <View className="flex-1 mx-3">
-              <Text className="text-lg font-bold text-slate-900 dark:text-slate-50">
-                {isEditMode ? `Edit ${type === "TempRH" ? "Temp RH" : screenTitle}` : screenTitle}
+              <Text
+                className="text-lg font-bold text-slate-900 dark:text-slate-50"
+                numberOfLines={1}
+              >
+                {isEditMode ? `Edit ${screenTitle}` : screenTitle}
               </Text>
-              <Text className="text-[11px] text-slate-500 dark:text-slate-400 font-semibold mt-0.5">
+              <Text
+                className="text-[11px] text-slate-500 dark:text-slate-400 font-semibold mt-0.5"
+                numberOfLines={1}
+              >
                 {isEditMode
                   ? tasks[0]?.name || "Manual Entry"
-                  : `${filteredTasks.length} scheduled logs`}
+                  : `${siteName || siteCode || ""}${
+                      siteName || siteCode ? " · " : ""
+                    }${headerDate}`}
               </Text>
             </View>
-            <View className="px-3 py-1.5 rounded-2xl bg-slate-50 dark:bg-slate-800">
-              {type === "TempRH" ? (
-                <Thermometer size={16} color="#ef4444" />
-              ) : type === "Water" ? (
-                <Droplets size={16} color="#3b82f6" />
-              ) : (
-                <FlaskConical size={16} color="#9333ea" />
-              )}
+            <View
+              className="px-3 py-1.5 rounded-2xl"
+              style={{ backgroundColor: accent + "1F" }}
+            >
+              <CategoryIcon size={16} color={accent} />
             </View>
           </View>
 
           {!isEditMode && (
             <View className="mt-3 gap-3">
+              {/* Assignee strip */}
+              <View className="flex-row items-center gap-3 bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-700 rounded-2xl px-3 py-2.5">
+                <View
+                  className="w-9 h-9 rounded-full items-center justify-center"
+                  style={{ backgroundColor: accent + "26" }}
+                >
+                  <Text className="text-xs font-bold" style={{ color: accent }}>
+                    {userInitials}
+                  </Text>
+                </View>
+                <View className="flex-1 min-w-0">
+                  <Text className="text-[9px] text-slate-400 dark:text-slate-500 uppercase tracking-wider">
+                    Assigned to
+                  </Text>
+                  <View className="flex-row items-center gap-1.5">
+                    <Text
+                      className="text-[13px] font-bold text-slate-900 dark:text-slate-50"
+                      numberOfLines={1}
+                    >
+                      {user?.name || user?.user_id || "Unassigned"}
+                    </Text>
+                    {type === "TempRH" && shift && (
+                      <View
+                        className="px-1.5 py-0.5 rounded"
+                        style={{ backgroundColor: accent + "26" }}
+                      >
+                        <Text
+                          className="text-[9px] font-bold"
+                          style={{ color: accent }}
+                        >
+                          Shift {shift}
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+                </View>
+                <View className="flex-row items-center gap-1">
+                  <Clock size={11} color="#94a3b8" />
+                  <Text className="text-[10px] text-slate-400 dark:text-slate-500">
+                    {headerDate}
+                  </Text>
+                </View>
+              </View>
+
+              {/* Date navigation + shift tabs */}
               <View className="bg-slate-50 dark:bg-slate-800/70 rounded-2xl p-3 border border-slate-100 dark:border-slate-700">
                 <DateNavBar
                   date={new Date(scheduledDate)}
@@ -686,51 +812,78 @@ export const LogEntryModule = ({ type, siteCode: initialSiteCode, onBack }: LogE
                 />
 
                 {type === "TempRH" && (
-                  <View className="flex-row mt-3 space-x-2 gap-2">
-                    {["A", "B", "C"].map((s) => (
-                      <TouchableOpacity
-                        key={s}
-                        onPress={() => setShift(s)}
-                        className={`flex-1 flex-row items-center justify-center py-2.5 rounded-xl border ${
-                          shift === s
-                            ? "bg-slate-900 border-slate-900 dark:bg-slate-50 dark:border-slate-50"
-                            : "bg-white border-slate-200 dark:bg-slate-800 dark:border-slate-700"
-                        }`}
-                      >
-                        <Text className={`font-bold text-sm ${
-                          shift === s
-                            ? "text-white dark:text-slate-900"
-                            : "text-slate-500"
-                        }`}>
-                          {s}
-                        </Text>
-                        <Text className={`ml-1 text-[10px] font-medium ${
-                          shift === s ? "opacity-70 text-white dark:text-slate-900" : "text-slate-400"
-                        }`}>
-                          {s === "A" ? "(1/3)" : s === "B" ? "(2/3)" : "(3/3)"}
-                        </Text>
-                      </TouchableOpacity>
-                    ))}
+                  <View className="flex-row mt-3 gap-2">
+                    {["A", "B", "C"].map((s) => {
+                      const active = shift === s;
+                      const pend = shiftPending[s] ?? 0;
+                      return (
+                        <TouchableOpacity
+                          key={s}
+                          onPress={() => setShift(s)}
+                          className={`flex-1 items-center py-2 rounded-xl border ${
+                            active
+                              ? "border-transparent"
+                              : "bg-white border-slate-200 dark:bg-slate-800 dark:border-slate-700"
+                          }`}
+                          style={active ? { backgroundColor: accent } : undefined}
+                        >
+                          <Text
+                            className={`font-bold text-[12px] ${
+                              active
+                                ? "text-white"
+                                : "text-slate-500 dark:text-slate-300"
+                            }`}
+                          >
+                            Shift {s}
+                          </Text>
+                          <Text
+                            className={`text-[9px] mt-0.5 ${
+                              active ? "text-white/80" : "text-slate-400"
+                            }`}
+                          >
+                            {active
+                              ? `${filledCount} / ${tasks.length}`
+                              : pend > 0
+                                ? `${pend} due`
+                                : "Done"}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
                   </View>
                 )}
               </View>
 
-              <View className="flex-row items-center bg-slate-50 dark:bg-slate-900 rounded-2xl px-4 py-1.5 border border-slate-100 dark:border-slate-800">
-                <Search size={16} color="#94a3b8" />
-                <TextInput
-                  placeholder="Search areas..."
-                  value={searchQuery}
-                  onChangeText={setSearchQuery}
-                  className="flex-1 ml-2 text-sm text-slate-900 dark:text-slate-50 py-2"
-                  placeholderTextColor="#94a3b8"
-                />
-                <TouchableOpacity
-                  onPress={() => loadTasks()}
-                  className="ml-2 w-9 h-9 rounded-xl bg-white dark:bg-slate-800 items-center justify-center border border-slate-100 dark:border-slate-700"
-                >
-                  <Filter size={16} color="#64748b" />
-                </TouchableOpacity>
-              </View>
+              {/* Line items progress */}
+              {tasks.length > 0 && (
+                <View className="bg-slate-50 dark:bg-slate-800/70 rounded-2xl px-3 py-2.5 border border-slate-100 dark:border-slate-700">
+                  <View className="flex-row items-center justify-between mb-2">
+                    <View className="flex-row items-center gap-1.5">
+                      <ListChecks size={13} color="#94a3b8" />
+                      <Text className="text-[11px] text-slate-500 dark:text-slate-400">
+                        Line items filled
+                      </Text>
+                    </View>
+                    <Text className="text-[12px] font-bold text-amber-500">
+                      {filledCount} / {tasks.length}
+                    </Text>
+                  </View>
+                  <View className="h-1 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden">
+                    <View
+                      style={{
+                        width: `${
+                          tasks.length
+                            ? Math.round((filledCount / tasks.length) * 100)
+                            : 0
+                        }%`,
+                        height: "100%",
+                        backgroundColor: "#f59e0b",
+                        borderRadius: 2,
+                      }}
+                    />
+                  </View>
+                </View>
+              )}
             </View>
           )}
         </View>
@@ -745,12 +898,14 @@ export const LogEntryModule = ({ type, siteCode: initialSiteCode, onBack }: LogE
           <FlatList
             data={filteredTasks}
             keyExtractor={item => item.id}
-            renderItem={({ item }) => (
+            renderItem={({ item, index }) => (
               <UnifiedLogItem
                 item={item}
                 type={type}
                 value={logValues[item.id] || {}}
                 onUpdateValue={updateValue}
+                index={index + 1}
+                total={filteredTasks.length}
               />
             )}
             contentContainerStyle={{ padding: 20, paddingBottom: 120 }}
@@ -781,22 +936,61 @@ export const LogEntryModule = ({ type, siteCode: initialSiteCode, onBack }: LogE
 
         {/* Footer Action */}
         {!loading && (
-          <View className="absolute bottom-0 left-0 right-0 p-5 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border-t border-slate-100 dark:border-slate-800">
-            <TouchableOpacity
-              onPress={() => handleSubmit()}
-              disabled={isSubmitting || (!isEditMode && !allScheduledTasksComplete)}
-              className={`w-full py-4 rounded-2xl flex-row items-center justify-center ${(isSubmitting || (!isEditMode && !allScheduledTasksComplete)) ? "bg-slate-300" : "bg-purple-600 shadow-lg shadow-purple-500/30"}`}
-            >
-              {isSubmitting ? (
-                <ActivityIndicator color="white" />
-              ) : (
-                <>
-                  <Text className="text-white font-bold text-lg uppercase tracking-wider">
-                    {isEditMode ? "UPDATE LOG" : (signature ? "SUBMIT LOGS" : "COMPLETE & SIGN")}
+          <View className="absolute bottom-0 left-0 right-0">
+            {!isEditMode &&
+              tasks.length > 0 &&
+              !allScheduledTasksComplete && (
+                <View className="mx-5 mb-2 flex-row items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/40">
+                  <Info size={12} color="#f59e0b" />
+                  <Text className="text-[10.5px] text-amber-600 dark:text-amber-400">
+                    {remainingCount} line item
+                    {remainingCount === 1 ? "" : "s"} still need readings to
+                    complete this {type === "TempRH" && shift ? "shift" : "log"}
                   </Text>
-                </>
+                </View>
               )}
-            </TouchableOpacity>
+            <View className="flex-row gap-2 px-5 pt-3 pb-5 bg-white/90 dark:bg-slate-900/90 border-t border-slate-100 dark:border-slate-800">
+              <TouchableOpacity
+                onPress={handleManualSave}
+                className="w-14 rounded-2xl bg-slate-100 dark:bg-slate-800 items-center justify-center border border-slate-200 dark:border-slate-700"
+              >
+                <Save size={18} color="#64748b" />
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => handleSubmit()}
+                disabled={
+                  isSubmitting || (!isEditMode && !allScheduledTasksComplete)
+                }
+                className={`flex-1 py-4 rounded-2xl flex-row items-center justify-center gap-2 ${
+                  isSubmitting || (!isEditMode && !allScheduledTasksComplete)
+                    ? "bg-slate-200 dark:bg-slate-800"
+                    : "bg-purple-600 shadow-lg shadow-purple-500/30"
+                }`}
+              >
+                {isSubmitting ? (
+                  <ActivityIndicator color="white" />
+                ) : (
+                  <>
+                    {!isEditMode && !allScheduledTasksComplete && (
+                      <Lock size={13} color="#94a3b8" />
+                    )}
+                    <Text
+                      className={`font-bold text-[15px] ${
+                        !isEditMode && !allScheduledTasksComplete
+                          ? "text-slate-400 dark:text-slate-500"
+                          : "text-white"
+                      }`}
+                    >
+                      {isEditMode
+                        ? "Update log"
+                        : signature
+                          ? "Submit logs"
+                          : "Complete & sign"}
+                    </Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            </View>
           </View>
         )}
       </KeyboardAvoidingView>

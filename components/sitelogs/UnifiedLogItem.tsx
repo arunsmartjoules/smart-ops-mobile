@@ -1,13 +1,13 @@
 import React from "react";
 import { View, Text, TextInput, TouchableOpacity } from "react-native";
-import { 
-  CheckCircle2, 
-  FlaskConical, 
-  Droplets, 
-  Activity, 
-  Beaker, 
-  Thermometer, 
-  CloudRain 
+import {
+  FlaskConical,
+  Droplets,
+  Activity,
+  Beaker,
+  Thermometer,
+  CloudRain,
+  MapPin,
 } from "lucide-react-native";
 import { TaskItem } from "@/services/SiteConfigService";
 import { LogImagePicker } from "./LogImagePicker";
@@ -18,213 +18,252 @@ interface UnifiedLogItemProps {
   value: any;
   onUpdateValue: (taskId: string, field: string, value: string) => void;
   isUploading?: boolean;
+  index?: number;
+  total?: number;
 }
 
-export const UnifiedLogItem = React.memo(({
-  item,
-  type,
-  value,
-  onUpdateValue,
-  isUploading = false
-}: UnifiedLogItemProps) => {
-  const subtitle = item.meta?.remarks || null;
-  const isCompleted = item.status === "Completed";
-  return (
-    <View
-      className={`bg-white dark:bg-slate-900 rounded-xl ${type === "Chemical" ? "p-3" : "p-4"} mb-3 border ${
-        isCompleted ? "border-green-200 dark:border-green-900" : "border-slate-100 dark:border-slate-800"
-      }`}
-    >
-      {/* Header */}
-      <View className="mb-3 flex-row items-start justify-between">
-        <View className="flex-1">
-          <Text className="text-slate-900 dark:text-slate-50 font-bold text-base">
-            {item.name || "Unnamed Area"}
-          </Text>
-          {subtitle && (
-            <Text className="text-slate-400 text-[10px] italic mt-0.5">
-              {subtitle}
+const hasText = (v: any) => !!v && String(v).trim().length > 0;
+
+export const UnifiedLogItem = React.memo(
+  ({
+    item,
+    type,
+    value,
+    onUpdateValue,
+    isUploading = false,
+    index,
+    total,
+  }: UnifiedLogItemProps) => {
+    const location = item.meta?.remarks || null;
+
+    const isFilled =
+      type === "Chemical"
+        ? hasText(value.dosing)
+        : type === "Water"
+          ? hasText(value.tds) || hasText(value.ph) || hasText(value.hardness)
+          : hasText(value.temp) && hasText(value.rh);
+
+    const pad = (n?: number) =>
+      n == null ? "" : String(n).padStart(2, "0");
+    const indexLabel =
+      index != null && total != null ? `${pad(index)} / ${total}` : null;
+
+    return (
+      <View
+        className={`bg-white dark:bg-slate-900 rounded-2xl p-3 mb-2.5 border ${
+          isFilled
+            ? "border-emerald-200 dark:border-emerald-900/40"
+            : "border-red-100 dark:border-red-900/30"
+        }`}
+      >
+        {/* Header: area + location + index */}
+        <View className="flex-row items-start justify-between gap-2 mb-2.5">
+          <View className="flex-1 min-w-0">
+            <Text
+              className="text-slate-900 dark:text-slate-50 font-bold text-[13px]"
+              numberOfLines={1}
+            >
+              {item.name || "Unnamed Area"}
             </Text>
+            {location && (
+              <View className="flex-row items-center gap-1 mt-0.5">
+                <MapPin size={10} color="#94a3b8" />
+                <Text
+                  className="text-slate-400 dark:text-slate-500 text-[10px] flex-1"
+                  numberOfLines={1}
+                >
+                  {location}
+                </Text>
+              </View>
+            )}
+          </View>
+          {indexLabel && (
+            <View
+              className={`px-2 py-1 rounded-md shrink-0 border ${
+                isFilled
+                  ? "bg-slate-50 dark:bg-slate-800 border-slate-100 dark:border-slate-700"
+                  : "bg-red-50 dark:bg-red-950/40 border-red-100 dark:border-red-900/40"
+              }`}
+            >
+              <Text
+                className={`text-[9.5px] font-semibold ${
+                  isFilled
+                    ? "text-slate-400 dark:text-slate-500"
+                    : "text-red-500 dark:text-red-400"
+                }`}
+              >
+                {indexLabel}
+              </Text>
+            </View>
           )}
         </View>
-        {isCompleted && (
-          <CheckCircle2 size={16} color="#16a34a" />
-        )}
-      </View>
 
-      {/* Input Fields based on Type */}
-      {type === "Chemical" && (
-        <View className="mb-2">
-          <View className="flex-row items-center gap-2">
-            <View className="w-7 h-7 rounded-lg bg-purple-50 dark:bg-purple-900/30 items-center justify-center mr-2">
-              <FlaskConical size={14} color="#9333ea" />
-            </View>
-            <View className="flex-1 flex-row items-center gap-2">
-              <TouchableOpacity
-                onPress={() => onUpdateValue(item.id, "dosing", "Yes")}
-                className={`flex-1 rounded-xl border px-3 py-2.5 items-center justify-center ${
+        {/* Chemical: Yes / No */}
+        {type === "Chemical" && (
+          <View className="flex-row items-center gap-2 mb-2.5">
+            <TouchableOpacity
+              onPress={() => onUpdateValue(item.id, "dosing", "Yes")}
+              className={`flex-1 rounded-xl border px-3 py-3 items-center justify-center ${
+                value.dosing === "Yes"
+                  ? "bg-emerald-50 border-emerald-500 dark:bg-emerald-900/20"
+                  : "bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700"
+              }`}
+            >
+              <Text
+                className={`text-sm font-bold ${
                   value.dosing === "Yes"
-                    ? "bg-emerald-50 border-emerald-500"
-                    : "bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700"
+                    ? "text-emerald-700 dark:text-emerald-400"
+                    : "text-slate-500 dark:text-slate-300"
                 }`}
               >
-                <Text
-                  className={`text-sm font-bold ${
-                    value.dosing === "Yes"
-                      ? "text-emerald-700"
-                      : "text-slate-500 dark:text-slate-300"
-                  }`}
-                >
-                  Yes
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={() => onUpdateValue(item.id, "dosing", "No")}
-                className={`flex-1 rounded-xl border px-3 py-2.5 items-center justify-center ${
+                Yes
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => onUpdateValue(item.id, "dosing", "No")}
+              className={`flex-1 rounded-xl border px-3 py-3 items-center justify-center ${
+                value.dosing === "No"
+                  ? "bg-amber-50 border-amber-500 dark:bg-amber-900/20"
+                  : "bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700"
+              }`}
+            >
+              <Text
+                className={`text-sm font-bold ${
                   value.dosing === "No"
-                    ? "bg-amber-50 border-amber-500"
-                    : "bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700"
+                    ? "text-amber-700 dark:text-amber-400"
+                    : "text-slate-500 dark:text-slate-300"
                 }`}
               >
-                <Text
-                  className={`text-sm font-bold ${
-                    value.dosing === "No"
-                      ? "text-amber-700"
-                      : "text-slate-500 dark:text-slate-300"
-                  }`}
-                >
-                  No
+                No
+              </Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* TempRH: Temp + RH */}
+        {type === "TempRH" && (
+          <View className="flex-row gap-2 mb-2.5">
+            <View
+              className={`flex-1 flex-row items-center gap-2 bg-slate-50 dark:bg-slate-800 rounded-xl px-3 py-2 border ${
+                hasText(value.temp)
+                  ? "border-slate-100 dark:border-slate-700"
+                  : "border-red-100 dark:border-red-900/40"
+              }`}
+            >
+              <Thermometer size={14} color="#ef4444" />
+              <View className="flex-1">
+                <Text className="text-[9px] text-slate-400 dark:text-slate-500 uppercase">
+                  Temp °C
                 </Text>
-              </TouchableOpacity>
+                <TextInput
+                  value={value.temp}
+                  onChangeText={(t) => onUpdateValue(item.id, "temp", t)}
+                  placeholder="— —"
+                  keyboardType="numeric"
+                  placeholderTextColor="#94a3b8"
+                  className="text-[14px] font-bold text-slate-900 dark:text-slate-50 p-0 m-0"
+                />
+              </View>
             </View>
-            <LogImagePicker
-              value={value.attachment}
-              onImageChange={(url) => onUpdateValue(item.id, "attachment", url || "")}
-              uploadPath={`chemical/${item.id}`}
-              compact
-            />
+            <View
+              className={`flex-1 flex-row items-center gap-2 bg-slate-50 dark:bg-slate-800 rounded-xl px-3 py-2 border ${
+                hasText(value.rh)
+                  ? "border-slate-100 dark:border-slate-700"
+                  : "border-red-100 dark:border-red-900/40"
+              }`}
+            >
+              <CloudRain size={14} color="#3b82f6" />
+              <View className="flex-1">
+                <Text className="text-[9px] text-slate-400 dark:text-slate-500 uppercase">
+                  RH %
+                </Text>
+                <TextInput
+                  value={value.rh}
+                  onChangeText={(t) => onUpdateValue(item.id, "rh", t)}
+                  placeholder="— —"
+                  keyboardType="numeric"
+                  placeholderTextColor="#94a3b8"
+                  className="text-[14px] font-bold text-slate-900 dark:text-slate-50 p-0 m-0"
+                />
+              </View>
+            </View>
           </View>
-        </View>
-      )}
+        )}
 
-      {type === "Water" && (
-        <>
-          <View className="flex-row space-x-2 gap-2 mb-3">
-            <View className="flex-1">
-              <View className="flex-row items-center bg-slate-50 dark:bg-slate-800 rounded-lg px-2 border border-slate-200 dark:border-slate-700">
-                <Droplets size={14} color="#3b82f6" />
-                <TextInput
-                  value={value.tds}
-                  onChangeText={(t) => onUpdateValue(item.id, "tds", t)}
-                  placeholder="TDS"
-                  keyboardType="numeric"
-                  className="flex-1 py-3 ml-1 font-bold text-slate-900 dark:text-slate-50 text-xs"
-                />
+        {/* Water: TDS / pH / Hardness */}
+        {type === "Water" && (
+          <View className="flex-row gap-2 mb-2.5">
+            {[
+              { key: "tds", label: "TDS", Icon: Droplets, color: "#3b82f6" },
+              { key: "ph", label: "pH", Icon: Activity, color: "#10b981" },
+              {
+                key: "hardness",
+                label: "Hard",
+                Icon: Beaker,
+                color: "#8b5cf6",
+              },
+            ].map(({ key, label, Icon, color }) => (
+              <View
+                key={key}
+                className={`flex-1 flex-row items-center gap-1.5 bg-slate-50 dark:bg-slate-800 rounded-xl px-2.5 py-2 border ${
+                  hasText(value[key])
+                    ? "border-slate-100 dark:border-slate-700"
+                    : "border-red-100 dark:border-red-900/40"
+                }`}
+              >
+                <Icon size={13} color={color} />
+                <View className="flex-1">
+                  <Text className="text-[9px] text-slate-400 dark:text-slate-500 uppercase">
+                    {label}
+                  </Text>
+                  <TextInput
+                    value={value[key]}
+                    onChangeText={(t) => onUpdateValue(item.id, key, t)}
+                    placeholder="—"
+                    keyboardType="numeric"
+                    placeholderTextColor="#94a3b8"
+                    className="text-[13px] font-bold text-slate-900 dark:text-slate-50 p-0 m-0"
+                  />
+                </View>
               </View>
-            </View>
-            <View className="flex-1">
-              <View className="flex-row items-center bg-slate-50 dark:bg-slate-800 rounded-lg px-2 border border-slate-200 dark:border-slate-700">
-                <Activity size={14} color="#10b981" />
-                <TextInput
-                  value={value.ph}
-                  onChangeText={(t) => onUpdateValue(item.id, "ph", t)}
-                  placeholder="pH"
-                  keyboardType="numeric"
-                  className="flex-1 py-3 ml-1 font-bold text-slate-900 dark:text-slate-50 text-xs"
-                />
-              </View>
-            </View>
-            <View className="flex-1">
-              <View className="flex-row items-center bg-slate-50 dark:bg-slate-800 rounded-lg px-2 border border-slate-200 dark:border-slate-700">
-                <Beaker size={14} color="#8b5cf6" />
-                <TextInput
-                  value={value.hardness}
-                  onChangeText={(t) => onUpdateValue(item.id, "hardness", t)}
-                  placeholder="Hard"
-                  keyboardType="numeric"
-                  className="flex-1 py-3 ml-1 font-bold text-slate-900 dark:text-slate-50 text-xs"
-                />
-              </View>
-            </View>
+            ))}
           </View>
-          <View className="flex-row items-center gap-2 mb-3">
-            <View className="flex-1 bg-slate-50 dark:bg-slate-800 rounded-lg px-3 border border-slate-200 dark:border-slate-700">
-              <TextInput
-                placeholder="Remarks..."
-                value={value.mainRemarks}
-                onChangeText={(t) => onUpdateValue(item.id, "mainRemarks", t)}
-                className="py-2 text-xs font-medium text-slate-600 dark:text-slate-400"
-              />
-            </View>
-            <LogImagePicker
-              value={value.attachment}
-              onImageChange={(url) => onUpdateValue(item.id, "attachment", url || "")}
-              uploadPath={`water/${item.id}`}
-              compact
-            />
-          </View>
-        </>
-      )}
+        )}
 
-      {type === "TempRH" && (
-        <View className="flex-row space-x-3 gap-3 items-center mb-3">
-          <View className="flex-1">
-            <View className="flex-row items-center bg-slate-50 dark:bg-slate-800 rounded-lg px-3 border border-slate-200 dark:border-slate-700">
-              <Thermometer size={16} color="#ef4444" />
-              <TextInput
-                value={value.temp}
-                onChangeText={(t) => onUpdateValue(item.id, "temp", t)}
-                placeholder="Temp"
-                keyboardType="numeric"
-                className="flex-1 py-3 ml-2 font-bold text-slate-900 dark:text-slate-50"
-              />
-              <Text className="text-xs text-slate-400 font-bold">°C</Text>
-            </View>
-          </View>
-          <View className="flex-1">
-            <View className="flex-row items-center bg-slate-50 dark:bg-slate-800 rounded-lg px-3 border border-slate-200 dark:border-slate-700">
-              <CloudRain size={16} color="#3b82f6" />
-              <TextInput
-                value={value.rh}
-                onChangeText={(t) => onUpdateValue(item.id, "rh", t)}
-                placeholder="RH"
-                keyboardType="numeric"
-                className="flex-1 py-3 ml-2 font-bold text-slate-900 dark:text-slate-50"
-              />
-              <Text className="text-xs text-slate-400 font-bold">%</Text>
-            </View>
+        {/* Remark + attachments */}
+        <View className="flex-row items-center gap-2">
+          <View className="flex-1 bg-slate-50 dark:bg-slate-800 rounded-xl px-3 border border-slate-100 dark:border-slate-700">
+            <TextInput
+              placeholder="Add a remark…"
+              value={value.mainRemarks}
+              onChangeText={(t) => onUpdateValue(item.id, "mainRemarks", t)}
+              className="py-2 text-xs font-medium text-slate-600 dark:text-slate-300"
+              placeholderTextColor="#94a3b8"
+            />
           </View>
           <LogImagePicker
             value={value.attachment}
-            onImageChange={(url) => onUpdateValue(item.id, "attachment", url || "")}
-            uploadPath={`temprh/${item.id}`}
+            onImageChange={(url) =>
+              onUpdateValue(item.id, "attachment", url || "")
+            }
+            uploadPath={`${type.toLowerCase()}/${item.id}`}
             compact
             disabled={isUploading}
           />
         </View>
-      )}
-
-      {/* Common Remarks Field (if not already handled in Water) */}
-      {type !== "Water" && (
-        <View className="bg-slate-50 dark:bg-slate-800 rounded-lg px-3 border border-slate-200 dark:border-slate-700">
-          <TextInput
-            placeholder="Add remarks..."
-            value={value.mainRemarks}
-            onChangeText={(t) => onUpdateValue(item.id, "mainRemarks", t)}
-            className="py-2 text-xs font-medium text-slate-600 dark:text-slate-400"
-            placeholderTextColor="#94a3b8"
-          />
-        </View>
-      )}
-    </View>
-  );
-}, (prev, next) => {
-  return (
-    prev.item.id === next.item.id &&
-    prev.item.status === next.item.status &&
-    JSON.stringify(prev.value) === JSON.stringify(next.value) &&
-    prev.isUploading === next.isUploading
-  );
-});
+      </View>
+    );
+  },
+  (prev, next) => {
+    return (
+      prev.item.id === next.item.id &&
+      prev.item.status === next.item.status &&
+      prev.index === next.index &&
+      prev.total === next.total &&
+      JSON.stringify(prev.value) === JSON.stringify(next.value) &&
+      prev.isUploading === next.isUploading
+    );
+  },
+);
 
 UnifiedLogItem.displayName = "UnifiedLogItem";

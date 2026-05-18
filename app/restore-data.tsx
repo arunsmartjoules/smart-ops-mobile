@@ -17,12 +17,13 @@ import SiteLogService, {
 } from "@/services/SiteLogService";
 import { useNetworkStatus } from "@/hooks/useNetworkStatus";
 import logger from "@/utils/logger";
+import { istTodayString, istDateString } from "@/utils/istDate";
 
 const LOG_NAMES = ["", "Water", "Temp RH", "Chemical Dosing"] as const;
 
-const todayIso = () => new Date().toISOString().slice(0, 10);
+const todayIso = () => istTodayString();
 const daysAgoIso = (n: number) =>
-  new Date(Date.now() - n * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  istDateString(new Date(Date.now() - n * 24 * 60 * 60 * 1000));
 
 export default function RestoreData() {
   const { isConnected } = useNetworkStatus();

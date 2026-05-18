@@ -13,6 +13,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useAutoSync } from "@/hooks/useAutoSync";
 import siteLogService from "@/services/SiteLogService";
 import { SiteConfigService } from "@/services/SiteConfigService";
+import { istTodayString, formatISTDate } from "@/utils/istDate";
 import LogFilterModal from "@/components/sitelogs/LogFilterModal";
 import {
   Filter,
@@ -41,7 +42,18 @@ export default function SiteLogs() {
   const [logProgress, setLogProgress] = useState<
     Record<string, { total: number; completed: number }>
   >({});
-  const [openCounts, setOpenCounts] = useState<Record<string, number>>({});
+  // Today's due count per category. Intentionally NOT driven by the date
+  // filter — the filter only affects history/progress, never the due count.
+  const [todayDueCounts, setTodayDueCounts] = useState<Record<string, number>>({});
+  // Today's Temp & RH due count broken down by shift.
+  const [tempRhShiftDue, setTempRhShiftDue] = useState<Record<"A" | "B" | "C", number>>({
+    A: 0,
+    B: 0,
+    C: 0,
+  });
+  // Distinct chillers logged TODAY. Filter-range independent — the chiller
+  // card must always reflect today, not the selected date range.
+  const [chillerLoggedToday, setChillerLoggedToday] = useState(0);
   const [filterVisible, setFilterVisible] = useState(false);
   // Main Logs screen defaults to "this month". Entry screens still default
   // to today (they don't read these state values — they use today directly).
@@ -61,11 +73,8 @@ export default function SiteLogs() {
   const siteCode = selectedSite?.site_code ?? null;
   const siteName = selectedSite?.site_name ?? selectedSite?.site_code ?? "Select Site";
   const dateRangePreview = useMemo(() => {
-    const fmt = (d: Date | null) =>
-      d
-        ? d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })
-        : "Any";
-    return `Date: ${fmt(fromDate)} - ${fmt(toDate)}`;
+    const fmt = (d: Date | null) => (d ? formatISTDate(d) : "Any");
+    return `${fmt(fromDate)} – ${fmt(toDate)}`;
   }, [fromDate, toDate]);
 
   // Safety timer to clear loading no matter what
@@ -114,13 +123,38 @@ export default function SiteLogs() {
         }
       }
 
-      // Fetch open/inprogress/pending counts from backend + local progress in parallel
-      const [counts, progress] = await Promise.all([
-        siteLogService.getOpenCounts(targetSite),
-        siteLogService.getCategoryProgress(targetSite, fromDate, toDate),
-      ]);
-      setOpenCounts(counts);
+      // Progress is filter-range based; due counts are today-only and must
+      // ignore fromDate/toDate entirely. "Today" is the IST calendar day —
+      // toISOString() is UTC, which rolls over a day early between IST
+      // 00:00–05:30 and made the due count show the previous day.
+      const today = istTodayString();
+      const dueTypes = ["Temp RH", "Water", "Chemical Dosing"];
+      const [progress, dueEntries, tempA, tempB, tempC, chillerCompletedToday] =
+        await Promise.all([
+          siteLogService.getCategoryProgress(targetSite, fromDate, toDate),
+          Promise.all(
+            dueTypes.map(
+              async (t) =>
+                [
+                  t,
+                  await SiteConfigService.getPendingCountForDate(targetSite, t, today),
+                ] as const,
+            ),
+          ),
+          SiteConfigService.getPendingCountForDate(targetSite, "Temp RH", today, "A"),
+          SiteConfigService.getPendingCountForDate(targetSite, "Temp RH", today, "B"),
+          SiteConfigService.getPendingCountForDate(targetSite, "Temp RH", today, "C"),
+          // Total completed chiller readings for today (NOT deduped per
+          // chiller), pinned to today so it ignores the filter date range.
+          SiteConfigService.getChillerCompletedCountForDate(
+            targetSite,
+            new Date(),
+          ),
+        ]);
       setLogProgress(progress);
+      setTodayDueCounts(Object.fromEntries(dueEntries));
+      setTempRhShiftDue({ A: tempA, B: tempB, C: tempC });
+      setChillerLoggedToday(chillerCompletedToday);
     } catch (e) {
       console.error(e);
     } finally {
@@ -313,11 +347,15 @@ export default function SiteLogs() {
             </View>
           </View>
 
-          <View className="mb-2 self-start px-3 py-1 rounded-full bg-red-50 dark:bg-red-950/30 border border-red-100 dark:border-red-900/40">
+          <TouchableOpacity
+            onPress={() => setFilterVisible(true)}
+            className="mb-4 self-start flex-row items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-50 dark:bg-red-950/30 border border-red-100 dark:border-red-900/40"
+          >
+            <Clock size={12} color="#dc2626" />
             <Text className="text-[11px] font-semibold text-red-700 dark:text-red-300">
               {dateRangePreview}
             </Text>
-          </View>
+          </TouchableOpacity>
 
         </View>
 
@@ -375,11 +413,96 @@ export default function SiteLogs() {
                     total: 0,
                     completed: 0,
                   };
-                  const pending =
-                    item.id === "chiller"
-                      ? 0
-                      : openCounts[getLogName(item.title)] ??
-                        Math.max(0, progress.total - progress.completed);
+                  const isChiller = item.id === "chiller";
+                  const isTempRh = item.id === "temp-rh";
+                  // Due count is always "today" — never the filter range.
+                  const pending = isChiller
+                    ? 0
+                    : todayDueCounts[getLogName(item.title)] ?? 0;
+
+                  // Status pill: done / partial / pending.
+                  let pillTone: "done" | "partial" | "pending" | null = null;
+                  let pillText = "";
+                  if (isChiller) {
+                    if (chillerLoggedToday > 0) {
+                      pillTone = "done";
+                      pillText = `${chillerLoggedToday} logged`;
+                    } else {
+                      pillTone = "pending";
+                      pillText = "Due";
+                    }
+                  } else if (progress.total > 0) {
+                    if (pending === 0) {
+                      pillTone = "done";
+                      pillText = "Done";
+                    } else if (progress.completed > 0) {
+                      pillTone = "partial";
+                      pillText = "Partial";
+                    } else {
+                      pillTone = "pending";
+                      pillText = `${pending} due`;
+                    }
+                  }
+
+                  const pct = isChiller
+                    ? chillerLoggedToday > 0
+                      ? 100
+                      : 0
+                    : progress.total > 0
+                      ? Math.round((progress.completed / progress.total) * 100)
+                      : 0;
+
+                  const footInfo = isChiller
+                    ? chillerLoggedToday > 0
+                      ? "All shifts complete"
+                      : item.subtitle
+                    : progress.total > 0
+                      ? pending === 0
+                        ? "All areas done"
+                        : `${progress.completed} of ${progress.total} areas done`
+                      : item.subtitle;
+
+                  const pillCls =
+                    pillTone === "done"
+                      ? "bg-emerald-100 dark:bg-emerald-900/25"
+                      : pillTone === "partial"
+                        ? "bg-amber-100 dark:bg-amber-900/25"
+                        : "bg-red-50 dark:bg-red-950/40";
+                  const pillTxtCls =
+                    pillTone === "done"
+                      ? "text-emerald-700 dark:text-emerald-400"
+                      : pillTone === "partial"
+                        ? "text-amber-700 dark:text-amber-400"
+                        : "text-red-600 dark:text-red-400";
+
+                  const onStart = () => {
+                    if (!siteCode) return;
+
+                    // Non-blocking targeted prefetch for Start flow.
+                    void siteLogService
+                      .prefetchPendingForCategory(siteCode, getLogName(item.title))
+                      .then(() => {
+                        void fetchLogs(siteCode);
+                      })
+                      .catch(() => {});
+
+                    if (item.id === "temp-rh") {
+                      setShiftModalVisible(true);
+                      const today = istTodayString();
+                      Promise.all([
+                        SiteConfigService.getPendingCountForDate(siteCode, "Temp RH", today, "A"),
+                        SiteConfigService.getPendingCountForDate(siteCode, "Temp RH", today, "B"),
+                        SiteConfigService.getPendingCountForDate(siteCode, "Temp RH", today, "C"),
+                      ])
+                        .then(([a, b, c]) => setShiftCounts({ A: a, B: b, C: c }))
+                        .catch(() => {});
+                    } else {
+                      router.push({
+                        pathname: item.route,
+                        params: { siteCode, isNew: "true" },
+                      });
+                    }
+                  };
 
                   return (
                     <View
@@ -393,7 +516,7 @@ export default function SiteLogs() {
                         elevation: 2,
                       }}
                     >
-                      <View className="flex-row items-center">
+                      <View className="flex-row items-center mb-3">
                         <View
                           className={`w-10 h-10 rounded-xl items-center justify-center mr-3 ${item.bg}`}
                         >
@@ -401,107 +524,79 @@ export default function SiteLogs() {
                         </View>
 
                         <View className="flex-1 min-w-0">
-                          <View className="flex-row justify-between items-start gap-2">
-                            <Text
-                              className="text-slate-900 dark:text-slate-50 font-bold text-[15px] flex-shrink"
-                              numberOfLines={2}
-                            >
-                              {item.title}
-                            </Text>
-                            {item.id === "chiller" ? (
-                              progress.completed > 0 && (
-                                <View className="px-2 py-0.5 rounded-lg bg-teal-100 dark:bg-teal-900/30 shrink-0">
-                                  <Text className="text-[10px] font-bold text-teal-700 dark:text-teal-400">
-                                    {progress.completed} logged
-                                  </Text>
-                                </View>
-                              )
-                            ) : (
-                              progress.total > 0 && (
-                                <View
-                                  className={`px-2 py-0.5 rounded-lg shrink-0 ${
-                                    pending === 0
-                                      ? "bg-emerald-100 dark:bg-emerald-900/25"
-                                      : "bg-red-50 dark:bg-red-950/40"
-                                  }`}
-                                >
-                                  {/* <Text
-                                    className={`text-[10px] font-bold ${
-                                      pending === 0
-                                        ? "text-emerald-800 dark:text-emerald-400"
-                                        : "text-red-600 dark:text-red-400"
-                                    }`}
-                                    numberOfLines={1}
-                                  >
-                                    {pending === 0
-                                      ? "All done"
-                                      : `${pending} pending`}
-                                  </Text> */}
-                                </View>
-                              )
-                            )}
-                          </View>
                           <Text
-                            className="text-slate-400 dark:text-slate-500 text-xs mt-1"
+                            className="text-slate-900 dark:text-slate-50 font-bold text-[15px]"
+                            numberOfLines={1}
+                          >
+                            {item.title}
+                          </Text>
+                          <Text
+                            className="text-slate-400 dark:text-slate-500 text-xs mt-0.5"
                             numberOfLines={1}
                           >
                             {item.subtitle}
                           </Text>
                         </View>
+
+                        {isTempRh ? (
+                          <View className="flex-row gap-1 shrink-0">
+                            {(["A", "B", "C"] as const).map((sh) => {
+                              const c = tempRhShiftDue[sh];
+                              const due = c > 0;
+                              return (
+                                <View
+                                  key={sh}
+                                  className={`px-1.5 py-1 rounded-md ${
+                                    due
+                                      ? "bg-red-50 dark:bg-red-950/40"
+                                      : "bg-emerald-100 dark:bg-emerald-900/25"
+                                  }`}
+                                >
+                                  <Text
+                                    className={`text-[10px] font-bold ${
+                                      due
+                                        ? "text-red-600 dark:text-red-400"
+                                        : "text-emerald-700 dark:text-emerald-400"
+                                    }`}
+                                  >
+                                    {sh} {c}
+                                  </Text>
+                                </View>
+                              );
+                            })}
+                          </View>
+                        ) : (
+                          pillTone && (
+                            <View className={`px-2 py-1 rounded-md shrink-0 ${pillCls}`}>
+                              <Text
+                                className={`text-[10px] font-bold ${pillTxtCls}`}
+                                numberOfLines={1}
+                              >
+                                {pillText}
+                              </Text>
+                            </View>
+                          )
+                        )}
                       </View>
 
-                      <View className="flex-row gap-2 mt-3 pt-3 border-t border-slate-100 dark:border-slate-800">
-                        <TouchableOpacity
-                          onPress={() => {
-                            if (!siteCode) return;
-
-                            // Non-blocking targeted prefetch for Start flow.
-                            void siteLogService
-                              .prefetchPendingForCategory(siteCode, getLogName(item.title))
-                              .then(() => {
-                                // Refresh top counters after prefetch completes.
-                                void fetchLogs(siteCode);
-                              })
-                              .catch(() => {});
-
-                            if (item.id === "temp-rh") {
-                              setShiftModalVisible(true);
-                              // Load pending counts for each shift
-                              const today = new Date().toISOString().slice(0, 10);
-                              Promise.all([
-                                SiteConfigService.getPendingCountForDate(siteCode, "Temp RH", today, "A"),
-                                SiteConfigService.getPendingCountForDate(siteCode, "Temp RH", today, "B"),
-                                SiteConfigService.getPendingCountForDate(siteCode, "Temp RH", today, "C"),
-                              ])
-                                .then(([a, b, c]) => setShiftCounts({ A: a, B: b, C: c }))
-                                .catch(() => {});
-                            } else {
-                              router.push({
-                                pathname: item.route,
-                                params: { siteCode, isNew: "true" },
-                              });
-                            }
+                      <View className="h-[3px] rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden mb-3">
+                        <View
+                          style={{
+                            width: `${pct}%`,
+                            height: "100%",
+                            backgroundColor: item.accent,
+                            borderRadius: 2,
                           }}
-                          activeOpacity={0.8}
-                          className="flex-1"
+                        />
+                      </View>
+
+                      <View className="flex-row items-center gap-2">
+                        <Text
+                          className="flex-1 text-slate-400 dark:text-slate-500 text-[11px]"
+                          numberOfLines={1}
                         >
-                          <View
-                            className="py-2 rounded-md flex-row items-center justify-center"
-                            style={{
-                              backgroundColor: item.colors[0],
-                            }}
-                          >
-                            <Plus
-                              size={14}
-                              color="white"
-                              strokeWidth={2.5}
-                              style={{ marginRight: 5 }}
-                            />
-                            <Text className="text-white font-bold text-xs">
-                              Start
-                            </Text>
-                          </View>
-                        </TouchableOpacity>
+                          {footInfo}
+                        </Text>
 
                         <TouchableOpacity
                           onPress={() =>
@@ -515,16 +610,29 @@ export default function SiteLogs() {
                               },
                             })
                           }
-                          className="flex-1 bg-slate-50 dark:bg-slate-800 py-2 rounded-md flex-row items-center justify-center border border-slate-100 dark:border-slate-700"
+                          className="h-9 px-3 rounded-lg bg-slate-50 dark:bg-slate-800 flex-row items-center justify-center border border-slate-100 dark:border-slate-700"
                         >
-                          <History
-                            size={14}
-                            color="#64748b"
-                            style={{ marginRight: 5 }}
-                          />
-                          <Text className="text-slate-600 dark:text-slate-300 font-bold text-xs">
-                            History
+                          <History size={15} color="#94a3b8" />
+                          <Text className="ml-1.5 text-slate-500 dark:text-slate-400 text-xs font-semibold">
+                            View
                           </Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity onPress={onStart} activeOpacity={0.85}>
+                          <View
+                            className="px-3.5 py-2 rounded-lg flex-row items-center justify-center"
+                            style={{ backgroundColor: item.colors[0] }}
+                          >
+                            <Plus
+                              size={13}
+                              color="white"
+                              strokeWidth={2.5}
+                              style={{ marginRight: 4 }}
+                            />
+                            <Text className="text-white font-bold text-xs">
+                              Start
+                            </Text>
+                          </View>
                         </TouchableOpacity>
                       </View>
                     </View>
@@ -547,7 +655,9 @@ export default function SiteLogs() {
       onSiteSelect={async (id) => {
           const s = availableSites.find((site) => site.site_code === id);
           if (s) await selectSite(s);
-          setOpenCounts({});
+          setTodayDueCounts({});
+          setTempRhShiftDue({ A: 0, B: 0, C: 0 });
+          setChillerLoggedToday(0);
           setLogProgress({});
           fetchLogs(id);
         }}

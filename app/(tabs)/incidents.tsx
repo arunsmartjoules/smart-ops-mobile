@@ -15,7 +15,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import * as ImagePicker from "expo-image-picker";
-import { ChevronDown, Filter, MapPin, Plus, RefreshCw, Camera, Image as ImageIcon, X, Clock } from "lucide-react-native";
+import { ChevronDown, Filter, MapPin, Plus, RefreshCw, Camera, Image as ImageIcon, X, Clock, AlertTriangle, UserCircle } from "lucide-react-native";
 import { useLocalSearchParams } from "expo-router";
 import DateTimePicker, { DateTimePickerAndroid } from "@react-native-community/datetimepicker";
 import { useAuth } from "@/contexts/AuthContext";
@@ -32,6 +32,15 @@ import { StorageService } from "@/services/StorageService";
 import FullscreenPicker from "@/components/FullscreenPicker";
 import { type SelectOption } from "@/components/SearchableSelect";
 import { TicketsService } from "@/services/TicketsService";
+import { getStatusVisual, getInitials } from "@/utils/ticketVisuals";
+import {
+  istDateString,
+  istTodayString,
+  istParts,
+  istDayStartMsFromYmd,
+  formatISTDate,
+  formatIST,
+} from "@/utils/istDate";
 import {
   FAULT_TYPE_OPTIONS,
   OPERATING_CONDITION_OPTIONS,
@@ -41,12 +50,7 @@ import { v4 as uuidv4 } from "uuid";
 
 type IncidentStatus = "Open" | "Inprogress" | "Resolved";
 
-const toLocalYmd = (date: Date) => {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-};
+const toLocalYmd = (date: Date) => istDateString(date);
 
 /** Normalize incidents.attachments from API (array) or local cache (JSON string). */
 function parseIncidentAttachments(raw: unknown): string[] {
@@ -188,13 +192,12 @@ export default function IncidentsTab() {
     (Array.isArray(params.status) ? params.status[0] : params.status) === "Inprogress"
       ? "Inprogress"
       : "Open";
-  const today = useMemo(() => new Date(), []);
-  const thisMonthStart = useMemo(
-    () => new Date(today.getFullYear(), today.getMonth(), 1),
-    [today],
-  );
-  const defaultFromDate = useMemo(() => toLocalYmd(thisMonthStart), [thisMonthStart]);
-  const defaultToDate = useMemo(() => toLocalYmd(today), [today]);
+  // Default range = 1st of the current IST month → today (IST).
+  const defaultToDate = useMemo(() => istTodayString(), []);
+  const defaultFromDate = useMemo(() => {
+    const { year, month } = istParts(new Date());
+    return `${year}-${String(month).padStart(2, "0")}-01`;
+  }, []);
   const [statusFilter, setStatusFilter] = useState<IncidentStatus>(initialStatus as IncidentStatus);
   const [rcaFilter, setRcaFilter] = useState("All");
   const [showFilter, setShowFilter] = useState(false);
@@ -205,13 +208,8 @@ export default function IncidentsTab() {
   const dateRangePreview = useMemo(() => {
     const formatPreviewDate = (dateStr: string | null) => {
       if (!dateStr) return "Any";
-      const [year, month, day] = dateStr.slice(0, 10).split("-").map(Number);
-      if (!year || !month || !day) return "Any";
-      return new Date(year, month - 1, day).toLocaleDateString("en-GB", {
-        day: "numeric",
-        month: "short",
-        year: "numeric",
-      });
+      const ms = istDayStartMsFromYmd(dateStr);
+      return ms == null ? "Any" : formatISTDate(ms);
     };
     return `Date: ${formatPreviewDate(fromDate)} - ${formatPreviewDate(toDate)}`;
   }, [fromDate, toDate]);
@@ -810,91 +808,134 @@ export default function IncidentsTab() {
     uploadUrisToStorage,
   ]);
 
-  const renderCard = ({ item }: { item: IncidentItem }) => (
-    <TouchableOpacity
-      onPress={() => openIncidentModal(item)}
-      activeOpacity={0.7}
-      className="bg-white dark:bg-slate-900 mb-4 rounded-2xl border border-slate-200 dark:border-slate-800"
-      style={{
-        shadowColor: "#000",
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.03,
-        shadowRadius: 8,
-        elevation: 1,
-      }}
-    >
-      <View className="p-3.5">
-        <View className="flex-row justify-between items-start mb-2">
-          <View className="flex-row items-center bg-slate-50 dark:bg-slate-800 rounded-lg border border-slate-100 dark:border-slate-700 px-2 py-1">
-            <Text className="text-[10px] font-bold text-slate-700 dark:text-slate-300 uppercase tracking-widest">
-              {item.incident_id || "INCIDENT"}
-            </Text>
-            <View className="mx-1.5 w-0.5 h-0.5 rounded-full bg-slate-300 dark:bg-slate-500" />
-            <Text className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest">
-              {item.site_code || "-"}
-            </Text>
-          </View>
-          <View className="px-2 py-1 rounded-lg border bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700">
-            <Text className="text-[9px] font-bold uppercase tracking-wider text-slate-600 dark:text-slate-300">
-              {item.rca_status}
-            </Text>
-          </View>
-        </View>
+  const renderCard = ({ item }: { item: IncidentItem }) => {
+    const status = getStatusVisual(item.status);
+    const statusLabel = item.status === "Resolved" ? "Closed" : status.label;
+    const assignee = parseAssignedTo(item.assigned_to).display;
+    const createdAt = item.incident_created_time
+      ? (() => {
+          const d = new Date(item.incident_created_time as any);
+          return Number.isNaN(d.getTime())
+            ? "-"
+            : `${formatIST(d, { day: "numeric", month: "short" })} · ${formatIST(d, { hour: "numeric", minute: "2-digit", hour12: true }, "en-US")}`;
+        })()
+      : "-";
 
-        <View className="mb-2.5">
-          <Text
-            className="text-slate-900 dark:text-slate-50 font-bold text-base leading-5 mb-1.5"
-            numberOfLines={1}
-          >
-            {item.fault_symptom}
-          </Text>
-          <View className="flex-row items-center self-start">
-            <View className={`flex-row items-center rounded-full px-2 py-1 ${
-              item.status === "Open"
-                ? "bg-red-50 dark:bg-red-900/20"
-                : item.status === "Inprogress"
-                  ? "bg-blue-50 dark:bg-blue-900/20"
-                  : "bg-green-50 dark:bg-green-900/20"
-            }`}>
+    return (
+      <TouchableOpacity
+        onPress={() => openIncidentModal(item)}
+        activeOpacity={0.7}
+        className="bg-white dark:bg-slate-900 mb-2.5 rounded-2xl border border-slate-200 dark:border-slate-800"
+        style={{
+          shadowColor: "#000",
+          shadowOffset: { width: 0, height: 2 },
+          shadowOpacity: 0.03,
+          shadowRadius: 8,
+          elevation: 1,
+        }}
+      >
+        <View className="p-3">
+          {/* Top: icon · title + id/site · rca badge */}
+          <View className="flex-row items-start">
+            <View
+              className="w-9 h-9 rounded-[10px] items-center justify-center mr-2.5"
+              style={{ backgroundColor: status.tint }}
+            >
+              <AlertTriangle size={16} color={status.color} />
+            </View>
+
+            <View className="flex-1 min-w-0 mr-2">
+              <Text
+                className="text-slate-900 dark:text-slate-50 font-semibold text-[14px] leading-5"
+                numberOfLines={2}
+              >
+                {item.fault_symptom}
+              </Text>
+              <View className="flex-row items-center mt-1">
+                <Text
+                  className="text-slate-500 dark:text-slate-400 text-[11px] font-medium flex-shrink-0"
+                  numberOfLines={1}
+                >
+                  {item.incident_id || "INCIDENT"}
+                </Text>
+                <View className="w-1 h-1 rounded-full bg-slate-300 dark:bg-slate-600 mx-2" />
+                <Text
+                  className="text-slate-400 dark:text-slate-500 text-[11px] flex-shrink"
+                  numberOfLines={1}
+                >
+                  {item.site_code || "-"}
+                </Text>
+              </View>
+            </View>
+
+            <View className="bg-slate-100 dark:bg-slate-800 rounded-md px-2 py-0.5 flex-shrink-0">
+              <Text className="text-[9px] font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                {item.rca_status}
+              </Text>
+            </View>
+          </View>
+
+          {/* Foot: time · assignee — status chip */}
+          <View className="flex-row items-center justify-between mt-2.5 pt-2.5 border-t border-slate-100 dark:border-slate-800/80">
+            <View className="flex-row items-center flex-1 mr-2" style={{ gap: 10 }}>
+              <View className="flex-row items-center flex-shrink-0">
+                <Clock size={12} color="#94a3b8" />
+                <Text className="text-slate-500 dark:text-slate-400 text-[10.5px] font-medium ml-1">
+                  {createdAt}
+                </Text>
+              </View>
+              <View className="flex-row items-center flex-shrink min-w-0">
+                {assignee ? (
+                  <>
+                    <View
+                      className="w-[18px] h-[18px] rounded-full items-center justify-center mr-1.5"
+                      style={{ backgroundColor: status.tint }}
+                    >
+                      <Text
+                        className="text-[8px] font-bold"
+                        style={{ color: status.color }}
+                      >
+                        {getInitials(assignee)}
+                      </Text>
+                    </View>
+                    <Text
+                      className="text-slate-500 dark:text-slate-400 text-[10.5px] font-medium flex-shrink"
+                      numberOfLines={1}
+                    >
+                      {assignee}
+                    </Text>
+                  </>
+                ) : (
+                  <>
+                    <UserCircle size={13} color="#94a3b8" />
+                    <Text className="text-slate-400 dark:text-slate-500 text-[10.5px] font-medium ml-1">
+                      Unassigned
+                    </Text>
+                  </>
+                )}
+              </View>
+            </View>
+
+            <View
+              className="flex-row items-center rounded-md px-2 py-1 flex-shrink-0"
+              style={{ backgroundColor: status.tint }}
+            >
               <View
-                className="rounded-full mr-2 w-1.5 h-1.5"
-                style={{
-                  backgroundColor:
-                    item.status === "Open"
-                      ? "#dc2626"
-                      : item.status === "Inprogress"
-                        ? "#2563eb"
-                        : "#16a34a",
-                }}
+                className="w-1.5 h-1.5 rounded-full mr-1.5"
+                style={{ backgroundColor: status.color }}
               />
               <Text
-                className={`font-bold uppercase tracking-widest text-[9px] ${
-                  item.status === "Open"
-                    ? "text-red-600"
-                    : item.status === "Inprogress"
-                      ? "text-blue-600"
-                      : "text-green-600"
-                }`}
+                className="text-[9px] font-bold uppercase tracking-wide"
+                style={{ color: status.color }}
               >
-                {item.status === "Resolved" ? "Closed" : item.status}
+                {statusLabel}
               </Text>
             </View>
           </View>
         </View>
-
-        <View className="flex-row items-center pt-2.5 border-t border-slate-100 dark:border-slate-800/80">
-          <MapPin size={10} color="#cbd5e1" />
-          <Text className="text-slate-400 dark:text-slate-500 text-[10px] font-medium ml-1 flex-1" numberOfLines={1}>
-            {item.asset_location || "General Area"}
-          </Text>
-          <Clock size={10} color="#cbd5e1" />
-          <Text className="text-slate-400 dark:text-slate-500 text-[10px] font-medium ml-1">
-            {item.incident_created_time ? new Date(item.incident_created_time).toLocaleDateString() : "-"}
-          </Text>
-        </View>
-      </View>
-    </TouchableOpacity>
-  );
+      </TouchableOpacity>
+    );
+  };
 
   const listEmpty = useMemo(
     () =>
@@ -1137,7 +1178,7 @@ export default function IncidentsTab() {
                     style={{ opacity: canEditMeta ? 1 : 0.7 }}
                   >
                     <Text className="text-slate-900 dark:text-slate-50">
-                      {form.incident_created_time.toLocaleString()}
+                      {formatIST(form.incident_created_time, { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: true }, "en-US")}
                     </Text>
                   </TouchableOpacity>
                 </View>
@@ -1189,7 +1230,7 @@ export default function IncidentsTab() {
                       className="border border-slate-300 dark:border-slate-700 rounded-xl px-3 py-3"
                     >
                       <Text className="text-slate-900 dark:text-slate-50">
-                        {(form.incident_updated_time || new Date()).toLocaleString()}
+                        {formatIST(form.incident_updated_time || new Date(), { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: true }, "en-US")}
                       </Text>
                     </TouchableOpacity>
                   </View>

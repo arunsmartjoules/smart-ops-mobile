@@ -8,16 +8,12 @@ import { siteResolver } from "./SiteResolver";
 import { db, attendanceLogs } from "../database";
 import { and, eq, desc } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
+import { istDateString } from "../utils/istDate";
 
 const BACKEND_URL = API_BASE_URL;
 
-export const getISTDateString = (d: Date = new Date()) =>
-  new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Kolkata",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(d);
+/** IST calendar date "YYYY-MM-DD". Thin alias over the central istDate util. */
+export const getISTDateString = (d: Date = new Date()) => istDateString(d);
 
 const safeDate = (value: any): Date | null => {
   if (!value) return null;

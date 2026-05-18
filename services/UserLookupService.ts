@@ -24,8 +24,13 @@ const UserLookupService = {
     }
 
     try {
+      // Exact employee_code filter — NOT the fuzzy `search` param. `search`
+      // does ILIKE '%term%' across name/email/employee_code and is ORDER BY
+      // name ASC, so a substring-matching code returns the alphabetically
+      // first user (the "everyone is Amreen Parveen" bug). The `equals`
+      // filter guarantees we only match the exact code.
       const res = await centralApiFetch(
-        `${API_BASE_URL}/api/users?search=${encodeURIComponent(employeeCode)}&limit=1`,
+        `${API_BASE_URL}/api/users?employee_code=${encodeURIComponent(employeeCode)}&limit=1`,
         {},
         10000,
       );
@@ -33,17 +38,25 @@ const UserLookupService = {
       if (res.ok) {
         const json = await res.json();
         const users = json.data || [];
-        if (users.length > 0 && users[0].name) {
-          nameCache.set(employeeCode, users[0].name);
-          return users[0].name;
+        const match = users[0];
+        // Defensive: only accept a result whose employee_code actually
+        // equals what we asked for. Anything else means executor_id was a
+        // name/UID, not a code — fall through and return it verbatim.
+        if (
+          match?.name &&
+          String(match.employee_code) === String(employeeCode)
+        ) {
+          nameCache.set(employeeCode, match.name);
+          return match.name;
         }
       }
     } catch (error) {
-      // Silently fail — just return the code
+      // Silently fail — just return the code/value as-is
       console.warn("UserLookup failed for", employeeCode, error);
     }
 
-    // Cache the raw code to avoid retrying
+    // No exact code match: executor_id is already a display name (backend
+    // writes the operator's name) or a UID. Return it verbatim.
     nameCache.set(employeeCode, employeeCode);
     return employeeCode;
   },

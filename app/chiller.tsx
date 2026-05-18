@@ -26,9 +26,9 @@ import {
   Gauge,
   PenTool,
   CheckCircle2,
-  Save,
 } from "lucide-react-native";
 import { SiteLogService } from "@/services/SiteLogService";
+import { formatAssignee } from "@/utils/assignee";
 import AssetService from "@/services/AssetService";
 import AttendanceService from "@/services/AttendanceService";
 import { useAuth } from "@/contexts/AuthContext";
@@ -40,7 +40,8 @@ import { LinearGradient } from "expo-linear-gradient";
 import { db, chillerReadings } from "@/database";
 import { eq } from "drizzle-orm";
 import Skeleton from "@/components/Skeleton";
-import { addDays, endOfDay, startOfDay } from "date-fns";
+import { addDays } from "date-fns";
+import { formatIST, istDayStartMs, istDayEndMs } from "@/utils/istDate";
 
 export default function ChillerEntry() {
   const { user } = useAuth();
@@ -89,6 +90,8 @@ export default function ChillerEntry() {
 
   const [assets, setAssets] = useState<SelectOption[]>([]);
   const [loadingAssets, setLoadingAssets] = useState(false);
+  // Read-only operator label shown when editing an existing reading.
+  const [assignedToDisplay, setAssignedToDisplay] = useState("");
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -112,6 +115,14 @@ export default function ChillerEntry() {
   // row per concurrent save. Serializing means later submissions await the
   // current one and see the populated ref, falling through to update.
   const inFlightSaveRef = useRef<Promise<void> | null>(null);
+  // Set the moment a "Completed" submission begins. A debounced auto-save
+  // timer scheduled by the last keystroke can otherwise fire AFTER completion
+  // (which nulls currentReadingRef), fall into the create branch, and write a
+  // duplicate "Inprogress" row — making the reading look un-logged.
+  const completedRef = useRef(false);
+  // Dedupe the "incomplete chiller log" alert within a single mount so the
+  // focus/site effects don't re-fire it. Keyed by `${site}:${openRowId}`.
+  const dupGuardKeyRef = useRef<string | null>(null);
 
   const isEditMode = !!(params.editId || params.id);
   const targetId = (params.editId || params.id || "") as string;
@@ -152,8 +163,8 @@ export default function ChillerEntry() {
         setLoadingDailyProgress(true);
 
         if (syncFromServer) {
-          const fromDate = startOfDay(addDays(new Date(), -1)).getTime();
-          const toDate = endOfDay(addDays(new Date(), 1)).getTime();
+          const fromDate = istDayStartMs(addDays(new Date(), -1));
+          const toDate = istDayEndMs(addDays(new Date(), 1));
           await SiteLogService.pullChillerReadings(selectedSite, {
             fromDate,
             toDate,
@@ -171,6 +182,87 @@ export default function ChillerEntry() {
       }
     },
     [isEditMode, selectedSite],
+  );
+
+  // Block starting a NEW chiller log while an incomplete one exists for this
+  // site today (any operator — devices are shared). The previous log must be
+  // completed first; we offer a direct jump to its edit screen.
+  const checkForOpenChillerLog = useCallback(async () => {
+    if (isEditMode || !selectedSite) return;
+    try {
+      const open =
+        await SiteLogService.findOpenChillerReadingForToday(selectedSite);
+      if (!open) return;
+      // The row this session is actively creating must not block itself.
+      if (
+        currentReadingRef.current?.id &&
+        open.id === currentReadingRef.current.id
+      ) {
+        return;
+      }
+      const key = `${selectedSite}:${open.id}`;
+      if (dupGuardKeyRef.current === key) return;
+      dupGuardKeyRef.current = key;
+
+      // assigned_to is the canonical operator NAME. executor_id is a code and
+      // pull-sync injects the literal "system" when the server row has none —
+      // neither is a name. Fall back to the current logged-in user (shared
+      // devices: it's almost always them) before the generic "Someone".
+      const SENTINELS = new Set([
+        "",
+        "system",
+        "unknown",
+        "null",
+        "undefined",
+      ]);
+      const cleanName = (v?: string | null) => {
+        const s = String(v ?? "").trim();
+        return SENTINELS.has(s.toLowerCase()) ? "" : s;
+      };
+      const who =
+        cleanName(open.assigned_to) ||
+        cleanName(user?.full_name) ||
+        cleanName(user?.name) ||
+        cleanName(open.executor_id) ||
+        "Someone";
+      const ts = open.reading_time || open.created_at;
+      const timeStr = ts
+        ? formatIST(new Date(ts), {
+            hour: "2-digit",
+            minute: "2-digit",
+            hour12: false,
+          })
+        : "earlier today";
+
+      Alert.alert(
+        "Incomplete Chiller Log",
+        `"${who}" has created a chiller log at ${timeStr} and left it without completing it. Please complete that and create a new chiller log.`,
+        [
+          {
+            text: "Go Back",
+            style: "cancel",
+            onPress: () => router.back(),
+          },
+          {
+            text: "Open Pending Log",
+            onPress: () =>
+              router.replace({
+                pathname: "/chiller",
+                params: { editId: open.id, mode: "edit" },
+              }),
+          },
+        ],
+        { cancelable: false },
+      );
+    } catch (e) {
+      console.error("Open chiller log check failed", e);
+    }
+  }, [isEditMode, selectedSite, user?.full_name, user?.name]);
+
+  useFocusEffect(
+    useCallback(() => {
+      checkForOpenChillerLog();
+    }, [checkForOpenChillerLog]),
   );
 
   useEffect(() => {
@@ -262,6 +354,9 @@ export default function ChillerEntry() {
       const record = rows[0];
         if (record) {
           setSelectedSite(record.site_code);
+          setAssignedToDisplay(
+            formatAssignee(record.assigned_to, record.executor_id),
+          );
           setFormData({
             chillerId: record.equipment_id || record.chiller_id || "",
             equipmentId: record.equipment_id || "",
@@ -345,6 +440,8 @@ export default function ChillerEntry() {
       // so we create a new row for the new asset instead of overwriting the old.
       if (field === "chillerId" && prev.chillerId && value !== prev.chillerId) {
         currentReadingRef.current = null;
+        // New asset = a fresh reading; allow auto-save again.
+        completedRef.current = false;
       }
 
       // Auto-save logic (debounced)
@@ -378,7 +475,13 @@ export default function ChillerEntry() {
       // Only auto-save if we have a chiller selection and user updated an eligible field.
       if (next.chillerId && autoSaveEligibleFields.has(field)) {
         autoSaveTimerRef.current = setTimeout(() => {
-          handleSubmission("In-progress", undefined, next);
+          // Reading already completed (or completing) — never let a late
+          // auto-save resurrect it as an "Inprogress" duplicate row.
+          if (completedRef.current) return;
+          // Canonical token is "Inprogress" (no hyphen/space). "In-progress"
+          // is misclassified as "Open" by getChillerTasks and the history
+          // status chip, so the logged count silently drops.
+          handleSubmission("Inprogress", undefined, next);
         }, 1500); // 1.5s delay for technical logs
       }
       
@@ -394,6 +497,22 @@ export default function ChillerEntry() {
   ) => {
     const currentFormData = formDataSnapshot || formDataRef.current;
 
+    const isCompleting = status === "Completed";
+
+    // Once the reading is (being) completed, drop any pending debounced
+    // auto-save and reject further auto-saves. Without this, a timer armed by
+    // the last keystroke fires after completion and creates a duplicate
+    // "Inprogress" row, so the reading appears un-logged.
+    if (isCompleting) {
+      completedRef.current = true;
+      if (autoSaveTimerRef.current) {
+        clearTimeout(autoSaveTimerRef.current);
+        autoSaveTimerRef.current = null;
+      }
+    } else if (completedRef.current) {
+      return;
+    }
+
     if (!currentFormData.chillerId) {
       Alert.alert("Error", "Please select a Chiller asset");
       return;
@@ -401,7 +520,9 @@ export default function ChillerEntry() {
 
     const finalSignature = sig || currentFormData.signature;
 
-    if (!isEditMode && status === "Completed" && !finalSignature) {
+    // Completion always requires a signature — including when an Inprogress
+    // log is reopened from history/edit. Auto-saves ("Inprogress") are exempt.
+    if (status === "Completed" && !finalSignature) {
       Alert.alert("Error", "Signature is required to complete the log");
       return;
     }
@@ -449,7 +570,15 @@ export default function ChillerEntry() {
           compressorLoadPercentage: parseFloat(currentFormData.load),
           inlineBtuMeter: parseFloat(currentFormData.inlineBtuMeter),
           remarks: currentFormData.remarks,
-          assignedTo: user?.full_name || user?.name || "unknown",
+          // assigned_to must carry the operator's display NAME — the backend
+          // derives log_activity_master / task_management assigned_to from it
+          // (codes must never leak to Fieldproxy). employee_code is a last
+          // resort over the literal "unknown".
+          assignedTo:
+            user?.full_name?.trim() ||
+            user?.name?.trim() ||
+            user?.employee_code ||
+            "unknown",
           signature: finalSignature,
           status: status,
           readingTime: params.readingTime
@@ -650,6 +779,19 @@ export default function ChillerEntry() {
                   placeholder="Select Chiller"
                   disabled={isEditMode || (params.isNew !== "true" && !!params.chillerId)}
                 />
+
+                {isEditMode && (
+                  <View className="mb-2">
+                    <Text className="text-slate-500 dark:text-slate-400 text-[10px] font-bold uppercase tracking-widest mb-1.5 ml-1">
+                      Assigned To
+                    </Text>
+                    <View className="bg-slate-100 dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 px-3 py-3.5">
+                      <Text className="font-semibold text-base text-slate-500 dark:text-slate-400">
+                        {assignedToDisplay || "—"}
+                      </Text>
+                    </View>
+                  </View>
+                )}
 
                 {/* Temperatures Section */}
                 <View className="flex-row items-center mt-4 mb-4">
@@ -854,14 +996,14 @@ export default function ChillerEntry() {
             {/* Removed manual Save button as autosave is implemented */}
             
             <TouchableOpacity
-              onPress={() => isEditMode ? handleSubmission("Completed") : setSignatureModalVisible(true)}
+              onPress={() => setSignatureModalVisible(true)}
               disabled={saving || (!isEditMode && !isAnyFieldFilled)}
               activeOpacity={0.8}
               className="flex-1 rounded-xl overflow-hidden"
               style={{ opacity: (!isEditMode && !isAnyFieldFilled) ? 0.6 : 1 }}
             >
               <LinearGradient
-                colors={isEditMode ? ["#334155", "#0f172a"] : ["#0d9488", "#0f766e"]}
+                colors={["#0d9488", "#0f766e"]}
                 start={{ x: 0, y: 0 }}
                 end={{ x: 1, y: 1 }}
                 style={StyleSheet.absoluteFill}
@@ -871,13 +1013,13 @@ export default function ChillerEntry() {
                   <ActivityIndicator color="white" />
                 ) : (
                   <>
-                    {isEditMode ? (
-                      <Save size={20} color="white" style={{ marginRight: 8 }} />
-                    ) : (
-                      <CheckCircle2 size={20} color="white" style={{ marginRight: 8 }} />
-                    )}
+                    <CheckCircle2
+                      size={20}
+                      color="white"
+                      style={{ marginRight: 8 }}
+                    />
                     <Text className="text-white font-bold text-base uppercase tracking-wider">
-                      {isEditMode ? "Update Reading" : "Complete"}
+                      Complete & Sign
                     </Text>
                   </>
                 )}
@@ -898,7 +1040,7 @@ export default function ChillerEntry() {
           <View className="bg-white dark:bg-slate-900 rounded-t-3xl h-[60%] overflow-hidden">
             <View className="flex-row items-center justify-between px-6 py-4 border-b border-slate-100 dark:border-slate-800">
               <Text className="text-slate-900 dark:text-slate-50 font-bold text-lg">
-                Sign to {isEditMode ? "Update" : "Complete"} Reading
+                Sign to Complete Reading
               </Text>
               <TouchableOpacity onPress={() => setSignatureModalVisible(false)}>
                 <Text className="text-purple-600 font-bold">Close</Text>
@@ -906,7 +1048,7 @@ export default function ChillerEntry() {
             </View>
             <SignaturePad
               standalone
-              okText={isEditMode ? "Update Reading" : "Complete Reading"}
+              okText="Complete Reading"
               onOK={(sig: string) => handleSubmission("Completed", sig)}
             />
           </View>

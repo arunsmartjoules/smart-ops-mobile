@@ -20,6 +20,7 @@ import {
   Trash2,
 } from "lucide-react-native";
 import SiteLogService from "@/services/SiteLogService";
+import { formatAssignee } from "@/utils/assignee";
 import { useAuth } from "@/contexts/AuthContext";
 import * as ImagePicker from "expo-image-picker";
 import { StorageService } from "@/services/StorageService";
@@ -50,6 +51,8 @@ export default function TempRHEntry() {
   const [uploading, setUploading] = useState(false);
   const [loadingEdit, setLoadingEdit] = useState(false);
   const [signatureModalVisible, setSignatureModalVisible] = useState(false);
+  // Read-only operator label shown when editing an existing log.
+  const [assignedToDisplay, setAssignedToDisplay] = useState("");
 
   // Load existing data in edit mode
   useEffect(() => {
@@ -63,6 +66,9 @@ export default function TempRHEntry() {
       setLoadingEdit(true);
       const log = await SiteLogService.getSiteLogById(id);
       if (log) {
+        setAssignedToDisplay(
+          formatAssignee(log.assigned_to, log.executor_id),
+        );
         setFormData({
           temperature: log.temperature != null ? String(log.temperature) : "",
           rh: log.rh != null ? String(log.rh) : "",
@@ -311,6 +317,18 @@ export default function TempRHEntry() {
         </View>
 
         <ScrollView className="flex-1 p-5" showsVerticalScrollIndicator={false}>
+          {isEditMode && (
+            <View className="mb-1">
+              <Text className="text-slate-500 dark:text-slate-400 text-[10px] font-bold uppercase tracking-widest mb-1.5 ml-1">
+                Assigned To
+              </Text>
+              <View className="bg-slate-100 dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 px-3 py-3.5">
+                <Text className="font-semibold text-base text-slate-500 dark:text-slate-400">
+                  {assignedToDisplay || "—"}
+                </Text>
+              </View>
+            </View>
+          )}
           <View className="mt-4">
             {renderInput(
               "Temperature",

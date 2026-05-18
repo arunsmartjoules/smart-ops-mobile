@@ -136,6 +136,17 @@ interface ISiteLogService {
   ): Promise<void>;
   prefetchPendingForCategory(siteCode: string, logName: string): Promise<void>;
   getTodayChillerReadingCount(siteCode: string, targetDate?: Date): Promise<number>;
+  findOpenChillerReadingForToday(
+    siteCode: string,
+    targetDate?: Date,
+  ): Promise<{
+    id: string;
+    status: string | null;
+    assigned_to: string | null;
+    executor_id: string | null;
+    reading_time: number | null;
+    created_at: number | null;
+  } | null>;
   getTodayChillerCompletedReadingCount(
     siteCode: string,
     targetDate?: Date,
@@ -311,7 +322,9 @@ export const SiteLogService: ISiteLogService = {
     if (!logs || logs.length === 0) return;
     const now = Date.now();
     const nowLocal = new Date();
-    const formattedToday = nowLocal.toISOString().split("T")[0];
+    // IST calendar day — a UTC slice here stamps the previous day's
+    // scheduled_date between IST 00:00–05:30.
+    const formattedToday = getISTDateString(nowLocal);
 
     try {
       // 1. Prepare records for batch insert
@@ -1165,11 +1178,9 @@ export const SiteLogService: ISiteLogService = {
         const normalizedLogs = serverLogs.map((serverLog: any) => {
           let scheduledDate: string | null = null;
           if (serverLog.scheduled_date) {
-            // Server DATE column is returned as midnight UTC ISO string (e.g. 18:30 UTC previous day).
-            // We must convert it to IST (+5:30) to get the correct LOCAL calendar day.
-            const d = new Date(serverLog.scheduled_date);
-            const istDate = new Date(d.getTime() + 5.5 * 60 * 60 * 1000);
-            scheduledDate = istDate.toISOString().split("T")[0];
+            // Server DATE column is returned as a midnight-UTC ISO instant;
+            // render it as the IST calendar day (centralised, DST-free).
+            scheduledDate = getISTDateString(new Date(serverLog.scheduled_date));
           }
 
           const safeParseFloat = (val: any) => {
@@ -1391,6 +1402,59 @@ export const SiteLogService: ISiteLogService = {
         error: error.message,
       });
       return 0;
+    }
+  },
+
+  /**
+   * Find the most recent NON-completed ("Inprogress"/"Open") chiller reading
+   * for a site on a given day (IST). Used to block starting a new chiller log
+   * while a previous one is still open. A row with empty/null status counts as
+   * completed (matches getChillerTasks), so it is NOT considered open.
+   */
+  async findOpenChillerReadingForToday(
+    siteCode: string,
+    targetDate: Date = new Date(),
+  ): Promise<{
+    id: string;
+    status: string | null;
+    assigned_to: string | null;
+    executor_id: string | null;
+    reading_time: number | null;
+    created_at: number | null;
+  } | null> {
+    try {
+      const targetDateStr = getISTDateString(targetDate);
+      const rows = await db
+        .select({
+          id: chillerReadings.id,
+          status: chillerReadings.status,
+          assigned_to: chillerReadings.assigned_to,
+          executor_id: chillerReadings.executor_id,
+          reading_time: chillerReadings.reading_time,
+          created_at: chillerReadings.created_at,
+        })
+        .from(chillerReadings)
+        .where(eq(chillerReadings.site_code, siteCode))
+        .orderBy(desc(chillerReadings.created_at));
+
+      const open = rows.filter((r) => {
+        const ts = r.reading_time || r.created_at;
+        if (!ts) return false;
+        if (getISTDateString(new Date(ts)) !== targetDateStr) return false;
+        const norm = String(r.status || "")
+          .toLowerCase()
+          .replace(/[\s_-]+/g, "");
+        return norm !== "completed" && norm !== "";
+      });
+
+      return open[0] ?? null;
+    } catch (error: any) {
+      logger.error("Error finding open chiller reading", {
+        module: "SITE_LOG_SERVICE",
+        siteCode,
+        error: error.message,
+      });
+      return null;
     }
   },
 
@@ -1744,9 +1808,8 @@ export const SiteLogService: ISiteLogService = {
       if (typeof raw === "string" && /^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
       const d = new Date(raw);
       if (isNaN(d.getTime())) return null;
-      // Server returns DATE as midnight-UTC; shift to IST for the calendar day.
-      const ist = new Date(d.getTime() + 5.5 * 60 * 60 * 1000);
-      return ist.toISOString().slice(0, 10);
+      // Server returns DATE as midnight-UTC; render as the IST calendar day.
+      return getISTDateString(d);
     };
     const contentKey = (logNameVal: string | null, scheduledDate: string | null, taskName: string | null) =>
       `${(logNameVal || "").toLowerCase().trim()}|${scheduledDate || ""}|${(taskName || "").toLowerCase().trim()}`;

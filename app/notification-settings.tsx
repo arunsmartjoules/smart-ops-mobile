@@ -21,6 +21,7 @@ import {
 } from "@/services/NotificationService";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import logger from "@/utils/logger";
+import { formatISTDateTime } from "@/utils/istDate";
 import cacheManager from "@/services/CacheManager";
 
 export default function NotificationSettingsPage() {
@@ -539,7 +540,7 @@ export default function NotificationSettingsPage() {
                       </View>
                       {regStatus?.time && (
                         <Text className="text-slate-400 text-[10px]">
-                          Last attempt: {new Date(regStatus.time).toLocaleString()}
+                          Last attempt: {formatISTDateTime(regStatus.time)}
                         </Text>
                       )}
                       {regStatus?.error && (

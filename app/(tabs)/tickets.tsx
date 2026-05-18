@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from "react"
 import {
   View,
   Text,
+  TextInput,
   TouchableOpacity,
   FlatList,
   RefreshControl,
@@ -17,6 +18,8 @@ import {
   RefreshCw,
   MapPin,
   ChevronDown,
+  Search,
+  X,
 } from "lucide-react-native";
 import { useLocalSearchParams, useFocusEffect, router } from "expo-router";
 import { useAuth } from "@/contexts/AuthContext";
@@ -34,6 +37,15 @@ import { useSites } from "@/hooks/useSites";
 import { db, tickets as ticketsTable, areas, categories } from "@/database";
 import { eq, desc } from "drizzle-orm";
 import logger from "@/utils/logger";
+import {
+  istTodayString,
+  istParts,
+  istDayStartMsFromYmd,
+  istDayEndMsFromYmd,
+  istDayStartIso,
+  istDayEndIso,
+  formatISTDate,
+} from "@/utils/istDate";
 import cacheManager from "@/services/CacheManager";
 import { v4 as uuidv4 } from "uuid";
 import TicketDetailModal from "@/components/TicketDetailModal";
@@ -62,47 +74,23 @@ const parseCreatedAtMs = (value: unknown) => {
   return null;
 };
 
-const getLocalDayStartMs = (dateStr: string | null) => {
-  if (!dateStr) return null;
-  const [year, month, day] = dateStr.slice(0, 10).split("-").map(Number);
-  if (!year || !month || !day) return null;
-  return new Date(year, month - 1, day, 0, 0, 0, 0).getTime();
-};
+// Day-window boundaries are pinned to the IST calendar day, not the device
+// timezone, so filtering "1–19 May" means 1–19 May in India everywhere.
+const getLocalDayStartMs = (dateStr: string | null) =>
+  istDayStartMsFromYmd(dateStr);
 
-const getLocalDayEndMs = (dateStr: string | null) => {
-  if (!dateStr) return null;
-  const [year, month, day] = dateStr.slice(0, 10).split("-").map(Number);
-  if (!year || !month || !day) return null;
-  return new Date(year, month - 1, day, 23, 59, 59, 999).getTime();
-};
+const getLocalDayEndMs = (dateStr: string | null) =>
+  istDayEndMsFromYmd(dateStr);
 
 const formatPreviewDate = (dateStr: string | null) => {
   if (!dateStr) return "Any";
-  const [year, month, day] = dateStr.slice(0, 10).split("-").map(Number);
-  if (!year || !month || !day) return "Any";
-  return new Date(year, month - 1, day).toLocaleDateString("en-GB", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  });
+  const ms = istDayStartMsFromYmd(dateStr);
+  return ms == null ? "Any" : formatISTDate(ms);
 };
 
-const toApiStartDate = (dateStr: string | null) => {
-  const ms = getLocalDayStartMs(dateStr);
-  return ms == null ? undefined : new Date(ms).toISOString();
-};
+const toApiStartDate = (dateStr: string | null) => istDayStartIso(dateStr);
 
-const toApiEndDate = (dateStr: string | null) => {
-  const ms = getLocalDayEndMs(dateStr);
-  return ms == null ? undefined : new Date(ms).toISOString();
-};
-
-const toLocalYmd = (date: Date) => {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-};
+const toApiEndDate = (dateStr: string | null) => istDayEndIso(dateStr);
 
 const AREA_PAGE_SIZE = 50;
 
@@ -167,13 +155,12 @@ export default function Tickets() {
   const selectedSiteCode = selectedSite?.site_code ?? "";
   const siteName = selectedSite?.site_name ?? selectedSite?.site_code ?? "Select Site";
 
-  const today = useMemo(() => new Date(), []);
-  const thisMonthStart = useMemo(
-    () => new Date(today.getFullYear(), today.getMonth(), 1),
-    [today],
-  );
-  const defaultFromDate = useMemo(() => toLocalYmd(thisMonthStart), [thisMonthStart]);
-  const defaultToDate = useMemo(() => toLocalYmd(today), [today]);
+  // Default range = 1st of the current IST month → today (IST).
+  const defaultToDate = useMemo(() => istTodayString(), []);
+  const defaultFromDate = useMemo(() => {
+    const { year, month } = istParts(new Date());
+    return `${year}-${String(month).padStart(2, "0")}-01`;
+  }, []);
 
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [loading, setLoading] = useState(true);
@@ -197,6 +184,7 @@ export default function Tickets() {
   const [statusFilter, setStatusFilter] = useState("Open");
   const [priorityFilter, setPriorityFilter] = useState("All");
   const [searchQuery, setSearchQuery] = useState("");
+  const [searchInput, setSearchInput] = useState("");
   const [showFiltersModal, setShowFiltersModal] = useState(false);
   const [tempSearch, setTempSearch] = useState("");
   const [fromDate, setFromDate] = useState<string | null>(defaultFromDate);
@@ -722,6 +710,19 @@ export default function Tickets() {
 
     return () => clearTimeout(timeout);
   }, [areaSearchQuery]);
+
+  // Inline search box → debounced searchQuery (triggers the filter effect).
+  useEffect(() => {
+    const timeout = setTimeout(() => {
+      if (searchInput.trim() !== searchQuery) setSearchQuery(searchInput.trim());
+    }, 400);
+    return () => clearTimeout(timeout);
+  }, [searchInput, searchQuery]);
+
+  // Keep the box in sync when search is changed elsewhere (clear / advanced).
+  useEffect(() => {
+    setSearchInput((prev) => (prev.trim() === searchQuery ? prev : searchQuery));
+  }, [searchQuery]);
 
   useEffect(() => {
     if (!selectedSiteCode) return;
@@ -1372,10 +1373,34 @@ export default function Tickets() {
               </TouchableOpacity>
             </View>
           </View>
-          <View className="mb-2 self-start px-3 py-1 rounded-full bg-red-50 dark:bg-red-950/30 border border-red-100 dark:border-red-900/40">
+          <View className="mb-3 self-start px-3 py-1 rounded-full bg-red-50 dark:bg-red-950/30 border border-red-100 dark:border-red-900/40">
             <Text className="text-[11px] font-semibold text-red-700 dark:text-red-300">
               {dateRangePreview}
             </Text>
+          </View>
+
+          <View className="flex-row items-center bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2.5">
+            <Search size={16} color="#94a3b8" />
+            <TextInput
+              value={searchInput}
+              onChangeText={setSearchInput}
+              placeholder="Search by ID, area, category…"
+              placeholderTextColor={isDark ? "#64748b" : "#94a3b8"}
+              className="flex-1 ml-2 text-sm text-slate-900 dark:text-slate-50"
+              style={{ paddingVertical: 0 }}
+              returnKeyType="search"
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+            {searchInput.length > 0 ? (
+              <TouchableOpacity
+                onPress={() => setSearchInput("")}
+                hitSlop={8}
+                className="ml-1"
+              >
+                <X size={16} color="#94a3b8" />
+              </TouchableOpacity>
+            ) : null}
           </View>
         </View>
 
@@ -1385,7 +1410,11 @@ export default function Tickets() {
           currentStatus={statusFilter}
           onStatusChange={setStatusFilter}
         />
-        <TicketFilters statusFilter={statusFilter} setStatusFilter={setStatusFilter} />
+        <TicketFilters
+          statusFilter={statusFilter}
+          setStatusFilter={setStatusFilter}
+          stats={stats}
+        />
 
         <View className="flex-1">
           <FlatList

@@ -22,6 +22,16 @@ import DateTimePicker, {
 } from "@react-native-community/datetimepicker";
 import FullscreenPicker from "./FullscreenPicker";
 import { type SelectOption } from "./SearchableSelect";
+import { formatIST } from "@/utils/istDate";
+
+const IST_PICKED_OPTS: Intl.DateTimeFormatOptions = {
+  day: "2-digit",
+  month: "short",
+  year: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: true,
+};
 
 interface IncidentDetailModalProps {
   visible: boolean;
@@ -289,10 +299,12 @@ export default function IncidentDetailModal({
                   style={{ opacity: canEditMeta ? 1 : 0.65 }}
                 >
                   <Text className="text-slate-900 dark:text-slate-50">
-                    {(
+                    {formatIST(
                       createdAt ||
-                      new Date(incident.incident_created_time || Date.now())
-                    ).toLocaleString()}
+                        new Date(incident.incident_created_time || Date.now()),
+                      IST_PICKED_OPTS,
+                      "en-US",
+                    )}
                   </Text>
                 </TouchableOpacity>
               </View>
@@ -376,7 +388,7 @@ export default function IncidentDetailModal({
                     style={{ opacity: canEditMeta ? 1 : 0.65 }}
                   >
                     <Text className="text-slate-900 dark:text-slate-50">
-                      {(respondedAt || new Date()).toLocaleString()}
+                      {formatIST(respondedAt || new Date(), IST_PICKED_OPTS, "en-US")}
                     </Text>
                   </TouchableOpacity>
                 </View>
@@ -396,7 +408,7 @@ export default function IncidentDetailModal({
                     style={{ opacity: canEditMeta ? 1 : 0.65 }}
                   >
                     <Text className="text-slate-900 dark:text-slate-50">
-                      {(resolvedAt || new Date()).toLocaleString()}
+                      {formatIST(resolvedAt || new Date(), IST_PICKED_OPTS, "en-US")}
                     </Text>
                   </TouchableOpacity>
                   <Text className="text-slate-700 dark:text-slate-300 text-xs font-bold uppercase mb-2">

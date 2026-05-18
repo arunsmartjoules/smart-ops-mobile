@@ -1,7 +1,8 @@
 import { eq, and, or, ne, gte, lte, like, inArray, desc, asc, count, sql, lt, gt } from "drizzle-orm";
 import { db, areas, siteLogs, chillerReadings, logMaster } from "../database";
 import logger from "../utils/logger";
-import { startOfDay, endOfDay, format, addDays } from "date-fns";
+import { addDays } from "date-fns";
+import { istDateString, istDayStartMs, istDayEndMs } from "../utils/istDate";
 import NetInfo from "@react-native-community/netinfo";
 import { apiFetch as centralApiFetch } from "../utils/apiHelper";
 import { API_BASE_URL } from "../constants/api";
@@ -112,7 +113,7 @@ export const SiteConfigService = {
     targetDate?: string,
   ): Promise<TaskItem[]> {
     try {
-      const scheduledDateStr = targetDate || format(startOfDay(fromDate || new Date()), "yyyy-MM-dd");
+      const scheduledDateStr = targetDate || istDateString(fromDate || new Date());
       const logVariants = getLogVariants(logName);
 
       logger.info(`Fetching tasks for ${siteCode} / ${logName} on ${scheduledDateStr}`, { shift });
@@ -182,8 +183,8 @@ export const SiteConfigService = {
         }
       }
 
-      const start = fromDate ? startOfDay(fromDate).getTime() : startOfDay(new Date()).getTime();
-      const end = toDate ? endOfDay(toDate).getTime() : endOfDay(new Date()).getTime();
+      const start = istDayStartMs(fromDate || new Date());
+      const end = istDayEndMs(toDate || new Date());
 
       const timeframeReadings = await db
         .select()
@@ -202,7 +203,12 @@ export const SiteConfigService = {
       timeframeReadings.forEach((reading) => {
         const chillerId = reading.chiller_id;
         if (!chillerId) return;
-        let status: any = (reading.status || "").toLowerCase().replace(/\s/g, "");
+        // Strip whitespace, hyphens AND underscores so "In-progress",
+        // "In Progress", "in_progress" all collapse to "inprogress" — matches
+        // the backend's normalization (chillerReadingsController).
+        let status: any = (reading.status || "")
+          .toLowerCase()
+          .replace(/[\s_-]+/g, "");
         if (status === "completed" || !reading.status) status = "Completed";
         else if (status === "inprogress") status = "Inprogress";
         else status = "Open";
@@ -252,7 +258,7 @@ export const SiteConfigService = {
     try {
       const logVariants = getLogVariants(logName);
       const parseDateStr = (s: string) => new Date(s);
-      const formatDateStr = (d: Date) => d.toISOString().split("T")[0];
+      const formatDateStr = (d: Date) => istDateString(d);
 
       const checkRange = async (days: number[]) => {
         let pendingDays = 0;
@@ -315,9 +321,50 @@ export const SiteConfigService = {
     }
   },
 
+  /**
+   * Total number of COMPLETED chiller readings for a given day — NOT deduped
+   * per chiller. Logging the same chiller 4 times counts as 4. A reading is
+   * "completed" when its status normalizes to "completed" or is empty/null
+   * (mirrors getChillerTasks / the backend chillerReadingsController).
+   * Day membership uses reading_time, falling back to created_at when null.
+   */
+  async getChillerCompletedCountForDate(
+    siteCode: string,
+    date: Date,
+  ): Promise<number> {
+    try {
+      const start = istDayStartMs(date);
+      const end = istDayEndMs(date);
+
+      const rows = await db
+        .select({
+          status: chillerReadings.status,
+          reading_time: chillerReadings.reading_time,
+          created_at: chillerReadings.created_at,
+        })
+        .from(chillerReadings)
+        .where(eq(chillerReadings.site_code, siteCode));
+
+      return rows.filter((r) => {
+        const ts = r.reading_time ?? r.created_at;
+        if (ts == null || ts < start || ts > end) return false;
+        const norm = String(r.status || "")
+          .toLowerCase()
+          .replace(/[\s_-]+/g, "");
+        return norm === "completed" || norm === "";
+      }).length;
+    } catch (e: any) {
+      logger.error("getChillerCompletedCountForDate failed", {
+        module: "SITE_CONFIG_SERVICE",
+        error: e.message,
+      });
+      return 0;
+    }
+  },
+
   async getGenericTask(siteCode: string, logName: string): Promise<TaskItem> {
-    const start = startOfDay(new Date()).getTime();
-    const end = endOfDay(new Date()).getTime();
+    const start = istDayStartMs(new Date());
+    const end = istDayEndMs(new Date());
     const result = await db.select({ value: count() }).from(siteLogs).where(and(eq(siteLogs.site_code, siteCode), eq(siteLogs.log_name, logName), or(ne(siteLogs.status, "Completed"), and(gte(siteLogs.created_at, start), lte(siteLogs.created_at, end)))));
     const logCount = result[0]?.value ?? 0;
     return { id: logName, name: logName === "Water" ? "Water Parameters" : `${logName} Log`, type: "general", isCompleted: logCount > 0, status: logCount > 0 ? "Completed" : "Open" };

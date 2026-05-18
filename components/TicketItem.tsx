@@ -1,8 +1,14 @@
 import React, { useCallback } from "react";
 import { View, Text, TouchableOpacity } from "react-native";
-import { MapPin, Clock } from "lucide-react-native";
-import { format } from "date-fns";
+import { Clock, Flag, UserCircle } from "lucide-react-native";
+import { formatIST } from "@/utils/istDate";
 import { type Ticket } from "@/services/TicketsService";
+import {
+  getCategoryVisual,
+  getStatusVisual,
+  getPriorityVisual,
+  getInitials,
+} from "@/utils/ticketVisuals";
 
 interface TicketItemProps {
   item: Ticket;
@@ -11,37 +17,15 @@ interface TicketItemProps {
   isCompact?: boolean;
 }
 
-const getPriorityColor = (priority?: string) => {
-  const p = (priority || "").toLowerCase();
-  if (p === "very high")
-    return {
-      bg: "bg-pink-50 dark:bg-pink-900/20",
-      text: "text-pink-600 dark:text-pink-400",
-      border: "border-pink-200 dark:border-pink-800/50",
-    };
-  if (p === "high")
-    return {
-      bg: "bg-red-50 dark:bg-red-900/20",
-      text: "text-red-600 dark:text-red-400",
-      border: "border-red-200 dark:border-red-800/50",
-    };
-  if (p === "medium")
-    return {
-      bg: "bg-orange-50 dark:bg-orange-900/20",
-      text: "text-orange-600 dark:text-orange-400",
-      border: "border-orange-200 dark:border-orange-800/50",
-    };
-  return {
-    bg: "bg-slate-50 dark:bg-slate-800/50",
-    text: "text-slate-500 dark:text-slate-400",
-    border: "border-slate-200 dark:border-slate-700",
-  };
-};
-
-const getStatusColor = (status?: string) => {
-  if (status === "Open") return { bg: "bg-red-50 dark:bg-red-900/20", text: "text-red-600", dot: "#dc2626" };
-  if (status === "Inprogress") return { bg: "bg-blue-50 dark:bg-blue-900/20", text: "text-blue-600", dot: "#2563eb" };
-  return { bg: "bg-green-50 dark:bg-green-900/20", text: "text-green-600", dot: "#16a34a" };
+const safeDate = (value?: string) => {
+  if (!value) return "";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "";
+  return `${formatIST(d, { day: "numeric", month: "short" })} · ${formatIST(
+    d,
+    { hour: "numeric", minute: "2-digit", hour12: true },
+    "en-US",
+  )}`;
 };
 
 const TicketItem = React.memo(
@@ -54,8 +38,11 @@ const TicketItem = React.memo(
       onLongPress(item);
     }, [item, onLongPress]);
 
-    const priorityColors = getPriorityColor(item.priority);
-    const statusColors = getStatusColor(item.status);
+    const cat = getCategoryVisual(item.category);
+    const status = getStatusVisual(item.status);
+    const priority = getPriorityVisual(item.priority);
+    const assignee = (item.assigned_to || "").trim();
+    const CatIcon = cat.Icon;
 
     return (
       <TouchableOpacity
@@ -63,97 +50,122 @@ const TicketItem = React.memo(
         onLongPress={handleLongPress}
         delayLongPress={500}
         activeOpacity={0.7}
-        className={`bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 ${isCompact ? "mb-3 rounded-2xl" : "mb-4 rounded-3xl"}`}
+        className="bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 mb-2.5 rounded-2xl"
         style={{
           shadowColor: "#000",
-          shadowOffset: { width: 0, height: isCompact ? 2 : 6 },
-          shadowOpacity: isCompact ? 0.03 : 0.04,
-          shadowRadius: isCompact ? 8 : 16,
-          elevation: isCompact ? 1 : 2,
+          shadowOffset: { width: 0, height: 2 },
+          shadowOpacity: 0.03,
+          shadowRadius: 8,
+          elevation: 1,
           borderWidth: 1,
         }}
       >
-        <View className={isCompact ? "p-4" : "p-4 sm:p-5"}>
-          {/* Title (hero) + Status pill */}
-          <View className="flex-row items-start justify-between">
-            {/* Title wrapper — bounded so a long title can wrap freely
-                without ever pushing or resizing the status pill. */}
-            <View className="flex-1 mr-3">
+        <View className="p-3">
+          {/* Top: category icon · title + id/site · priority */}
+          <View className="flex-row items-start">
+            <View
+              className="w-9 h-9 rounded-[10px] items-center justify-center mr-2.5"
+              style={{ backgroundColor: cat.tint }}
+            >
+              <CatIcon size={16} color={cat.color} />
+            </View>
+
+            <View className="flex-1 min-w-0 mr-2">
               <Text
-                className={`text-slate-900 dark:text-slate-50 font-bold ${isCompact ? "text-[15px] leading-5" : "text-lg leading-7"}`}
+                className="text-slate-900 dark:text-slate-50 font-semibold text-[14px] leading-5"
                 numberOfLines={2}
               >
                 {item.title}
               </Text>
-            </View>
-
-            <View
-              className={`flex-row items-center rounded-full flex-shrink-0 ${statusColors.bg} ${isCompact ? "px-2.5 py-1" : "px-3 py-1.5"}`}
-            >
-              <View
-                className="rounded-full mr-1.5 w-1.5 h-1.5"
-                style={{ backgroundColor: statusColors.dot }}
-              />
-              <Text
-                className={`font-bold uppercase tracking-wide ${statusColors.text} ${isCompact ? "text-[9px]" : "text-[10px]"}`}
-              >
-                {item.status}
-              </Text>
-            </View>
-          </View>
-
-          {/* Quiet meta line: #ID · SITE · PRIORITY */}
-          <View className="flex-row items-center mt-1.5">
-            <Text
-              className={`font-bold text-slate-500 dark:text-slate-400 flex-shrink-0 ${isCompact ? "text-[11px]" : "text-xs"}`}
-              numberOfLines={1}
-            >
-              #{item.ticket_no}
-            </Text>
-
-            <View className="w-1 h-1 rounded-full bg-slate-300 dark:bg-slate-600 mx-2" />
-
-            <Text
-              className={`font-medium text-slate-400 dark:text-slate-500 flex-shrink ${isCompact ? "text-[11px]" : "text-xs"}`}
-              numberOfLines={1}
-            >
-              {item.site_code}
-            </Text>
-
-            {item.priority ? (
-              <>
-                <View className="w-1 h-1 rounded-full bg-slate-300 dark:bg-slate-600 mx-2" />
+              <View className="flex-row items-center mt-1">
                 <Text
-                  className={`font-bold uppercase tracking-wide flex-shrink-0 ${priorityColors.text} ${isCompact ? "text-[10px]" : "text-[11px]"}`}
+                  className="text-slate-500 dark:text-slate-400 text-[11px] font-medium flex-shrink-0"
                   numberOfLines={1}
                 >
-                  {item.priority}
+                  #{item.ticket_no}
                 </Text>
-              </>
+                <View className="w-1 h-1 rounded-full bg-slate-300 dark:bg-slate-600 mx-2" />
+                <Text
+                  className="text-slate-400 dark:text-slate-500 text-[11px] flex-shrink"
+                  numberOfLines={1}
+                >
+                  {item.site_code}
+                </Text>
+              </View>
+            </View>
+
+            {priority ? (
+              <View
+                className="flex-row items-center rounded-md px-2 py-0.5 flex-shrink-0"
+                style={{ backgroundColor: priority.tint }}
+              >
+                <Flag size={9} color={priority.color} />
+                <Text
+                  className="ml-1 text-[9px] font-bold uppercase tracking-wide"
+                  style={{ color: priority.color }}
+                >
+                  {priority.label}
+                </Text>
+              </View>
             ) : null}
           </View>
 
-          {/* Footer: created date + time · location (single line) */}
-          <View
-            className={`flex-row items-center border-t border-slate-100 dark:border-slate-800/80 ${isCompact ? "mt-3 pt-2.5" : "mt-3 pt-3"}`}
-          >
-            <Clock size={12} color="#94a3b8" />
-            <Text
-              className={`text-slate-500 dark:text-slate-400 font-medium ml-1.5 flex-shrink-0 ${isCompact ? "text-[11px]" : "text-xs"}`}
-              numberOfLines={1}
-            >
-              {format(new Date(item.created_at), "MMM d, yyyy • h:mm a")}
-            </Text>
+          {/* Foot: time · assignee — status chip */}
+          <View className="flex-row items-center justify-between mt-2.5 pt-2.5 border-t border-slate-100 dark:border-slate-800/80">
+            <View className="flex-row items-center flex-1 mr-2" style={{ gap: 10 }}>
+              <View className="flex-row items-center flex-shrink-0">
+                <Clock size={12} color="#94a3b8" />
+                <Text className="text-slate-500 dark:text-slate-400 text-[10.5px] font-medium ml-1">
+                  {safeDate(item.created_at)}
+                </Text>
+              </View>
+              <View className="flex-row items-center flex-shrink min-w-0">
+                {assignee ? (
+                  <>
+                    <View
+                      className="w-[18px] h-[18px] rounded-full items-center justify-center mr-1.5"
+                      style={{ backgroundColor: status.tint }}
+                    >
+                      <Text
+                        className="text-[8px] font-bold"
+                        style={{ color: status.color }}
+                      >
+                        {getInitials(assignee)}
+                      </Text>
+                    </View>
+                    <Text
+                      className="text-slate-500 dark:text-slate-400 text-[10.5px] font-medium flex-shrink"
+                      numberOfLines={1}
+                    >
+                      {assignee}
+                    </Text>
+                  </>
+                ) : (
+                  <>
+                    <UserCircle size={13} color="#94a3b8" />
+                    <Text className="text-slate-400 dark:text-slate-500 text-[10.5px] font-medium ml-1">
+                      Unassigned
+                    </Text>
+                  </>
+                )}
+              </View>
+            </View>
 
-            <View className="w-1 h-1 rounded-full bg-slate-300 dark:bg-slate-600 mx-2 flex-shrink-0" />
-
-            <MapPin size={12} color="#94a3b8" />
-            <Text
-              className={`text-slate-500 dark:text-slate-400 font-medium ml-1.5 flex-1 ${isCompact ? "text-[11px]" : "text-xs"}`}
-              numberOfLines={1}
+            <View
+              className="flex-row items-center rounded-md px-2 py-1 flex-shrink-0"
+              style={{ backgroundColor: status.tint }}
             >
-              {item.area_asset || item.location || "General Area"}
-            </Text>
+              <View
+                className="w-1.5 h-1.5 rounded-full mr-1.5"
+                style={{ backgroundColor: status.color }}
+              />
+              <Text
+                className="text-[9px] font-bold uppercase tracking-wide"
+                style={{ color: status.color }}
+              >
+                {status.label}
+              </Text>
+            </View>
           </View>
         </View>
       </TouchableOpacity>

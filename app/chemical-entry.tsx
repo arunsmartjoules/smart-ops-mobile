@@ -21,6 +21,7 @@ import {
   Check,
 } from "lucide-react-native";
 import SiteLogService from "@/services/SiteLogService";
+import { formatAssignee } from "@/utils/assignee";
 import { useAuth } from "@/contexts/AuthContext";
 import * as ImagePicker from "expo-image-picker";
 import { StorageService } from "@/services/StorageService";
@@ -50,6 +51,8 @@ export default function ChemicalEntry() {
   const [loadingEdit, setLoadingEdit] = useState(false);
   const [signatureModalVisible, setSignatureModalVisible] = useState(false);
   const [showDosingPicker, setShowDosingPicker] = useState(false);
+  // Read-only operator label shown when editing an existing log.
+  const [assignedToDisplay, setAssignedToDisplay] = useState("");
 
   // Load existing data in edit mode
   useEffect(() => {
@@ -63,6 +66,9 @@ export default function ChemicalEntry() {
       setLoadingEdit(true);
       const log = await SiteLogService.getSiteLogById(id);
       if (log) {
+        setAssignedToDisplay(
+          formatAssignee(log.assigned_to, log.executor_id),
+        );
         setFormData({
           chemicalDosing: log.chemicalDosing || "",
           remarks: log.remarks || "",
@@ -257,6 +263,18 @@ export default function ChemicalEntry() {
         </View>
 
         <ScrollView className="flex-1 p-5" showsVerticalScrollIndicator={false}>
+          {isEditMode && (
+            <View className="mb-1">
+              <Text className="text-slate-500 dark:text-slate-400 text-[10px] font-bold uppercase tracking-widest mb-1.5 ml-1">
+                Assigned To
+              </Text>
+              <View className="bg-slate-100 dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 px-3 py-3.5">
+                <Text className="font-semibold text-base text-slate-500 dark:text-slate-400">
+                  {assignedToDisplay || "—"}
+                </Text>
+              </View>
+            </View>
+          )}
           <View className="mt-4">
             <View className="flex-row items-end space-x-3 gap-3 mb-6">
               <View className="flex-1">

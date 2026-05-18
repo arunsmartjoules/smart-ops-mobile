@@ -23,8 +23,9 @@ const IncidentTopFilters = ({ selected, onChange, canEdit }: IncidentTopFiltersP
             <TouchableOpacity
               key={item}
               disabled={!canEdit}
+              activeOpacity={0.7}
               onPress={() => onChange(item)}
-              className={`px-4 py-2 rounded-xl ${
+              className={`px-3.5 py-2 rounded-xl ${
                 active
                   ? "bg-red-600"
                   : "bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800"

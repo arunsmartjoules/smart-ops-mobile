@@ -11,6 +11,7 @@ import {
 import { type Ticket } from "@/services/TicketsService";
 import { type SelectOption } from "./SearchableSelect";
 import TicketDetailHeader from "./TicketDetailHeader";
+import TicketAssignee from "./TicketAssignee";
 import TicketDetailInfo from "./TicketDetailInfo";
 import TicketDetailStatusUpdate, {
   isTempMandatoryCategory,
@@ -168,6 +169,8 @@ const TicketDetailModal = React.memo(
                 contentContainerStyle={{ paddingBottom: 120, flexGrow: 1 }}
               >
                 <View>
+                  <TicketAssignee ticket={ticket} />
+
                   <TicketDetailInfo ticket={ticket} />
 
                   <TicketDetailStatusUpdate

@@ -22,16 +22,12 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import {
   ListChecks,
   Wrench,
-  ChevronRight,
   Filter,
   RefreshCw,
   WifiOff,
   MapPin,
   ChevronDown,
   Clock,
-  Briefcase,
-  AlertCircle,
-  CheckCircle2,
   Search,
   ChevronLeft,
   Calendar as CalendarIcon,
@@ -48,26 +44,33 @@ import { AttendanceService, type Site } from "@/services/AttendanceService";
 import { useSites } from "@/hooks/useSites";
 import { db, pmInstances } from "@/database";
 import { eq } from "drizzle-orm";
+import { addDays, parseISO, isValid } from "date-fns";
 import {
-  format,
-  addDays,
-  startOfDay,
-  endOfDay,
-  startOfMonth,
-  endOfMonth,
-  parseISO,
-  isValid,
-} from "date-fns";
+  istDateString,
+  istTodayString,
+  istParts,
+  istDayStartMsFromYmd,
+  istDayEndMsFromYmd,
+  formatIST,
+} from "@/utils/istDate";
 import AdvancedFilterModal from "@/components/AdvancedFilterModal";
 import QRScannerModal, { type QRScannerRef } from "@/components/QRScannerModal";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import logger from "@/utils/logger";
 import Skeleton from "@/components/Skeleton";
+import { getPmStatusVisual, getInitials } from "@/utils/ticketVisuals";
 
 type PMInstanceRow = typeof pmInstances.$inferSelect;
 
 // Constants
 const PAGE_SIZE = 20;
+
+// Display patterns used in this screen, mapped to IST Intl options so dates
+// always render as the India calendar day regardless of device timezone.
+const IST_PATTERN_OPTS: Record<string, Intl.DateTimeFormatOptions> = {
+  "d MMM yyyy": { day: "numeric", month: "short", year: "numeric" },
+  "d MMM": { day: "numeric", month: "short" },
+};
 
 const safeFormat = (date: any, formatStr: string) => {
   if (!date) return "N/A";
@@ -87,18 +90,21 @@ const safeFormat = (date: any, formatStr: string) => {
   }
 
   if (!isValid(d)) return "Invalid Date";
-  return format(d, formatStr);
+  return formatIST(d, IST_PATTERN_OPTS[formatStr] || IST_PATTERN_OPTS["d MMM yyyy"]);
 };
 
-const STATUS_COLORS: Record<string, { bg: string; text: string; dot: string }> =
-  {
-    Pending: { bg: "#fffbeb", text: "#d97706", dot: "#fbbf24" },
-    "In-progress": { bg: "#fff7ed", text: "#c2410c", dot: "#f97316" },
-    Completed: { bg: "#f0fdf4", text: "#15803d", dot: "#22c55e" },
-    Overdue: { bg: "#fef2f2", text: "#dc2626", dot: "#ef4444" },
-  };
-
 const STATUS_OPTIONS = ["Pending", "In-progress", "Completed"];
+
+// IST month bounds as "YYYY-MM-DD" (timezone-pure arithmetic — no DST in IST).
+const istMonthStart = () => {
+  const { year, month } = istParts(new Date());
+  return `${year}-${String(month).padStart(2, "0")}-01`;
+};
+const istMonthEnd = () => {
+  const { year, month } = istParts(new Date());
+  const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  return `${year}-${String(month).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
+};
 
 // ─── PMSkeleton ──────────────────────────────────────────────────────────────
 const PMSkeleton = () => {
@@ -151,103 +157,106 @@ const PMCard = React.memo(
     showCompletedDate?: boolean;
   }) => {
     const isDark = useColorScheme() === "dark";
-    const statusInfo =
-      STATUS_COLORS[instance.status] || STATUS_COLORS["Pending"];
+    const status = getPmStatusVisual(instance.status);
 
     return (
       <TouchableOpacity
         onPress={onPress}
         activeOpacity={0.7}
-        className="bg-white dark:bg-slate-900 mb-2 border border-slate-100 dark:border-slate-800 rounded-2xl p-3"
+        className="bg-white dark:bg-slate-900 mb-2.5 border border-slate-200 dark:border-slate-800 rounded-2xl p-3"
         style={{
           shadowColor: "#000",
-          shadowOffset: { width: 0, height: 1 },
-          shadowOpacity: isDark ? 0 : 0.04,
-          shadowRadius: 6,
-          elevation: 2,
+          shadowOffset: { width: 0, height: 2 },
+          shadowOpacity: isDark ? 0 : 0.03,
+          shadowRadius: 8,
+          elevation: 1,
         }}
       >
-        <View className="flex-row items-center justify-between mb-1.5">
-          <View className="bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 flex-row items-center px-1.5 py-0.5 rounded-lg gap-1">
-            <Clock size={10} color={isDark ? "#94a3b8" : "#64748b"} />
-            <Text className="text-[9px] font-bold text-slate-500 dark:text-slate-400 uppercase">
-              {instance.frequency || "ONCE"}
-            </Text>
-          </View>
+        {/* Top: icon · asset/title · status chip */}
+        <View className="flex-row items-start">
           <View
-            className="px-2 py-0.5 rounded-md"
-            style={{
-              backgroundColor: isDark ? statusInfo.bg + "20" : statusInfo.bg,
-            }}
+            className="w-9 h-9 rounded-[10px] items-center justify-center mr-2.5"
+            style={{ backgroundColor: status.tint }}
           >
+            <Wrench size={16} color={status.color} />
+          </View>
+
+          <View className="flex-1 min-w-0 mr-2">
             <Text
-              style={{
-                fontSize: 9,
-                fontWeight: "700",
-                color: isDark ? statusInfo.dot : statusInfo.text,
-              }}
+              className="text-slate-900 dark:text-slate-50 font-semibold text-[14px] leading-5"
+              numberOfLines={2}
             >
-              {instance.status}
+              {instance.title || instance.asset_id || "PM Task"}
+            </Text>
+            <View className="flex-row items-center mt-1">
+              <Text
+                className="text-slate-500 dark:text-slate-400 text-[11px] font-medium flex-shrink"
+                numberOfLines={1}
+              >
+                {instance.asset_id || "Unknown Asset"}
+              </Text>
+              <View className="w-1 h-1 rounded-full bg-slate-300 dark:bg-slate-600 mx-2" />
+              <Text
+                className="text-slate-400 dark:text-slate-500 text-[11px] uppercase flex-shrink-0"
+                numberOfLines={1}
+              >
+                {instance.frequency || "ONCE"}
+              </Text>
+            </View>
+          </View>
+
+          <View
+            className="flex-row items-center rounded-md px-2 py-1 flex-shrink-0"
+            style={{ backgroundColor: status.tint }}
+          >
+            <View
+              className="w-1.5 h-1.5 rounded-full mr-1.5"
+              style={{ backgroundColor: status.color }}
+            />
+            <Text
+              className="text-[9px] font-bold uppercase tracking-wide"
+              style={{ color: status.color }}
+            >
+              {status.label}
             </Text>
           </View>
         </View>
 
-        <View className="flex-row items-center">
-          <View
-            className="w-10 h-10 rounded-xl items-center justify-center mr-3"
-            style={{
-              backgroundColor: isDark
-                ? statusInfo.dot + "20"
-                : statusInfo.bg + "40",
-            }}
-          >
-            <Wrench size={18} color={statusInfo.dot} />
-          </View>
-          <View className="flex-1">
+        {/* Foot: due date · assignee */}
+        <View className="flex-row items-center justify-between mt-2.5 pt-2.5 border-t border-slate-100 dark:border-slate-800/80">
+          <View className="flex-row items-center flex-shrink mr-2">
+            <Clock size={12} color="#94a3b8" />
             <Text
-              className="text-slate-900 dark:text-slate-50 text-[13px] font-bold"
+              className="text-slate-500 dark:text-slate-400 text-[10.5px] font-medium ml-1 flex-shrink"
               numberOfLines={1}
             >
-              {instance.asset_id || "Unknown Asset"}
-            </Text>
-            <Text
-              className="text-slate-500 dark:text-slate-400 text-[11px]"
-              numberOfLines={1}
-            >
-              {instance.title}
-            </Text>
-          </View>
-          <ChevronRight size={14} color="#cbd5e1" />
-        </View>
-
-        <View className="mt-2 pt-2 border-t border-slate-50 dark:border-slate-800 flex-row items-center justify-between flex-wrap gap-y-1">
-          <View className="flex-row items-center gap-1.5 flex-shrink max-w-[65%]">
-            <Clock size={10} color="#94a3b8" />
-            <Text
-              className="text-slate-400 dark:text-slate-500 text-[10px] font-medium flex-shrink"
-              numberOfLines={1}
-            >
-              {`Due: ${safeFormat(instance.start_due_date, "d MMM yyyy")}`}
+              {`Due ${safeFormat(instance.start_due_date, "d MMM yyyy")}`}
             </Text>
             {showCompletedDate && instance.completed_on ? (
               <Text
-                className="text-green-600 dark:text-green-400 text-[10px] font-medium flex-shrink"
+                className="text-green-600 dark:text-green-400 text-[10.5px] font-medium ml-1.5 flex-shrink"
                 numberOfLines={1}
               >
-                {`• Done: ${safeFormat(instance.completed_on, "d MMM")}`}
+                {`· Done ${safeFormat(instance.completed_on, "d MMM")}`}
               </Text>
             ) : null}
           </View>
 
           {instance.assigned_to_name ? (
-            <View className="flex-row items-center gap-1.5 flex-1 justify-end ml-2 max-w-[35%]">
-              <View className="w-4 h-4 rounded-full bg-slate-100 dark:bg-slate-800 items-center justify-center">
-                <Text className="text-slate-500 text-[8px] font-bold">
-                  {instance.assigned_to_name.charAt(0).toUpperCase()}
+            <View className="flex-row items-center flex-shrink min-w-0">
+              <View
+                className="w-[18px] h-[18px] rounded-full items-center justify-center mr-1.5"
+                style={{ backgroundColor: status.tint }}
+              >
+                <Text
+                  className="text-[8px] font-bold"
+                  style={{ color: status.color }}
+                >
+                  {getInitials(instance.assigned_to_name)}
                 </Text>
               </View>
               <Text
-                className="text-slate-600 dark:text-slate-300 text-[10px] font-bold flex-1"
+                className="text-slate-500 dark:text-slate-400 text-[10.5px] font-medium flex-shrink"
                 numberOfLines={1}
                 ellipsizeMode="tail"
               >
@@ -255,7 +264,7 @@ const PMCard = React.memo(
               </Text>
             </View>
           ) : (
-            <Text className="text-slate-300 dark:text-slate-600 text-[10px] italic">
+            <Text className="text-slate-300 dark:text-slate-600 text-[10.5px] italic">
               Unassigned
             </Text>
           )}
@@ -276,18 +285,14 @@ PMCard.displayName = "PMCard";
 // ─── Stat Card ─────────────────────────────────────────────────────────────────
 const StatCard = React.memo(
   ({
-    icon,
     value,
     label,
-    bg,
     color,
     isActive,
     onPress,
   }: {
-    icon: React.ReactNode;
     value: number;
     label: string;
-    bg: string;
     color: string;
     isActive: boolean;
     onPress: () => void;
@@ -296,27 +301,24 @@ const StatCard = React.memo(
       <TouchableOpacity
         onPress={onPress}
         activeOpacity={0.7}
-        className="flex-1 rounded-xl p-3 bg-white dark:bg-slate-900"
+        className="flex-1 rounded-xl py-2.5 px-1.5 items-center bg-white dark:bg-slate-900"
         style={{
+          borderWidth: 1,
+          borderColor: isActive ? color : `${color}33`,
           shadowColor: "#000",
           shadowOffset: { width: 0, height: 1 },
-          shadowOpacity: 0.05,
+          shadowOpacity: 0.04,
           shadowRadius: 4,
-          elevation: 2,
-          borderWidth: isActive ? 1 : 0,
-          borderColor: isActive ? color : "transparent",
+          elevation: 1,
         }}
       >
-        <View
-          className="w-8 h-8 rounded-lg items-center justify-center mb-2"
-          style={{ backgroundColor: bg }}
-        >
-          {icon}
-        </View>
-        <Text className="text-slate-900 dark:text-slate-50 text-xl font-bold">
+        <Text className="text-[17px] font-bold leading-tight" style={{ color }}>
           {value}
         </Text>
-        <Text className="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+        <Text
+          className="text-[9px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500 mt-0.5"
+          numberOfLines={1}
+        >
           {label}
         </Text>
       </TouchableOpacity>
@@ -364,21 +366,15 @@ export default function PreventiveMaintenance() {
     selectedSite?.site_name ?? selectedSite?.site_code ?? "Select Site";
 
   // Date handling — default to the current month (1st → last day)
-  const [currentDate, setCurrentDate] = useState(
-    format(startOfMonth(new Date()), "yyyy-MM-dd"),
-  );
-  const [toDate, setToDate] = useState(
-    format(endOfMonth(new Date()), "yyyy-MM-dd"),
-  );
+  const [currentDate, setCurrentDate] = useState(istMonthStart());
+  const [toDate, setToDate] = useState(istMonthEnd());
 
   const [tempSearch, setTempSearch] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [tempFromDate, setTempFromDate] = useState<string | null>(
-    format(startOfMonth(new Date()), "yyyy-MM-dd"),
+    istMonthStart(),
   );
-  const [tempToDate, setTempToDate] = useState<string | null>(
-    format(endOfMonth(new Date()), "yyyy-MM-dd"),
-  );
+  const [tempToDate, setTempToDate] = useState<string | null>(istMonthEnd());
 
   // QR filter state
   const qrScannerRef = useRef<QRScannerRef>(null);
@@ -588,9 +584,16 @@ export default function PreventiveMaintenance() {
       const q = searchQuery.toLowerCase();
       list = list.filter((i) => {
         const dateObj = i.start_due_date ? new Date(i.start_due_date) : null;
-        const dueDateStr = dateObj ? format(dateObj, "d MMM yyyy") : "";
-        const dueDateISO = dateObj ? format(dateObj, "yyyy-MM-dd") : "";
-        const dueDateShort = dateObj ? format(dateObj, "d/M") : "";
+        const dueDateStr = dateObj
+          ? formatIST(dateObj, { day: "numeric", month: "short", year: "numeric" })
+          : "";
+        const dueDateISO = dateObj ? istDateString(dateObj) : "";
+        const dueDateShort = dateObj
+          ? (() => {
+              const p = istParts(dateObj);
+              return `${p.day}/${p.month}`;
+            })()
+          : "";
 
         return (
           (i.title && i.title.toLowerCase().includes(q)) ||
@@ -606,8 +609,8 @@ export default function PreventiveMaintenance() {
     }
 
     // 3. Apply Date Filter in normal browsing mode (no text/QR search)
-    const startRange = startOfDay(parseISO(currentDate)).getTime();
-    const endRange = endOfDay(parseISO(toDate)).getTime();
+    const startRange = istDayStartMsFromYmd(currentDate) ?? 0;
+    const endRange = istDayEndMsFromYmd(toDate) ?? Number.MAX_SAFE_INTEGER;
     list = list.filter((i) => {
       if (!i.start_due_date) return false;
       const ts = new Date(i.start_due_date).getTime();
@@ -624,8 +627,8 @@ export default function PreventiveMaintenance() {
   ]);
 
   const stats = useMemo(() => {
-    const startRange = startOfDay(parseISO(currentDate)).getTime();
-    const endRange = endOfDay(parseISO(toDate)).getTime();
+    const startRange = istDayStartMsFromYmd(currentDate) ?? 0;
+    const endRange = istDayEndMsFromYmd(toDate) ?? Number.MAX_SAFE_INTEGER;
 
     const rangeInstances = allInstances.filter((i) => {
       if (!i.start_due_date) return false;
@@ -710,26 +713,17 @@ export default function PreventiveMaintenance() {
   }, [tempSearch, tempFromDate, tempToDate]);
 
   const handleQRAssetFound = useCallback((assetName: string) => {
-    const now = new Date();
-    const monthStart = format(
-      new Date(now.getFullYear(), now.getMonth(), 1),
-      "yyyy-MM-dd",
-    );
-    const monthEnd = format(
-      new Date(now.getFullYear(), now.getMonth() + 1, 0),
-      "yyyy-MM-dd",
-    );
-    setCurrentDate(monthStart);
-    setToDate(monthEnd);
+    setCurrentDate(istMonthStart());
+    setToDate(istMonthEnd());
     setQrAssetFilter(assetName);
     setSearchQuery("");
   }, []);
 
   const clearQRFilter = useCallback(() => {
     setQrAssetFilter(null);
-    const today = format(new Date(), "yyyy-MM-dd");
-    setCurrentDate(addDays(new Date(), -30).toISOString().split("T")[0]);
-    setToDate(addDays(new Date(), 30).toISOString().split("T")[0]);
+    // ±30 days around today, expressed as IST calendar days.
+    setCurrentDate(istDateString(addDays(new Date(), -30)));
+    setToDate(istDateString(addDays(new Date(), 30)));
   }, []);
 
   const renderItem: ListRenderItem<PMInstanceRow> = useCallback(
@@ -872,8 +866,8 @@ export default function PreventiveMaintenance() {
                   <Filter
                     size={20}
                     color={
-                      tempFromDate !== format(new Date(), "yyyy-MM-dd") ||
-                      tempToDate !== format(new Date(), "yyyy-MM-dd")
+                      tempFromDate !== istTodayString() ||
+                      tempToDate !== istTodayString()
                         ? "#dc2626"
                         : isDark
                           ? "#dc2626"
@@ -891,30 +885,24 @@ export default function PreventiveMaintenance() {
             </Text>
           </View>
 
-          <View className="flex-row gap-2 mb-3">
+          <View className="flex-row gap-1.5 mb-3">
             <StatCard
-              icon={<AlertCircle size={14} color="#f97316" />}
               value={stats.pending}
               label="Pending"
-              bg="#fff7ed"
               color="#f97316"
               isActive={statusFilter === "Pending"}
               onPress={() => setStatusFilter("Pending")}
             />
             <StatCard
-              icon={<Clock size={14} color="#3b82f6" />}
               value={stats.inProgress}
               label="In Progress"
-              bg="#eff6ff"
               color="#3b82f6"
               isActive={statusFilter === "In-progress"}
               onPress={() => setStatusFilter("In-progress")}
             />
             <StatCard
-              icon={<CheckCircle2 size={14} color="#22c55e" />}
               value={stats.completed}
               label="Completed"
-              bg="#f0fdf4"
               color="#22c55e"
               isActive={statusFilter === "Completed"}
               onPress={() => setStatusFilter("Completed")}
