@@ -1445,7 +1445,7 @@ export default function Tickets() {
             onEndReachedThreshold={0.1}
             refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#dc2626" />}
             showsVerticalScrollIndicator={false}
-            contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 100 }}
+            contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: 100 }}
           />
         </View>
 

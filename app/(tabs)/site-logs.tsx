@@ -131,7 +131,10 @@ export default function SiteLogs() {
       const dueTypes = ["Temp RH", "Water", "Chemical Dosing"];
       const [progress, dueEntries, tempA, tempB, tempC, chillerCompletedToday] =
         await Promise.all([
-          siteLogService.getCategoryProgress(targetSite, fromDate, toDate),
+          // Card progress is TODAY-only, independent of the date filter.
+          // (getCategoryProgress keys off a single day = istDateString of the
+          // passed date; the filter only scopes pull range / history nav.)
+          siteLogService.getCategoryProgress(targetSite, new Date(), new Date()),
           Promise.all(
             dueTypes.map(
               async (t) =>

@@ -1036,7 +1036,7 @@ export default function IncidentsTab() {
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#dc2626" />
           }
           showsVerticalScrollIndicator={false}
-          contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 120, flexGrow: 1 }}
+          contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: 120, flexGrow: 1 }}
         />
 
         <TouchableOpacity

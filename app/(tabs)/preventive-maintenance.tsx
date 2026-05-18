@@ -1012,7 +1012,7 @@ const styles = StyleSheet.create({
   flex: { flex: 1 },
   container: { flex: 1 },
   listHeader: { paddingTop: 2, paddingHorizontal: 20, paddingBottom: 8 },
-  listContent: { paddingHorizontal: 20, paddingBottom: 60 },
+  listContent: { paddingHorizontal: 12, paddingBottom: 60 },
 
   // Header
   fixedArea: {
