@@ -633,9 +633,16 @@ export default function Tickets() {
         if (res.success) {
           const newTickets = res.data || [];
           if (reset) {
-            if (newTickets.length > 0 || !hasLocalData) {
-              setTickets(newTickets);
-            }
+            // A successful server response is authoritative for the active
+            // filter: refresh=true bypasses the local cache, and a network
+            // failure sets res.success=false (handled in the else below,
+            // which preserves the optimistic local preview). So always
+            // reflect the server result here — even when it's empty.
+            // Skipping the empty case left stale local rows on screen
+            // (e.g. tickets resolved on the server but not yet reconciled
+            // locally still showing under the "Open" tab while the
+            // server-driven count correctly read 0).
+            setTickets(newTickets);
           } else {
             setTickets((prev) => {
               const existingIds = new Set(prev.map((t) => t.id));
