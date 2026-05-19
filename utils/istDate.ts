@@ -14,7 +14,12 @@
  */
 
 export const IST_TZ = "Asia/Kolkata";
-const IST_OFFSET = "+05:30";
+// IST is a fixed UTC+05:30 (no DST). We do boundary math with this offset
+// rather than Date.parse("...+05:30"): Hermes (React Native's JS engine)
+// does NOT reliably parse non-Z timezone offsets and returns Invalid Date,
+// which would silently collapse every date filter.
+const IST_OFFSET_MS = (5 * 60 + 30) * 60_000;
+const DAY_MS = 24 * 60 * 60_000;
 
 type DateInput = Date | number | string | null | undefined;
 
@@ -77,31 +82,33 @@ export const istParts = (input?: DateInput): ISTParts => {
   };
 };
 
-/** Epoch ms of IST 00:00:00.000 for the IST calendar day containing `input`. */
-export const istDayStartMs = (input?: DateInput): number => {
-  const ymd = istDateString(input);
-  return ymd ? Date.parse(`${ymd}T00:00:00.000${IST_OFFSET}`) : NaN;
-};
-
-/** Epoch ms of IST 23:59:59.999 for the IST calendar day containing `input`. */
-export const istDayEndMs = (input?: DateInput): number => {
-  const ymd = istDateString(input);
-  return ymd ? Date.parse(`${ymd}T23:59:59.999${IST_OFFSET}`) : NaN;
-};
-
 /** Epoch ms of IST 00:00 for an explicit "YYYY-MM-DD" string. */
-export const istDayStartMsFromYmd = (ymd: string | null | undefined): number | null => {
+export const istDayStartMsFromYmd = (
+  ymd: string | null | undefined,
+): number | null => {
   if (!ymd) return null;
-  const ms = Date.parse(`${ymd.slice(0, 10)}T00:00:00.000${IST_OFFSET}`);
-  return Number.isNaN(ms) ? null : ms;
+  const m = String(ymd).slice(0, 10).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return null;
+  // UTC midnight of that calendar date, shifted back by the IST offset →
+  // the exact instant of 00:00 IST on that day.
+  return Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])) - IST_OFFSET_MS;
 };
 
 /** Epoch ms of IST 23:59:59.999 for an explicit "YYYY-MM-DD" string. */
-export const istDayEndMsFromYmd = (ymd: string | null | undefined): number | null => {
-  if (!ymd) return null;
-  const ms = Date.parse(`${ymd.slice(0, 10)}T23:59:59.999${IST_OFFSET}`);
-  return Number.isNaN(ms) ? null : ms;
+export const istDayEndMsFromYmd = (
+  ymd: string | null | undefined,
+): number | null => {
+  const start = istDayStartMsFromYmd(ymd);
+  return start == null ? null : start + DAY_MS - 1;
 };
+
+/** Epoch ms of IST 00:00:00.000 for the IST calendar day containing `input`. */
+export const istDayStartMs = (input?: DateInput): number =>
+  istDayStartMsFromYmd(istDateString(input)) ?? NaN;
+
+/** Epoch ms of IST 23:59:59.999 for the IST calendar day containing `input`. */
+export const istDayEndMs = (input?: DateInput): number =>
+  istDayEndMsFromYmd(istDateString(input)) ?? NaN;
 
 /** ISO instant (UTC, for the wire) at IST 00:00 of the given day. */
 export const istDayStartIso = (ymd: string | null | undefined): string | undefined => {
