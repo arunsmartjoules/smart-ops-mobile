@@ -45,6 +45,7 @@ import AttendanceService, { type Site } from "@/services/AttendanceService";
 import { useAuth } from "@/contexts/AuthContext";
 import Skeleton from "@/components/Skeleton";
 import UserLookupService from "@/services/UserLookupService";
+import { formatAssignee } from "@/utils/assignee";
 
 // Memoized History Item Component
 const HistoryItem = memo(
@@ -72,7 +73,20 @@ const HistoryItem = memo(
     };
 
     const IconComp = getLogIcon();
-    const logStatus = item.status || "Completed";
+    // Normalize so legacy "In-progress" / "in_progress" and canonical
+    // "Inprogress" render identically (label + colour). Empty/null = Completed
+    // (a chiller_readings row only exists once submitted).
+    const rawStatus = String(item.status || "Completed");
+    const normStatus = rawStatus.toLowerCase().replace(/[\s_-]+/g, "");
+    const logStatus =
+      normStatus === "completed" || normStatus === ""
+        ? "Completed"
+        : normStatus === "inprogress"
+          ? "Inprogress"
+          : normStatus === "open" || normStatus === "pending"
+            ? "Open"
+            : rawStatus;
+    const isPendingTone = logStatus === "Open" || logStatus === "Inprogress";
 
     return (
       <TouchableOpacity
@@ -118,7 +132,7 @@ const HistoryItem = memo(
                       new Date(item.created_at || item.createdAt),
                       "HH:mm",
                     )}`}{" "}
-                • {resolvedName || item.executor_id || "Unknown"}
+                • {resolvedName || "Unknown"}
               </Text>
             </View>
           </View>
@@ -243,10 +257,10 @@ const HistoryItem = memo(
             </Text>
           </View>
           <View
-            className={`px-1.5 py-0.5 rounded-full ${logStatus === "Open" || logStatus === "Inprogress" ? "bg-amber-50 dark:bg-amber-900/20" : "bg-green-50 dark:bg-green-900/20"}`}
+            className={`px-1.5 py-0.5 rounded-full ${isPendingTone ? "bg-amber-50 dark:bg-amber-900/20" : "bg-green-50 dark:bg-green-900/20"}`}
           >
             <Text
-              className={`text-[10px] font-bold ${logStatus === "Open" || logStatus === "Inprogress" ? "text-amber-600" : "text-green-600"}`}
+              className={`text-[10px] font-bold ${isPendingTone ? "text-amber-600" : "text-green-600"}`}
             >
               {logStatus}
             </Text>
@@ -452,7 +466,11 @@ export default function SiteHistory() {
   const statusSummary = useMemo(() => {
     return filteredLogs.reduce(
       (acc, log) => {
-        let logStatus = (log.status || "Completed").toLowerCase();
+        // Strip [\s_-] so legacy "In-progress" buckets as inprogress, not
+        // resolved (otherwise the summary cards over-count Resolved).
+        let logStatus = (log.status || "Completed")
+          .toLowerCase()
+          .replace(/[\s_-]+/g, "");
         if (logStatus === "pending") logStatus = "open";
 
         if (logStatus === "open") acc.open += 1;
@@ -467,9 +485,11 @@ export default function SiteHistory() {
   const displayLogs = useMemo(() => {
     if (selectedStatus === "all") return filteredLogs;
     return filteredLogs.filter((log) => {
-      let logStatus = (log.status || "Completed").toLowerCase();
+      let logStatus = (log.status || "Completed")
+        .toLowerCase()
+        .replace(/[\s_-]+/g, "");
       if (logStatus === "pending") logStatus = "open";
-      return logStatus === selectedStatus.toLowerCase();
+      return logStatus === selectedStatus.toLowerCase().replace(/[\s_-]+/g, "");
     });
   }, [filteredLogs, selectedStatus]);
 
@@ -529,7 +549,17 @@ export default function SiteHistory() {
   const renderHistoryItem = useCallback(
     ({ item }: { item: any }) => {
       const route = getRoute();
-      const resolvedName = resolvedNames.get(item.executor_id) || item.executor_id;
+      // Prefer the operator NAME (assigned_to). executor_id is a code and
+      // pull-sync injects "system" for rows the server has no executor for —
+      // formatAssignee filters those sentinels so we show the resolved name
+      // or "Unknown" instead of "SYSTEM".
+      const resolvedExecutor =
+        resolvedNames.get(item.executor_id) || item.executor_id;
+      const resolvedName = formatAssignee(
+        item.assigned_to,
+        resolvedExecutor,
+        "Unknown",
+      );
 
       return (
         <HistoryItem
