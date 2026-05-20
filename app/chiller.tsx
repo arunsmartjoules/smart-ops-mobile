@@ -664,15 +664,11 @@ export default function ChillerEntry() {
           compressorLoadPercentage: parseFloat(currentFormData.load),
           inlineBtuMeter: parseFloat(currentFormData.inlineBtuMeter),
           remarks: currentFormData.remarks,
-          // assigned_to must carry the operator's display NAME — the backend
-          // derives log_activity_master / task_management assigned_to from it
-          // (codes must never leak to Fieldproxy). employee_code is a last
-          // resort over the literal "unknown".
-          assignedTo:
-            user?.full_name?.trim() ||
-            user?.name?.trim() ||
-            user?.employee_code ||
-            "unknown",
+          // NOTE: assignedTo is intentionally NOT in basePayload. The row's
+          // assigned_to is set ONCE at create time (ensureChillerRow / the
+          // safety-net saveChillerReading below) and must never be overwritten
+          // by edits. Otherwise a second operator opening someone else's log
+          // to complete or correct it would silently steal authorship.
           signature: finalSignature,
           // NOTE: status & readingTime are intentionally NOT in basePayload.
           // Auto-save must never change status or move reading_time; those
@@ -703,10 +699,16 @@ export default function ChillerEntry() {
         } else if (isCompleting) {
           // Safety net: the create-on-select row is missing (ensure failed /
           // was offline at select). Create it now, completed, so a finished
-          // reading is never lost. This is the ONLY create path left here.
+          // reading is never lost. This is the ONLY create path left here —
+          // and the only place we set assigned_to from the current user.
           const now = Date.now();
           const created = await SiteLogService.saveChillerReading({
             ...basePayload,
+            assignedTo:
+              user?.full_name?.trim() ||
+              user?.name?.trim() ||
+              user?.employee_code ||
+              "unknown",
             executorId:
               user?.employee_code || user?.user_id || user?.id || "unknown",
             status: "Completed",

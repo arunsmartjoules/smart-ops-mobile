@@ -161,7 +161,9 @@ interface ISiteLogService {
     siteCode: string,
     fromDate?: Date | null,
     toDate?: Date | null,
-  ): Promise<Record<string, { total: number; completed: number }>>;
+  ): Promise<
+    Record<string, { total: number; completed: number; inProgress?: number }>
+  >;
   getOpenCounts(siteCode: string): Promise<Record<string, number>>;
   getUnsyncedCounts(): Promise<number>;
   pullLogMaster(): Promise<void>;
@@ -1558,33 +1560,56 @@ export const SiteLogService: ISiteLogService = {
     siteCode: string,
     fromDate?: Date | null,
     toDate?: Date | null,
-  ): Promise<Record<string, { total: number; completed: number }>> {
+  ): Promise<
+    Record<string, { total: number; completed: number; inProgress?: number }>
+  > {
     try {
       const SiteConfigService =
         require("./SiteConfigService").SiteConfigService;
 
       const types = ["Temp RH", "Chiller Logs", "Water", "Chemical Dosing"];
-      const result: Record<string, { total: number; completed: number }> = {};
+      const result: Record<
+        string,
+        { total: number; completed: number; inProgress?: number }
+      > = {};
 
       for (const type of types) {
-        let tasks: TaskItem[] = [];
         if (type === "Chiller Logs") {
-          tasks = await SiteConfigService.getChillerTasks(
+          // Chiller progress is per-reading (NOT deduped by chiller_id): three
+          // readings on the same chiller count as three done. getChillerTasks
+          // is still used to size `total` (configured chiller slots) so the
+          // existing percentage stays interpretable.
+          const tasks = await SiteConfigService.getChillerTasks(
             siteCode,
             fromDate,
             toDate,
           );
-        } else {
-          tasks = await SiteConfigService.getLogTasks(
+          const dayRef = fromDate || new Date();
+          const completed = await this.getTodayChillerCompletedReadingCount(
             siteCode,
-            type,
-            fromDate,
-            toDate,
-            undefined,
-            true,
+            dayRef,
           );
+          const totalReadings = await this.getTodayChillerReadingCount(
+            siteCode,
+            dayRef,
+          );
+          const inProgress = Math.max(0, totalReadings - completed);
+          result[type] = {
+            total: Math.max(tasks.length, completed + inProgress),
+            completed,
+            inProgress,
+          };
+          continue;
         }
 
+        const tasks = await SiteConfigService.getLogTasks(
+          siteCode,
+          type,
+          fromDate,
+          toDate,
+          undefined,
+          true,
+        );
         const completed = tasks.filter((t: TaskItem) => t.isCompleted).length;
         result[type] = { total: tasks.length, completed };
       }

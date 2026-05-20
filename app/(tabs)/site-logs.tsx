@@ -41,7 +41,7 @@ export default function SiteLogs() {
   const isDark = useColorScheme() === "dark";
   const [loading, setLoading] = useState(true);
   const [logProgress, setLogProgress] = useState<
-    Record<string, { total: number; completed: number }>
+    Record<string, { total: number; completed: number; inProgress?: number }>
   >({});
   // Today's Temp & RH progress broken down by shift (completed / total).
   const [tempRhShiftProgress, setTempRhShiftProgress] = useState<
@@ -460,15 +460,19 @@ export default function SiteLogs() {
                     completed: 0,
                   };
                   const isTempRh = item.id === "temp-rh";
+                  const isChiller = item.id === "chiller";
 
                   // Completed / pending out of today's total. (Chiller's
-                  // `progress` total is the configured chiller count, e.g. 12.)
+                  // `completed` is the RAW count of completed readings — not
+                  // deduped by chiller_id — so logging the same chiller twice
+                  // counts as two.)
                   const completed = progress.completed;
                   const totalCount = progress.total;
+                  const inProgress = progress.inProgress ?? 0;
                   const pending = Math.max(0, totalCount - completed);
                   const pct =
                     totalCount > 0
-                      ? Math.round((completed / totalCount) * 100)
+                      ? Math.min(100, Math.round((completed / totalCount) * 100))
                       : 0;
                   const allDone = totalCount > 0 && completed >= totalCount;
 
@@ -537,6 +541,30 @@ export default function SiteLogs() {
                             <Text className="ml-0.5 text-[11px] text-slate-400 dark:text-slate-500">
                               done
                             </Text>
+                            {isChiller && (
+                              <>
+                                <Text className="mx-1.5 text-slate-300 dark:text-slate-600">
+                                  ·
+                                </Text>
+                                <Clock
+                                  size={12}
+                                  color={inProgress > 0 ? "#3b82f6" : "#94a3b8"}
+                                  strokeWidth={3}
+                                />
+                                <Text
+                                  className={`ml-1 text-[12px] font-bold ${
+                                    inProgress > 0
+                                      ? "text-blue-600 dark:text-blue-400"
+                                      : "text-slate-400 dark:text-slate-500"
+                                  }`}
+                                >
+                                  {inProgress}
+                                </Text>
+                                <Text className="ml-0.5 text-[11px] text-slate-400 dark:text-slate-500">
+                                  in progress
+                                </Text>
+                              </>
+                            )}
                             {item.id !== "chiller" && (
                               <>
                                 <Text className="mx-1.5 text-slate-300 dark:text-slate-600">
