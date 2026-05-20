@@ -1399,17 +1399,10 @@ export default function PMExecutionScreen() {
           <View style={styles.evidenceCol}>
             <TouchableOpacity
               onPress={() => {
+                // Before-image is captured in the Start modal and is
+                // read-only here — tap only previews it.
                 if (instance?.before_image) {
-                  if (instance.status === "Completed") {
-                    setPreviewImageUrl(instance.before_image);
-                  } else {
-                    promptReplaceInstanceImage(
-                      "before_image",
-                      instance.before_image,
-                    );
-                  }
-                } else {
-                  promptAddInstanceImage("before_image");
+                  setPreviewImageUrl(instance.before_image);
                 }
               }}
               style={[

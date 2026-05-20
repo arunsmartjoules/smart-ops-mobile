@@ -17,7 +17,11 @@ import {
   RefreshControl,
   TextInput,
   useColorScheme,
+  Modal,
+  Image,
+  Alert,
 } from "react-native";
+import * as ImagePicker from "expo-image-picker";
 import { SafeAreaView } from "react-native-safe-area-context";
 import {
   ListChecks,
@@ -33,6 +37,8 @@ import {
   Calendar as CalendarIcon,
   QrCode,
   X,
+  Camera,
+  Image as ImageIcon,
 } from "lucide-react-native";
 import { router, useFocusEffect } from "expo-router";
 import { useAuth } from "@/contexts/AuthContext";
@@ -337,6 +343,13 @@ export default function PreventiveMaintenance() {
   const [allInstances, setAllInstances] = useState<PMInstanceRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+
+  // Pre-execution Start modal: capture the before-image, stamp the start
+  // time, then move to the execution screen.
+  const [startModalInstance, setStartModalInstance] =
+    useState<PMInstanceRow | null>(null);
+  const [startBeforeImage, setStartBeforeImage] = useState<string>("");
+  const [starting, setStarting] = useState(false);
   const [statusFilter, setStatusFilter] = useState("Pending");
   const [showFiltersModal, setShowFiltersModal] = useState(false);
   const [serverStats, setServerStats] = useState<any>(null);
@@ -697,6 +710,20 @@ export default function PreventiveMaintenance() {
         );
       }
 
+      const isNotStarted =
+        normalizedStatus === "pending" ||
+        normalizedStatus === "open" ||
+        normalizedStatus === "";
+      if (isNotStarted) {
+        // New flow: capture the before-image and stamp the start time in a
+        // modal before entering the execution screen.
+        setStartBeforeImage("");
+        setStartModalInstance(instance);
+        return;
+      }
+
+      // Already In-progress or Completed — open execution directly so the
+      // original start time is preserved (no re-start).
       router.push({
         pathname: "/pm-execution",
         params: { instanceId: instance.id },
@@ -704,6 +731,99 @@ export default function PreventiveMaintenance() {
     },
     [user],
   );
+
+  const pickStartBeforeImage = useCallback(
+    async (source: "camera" | "library") => {
+      try {
+        const options: ImagePicker.ImagePickerOptions = {
+          mediaTypes: ["images"],
+          allowsEditing: true,
+          quality: 0.7,
+        };
+        if (source === "camera") {
+          const perm = await ImagePicker.requestCameraPermissionsAsync();
+          if (!perm.granted) {
+            Alert.alert(
+              "Permission Required",
+              "Camera access is required to capture the before photo.",
+            );
+            return;
+          }
+          const result = await ImagePicker.launchCameraAsync(options);
+          if (!result.canceled && result.assets[0]?.uri) {
+            setStartBeforeImage(result.assets[0].uri);
+          }
+        } else {
+          const perm =
+            await ImagePicker.requestMediaLibraryPermissionsAsync();
+          if (!perm.granted) {
+            Alert.alert(
+              "Permission Required",
+              "Photo library access is required to choose the before photo.",
+            );
+            return;
+          }
+          const result = await ImagePicker.launchImageLibraryAsync(options);
+          if (!result.canceled && result.assets[0]?.uri) {
+            setStartBeforeImage(result.assets[0].uri);
+          }
+        }
+      } catch (err) {
+        logger.error("PM start before-image picker error", { error: err });
+        Alert.alert("Error", "Failed to pick image.");
+      }
+    },
+    [],
+  );
+
+  const promptStartBeforeImage = useCallback(() => {
+    Alert.alert("Before photo", "Choose an option", [
+      { text: "Take photo", onPress: () => void pickStartBeforeImage("camera") },
+      {
+        text: "Choose from gallery",
+        onPress: () => void pickStartBeforeImage("library"),
+      },
+      { text: "Cancel", style: "cancel" },
+    ]);
+  }, [pickStartBeforeImage]);
+
+  const closeStartModal = useCallback(() => {
+    if (starting) return;
+    setStartModalInstance(null);
+    setStartBeforeImage("");
+  }, [starting]);
+
+  const handleConfirmStart = useCallback(async () => {
+    if (!startModalInstance || !startBeforeImage || starting) return;
+    setStarting(true);
+    try {
+      await PMService.startExecution(startModalInstance.id, {
+        beforeImage: startBeforeImage,
+        startDatetime: new Date().toISOString(),
+      });
+      // Optimistic: reflect the In-progress + before_image locally.
+      setAllInstances((prev) =>
+        prev.map((inst) =>
+          inst.id === startModalInstance.id
+            ? {
+                ...inst,
+                status: "In-progress",
+                before_image: startBeforeImage,
+              }
+            : inst,
+        ),
+      );
+      const instanceId = startModalInstance.id;
+      setStartModalInstance(null);
+      setStartBeforeImage("");
+      router.push({ pathname: "/pm-execution", params: { instanceId } });
+    } catch (err) {
+      logger.error("Failed to start PM", { error: err });
+      Alert.alert("Error", "Could not start this PM. Please try again.");
+    } finally {
+      setStarting(false);
+    }
+  }, [startModalInstance, startBeforeImage, starting]);
 
   const applyAdvancedFilters = useCallback(() => {
     setSearchQuery(tempSearch);
@@ -1002,6 +1122,160 @@ export default function PreventiveMaintenance() {
           onClose={() => {}}
           onAssetFound={handleQRAssetFound}
         />
+        <Modal
+          visible={!!startModalInstance}
+          transparent
+          animationType="fade"
+          onRequestClose={closeStartModal}
+        >
+          <View style={styles.startModalOverlay}>
+            <View
+              style={[
+                styles.startModalCard,
+                { backgroundColor: isDark ? "#0f172a" : "#ffffff" },
+              ]}
+            >
+              <View style={styles.startModalHeader}>
+                <Text
+                  style={[
+                    styles.startModalTitle,
+                    { color: isDark ? "#f1f5f9" : "#0f172a" },
+                  ]}
+                >
+                  Start PM
+                </Text>
+                <TouchableOpacity
+                  onPress={closeStartModal}
+                  disabled={starting}
+                  hitSlop={10}
+                >
+                  <X size={20} color={isDark ? "#94a3b8" : "#64748b"} />
+                </TouchableOpacity>
+              </View>
+
+              <Text
+                style={[
+                  styles.startModalSubtitle,
+                  { color: isDark ? "#94a3b8" : "#64748b" },
+                ]}
+                numberOfLines={2}
+              >
+                {startModalInstance?.title || ""}
+              </Text>
+
+              <Text
+                style={[
+                  styles.startModalLabel,
+                  { color: isDark ? "#cbd5e1" : "#475569" },
+                ]}
+              >
+                Before Photo <Text style={{ color: "#ef4444" }}>*</Text>
+              </Text>
+
+              <TouchableOpacity
+                onPress={promptStartBeforeImage}
+                disabled={starting}
+                style={[
+                  styles.startBeforeBox,
+                  {
+                    borderColor: startBeforeImage
+                      ? "#3b82f6"
+                      : isDark
+                        ? "#334155"
+                        : "#cbd5e1",
+                    backgroundColor: isDark ? "#1e293b" : "#f8fafc",
+                  },
+                ]}
+              >
+                {startBeforeImage ? (
+                  <Image
+                    source={{ uri: startBeforeImage }}
+                    style={styles.startBeforePreview}
+                    resizeMode="cover"
+                  />
+                ) : (
+                  <View style={styles.startBeforePlaceholder}>
+                    <Camera size={22} color={isDark ? "#64748b" : "#94a3b8"} />
+                    <Text
+                      style={{
+                        marginTop: 6,
+                        fontSize: 12,
+                        fontWeight: "600",
+                        color: isDark ? "#64748b" : "#94a3b8",
+                      }}
+                    >
+                      Tap to capture before photo
+                    </Text>
+                  </View>
+                )}
+              </TouchableOpacity>
+
+              {startBeforeImage ? (
+                <TouchableOpacity
+                  onPress={promptStartBeforeImage}
+                  disabled={starting}
+                  style={styles.startRetakeBtn}
+                >
+                  <ImageIcon size={14} color="#3b82f6" />
+                  <Text style={styles.startRetakeText}>Change photo</Text>
+                </TouchableOpacity>
+              ) : (
+                <Text
+                  style={{
+                    fontSize: 11,
+                    color: isDark ? "#64748b" : "#94a3b8",
+                    marginTop: 6,
+                  }}
+                >
+                  A before photo is required to start this PM.
+                </Text>
+              )}
+
+              <View style={styles.startModalActions}>
+                <TouchableOpacity
+                  onPress={closeStartModal}
+                  disabled={starting}
+                  style={[
+                    styles.startBtn,
+                    {
+                      backgroundColor: "transparent",
+                      borderWidth: 1,
+                      borderColor: isDark ? "#334155" : "#e2e8f0",
+                    },
+                  ]}
+                >
+                  <Text
+                    style={{
+                      fontWeight: "700",
+                      color: isDark ? "#cbd5e1" : "#475569",
+                    }}
+                  >
+                    Cancel
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={handleConfirmStart}
+                  disabled={!startBeforeImage || starting}
+                  style={[
+                    styles.startBtn,
+                    {
+                      backgroundColor:
+                        !startBeforeImage || starting ? "#93c5fd" : "#2563eb",
+                    },
+                  ]}
+                >
+                  {starting ? (
+                    <ActivityIndicator size="small" color="#ffffff" />
+                  ) : (
+                    <Text style={{ fontWeight: "700", color: "#ffffff" }}>
+                      Start
+                    </Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
       </SafeAreaView>
     </View>
   );
@@ -1247,4 +1521,60 @@ const styles = StyleSheet.create({
     paddingHorizontal: 40,
   },
   footerLoader: { paddingVertical: 20, alignItems: "center" },
+  startModalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(15,23,42,0.6)",
+    justifyContent: "center",
+    paddingHorizontal: 24,
+  },
+  startModalCard: {
+    borderRadius: 20,
+    padding: 20,
+  },
+  startModalHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  startModalTitle: { fontSize: 18, fontWeight: "800" },
+  startModalSubtitle: { fontSize: 13, fontWeight: "600", marginTop: 4 },
+  startModalLabel: {
+    fontSize: 11,
+    fontWeight: "700",
+    textTransform: "uppercase",
+    letterSpacing: 1,
+    marginTop: 18,
+    marginBottom: 8,
+  },
+  startBeforeBox: {
+    height: 160,
+    borderRadius: 14,
+    borderWidth: 1.5,
+    borderStyle: "dashed",
+    overflow: "hidden",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  startBeforePreview: { width: "100%", height: "100%" },
+  startBeforePlaceholder: { alignItems: "center", justifyContent: "center" },
+  startRetakeBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginTop: 8,
+    alignSelf: "flex-start",
+  },
+  startRetakeText: { color: "#3b82f6", fontSize: 12, fontWeight: "700" },
+  startModalActions: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 22,
+  },
+  startBtn: {
+    flex: 1,
+    height: 46,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+  },
 });

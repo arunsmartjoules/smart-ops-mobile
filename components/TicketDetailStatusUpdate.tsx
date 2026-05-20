@@ -158,6 +158,10 @@ const TicketDetailStatusUpdate = ({
   );
   const showAreaAndCategory =
     updateStatus === "Inprogress" || updateStatus === "Resolved";
+  // Incident/breakdown can be raised off a ticket while it's still Open or
+  // already Inprogress (e.g. tech starts work, then discovers it's a breakdown).
+  const canCreateIncidentFromTicket =
+    ticket.status === "Open" || ticket.status === "Inprogress";
   const effectiveCategory = (
     updateCategory.trim() ||
     ticket.category ||
@@ -168,6 +172,15 @@ const TicketDetailStatusUpdate = ({
     isTempMandatoryCategory(effectiveCategory);
   const beforeTempMissing = mandatoryTempsForCategory && !beforeTemp.trim();
   const afterTempMissing = mandatoryTempsForCategory && !afterTemp.trim();
+
+  // Temp capture follows the ticket lifecycle: Before Temp is entered while
+  // the ticket is Open (tech starting work) and stays visible/editable once
+  // Inprogress, alongside After Temp (tech wrapping up). Gated on the
+  // *current* ticket status, not the target status being selected.
+  const showBeforeTemp =
+    ticket.status === "Open" || ticket.status === "Inprogress";
+  const showAfterTemp = ticket.status === "Inprogress";
+  const showTempSection = showBeforeTemp || showAfterTemp;
 
   const pickImage = async () => {
     try {
@@ -392,9 +405,10 @@ const TicketDetailStatusUpdate = ({
         </View>
       )}
 
-      {/* Before / After Temp (for Inprogress and Resolved) */}
-      {(updateStatus === "Inprogress" || updateStatus === "Resolved") && (
+      {/* Before Temp while ticket is Open; After Temp while Inprogress */}
+      {showTempSection && (
         <View style={{ flexDirection: "row", gap: 10, marginBottom: 16 }}>
+          {showBeforeTemp && (
           <View style={{ flex: 1 }}>
             <Text
               className="text-slate-500 dark:text-slate-400"
@@ -430,6 +444,8 @@ const TicketDetailStatusUpdate = ({
               onChangeText={setBeforeTemp}
             />
           </View>
+          )}
+          {showAfterTemp && (
           <View style={{ flex: 1 }}>
             <Text
               className="text-slate-500 dark:text-slate-400"
@@ -465,6 +481,7 @@ const TicketDetailStatusUpdate = ({
               onChangeText={setAfterTemp}
             />
           </View>
+          )}
         </View>
       )}
 
@@ -602,7 +619,7 @@ const TicketDetailStatusUpdate = ({
         </View>
       )}
 
-      {ticket.status === "Open" && setCreateIncidentFromTicket ? (
+      {canCreateIncidentFromTicket && setCreateIncidentFromTicket ? (
         <TouchableOpacity
           onPress={() => {
             if (createIncidentFromTicket) {
@@ -643,7 +660,7 @@ const TicketDetailStatusUpdate = ({
         </TouchableOpacity>
       ) : null}
 
-      {ticket.status === "Open" && createIncidentFromTicket && setIncidentDraft ? (
+      {canCreateIncidentFromTicket && createIncidentFromTicket && setIncidentDraft ? (
         <View
           className="mt-3 rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/80 p-3"
           style={{ gap: 12 }}

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   View,
   Text,
@@ -54,13 +54,30 @@ export default function WaterEntry() {
   const [signatureModalVisible, setSignatureModalVisible] = useState(false);
   // Read-only operator label shown when editing an existing log.
   const [assignedToDisplay, setAssignedToDisplay] = useState("");
+  // Single-row model: the row this screen writes to. In edit mode it's
+  // params.id; in new mode it's the row auto-created (status Inprogress) the
+  // moment the first reading is entered. Save/Complete then UPDATE this same
+  // row — never a second one.
+  const currentLogIdRef = useRef<string | null>(null);
+  const autoFlipTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const autoFlipInFlightRef = useRef(false);
+  const completedRef = useRef(false);
 
   // Load existing data in edit mode
   useEffect(() => {
     if (isEditMode && params.id) {
+      currentLogIdRef.current = params.id;
       loadExistingLog(params.id);
     }
   }, [params.id, isEditMode]);
+
+  // Clear any pending auto-Inprogress timer on unmount.
+  useEffect(
+    () => () => {
+      if (autoFlipTimerRef.current) clearTimeout(autoFlipTimerRef.current);
+    },
+    [],
+  );
 
   const loadExistingLog = async (id: string) => {
     try {
@@ -86,8 +103,62 @@ export default function WaterEntry() {
     }
   };
 
+  // Create the single row as "Inprogress" the first time a reading is
+  // entered (new mode only). Never creates a second row.
+  const ensureInprogressRow = async (snapshot: typeof formData) => {
+    if (isEditMode) return;
+    if (currentLogIdRef.current || completedRef.current) return;
+    if (autoFlipInFlightRef.current) return;
+    autoFlipInFlightRef.current = true;
+    try {
+      const created = await SiteLogService.saveSiteLog({
+        siteCode: params.siteCode,
+        executorId:
+          user?.employee_code || user?.user_id || user?.id || "unknown",
+        assignedTo:
+          user?.full_name?.trim() ||
+          user?.name?.trim() ||
+          user?.employee_code ||
+          "unknown",
+        logName: "Water",
+        taskName: params.areaName,
+        tds: snapshot.tds ? parseFloat(snapshot.tds) : null,
+        ph: snapshot.ph ? parseFloat(snapshot.ph) : null,
+        hardness: snapshot.hardness ? parseFloat(snapshot.hardness) : null,
+        remarks: snapshot.remarks,
+        attachment: snapshot.attachment,
+        entryTime: entryTime,
+        status: "Inprogress",
+      });
+      if (created?.id) currentLogIdRef.current = created.id;
+    } catch (e) {
+      console.error("ensureInprogressRow failed", e);
+    } finally {
+      autoFlipInFlightRef.current = false;
+    }
+  };
+
+  const AUTO_FLIP_FIELDS = new Set(["tds", "ph", "hardness", "remarks"]);
+
   const updateField = (field: string, value: string) => {
-    setFormData((prev) => ({ ...prev, [field]: value }));
+    setFormData((prev) => {
+      const next = { ...prev, [field]: value };
+      // First real reading → flip the scheduled task to Inprogress (debounced,
+      // one-shot). Subsequent edits persist via Save / Complete & Sign.
+      if (
+        !isEditMode &&
+        !currentLogIdRef.current &&
+        !completedRef.current &&
+        AUTO_FLIP_FIELDS.has(field) &&
+        value.trim().length > 0
+      ) {
+        if (autoFlipTimerRef.current) clearTimeout(autoFlipTimerRef.current);
+        autoFlipTimerRef.current = setTimeout(() => {
+          ensureInprogressRow(next);
+        }, 800);
+      }
+      return next;
+    });
   };
 
   const processImageResult = async (result: ImagePicker.ImagePickerResult) => {
@@ -145,24 +216,33 @@ export default function WaterEntry() {
     ]);
   };
 
+  const operatorName =
+    user?.full_name?.trim() ||
+    user?.name?.trim() ||
+    user?.employee_code ||
+    "unknown";
+
   const handleSave = async () => {
     try {
       setSaving(true);
-      if (isEditMode && params.id) {
-        await SiteLogService.updateSiteLog(params.id, {
+      if (autoFlipTimerRef.current) clearTimeout(autoFlipTimerRef.current);
+      const targetId = isEditMode ? params.id : currentLogIdRef.current;
+      if (targetId) {
+        await SiteLogService.updateSiteLog(targetId, {
           tds: formData.tds ? parseFloat(formData.tds) : null,
           ph: formData.ph ? parseFloat(formData.ph) : null,
           hardness: formData.hardness ? parseFloat(formData.hardness) : null,
           remarks: formData.remarks,
           attachment: formData.attachment,
           status: "Inprogress",
-          assignedTo: user?.name || user?.user_id || "unknown",
+          assignedTo: operatorName,
         });
       } else {
-        await SiteLogService.saveSiteLog({
+        const created = await SiteLogService.saveSiteLog({
           siteCode: params.siteCode,
-          executorId: user?.employee_code || user?.user_id || user?.id || "unknown",
-          assignedTo: user?.name || user?.user_id || "unknown",
+          executorId:
+            user?.employee_code || user?.user_id || user?.id || "unknown",
+          assignedTo: operatorName,
           logName: "Water",
           taskName: params.areaName,
           tds: formData.tds ? parseFloat(formData.tds) : null,
@@ -173,6 +253,7 @@ export default function WaterEntry() {
           entryTime: entryTime,
           status: "Inprogress",
         });
+        if (created?.id) currentLogIdRef.current = created.id;
       }
       router.back();
     } catch (error: any) {
@@ -203,9 +284,13 @@ export default function WaterEntry() {
     try {
       setSaving(true);
       const endTime = new Date().getTime();
+      // Completion supersedes any pending auto-Inprogress flip.
+      if (autoFlipTimerRef.current) clearTimeout(autoFlipTimerRef.current);
+      completedRef.current = true;
 
-      if (isEditMode && params.id) {
-        await SiteLogService.updateSiteLog(params.id, {
+      const targetId = isEditMode ? params.id : currentLogIdRef.current;
+      if (targetId) {
+        await SiteLogService.updateSiteLog(targetId, {
           tds: formData.tds ? parseFloat(formData.tds) : null,
           ph: formData.ph ? parseFloat(formData.ph) : null,
           hardness: formData.hardness ? parseFloat(formData.hardness) : null,
@@ -214,13 +299,14 @@ export default function WaterEntry() {
           endTime: endTime,
           status: "Completed",
           attachment: formData.attachment,
-          assignedTo: user?.name || user?.user_id || "unknown",
+          assignedTo: operatorName,
         });
       } else {
-        await SiteLogService.saveSiteLog({
+        const created = await SiteLogService.saveSiteLog({
           siteCode: params.siteCode,
-          executorId: user?.employee_code || user?.user_id || user?.id || "unknown",
-          assignedTo: user?.name || user?.user_id || "unknown",
+          executorId:
+            user?.employee_code || user?.user_id || user?.id || "unknown",
+          assignedTo: operatorName,
           logName: "Water",
           taskName: params.areaName,
           tds: formData.tds ? parseFloat(formData.tds) : null,
@@ -233,6 +319,7 @@ export default function WaterEntry() {
           status: "Completed",
           attachment: formData.attachment,
         });
+        if (created?.id) currentLogIdRef.current = created.id;
       }
 
       Alert.alert(

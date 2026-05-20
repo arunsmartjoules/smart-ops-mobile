@@ -46,6 +46,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import Skeleton from "@/components/Skeleton";
 import UserLookupService from "@/services/UserLookupService";
 import { formatAssignee } from "@/utils/assignee";
+import { setRouteParams } from "@/utils/routeParams";
 
 // Memoized History Item Component
 const HistoryItem = memo(
@@ -570,21 +571,27 @@ export default function SiteHistory() {
           onPress={() => {
             if (route) {
               const isChillerRoute = route === "/chiller";
-              router.push({
-                pathname: route,
-                params: isChillerRoute
-                  ? {
-                      editId: item.id,
-                      siteCode: item.site_code || siteCode,
-                      chillerId: item.equipment_id || item.chiller_id,
-                      mode: "edit",
-                    }
-                  : {
-                      editId: item.id,
-                      siteCode: item.site_code || siteCode,
-                      mode: "edit",
-                    },
-              });
+              // /temp-rh, /water, /chemical now read params from the
+              // routeParams store (no nav hooks → no teardown crash). The
+              // chiller screen still uses URL params, so push as before.
+              if (isChillerRoute) {
+                router.push({
+                  pathname: route,
+                  params: {
+                    editId: item.id,
+                    siteCode: item.site_code || siteCode,
+                    chillerId: item.equipment_id || item.chiller_id,
+                    mode: "edit",
+                  },
+                });
+              } else {
+                setRouteParams(route, {
+                  editId: item.id,
+                  siteCode: item.site_code || siteCode,
+                  mode: "edit",
+                });
+                router.push(route);
+              }
             }
           }}
           onLongPress={() => handleDelete(item)}

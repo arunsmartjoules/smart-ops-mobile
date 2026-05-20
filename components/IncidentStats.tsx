@@ -73,7 +73,7 @@ const IncidentStats = ({
           "Inprogress",
           "#3b82f6",
         )}
-        {renderCard("Closed", stats.Resolved || 0, "Resolved", "#22c55e")}
+        {renderCard("Completed", stats.Resolved || 0, "Resolved", "#22c55e")}
       </View>
     </View>
   );

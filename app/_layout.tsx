@@ -1,4 +1,7 @@
 import "react-native-gesture-handler";
+// Dev-only diagnostic: import BEFORE anything else so it patches console.error
+// before any other module logs. See utils/navContextErrorTrap.ts.
+import "@/utils/navContextErrorTrap";
 import { Stack, useRouter, useSegments, router } from "expo-router";
 import "react-native-reanimated";
 import "./global.css";

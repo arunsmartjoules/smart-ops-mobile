@@ -158,6 +158,9 @@ interface IncidentCreateForm {
   assigned_to: string;
   status: "Open" | "Inprogress";
   incident_updated_time: Date | null;
+  // Stable idempotency key for this form's incident, reused on every submit /
+  // offline replay so retries collapse into one incident server-side.
+  client_request_id: string;
 }
 
 export default function IncidentsTab() {
@@ -236,7 +239,7 @@ export default function IncidentsTab() {
   const [assetsLoading, setAssetsLoading] = useState(false);
   const [assetOptions, setAssetOptions] = useState<SelectOption[]>([]);
   const [assetSearchQuery, setAssetSearchQuery] = useState("");
-  const [form, setForm] = useState<IncidentCreateForm>({
+  const [form, setForm] = useState<IncidentCreateForm>(() => ({
     site_code: "",
     fault_symptom: "",
     asset_location: "",
@@ -249,7 +252,8 @@ export default function IncidentsTab() {
     assigned_to: "",
     status: "Open",
     incident_updated_time: null,
-  });
+    client_request_id: uuidv4(),
+  }));
   const currentUserId = user?.user_id || user?.id || "";
 
   const siteOptions = useMemo<SelectOption[]>(
@@ -342,6 +346,15 @@ export default function IncidentsTab() {
     [isConnected],
   );
 
+  // RCA quick-filters only apply to Completed incidents; drop any active RCA
+  // filter when the status filter moves away from "Resolved" so the list
+  // isn't left filtered by a chip the user can no longer toggle.
+  useEffect(() => {
+    if (statusFilter !== "Resolved" && rcaFilter !== "All") {
+      setRcaFilter("All");
+    }
+  }, [statusFilter, rcaFilter]);
+
   useEffect(() => {
     void fetchData("filter");
   }, [fetchData]);
@@ -392,6 +405,8 @@ export default function IncidentsTab() {
       assigned_to: currentUserId,
       status: "Open",
       incident_updated_time: null,
+      // Fresh key per new draft so distinct incidents don't share one.
+      client_request_id: uuidv4(),
     });
     setAssetSearchQuery("");
   }, [currentUserId, selectedSiteCode]);
@@ -591,7 +606,8 @@ export default function IncidentsTab() {
       attachments: uploadedAttachments,
       ...(canEditMeta ? { incident_created_time: form.incident_created_time.toISOString() } : {}),
       ...(respondedAtForInprogress ? { incident_updated_time: respondedAtForInprogress } : {}),
-      client_request_id: uuidv4(),
+      // Stable across re-submits / offline replays of this draft.
+      client_request_id: form.client_request_id,
     };
     const result = await IncidentsService.createIncident(payload);
     if (result?.success || result?.queued) {
@@ -655,11 +671,25 @@ export default function IncidentsTab() {
       Alert.alert("Invalid time", "Resolved time cannot be in the future.");
       return;
     }
+    if (
+      detailResolvedAt &&
+      detailRespondedAt &&
+      detailResolvedAt.getTime() < detailRespondedAt.getTime()
+    ) {
+      Alert.alert(
+        "Invalid time",
+        "Resolved time cannot be earlier than responded time.",
+      );
+      return;
+    }
 
+    // RCA is only manageable once the incident is Completed (status "Resolved");
+    // role permission (canEditRca) still applies on top of that.
+    const canManageRca = canEditRca && selectedIncident.status === "Resolved";
     const hasStatusChange = Boolean(nextStatus);
-    const hasRcaStatusChange = canEditRca && updateRcaStatus !== selectedIncident.rca_status;
-    const hasRcaCheckerChange = canEditRca && detailRcaChecker !== String(selectedIncident.rca_checker || "");
-    const hasNewRcaAttachments = canEditRca && detailPendingRcaAttachments.length > 0;
+    const hasRcaStatusChange = canManageRca && updateRcaStatus !== selectedIncident.rca_status;
+    const hasRcaCheckerChange = canManageRca && detailRcaChecker !== String(selectedIncident.rca_checker || "");
+    const hasNewRcaAttachments = canManageRca && detailPendingRcaAttachments.length > 0;
     const hasRcaChange = hasRcaStatusChange || hasRcaCheckerChange || hasNewRcaAttachments;
     const hasNewAttachments = detailPendingAttachments.length > 0;
     const hasRemarkChange = updateRemarks.trim() !== String(selectedIncident.remarks || "").trim();
@@ -722,7 +752,7 @@ export default function IncidentsTab() {
         }
       }
 
-      if (canEditRca && hasRcaChange) {
+      if (canManageRca && hasRcaChange) {
         const existingRca = parseIncidentAttachments(selectedIncident.rca_attachments);
         let uploadedRca: string[] = [];
         try {
@@ -810,7 +840,7 @@ export default function IncidentsTab() {
 
   const renderCard = ({ item }: { item: IncidentItem }) => {
     const status = getStatusVisual(item.status);
-    const statusLabel = item.status === "Resolved" ? "Closed" : status.label;
+    const statusLabel = item.status === "Resolved" ? "Completed" : status.label;
     const assignee = parseAssignedTo(item.assigned_to).display;
     const createdAt = item.incident_created_time
       ? (() => {
@@ -1016,11 +1046,15 @@ export default function IncidentsTab() {
           currentStatus={statusFilter}
           onStatusChange={(value) => setStatusFilter(value as IncidentStatus)}
         />
-        <IncidentTopFilters
-          selected={rcaFilter}
-          onChange={setRcaFilter}
-          canEdit={canEditRca}
-        />
+        {/* RCA quick-filters apply only to Completed incidents — hidden
+            entirely under Open / Inprogress. */}
+        {statusFilter === "Resolved" ? (
+          <IncidentTopFilters
+            selected={rcaFilter}
+            onChange={setRcaFilter}
+            canEdit={canEditRca}
+          />
+        ) : null}
         {isSwitchingFilters ? (
           <View className="px-5 mb-2">
             <Text className="text-xs text-slate-500 dark:text-slate-400">Updating incidents...</Text>
@@ -1071,7 +1105,7 @@ export default function IncidentsTab() {
           priorityFilter={"All"}
           setPriorityFilter={() => {}}
           statusOptions={["All", "Open", "Inprogress", "Resolved"]}
-          statusOptionLabels={{ Resolved: "Closed" }}
+          statusOptionLabels={{ Resolved: "Completed" }}
           applyAdvancedFilters={applyAdvancedFilters}
           title="Filter Incidents"
         />
@@ -1387,7 +1421,7 @@ export default function IncidentsTab() {
           rcaChecker={detailRcaChecker}
           setRcaChecker={setDetailRcaChecker}
           rcaCheckerOptions={siteUserOptions}
-          canEditRca={canEditRca}
+          canEditRca={canEditRca && selectedIncident?.status === "Resolved"}
           nextStatus={nextStatus}
           setNextStatus={setNextStatus}
           remarks={updateRemarks}

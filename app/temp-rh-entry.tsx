@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   View,
   Text,
@@ -53,13 +53,32 @@ export default function TempRHEntry() {
   const [signatureModalVisible, setSignatureModalVisible] = useState(false);
   // Read-only operator label shown when editing an existing log.
   const [assignedToDisplay, setAssignedToDisplay] = useState("");
+  // Single-row model — see water-entry for the rationale.
+  const currentLogIdRef = useRef<string | null>(null);
+  const autoFlipTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const autoFlipInFlightRef = useRef(false);
+  const completedRef = useRef(false);
+
+  const operatorName =
+    user?.full_name?.trim() ||
+    user?.name?.trim() ||
+    user?.employee_code ||
+    "unknown";
 
   // Load existing data in edit mode
   useEffect(() => {
     if (isEditMode && params.id) {
+      currentLogIdRef.current = params.id;
       loadExistingLog(params.id);
     }
   }, [params.id, isEditMode]);
+
+  useEffect(
+    () => () => {
+      if (autoFlipTimerRef.current) clearTimeout(autoFlipTimerRef.current);
+    },
+    [],
+  );
 
   const loadExistingLog = async (id: string) => {
     try {
@@ -84,8 +103,55 @@ export default function TempRHEntry() {
     }
   };
 
+  const ensureInprogressRow = async (snapshot: typeof formData) => {
+    if (isEditMode) return;
+    if (currentLogIdRef.current || completedRef.current) return;
+    if (autoFlipInFlightRef.current) return;
+    autoFlipInFlightRef.current = true;
+    try {
+      const created = await SiteLogService.saveSiteLog({
+        siteCode: params.siteCode,
+        executorId:
+          user?.employee_code || user?.user_id || user?.id || "unknown",
+        assignedTo: operatorName,
+        logName: "Temp RH",
+        taskName: params.areaName,
+        temperature: snapshot.temperature
+          ? parseFloat(snapshot.temperature)
+          : null,
+        rh: snapshot.rh ? parseFloat(snapshot.rh) : null,
+        remarks: snapshot.remarks,
+        attachment: snapshot.attachment,
+        entryTime: entryTime,
+        status: "Inprogress",
+      });
+      if (created?.id) currentLogIdRef.current = created.id;
+    } catch (e) {
+      console.error("ensureInprogressRow failed", e);
+    } finally {
+      autoFlipInFlightRef.current = false;
+    }
+  };
+
+  const AUTO_FLIP_FIELDS = new Set(["temperature", "rh", "remarks"]);
+
   const updateField = (field: string, value: string) => {
-    setFormData((prev) => ({ ...prev, [field]: value }));
+    setFormData((prev) => {
+      const next = { ...prev, [field]: value };
+      if (
+        !isEditMode &&
+        !currentLogIdRef.current &&
+        !completedRef.current &&
+        AUTO_FLIP_FIELDS.has(field) &&
+        value.trim().length > 0
+      ) {
+        if (autoFlipTimerRef.current) clearTimeout(autoFlipTimerRef.current);
+        autoFlipTimerRef.current = setTimeout(() => {
+          ensureInprogressRow(next);
+        }, 800);
+      }
+      return next;
+    });
   };
 
   const processImageResult = async (result: ImagePicker.ImagePickerResult) => {
@@ -150,20 +216,23 @@ export default function TempRHEntry() {
       const hasRH = !!(formData.rh && formData.rh.trim().length > 0);
       const status = hasTemp && hasRH ? "Completed" : hasTemp || hasRH ? "Inprogress" : "Open";
 
-      if (isEditMode && params.id) {
-        await SiteLogService.updateSiteLog(params.id, {
+      if (autoFlipTimerRef.current) clearTimeout(autoFlipTimerRef.current);
+      const targetId = isEditMode ? params.id : currentLogIdRef.current;
+      if (targetId) {
+        await SiteLogService.updateSiteLog(targetId, {
           temperature: hasTemp ? parseFloat(formData.temperature) : null,
           rh: hasRH ? parseFloat(formData.rh) : null,
           remarks: formData.remarks,
           attachment: formData.attachment,
           status,
-          assignedTo: user?.name || user?.user_id || "unknown",
+          assignedTo: operatorName,
         });
       } else {
-        await SiteLogService.saveSiteLog({
+        const created = await SiteLogService.saveSiteLog({
           siteCode: params.siteCode,
-          executorId: user?.employee_code || user?.user_id || user?.id || "unknown",
-          assignedTo: user?.name || user?.user_id || "unknown",
+          executorId:
+            user?.employee_code || user?.user_id || user?.id || "unknown",
+          assignedTo: operatorName,
           logName: "Temp RH",
           taskName: params.areaName,
           temperature: hasTemp ? parseFloat(formData.temperature) : null,
@@ -173,6 +242,7 @@ export default function TempRHEntry() {
           entryTime: entryTime,
           status,
         });
+        if (created?.id) currentLogIdRef.current = created.id;
       }
       router.back();
     } catch (error: any) {
@@ -207,9 +277,11 @@ export default function TempRHEntry() {
         status = "Inprogress";
       }
 
-      if (isEditMode && params.id) {
-        // Update existing log
-        await SiteLogService.updateSiteLog(params.id, {
+      if (autoFlipTimerRef.current) clearTimeout(autoFlipTimerRef.current);
+      completedRef.current = true;
+      const targetId = isEditMode ? params.id : currentLogIdRef.current;
+      if (targetId) {
+        await SiteLogService.updateSiteLog(targetId, {
           temperature: hasTemp ? parseFloat(formData.temperature) : null,
           rh: hasRH ? parseFloat(formData.rh) : null,
           remarks: formData.remarks,
@@ -217,14 +289,14 @@ export default function TempRHEntry() {
           endTime: endTime,
           status: status,
           attachment: formData.attachment,
-          assignedTo: user?.name || user?.user_id || "unknown",
+          assignedTo: operatorName,
         });
       } else {
-        // Create new log
-        await SiteLogService.saveSiteLog({
+        const created = await SiteLogService.saveSiteLog({
           siteCode: params.siteCode,
-          executorId: user?.employee_code || user?.user_id || user?.id || "unknown",
-          assignedTo: user?.name || user?.user_id || "unknown",
+          executorId:
+            user?.employee_code || user?.user_id || user?.id || "unknown",
+          assignedTo: operatorName,
           logName: "Temp RH",
           taskName: params.areaName,
           temperature: hasTemp ? parseFloat(formData.temperature) : null,
@@ -236,6 +308,7 @@ export default function TempRHEntry() {
           status: status,
           attachment: formData.attachment,
         });
+        if (created?.id) currentLogIdRef.current = created.id;
       }
 
       Alert.alert(

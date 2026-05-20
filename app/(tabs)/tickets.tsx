@@ -52,6 +52,7 @@ import TicketDetailModal from "@/components/TicketDetailModal";
 import { isTempMandatoryCategory } from "@/components/TicketDetailStatusUpdate";
 import {
   DEFAULT_TICKET_INCIDENT_DRAFT,
+  makeTicketIncidentDraft,
   type TicketIncidentDraft,
 } from "@/constants/incidentFormOptions";
 import AdvancedFilterModal from "@/components/AdvancedFilterModal";
@@ -212,10 +213,15 @@ export default function Tickets() {
   const [afterTemp, setAfterTemp] = useState("");
   const [attachmentUri, setAttachmentUri] = useState("");
   const [createIncidentFromTicket, setCreateIncidentFromTicket] = useState(false);
-  const [incidentDraft, setIncidentDraft] = useState<TicketIncidentDraft>(DEFAULT_TICKET_INCIDENT_DRAFT);
+  const [incidentDraft, setIncidentDraft] = useState<TicketIncidentDraft>(() =>
+    makeTicketIncidentDraft(uuidv4),
+  );
 
   const resetIncidentDraft = useCallback(() => {
-    setIncidentDraft({ ...DEFAULT_TICKET_INCIDENT_DRAFT });
+    // New idempotency key per fresh draft so a *different* logical incident
+    // doesn't reuse a key (which would make the backend dedupe return the
+    // previous incident).
+    setIncidentDraft(makeTicketIncidentDraft(uuidv4));
   }, []);
 
   const onCreateIncidentFromTicketChange = useCallback((v: boolean) => {
@@ -1140,20 +1146,33 @@ export default function Tickets() {
         ""
       ).trim();
       if (isTempMandatoryCategory(effectiveCategory)) {
+        // Which temps are captured tracks the current ticket status (see
+        // TicketDetailStatusUpdate): Before only while Open; both Before and
+        // After while Inprogress. Validate exactly what's shown.
+        const isOpen = selectedTicket.status === "Open";
+        const isInprogress = selectedTicket.status === "Inprogress";
         const bt = beforeTemp.trim();
         const at = afterTemp.trim();
-        if (!bt || !at) {
+        if (isOpen && !bt) {
+          Alert.alert(
+            "Required",
+            "Please enter before temperature for this category.",
+          );
+          return;
+        }
+        if (isInprogress && (!bt || !at)) {
           Alert.alert(
             "Required",
             "Please enter before and after temperature for this category.",
           );
           return;
         }
-        if (Number.isNaN(parseFloat(bt)) || Number.isNaN(parseFloat(at))) {
-          Alert.alert(
-            "Required",
-            "Before and after temperature must be valid numbers.",
-          );
+        if (bt && Number.isNaN(parseFloat(bt))) {
+          Alert.alert("Required", "Before temperature must be a valid number.");
+          return;
+        }
+        if (isInprogress && at && Number.isNaN(parseFloat(at))) {
+          Alert.alert("Required", "After temperature must be a valid number.");
           return;
         }
       }
@@ -1193,7 +1212,9 @@ export default function Tickets() {
           incidentDraft.immediate_action_taken.trim() || updateRemarks.trim() || "",
         attachments: incidentDraft.incidentAttachments,
         remarks: incidentDraft.incidentRemarks.trim() || undefined,
-        client_request_id: uuidv4(),
+        // Stable across re-submits / offline-queue replays of this same draft
+        // so the backend collapses them into one incident.
+        client_request_id: incidentDraft.client_request_id,
       };
     }
 

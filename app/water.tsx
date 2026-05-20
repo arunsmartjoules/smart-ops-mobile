@@ -1,21 +1,29 @@
-import React from "react";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { useRef } from "react";
+import { router } from "expo-router";
 import { LogEntryModule } from "@/components/sitelogs/LogEntryModule";
+import { consumeRouteParams } from "@/utils/routeParams";
 
 /**
- * Water Monitoring Entry Screen
- * Refactored to use generic LogEntryModule for clean state management and 
- * strict "To-Do" filtering.
+ * Water Monitoring Entry Screen. Hookless for navigation (see temp-rh.tsx
+ * for the rationale): params travel via the routeParams store, `router` is
+ * the global non-hook export.
  */
 export default function WaterTaskList() {
-  const router = useRouter();
-  const { siteCode } = useLocalSearchParams<{ siteCode?: string }>();
+  const paramsRef = useRef(
+    consumeRouteParams<{ siteCode?: string; editId?: string }>("/water"),
+  );
+
+  const handleBack = () => {
+    if (router.canGoBack()) router.back();
+    else router.replace("/(tabs)/site-logs");
+  };
 
   return (
-    <LogEntryModule 
-      type="Water" 
-      siteCode={siteCode}
-      onBack={() => router.back()}
+    <LogEntryModule
+      type="Water"
+      siteCode={paramsRef.current.siteCode}
+      editId={paramsRef.current.editId}
+      onBack={handleBack}
     />
   );
 }

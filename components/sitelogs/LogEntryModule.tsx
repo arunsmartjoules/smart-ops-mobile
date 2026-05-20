@@ -1,18 +1,20 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { 
-  View, 
-  Text, 
-  TouchableOpacity, 
-  FlatList, 
+import {
+  View,
+  Text,
+  TouchableOpacity,
+  FlatList,
   ActivityIndicator,
   RefreshControl,
   Alert,
   KeyboardAvoidingView,
   Platform,
-  Modal
+  Modal,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useLocalSearchParams } from "expo-router";
+// No expo-router hooks here on purpose — they throw "Couldn't find a
+// navigation context" during route teardown. Params arrive as props from the
+// route wrapper, which reads them from the routeParams store (no hooks).
 import { ChevronLeft, CheckCircle2, Droplets, FlaskConical, Thermometer, Save, Info, ListChecks, Clock, Lock } from "lucide-react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useAuth } from "@/contexts/AuthContext";
@@ -34,13 +36,21 @@ import { db } from "@/database";
 interface LogEntryModuleProps {
   type: "Chemical" | "Water" | "TempRH";
   siteCode?: string;
+  /** Edit-mode log id (was previously read from useLocalSearchParams). */
+  editId?: string;
+  /** Initial shift for TempRH (was previously read from params). */
+  initialShift?: "A" | "B" | "C" | null;
   onBack: () => void;
 }
 
-export const LogEntryModule = ({ type, siteCode: initialSiteCode, onBack }: LogEntryModuleProps) => {
+export const LogEntryModule = ({
+  type,
+  siteCode: initialSiteCode,
+  editId,
+  initialShift,
+  onBack,
+}: LogEntryModuleProps) => {
   const { user } = useAuth();
-  const params = useLocalSearchParams<{ editId?: string; mode?: string }>();
-  const editId = params.editId;
   const isEditMode = !!editId;
   
   // State
@@ -51,7 +61,9 @@ export const LogEntryModule = ({ type, siteCode: initialSiteCode, onBack }: LogE
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
-  const [shift, setShift] = useState<string | null>(type === "TempRH" ? "A" : null);
+  const [shift, setShift] = useState<string | null>(
+    type === "TempRH" ? (initialShift ?? "A") : null,
+  );
   
   // Form State
   const [logValues, setLogValues] = useState<Record<string, any>>({});
@@ -327,7 +339,13 @@ export const LogEntryModule = ({ type, siteCode: initialSiteCode, onBack }: LogE
               );
       if (!hasData) return;
 
-      const status = isTaskComplete(taskId) ? "Completed" : "Inprogress";
+      // Auto-save NEVER marks a row Completed. "Completed" is reserved for
+      // the explicit submit-with-signature flow (handleSubmit) — otherwise
+      // a row drops out of the pending list the instant both fields are
+      // filled, which (a) shows it as Completed without a signature, and
+      // (b) empties the tasks array so handleSubmit hits its "No Data"
+      // early-return and the Complete & Sign button does nothing.
+      const status = "Inprogress";
       const shiftLabel =
         shift === "A" ? " (1/3)" : shift === "B" ? " (2/3)" : shift === "C" ? " (3/3)" : "";
 
@@ -820,7 +838,7 @@ export const LogEntryModule = ({ type, siteCode: initialSiteCode, onBack }: LogE
                         <TouchableOpacity
                           key={s}
                           onPress={() => setShift(s)}
-                          className={`flex-1 items-center py-2 rounded-xl border ${
+                          className={`flex-1 items-center py-1.5 rounded-xl border ${
                             active
                               ? "border-transparent"
                               : "bg-white border-slate-200 dark:bg-slate-800 dark:border-slate-700"

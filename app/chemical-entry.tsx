@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   View,
   Text,
@@ -53,13 +53,32 @@ export default function ChemicalEntry() {
   const [showDosingPicker, setShowDosingPicker] = useState(false);
   // Read-only operator label shown when editing an existing log.
   const [assignedToDisplay, setAssignedToDisplay] = useState("");
+  // Single-row model — see water-entry for the rationale.
+  const currentLogIdRef = useRef<string | null>(null);
+  const autoFlipTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const autoFlipInFlightRef = useRef(false);
+  const completedRef = useRef(false);
+
+  const operatorName =
+    user?.full_name?.trim() ||
+    user?.name?.trim() ||
+    user?.employee_code ||
+    "unknown";
 
   // Load existing data in edit mode
   useEffect(() => {
     if (isEditMode && params.id) {
+      currentLogIdRef.current = params.id;
       loadExistingLog(params.id);
     }
   }, [params.id, isEditMode]);
+
+  useEffect(
+    () => () => {
+      if (autoFlipTimerRef.current) clearTimeout(autoFlipTimerRef.current);
+    },
+    [],
+  );
 
   const loadExistingLog = async (id: string) => {
     try {
@@ -83,8 +102,52 @@ export default function ChemicalEntry() {
     }
   };
 
+  const ensureInprogressRow = async (snapshot: typeof formData) => {
+    if (isEditMode) return;
+    if (currentLogIdRef.current || completedRef.current) return;
+    if (autoFlipInFlightRef.current) return;
+    autoFlipInFlightRef.current = true;
+    try {
+      const created = await SiteLogService.saveSiteLog({
+        siteCode: params.siteCode,
+        executorId:
+          user?.employee_code || user?.user_id || user?.id || "unknown",
+        assignedTo: operatorName,
+        logName: "Chemical Dosing",
+        taskName: params.areaName,
+        chemicalDosing: snapshot.chemicalDosing,
+        remarks: snapshot.remarks,
+        attachment: snapshot.attachment,
+        entryTime: entryTime,
+        status: "Inprogress",
+      });
+      if (created?.id) currentLogIdRef.current = created.id;
+    } catch (e) {
+      console.error("ensureInprogressRow failed", e);
+    } finally {
+      autoFlipInFlightRef.current = false;
+    }
+  };
+
+  const AUTO_FLIP_FIELDS = new Set(["chemicalDosing", "remarks"]);
+
   const updateField = (field: string, value: string) => {
-    setFormData((prev) => ({ ...prev, [field]: value }));
+    setFormData((prev) => {
+      const next = { ...prev, [field]: value };
+      if (
+        !isEditMode &&
+        !currentLogIdRef.current &&
+        !completedRef.current &&
+        AUTO_FLIP_FIELDS.has(field) &&
+        value.trim().length > 0
+      ) {
+        if (autoFlipTimerRef.current) clearTimeout(autoFlipTimerRef.current);
+        autoFlipTimerRef.current = setTimeout(() => {
+          ensureInprogressRow(next);
+        }, 800);
+      }
+      return next;
+    });
   };
 
   const processImageResult = async (result: ImagePicker.ImagePickerResult) => {
@@ -145,19 +208,22 @@ export default function ChemicalEntry() {
   const handleSave = async () => {
     try {
       setSaving(true);
-      if (isEditMode && params.id) {
-        await SiteLogService.updateSiteLog(params.id, {
+      if (autoFlipTimerRef.current) clearTimeout(autoFlipTimerRef.current);
+      const targetId = isEditMode ? params.id : currentLogIdRef.current;
+      if (targetId) {
+        await SiteLogService.updateSiteLog(targetId, {
           chemicalDosing: formData.chemicalDosing,
           remarks: formData.remarks,
           attachment: formData.attachment,
           status: "Inprogress",
-          assignedTo: user?.name || user?.user_id || "unknown",
+          assignedTo: operatorName,
         });
       } else {
-        await SiteLogService.saveSiteLog({
+        const created = await SiteLogService.saveSiteLog({
           siteCode: params.siteCode,
-          executorId: user?.employee_code || user?.user_id || user?.id || "unknown",
-          assignedTo: user?.name || user?.user_id || "unknown",
+          executorId:
+            user?.employee_code || user?.user_id || user?.id || "unknown",
+          assignedTo: operatorName,
           logName: "Chemical Dosing",
           taskName: params.areaName,
           chemicalDosing: formData.chemicalDosing,
@@ -166,6 +232,7 @@ export default function ChemicalEntry() {
           entryTime: entryTime,
           status: "Inprogress",
         });
+        if (created?.id) currentLogIdRef.current = created.id;
       }
       router.back();
     } catch (error: any) {
@@ -190,22 +257,26 @@ export default function ChemicalEntry() {
     try {
       setSaving(true);
       const endTime = new Date().getTime();
+      if (autoFlipTimerRef.current) clearTimeout(autoFlipTimerRef.current);
+      completedRef.current = true;
 
-      if (isEditMode && params.id) {
-        await SiteLogService.updateSiteLog(params.id, {
+      const targetId = isEditMode ? params.id : currentLogIdRef.current;
+      if (targetId) {
+        await SiteLogService.updateSiteLog(targetId, {
           chemicalDosing: formData.chemicalDosing,
           remarks: formData.remarks,
           signature: sig,
           endTime: endTime,
           status: "Completed",
           attachment: formData.attachment,
-          assignedTo: user?.name || user?.user_id || "unknown",
+          assignedTo: operatorName,
         });
       } else {
-        await SiteLogService.saveSiteLog({
+        const created = await SiteLogService.saveSiteLog({
           siteCode: params.siteCode,
-          executorId: user?.employee_code || user?.user_id || user?.id || "unknown",
-          assignedTo: user?.name || user?.user_id || "unknown",
+          executorId:
+            user?.employee_code || user?.user_id || user?.id || "unknown",
+          assignedTo: operatorName,
           logName: "Chemical Dosing",
           taskName: params.areaName,
           chemicalDosing: formData.chemicalDosing,
@@ -216,6 +287,7 @@ export default function ChemicalEntry() {
           status: "Completed",
           attachment: formData.attachment,
         });
+        if (created?.id) currentLogIdRef.current = created.id;
       }
 
       Alert.alert(

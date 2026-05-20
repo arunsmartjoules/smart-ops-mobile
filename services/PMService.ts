@@ -537,6 +537,88 @@ const PMService = {
     }
   },
 
+  /**
+   * Start a PM from the pre-execution modal: records status In-progress, the
+   * captured before_image, and an explicit device-side start_datetime.
+   *
+   * start_datetime is sent from the device (not left for the backend to
+   * auto-stamp) so an offline start preserves the real tap time — the backend
+   * only auto-sets start_datetime when it isn't provided
+   * (pmInstancesController.update). before_image is captured here precisely so
+   * the execution screen never has to mutate it (which previously raced with
+   * the post-status-transition instance re-fetch and wiped the image).
+   */
+  async startExecution(
+    instanceServerId: string,
+    options: { beforeImage: string; startDatetime: string },
+  ): Promise<void> {
+    const beforeImageValue = await queueAttachmentIfLocal(
+      options.beforeImage,
+      "pm-completion",
+      "pm_instance",
+      instanceServerId,
+      "before_image",
+    );
+
+    const now = Date.now();
+    // Local pm_instances has no start_datetime column; it lives only in the
+    // sync payload (backend pm_instances does have it).
+    const localUpdate = {
+      status: "In-progress",
+      before_image: beforeImageValue,
+      updated_at: now,
+    };
+    await db
+      .update(pmInstances)
+      .set(localUpdate)
+      .where(eq(pmInstances.id, instanceServerId));
+
+    const syncPayload = {
+      id: instanceServerId,
+      status: "In-progress",
+      before_image: beforeImageValue,
+      start_datetime: options.startDatetime,
+      updated_at: now,
+    };
+
+    await this.prunePendingInstanceUpdates(instanceServerId);
+    const queueItemId = uuidv4();
+    await db.insert(offlineQueue).values({
+      id: queueItemId,
+      entity_type: "pm_instance_update",
+      operation: "update",
+      payload: JSON.stringify(syncPayload),
+      created_at: now,
+      retry_count: 0,
+      last_error: null,
+      status: "pending",
+    });
+
+    const netState = await NetInfo.fetch();
+    if (netState.isConnected) {
+      try {
+        const response = await apiFetch(
+          `/api/pm-instances/${instanceServerId}`,
+          { method: "PUT", body: JSON.stringify(syncPayload) },
+        );
+        if (response.ok) {
+          await cacheManager.dequeue(queueItemId);
+        } else {
+          logger.warn("PM startExecution PUT non-OK, keeping in queue", {
+            module: "PM_SERVICE",
+            status: response.status,
+            instanceId: instanceServerId,
+          });
+        }
+      } catch (err) {
+        logger.warn("Immediate startExecution failed, staying in queue", {
+          module: "PM_SERVICE",
+          error: err,
+        });
+      }
+    }
+  },
+
   async startInstance(instanceServerId: string): Promise<void> {
     const updateData = { status: "In-progress", updated_at: Date.now() };
     await db.update(pmInstances).set(updateData).where(eq(pmInstances.id, instanceServerId));

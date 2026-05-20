@@ -123,6 +123,9 @@ export default function ChillerEntry() {
   // Dedupe the "incomplete chiller log" alert within a single mount so the
   // focus/site effects don't re-fire it. Keyed by `${site}:${openRowId}`.
   const dupGuardKeyRef = useRef<string | null>(null);
+  // Single-flight gate for the create-on-select row so React re-renders /
+  // effect re-runs can't spawn a second row before the first create returns.
+  const creatingRowRef = useRef(false);
 
   const isEditMode = !!(params.editId || params.id);
   const targetId = (params.editId || params.id || "") as string;
@@ -264,6 +267,76 @@ export default function ChillerEntry() {
       checkForOpenChillerLog();
     }, [checkForOpenChillerLog]),
   );
+
+  // Single-row model: selecting a chiller (new entry) immediately creates ONE
+  // chiller_readings row — status=Inprogress, start time=now. Every later edit
+  // UPDATES this same row (see handleSubmission). The reading is finished
+  // later from the history screen via Complete & Sign. No per-keystroke
+  // duplicate rows are ever created.
+  const ensureChillerRow = useCallback(async () => {
+    if (isEditMode) return;
+    if (!selectedSite || !formData.chillerId) return;
+    if (currentReadingRef.current?.id) return;
+    if (completedRef.current || creatingRowRef.current) return;
+
+    creatingRowRef.current = true;
+    try {
+      // If an open row already exists for this site+day, the duplicate guard
+      // (checkForOpenChillerLog) owns it and redirects to edit — never create
+      // a second row here.
+      const existing =
+        await SiteLogService.findOpenChillerReadingForToday(selectedSite);
+      if (existing?.id) return;
+
+      const selectedAsset = assets.find(
+        (a) => a.value === formData.chillerId,
+      );
+      const assetName = selectedAsset?.label || formData.chillerId;
+      const now = Date.now();
+      const created = await SiteLogService.saveChillerReading({
+        siteCode: selectedSite,
+        chillerId: assetName,
+        equipmentId: formData.chillerId,
+        assetName,
+        assetType: selectedAsset?.description || "Chiller",
+        assignedTo:
+          user?.full_name?.trim() ||
+          user?.name?.trim() ||
+          user?.employee_code ||
+          "unknown",
+        executorId:
+          user?.employee_code || user?.user_id || user?.id || "unknown",
+        status: "Inprogress",
+        readingTime: params.readingTime ? parseInt(params.readingTime) : now,
+        startDatetime: now,
+      });
+      if (created?.id) {
+        currentReadingRef.current = {
+          id: created.id,
+          chillerId: formData.chillerId,
+        };
+      }
+    } catch (e) {
+      console.error("ensureChillerRow failed", e);
+    } finally {
+      creatingRowRef.current = false;
+    }
+  }, [
+    isEditMode,
+    selectedSite,
+    formData.chillerId,
+    assets,
+    user?.full_name,
+    user?.name,
+    user?.employee_code,
+    user?.user_id,
+    user?.id,
+    params.readingTime,
+  ]);
+
+  useEffect(() => {
+    ensureChillerRow();
+  }, [ensureChillerRow]);
 
   useEffect(() => {
     if (targetId) {
@@ -472,15 +545,12 @@ export default function ChillerEntry() {
         "attachment",
       ]);
 
-      // Only auto-save if we have a chiller selection and user updated an eligible field.
+      // Debounced save = UPDATE the single row created on chiller-select.
+      // It never creates a row and never changes status (handleSubmission
+      // treats a non-"Completed" status as a value-only update).
       if (next.chillerId && autoSaveEligibleFields.has(field)) {
         autoSaveTimerRef.current = setTimeout(() => {
-          // Reading already completed (or completing) — never let a late
-          // auto-save resurrect it as an "Inprogress" duplicate row.
           if (completedRef.current) return;
-          // Canonical token is "Inprogress" (no hyphen/space). "In-progress"
-          // is misclassified as "Open" by getChillerTasks and the history
-          // status chip, so the logged count silently drops.
           handleSubmission("Inprogress", undefined, next);
         }, 1500); // 1.5s delay for technical logs
       }
@@ -580,41 +650,59 @@ export default function ChillerEntry() {
             user?.employee_code ||
             "unknown",
           signature: finalSignature,
-          status: status,
-          readingTime: params.readingTime
-            ? parseInt(params.readingTime)
-            : new Date().getTime(),
+          // NOTE: status & readingTime are intentionally NOT in basePayload.
+          // Auto-save must never change status or move reading_time; those
+          // are set once at create (ensureChillerRow) and on completion only.
           attachments: currentFormData.attachment,
         };
-        const createPayload = {
-          ...basePayload,
-          // Set executor only on first create; updates should preserve creator.
-          executorId: user?.employee_code || user?.user_id || user?.id || "unknown",
-        };
 
-        if (isEditMode) {
-          const targetId = (params.editId || params.id) as string;
-          await SiteLogService.updateChillerReading(targetId, basePayload);
-        } else if (
+        // The single row to write to: the edited record, or the row
+        // ensureChillerRow created this session for THIS chiller.
+        const sessionId =
+          !isEditMode &&
           currentReadingRef.current?.chillerId === currentFormData.chillerId
-        ) {
-          // First save already created the row this session — keep updating it.
-          // Without this the chiller's per-keystroke auto-save creates a new
-          // backend row each time, leading to dozens of duplicates per shift.
-          // Chiller-id check guards against an in-flight create returning after
-          // the user switched chillers and claiming the slot for the wrong row.
-          await SiteLogService.updateChillerReading(
-            currentReadingRef.current.id,
-            basePayload,
-          );
-        } else {
-          const created = await SiteLogService.saveChillerReading(createPayload);
+            ? currentReadingRef.current.id
+            : undefined;
+        const targetId = isEditMode
+          ? ((params.editId || params.id) as string)
+          : sessionId;
+
+        if (targetId) {
+          // Value-only update. Status flips to Completed ONLY on explicit
+          // Complete & Sign; auto-save ("Inprogress") preserves it.
+          await SiteLogService.updateChillerReading(targetId, {
+            ...basePayload,
+            ...(isCompleting
+              ? { status: "Completed", endDatetime: Date.now() }
+              : {}),
+          });
+        } else if (isCompleting) {
+          // Safety net: the create-on-select row is missing (ensure failed /
+          // was offline at select). Create it now, completed, so a finished
+          // reading is never lost. This is the ONLY create path left here.
+          const now = Date.now();
+          const created = await SiteLogService.saveChillerReading({
+            ...basePayload,
+            executorId:
+              user?.employee_code || user?.user_id || user?.id || "unknown",
+            status: "Completed",
+            readingTime: params.readingTime
+              ? parseInt(params.readingTime)
+              : now,
+            startDatetime: now,
+            endDatetime: now,
+          });
           if (created?.id) {
             currentReadingRef.current = {
               id: created.id,
               chillerId: currentFormData.chillerId,
             };
           }
+        } else {
+          // Auto-save fired before the create-on-select row exists — skip.
+          // ensureChillerRow owns creation; the next auto-save / completion
+          // will persist these values to that single row.
+          return;
         }
 
         if (status === "Completed") {
@@ -771,7 +859,7 @@ export default function ChillerEntry() {
                 />
 
                 <SearchableSelect
-                  label="Chiller ID"
+                  label="Chiller ID *"
                   options={assets}
                   value={formData.chillerId}
                   onChange={(val) => updateField("chillerId", val)}
@@ -997,10 +1085,19 @@ export default function ChillerEntry() {
             
             <TouchableOpacity
               onPress={() => setSignatureModalVisible(true)}
-              disabled={saving || (!isEditMode && !isAnyFieldFilled)}
+              disabled={
+                saving ||
+                !formData.chillerId ||
+                (!isEditMode && !isAnyFieldFilled)
+              }
               activeOpacity={0.8}
               className="flex-1 rounded-xl overflow-hidden"
-              style={{ opacity: (!isEditMode && !isAnyFieldFilled) ? 0.6 : 1 }}
+              style={{
+                opacity:
+                  !formData.chillerId || (!isEditMode && !isAnyFieldFilled)
+                    ? 0.6
+                    : 1,
+              }}
             >
               <LinearGradient
                 colors={["#0d9488", "#0f766e"]}

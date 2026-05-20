@@ -9,7 +9,7 @@ import Animated, {
 } from "react-native-reanimated";
 
 interface AnimatedTabBarButtonProps {
-  focused: boolean;
+  focused?: boolean;
   onPress?: () => void;
   onLongPress?: () => void;
   children: React.ReactNode;
@@ -21,6 +21,9 @@ interface AnimatedTabBarButtonProps {
     selected?: boolean;
   };
   accessibilityLabel?: string;
+  // React Navigation v7 communicates the active tab via aria-selected on the
+  // button props; BottomTabBarButtonProps no longer includes `focused`.
+  "aria-selected"?: boolean;
 }
 
 export const AnimatedTabBarButton: React.FC<AnimatedTabBarButtonProps> = ({
@@ -34,13 +37,16 @@ export const AnimatedTabBarButton: React.FC<AnimatedTabBarButtonProps> = ({
   testID,
   accessibilityState,
   accessibilityLabel,
+  "aria-selected": ariaSelected,
 }) => {
+  const isFocused =
+    focused ?? ariaSelected ?? accessibilityState?.selected ?? false;
   const pressScale = useSharedValue(1);
-  const focusProgress = useSharedValue(focused ? 1 : 0);
+  const focusProgress = useSharedValue(isFocused ? 1 : 0);
 
   useEffect(() => {
-    focusProgress.value = withTiming(focused ? 1 : 0, { duration: 180 });
-  }, [focused, focusProgress]);
+    focusProgress.value = withTiming(isFocused ? 1 : 0, { duration: 180 });
+  }, [isFocused, focusProgress]);
 
   const animatedStyle = useAnimatedStyle(() => {
     return {
@@ -74,7 +80,9 @@ export const AnimatedTabBarButton: React.FC<AnimatedTabBarButtonProps> = ({
       testID={testID}
       accessibilityLabel={accessibilityLabel}
       accessibilityRole="button"
-      accessibilityState={accessibilityState}
+      accessibilityState={accessibilityState ?? { selected: isFocused }}
+      android_ripple={null}
+      android_disableSound
       style={[styles.container, style]}
     >
       <Animated.View style={[styles.inner, animatedStyle]}>
