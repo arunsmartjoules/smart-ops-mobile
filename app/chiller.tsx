@@ -42,6 +42,7 @@ import { eq } from "drizzle-orm";
 import Skeleton from "@/components/Skeleton";
 import { addDays } from "date-fns";
 import { formatIST, istDayStartMs, istDayEndMs } from "@/utils/istDate";
+import { consumeRouteParams } from "@/utils/routeParams";
 
 export default function ChillerEntry() {
   const { user } = useAuth();
@@ -53,9 +54,23 @@ export default function ChillerEntry() {
     isNew?: string;
     readingTime?: string;
   }>();
+  // The site-logs screen passes siteCode through the imperative route-params
+  // store (setRouteParams) rather than URL params, so reading useLocalSearchParams
+  // alone leaves selectedSite empty. Consume the store once on mount and merge.
+  const storeParamsRef = useRef(
+    consumeRouteParams<{
+      siteCode?: string;
+      editId?: string;
+      chillerId?: string;
+    }>("/chiller"),
+  );
+  const initialSiteCode =
+    (params.siteCode as string | undefined) ||
+    storeParamsRef.current.siteCode ||
+    "";
 
   const [formData, setFormData] = useState({
-    chillerId: params.chillerId || "",
+    chillerId: params.chillerId || storeParamsRef.current.chillerId || "",
     equipmentId: "",
     // Temperatures
     condenserInletTemp: "",
@@ -84,7 +99,7 @@ export default function ChillerEntry() {
     attachment: "",
     signature: "",
   });
-  const [selectedSite, setSelectedSite] = useState(params.siteCode);
+  const [selectedSite, setSelectedSite] = useState(initialSiteCode);
   const [sites, setSites] = useState<SelectOption[]>([]);
   const [loadingSites, setLoadingSites] = useState(false);
 
@@ -427,8 +442,17 @@ export default function ChillerEntry() {
       const record = rows[0];
         if (record) {
           setSelectedSite(record.site_code);
+          // formatAssignee falls back to "—" when both fields are blank/sentinels.
+          // For an Inprogress row created on a shared device, the operator is
+          // almost always the currently logged-in user, so prefer their name
+          // over the dash before giving up.
+          const cleaned = formatAssignee(record.assigned_to, record.executor_id, "");
           setAssignedToDisplay(
-            formatAssignee(record.assigned_to, record.executor_id),
+            cleaned ||
+              user?.full_name?.trim() ||
+              user?.name?.trim() ||
+              user?.employee_code ||
+              "—",
           );
           setFormData({
             chillerId: record.equipment_id || record.chiller_id || "",
@@ -865,7 +889,6 @@ export default function ChillerEntry() {
                   onChange={(val) => updateField("chillerId", val)}
                   loading={loadingAssets}
                   placeholder="Select Chiller"
-                  disabled={isEditMode || (params.isNew !== "true" && !!params.chillerId)}
                 />
 
                 {isEditMode && (
