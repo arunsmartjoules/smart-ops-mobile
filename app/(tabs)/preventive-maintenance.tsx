@@ -301,23 +301,21 @@ const StatCard = React.memo(
     label: string;
     color: string;
     isActive: boolean;
-    onPress: () => void;
+    onPress?: () => void;
   }) => {
-    return (
-      <TouchableOpacity
-        onPress={onPress}
-        activeOpacity={0.7}
-        className="flex-1 rounded-xl py-2.5 px-1.5 items-center bg-white dark:bg-slate-900"
-        style={{
-          borderWidth: 1,
-          borderColor: isActive ? color : `${color}33`,
-          shadowColor: "#000",
-          shadowOffset: { width: 0, height: 1 },
-          shadowOpacity: 0.04,
-          shadowRadius: 4,
-          elevation: 1,
-        }}
-      >
+    const cardClass =
+      "flex-1 rounded-xl py-2.5 px-1.5 items-center bg-white dark:bg-slate-900";
+    const cardStyle = {
+      borderWidth: 1,
+      borderColor: isActive ? color : `${color}33`,
+      shadowColor: "#000",
+      shadowOffset: { width: 0, height: 1 },
+      shadowOpacity: 0.04,
+      shadowRadius: 4,
+      elevation: 1,
+    };
+    const body = (
+      <>
         <Text className="text-[17px] font-bold leading-tight" style={{ color }}>
           {value}
         </Text>
@@ -327,6 +325,25 @@ const StatCard = React.memo(
         >
           {label}
         </Text>
+      </>
+    );
+
+    if (!onPress) {
+      return (
+        <View className={cardClass} style={cardStyle}>
+          {body}
+        </View>
+      );
+    }
+
+    return (
+      <TouchableOpacity
+        onPress={onPress}
+        activeOpacity={0.7}
+        className={cardClass}
+        style={cardStyle}
+      >
+        {body}
       </TouchableOpacity>
     );
   },
@@ -1006,6 +1023,12 @@ export default function PreventiveMaintenance() {
           </View>
 
           <View className="flex-row gap-1.5 mb-3">
+            <StatCard
+              value={stats.total}
+              label="Total"
+              color="#6366f1"
+              isActive={false}
+            />
             <StatCard
               value={stats.pending}
               label="Pending"

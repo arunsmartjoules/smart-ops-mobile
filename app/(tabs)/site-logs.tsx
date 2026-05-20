@@ -27,6 +27,7 @@ import {
   Clock,
   X,
   Check,
+  ListChecks,
 } from "lucide-react-native";
 import { useNetworkStatus } from "@/hooks/useNetworkStatus";
 import { useSites } from "@/hooks/useSites";
@@ -281,6 +282,20 @@ export default function SiteLogs() {
     },
   ];
 
+  // Overall progress — sum of completed/total across all log categories for today.
+  const overallProgress = useMemo(() => {
+    let total = 0;
+    let completed = 0;
+    for (const cat of categories) {
+      const p = logProgress[getLogName(cat.title)];
+      if (!p) continue;
+      total += p.total;
+      completed += p.completed;
+    }
+    const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
+    return { total, completed, pct, allDone: total > 0 && completed >= total };
+  }, [logProgress]);
+
   return (
     <View className="flex-1 bg-slate-50 dark:bg-slate-950">
       <SafeAreaView className="flex-1" edges={["top"]}>
@@ -329,18 +344,9 @@ export default function SiteLogs() {
             </View>
           </View>
 
-          {/* Static "today" indicator — date filtering lives in the entry
-              and history screens, not here. */}
-          <View className="mb-4 self-start flex-row items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-50 dark:bg-red-950/30 border border-red-100 dark:border-red-900/40">
-            <Clock size={12} color="#dc2626" />
-            <Text className="text-[11px] font-semibold text-red-700 dark:text-red-300">
-              {todayLabel}
-            </Text>
-          </View>
-
         </View>
 
-        <View className="flex-1 px-5 pt-6 pb-6">
+        <View className="flex-1 px-5 pt-3 pb-6">
           {!loading && isConnected && !siteCode && (
             <View className="mb-3 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 p-4 items-center">
               <Text className="text-slate-900 dark:text-slate-50 font-bold">
@@ -379,6 +385,65 @@ export default function SiteLogs() {
             </View>
           ) : (
             <View className="flex-1">
+              {/* Overall progress for today across all log categories */}
+              <View
+                className="bg-white dark:bg-slate-900 rounded-xl px-3 py-2 mb-3 border border-slate-100 dark:border-slate-800"
+                style={{
+                  shadowColor: "#000",
+                  shadowOffset: { width: 0, height: 1 },
+                  shadowOpacity: 0.05,
+                  shadowRadius: 6,
+                  elevation: 2,
+                }}
+              >
+                <View className="flex-row items-center justify-between mb-1">
+                  <View className="flex-row items-center flex-1 min-w-0">
+                    <Clock size={11} color="#dc2626" />
+                    <Text
+                      className="ml-1 text-[11px] font-bold text-red-700 dark:text-red-300"
+                      numberOfLines={1}
+                    >
+                      {todayLabel}
+                    </Text>
+                  </View>
+                  <Text
+                    className="text-sm font-extrabold ml-2"
+                    style={{
+                      color: overallProgress.allDone ? "#10b981" : "#6366f1",
+                    }}
+                  >
+                    {overallProgress.pct}%
+                  </Text>
+                </View>
+                <View className="flex-row items-center mb-1.5">
+                  <Check size={11} color="#059669" strokeWidth={3} />
+                  <Text className="ml-1 text-[11px] font-bold text-emerald-600 dark:text-emerald-400">
+                    {overallProgress.completed}
+                  </Text>
+                  <Text className="ml-0.5 text-[10px] text-slate-400 dark:text-slate-500">
+                    of
+                  </Text>
+                  <Text className="ml-1 text-[11px] font-bold text-slate-700 dark:text-slate-200">
+                    {overallProgress.total}
+                  </Text>
+                  <Text className="ml-1 text-[10px] text-slate-400 dark:text-slate-500">
+                    logs done today
+                  </Text>
+                </View>
+                <View className="h-1 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
+                  <View
+                    style={{
+                      width: `${overallProgress.pct}%`,
+                      height: "100%",
+                      backgroundColor: overallProgress.allDone
+                        ? "#10b981"
+                        : "#6366f1",
+                      borderRadius: 999,
+                    }}
+                  />
+                </View>
+              </View>
+
               <Text className="text-slate-500 dark:text-slate-400 text-[11px] font-bold uppercase tracking-widest mb-2">
                 Log categories
               </Text>
@@ -472,26 +537,44 @@ export default function SiteLogs() {
                             <Text className="ml-0.5 text-[11px] text-slate-400 dark:text-slate-500">
                               done
                             </Text>
-                            <Text className="mx-1.5 text-slate-300 dark:text-slate-600">
-                              ·
-                            </Text>
-                            <Clock
-                              size={12}
-                              color={pending > 0 ? "#dc2626" : "#94a3b8"}
-                              strokeWidth={3}
-                            />
-                            <Text
-                              className={`ml-1 text-[12px] font-bold ${
-                                pending > 0
-                                  ? "text-red-600 dark:text-red-400"
-                                  : "text-slate-400 dark:text-slate-500"
-                              }`}
-                            >
-                              {pending}
-                            </Text>
-                            <Text className="ml-0.5 text-[11px] text-slate-400 dark:text-slate-500">
-                              pending
-                            </Text>
+                            {item.id !== "chiller" && (
+                              <>
+                                <Text className="mx-1.5 text-slate-300 dark:text-slate-600">
+                                  ·
+                                </Text>
+                                <Clock
+                                  size={12}
+                                  color={pending > 0 ? "#dc2626" : "#94a3b8"}
+                                  strokeWidth={3}
+                                />
+                                <Text
+                                  className={`ml-1 text-[12px] font-bold ${
+                                    pending > 0
+                                      ? "text-red-600 dark:text-red-400"
+                                      : "text-slate-400 dark:text-slate-500"
+                                  }`}
+                                >
+                                  {pending}
+                                </Text>
+                                <Text className="ml-0.5 text-[11px] text-slate-400 dark:text-slate-500">
+                                  pending
+                                </Text>
+                                <Text className="mx-1.5 text-slate-300 dark:text-slate-600">
+                                  ·
+                                </Text>
+                                <ListChecks
+                                  size={12}
+                                  color="#6366f1"
+                                  strokeWidth={3}
+                                />
+                                <Text className="ml-1 text-[12px] font-bold text-indigo-600 dark:text-indigo-400">
+                                  {totalCount}
+                                </Text>
+                                <Text className="ml-0.5 text-[11px] text-slate-400 dark:text-slate-500">
+                                  total
+                                </Text>
+                              </>
+                            )}
                           </View>
                         </View>
 
