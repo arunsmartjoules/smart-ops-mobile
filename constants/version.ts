@@ -15,7 +15,7 @@
  * when you cut a new native EAS build.
  */
 
-export const APP_VERSION = "1.0.79.7";
+export const APP_VERSION = "1.0.79.8";
 
 /** Human-facing version string shown in the UI. */
 export const APP_VERSION_DISPLAY = `${APP_VERSION} (Beta)`;

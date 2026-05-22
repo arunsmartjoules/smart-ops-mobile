@@ -1,13 +1,20 @@
 import * as Updates from 'expo-updates';
 import logger from '@/utils/logger';
 
-export type UpdateState = 
+export type UpdateState =
   | { status: 'idle' }
   | { status: 'checking' }
   | { status: 'downloading' }
   | { status: 'ready'; restart: () => void }
   | { status: 'error'; message: string }
   | { status: 'up-to-date' };
+
+/** Outcome of a manual update check — lets the caller show an accurate message. */
+export type UpdateCheckResult =
+  | { status: 'available' }
+  | { status: 'up-to-date' }
+  | { status: 'unsupported' } // OTA disabled — dev build / Expo Go
+  | { status: 'error'; error: string };
 
 type UpdateListener = (state: UpdateState) => void;
 
@@ -32,19 +39,21 @@ class UpdateService {
     return this.updateAvailable;
   }
 
-  async checkForUpdate(automatic = true) {
-    if (this.isChecking) return { available: false, reason: 'Already checking' };
+  /**
+   * Check for an OTA update.
+   *
+   * `automatic` (launch): downloads silently and surfaces "Restart" via the
+   * banner. Manual checks (profile screen) emit nothing to the banner — the
+   * caller drives its own UI from the returned UpdateCheckResult.
+   */
+  async checkForUpdate(automatic = true): Promise<UpdateCheckResult> {
+    if (this.isChecking) return { status: 'up-to-date' };
     this.isChecking = true;
-    
+
     try {
       if (!Updates.isEnabled) {
         logger.debug('expo-updates not enabled (dev build)', { module: 'UPDATE_SERVICE' });
-        return { available: false, reason: 'Updates not enabled' };
-      }
-
-      // Only emit 'checking' if manual
-      if (!automatic) {
-        this.emit({ status: 'checking' });
+        return { status: 'unsupported' };
       }
 
       const result = await Updates.checkForUpdateAsync();
@@ -52,31 +61,20 @@ class UpdateService {
 
       if (result.isAvailable) {
         this.updateAvailable = true;
-        
-        // If automatic, start downloading in background without showing 'downloading' status
         if (automatic) {
           logger.info('Background downloading update...', { module: 'UPDATE_SERVICE' });
           await Updates.fetchUpdateAsync();
           logger.info('Background update downloaded.', { module: 'UPDATE_SERVICE' });
           this.emit({ status: 'ready', restart: () => this.reloadApp() });
         }
-        
-        return { available: true };
-      } else {
-        this.updateAvailable = false;
-        if (!automatic) {
-          this.emit({ status: 'up-to-date' });
-          setTimeout(() => this.emit({ status: 'idle' }), 2000);
-        }
-        return { available: false };
+        return { status: 'available' };
       }
+
+      this.updateAvailable = false;
+      return { status: 'up-to-date' };
     } catch (e: any) {
-      logger.warn('Update check failed', { module: 'UPDATE_SERVICE', error: e.message });
-      if (!automatic) {
-        this.emit({ status: 'error', message: e.message });
-        setTimeout(() => this.emit({ status: 'idle' }), 3000);
-      }
-      return { available: false, reason: e.message };
+      logger.warn('Update check failed', { module: 'UPDATE_SERVICE', error: e?.message });
+      return { status: 'error', error: e?.message || 'Unknown error' };
     } finally {
       this.isChecking = false;
     }

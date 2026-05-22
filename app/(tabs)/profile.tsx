@@ -50,11 +50,12 @@ export default function Profile() {
     setIsCheckingUpdates(true);
     try {
       const result = await UpdateService.checkForUpdate(false);
-      if (result.available) {
+
+      if (result.status === "available") {
         setUpdateAvailable(true);
         Alert.alert(
           "Update Available",
-          "A new version is available. Would you like to download and install it now?",
+          "A new version is available. Download and install it now?",
           [
             { text: "Later", style: "cancel" },
             {
@@ -65,31 +66,41 @@ export default function Profile() {
                   Alert.alert(
                     "Success",
                     "Update installed. The app will now restart.",
-                    [
-                      {
-                        text: "Restart",
-                        onPress: () => UpdateService.reloadApp(),
-                      },
-                    ],
+                    [{ text: "Restart", onPress: () => UpdateService.reloadApp() }],
                   );
                 } else {
                   Alert.alert(
-                    "Error",
-                    "Failed to download update. Please try again later.",
+                    "Download Failed",
+                    fetchRes.error ||
+                      "Could not download the update. Please try again.",
                   );
                 }
               },
             },
           ],
         );
-      } else {
+      } else if (result.status === "up-to-date") {
         Alert.alert(
           "Up to Date",
           "You are using the latest version of JouleOps.",
         );
+      } else if (result.status === "unsupported") {
+        Alert.alert(
+          "Updates Unavailable",
+          "Over-the-air updates aren't available in this build. Install the latest version from the app store.",
+        );
+      } else {
+        Alert.alert(
+          "Update Check Failed",
+          result.error ||
+            "Could not check for updates. Check your connection and try again.",
+        );
       }
     } catch (e: any) {
-      Alert.alert("Error", "Failed to check for updates. " + e.message);
+      Alert.alert(
+        "Update Check Failed",
+        e?.message || "Something went wrong while checking for updates.",
+      );
     } finally {
       setIsCheckingUpdates(false);
     }
