@@ -68,6 +68,14 @@ class VersionGateService {
     this.emit();
   }
 
+  /** Lift the block — used when a re-check finds the build is allowed again. */
+  clearBlocked() {
+    if (!this.state.blocked) return;
+    this.state = { blocked: false };
+    logger.info("App version block lifted", { module: "VERSION_GATE" });
+    this.emit();
+  }
+
   /**
    * Ask the backend whether this build is still allowed and whether
    * maintenance mode is on. Safe to call on launch, on every foreground, and
@@ -96,6 +104,10 @@ class VersionGateService {
       if (body?.success && body?.data) {
         if (body.data.blocked) {
           this.reportBlocked({ reason: body.data.reason });
+        } else {
+          // A re-check came back clean — e.g. the rule was changed on the
+          // server. Lift the block so the app becomes usable again.
+          this.clearBlocked();
         }
         ServerStatusService.setMaintenance(body.data.maintenance);
       }

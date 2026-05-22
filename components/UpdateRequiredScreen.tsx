@@ -16,14 +16,16 @@ import UpdateService, { type UpdateState } from "@/services/UpdateService";
  * Full-screen, non-dismissible "update required" gate.
  *
  * Renders nothing until the backend version gate blocks this build, then
- * covers the entire app. If an OTA update can fix the block it offers an
- * in-place "Update & Restart" — the fast path that resolves most version
- * blocks without a trip to the app store. Only when no OTA is available does
- * it fall back to the store. Mounted once near the root (see app/_layout.tsx).
+ * covers the entire app. The primary action looks for an OTA update and, if
+ * found, applies it in place ("Update & Restart") — no app-store trip needed.
+ * "Retry" re-checks the gate, so if the rule is changed on the server the
+ * block lifts itself. The app store is the last-resort fallback for old native
+ * builds an OTA can't fix. Mounted once near the root (see app/_layout.tsx).
  */
 export default function UpdateRequiredScreen() {
   const [gate, setGate] = useState<VersionGateState>({ blocked: false });
   const [update, setUpdate] = useState<UpdateState>({ status: "idle" });
+  const [retrying, setRetrying] = useState(false);
 
   useEffect(() => {
     const unsubGate = VersionGateService.subscribe(setGate);
@@ -34,7 +36,7 @@ export default function UpdateRequiredScreen() {
     };
   }, []);
 
-  // When the gate blocks, look for an OTA that can resolve it in place.
+  // When the gate blocks, immediately look for an OTA that can resolve it.
   useEffect(() => {
     if (gate.blocked) {
       UpdateService.checkAndPrepare();
@@ -46,6 +48,16 @@ export default function UpdateRequiredScreen() {
   const otaReady = update.status === "ready";
   const otaBusy =
     update.status === "checking" || update.status === "downloading";
+  const noOta = update.status === "up-to-date";
+
+  const handleRetry = async () => {
+    setRetrying(true);
+    try {
+      await VersionGateService.check();
+    } finally {
+      setRetrying(false);
+    }
+  };
 
   return (
     <Modal
@@ -70,30 +82,63 @@ export default function UpdateRequiredScreen() {
               "A newer version of JouleOps is required to continue."}
         </Text>
 
+        {/* Primary action — fetch & apply an OTA update. */}
         {otaBusy ? (
           <View style={styles.busyRow}>
             <ActivityIndicator color="white" />
-            <Text style={styles.busyText}>Preparing update…</Text>
+            <Text style={styles.busyText}>
+              {update.status === "downloading"
+                ? "Downloading update…"
+                : "Checking for update…"}
+            </Text>
           </View>
         ) : otaReady ? (
           <TouchableOpacity
-            style={styles.button}
+            style={styles.primaryButton}
             onPress={() => {
               if (update.status === "ready") update.restart();
             }}
             activeOpacity={0.85}
           >
-            <Text style={styles.buttonText}>Update &amp; Restart</Text>
+            <Text style={styles.primaryButtonText}>Update &amp; Restart</Text>
           </TouchableOpacity>
         ) : (
           <TouchableOpacity
-            style={styles.button}
-            onPress={() => VersionGateService.openStore()}
+            style={styles.primaryButton}
+            onPress={() => UpdateService.checkAndPrepare()}
             activeOpacity={0.85}
           >
-            <Text style={styles.buttonText}>Update Now</Text>
+            <Text style={styles.primaryButtonText}>Check for Update</Text>
           </TouchableOpacity>
         )}
+
+        {noOta && (
+          <Text style={styles.hint}>
+            No new update found yet — try again in a moment.
+          </Text>
+        )}
+
+        {/* Retry the gate — picks up rule changes made on the server. */}
+        <TouchableOpacity
+          style={styles.secondaryButton}
+          onPress={handleRetry}
+          disabled={retrying}
+          activeOpacity={0.8}
+        >
+          {retrying ? (
+            <ActivityIndicator color="white" size="small" />
+          ) : (
+            <Text style={styles.secondaryButtonText}>Retry</Text>
+          )}
+        </TouchableOpacity>
+
+        {/* Last-resort fallback for old native builds an OTA can't fix. */}
+        <TouchableOpacity
+          onPress={() => VersionGateService.openStore()}
+          activeOpacity={0.7}
+        >
+          <Text style={styles.storeLink}>Open the app store instead</Text>
+        </TouchableOpacity>
 
         <Text style={styles.version}>
           Installed version {VersionGateService.appVersion}
@@ -138,34 +183,66 @@ const styles = StyleSheet.create({
     fontSize: 15,
     lineHeight: 22,
     textAlign: "center",
-    marginBottom: 32,
+    marginBottom: 28,
   },
   busyRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
-    paddingVertical: 14,
+    height: 48,
   },
   busyText: {
     color: "white",
     fontSize: 15,
     fontWeight: "700",
   },
-  button: {
+  primaryButton: {
     backgroundColor: "white",
     paddingHorizontal: 40,
-    paddingVertical: 14,
+    height: 48,
     borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
   },
-  buttonText: {
+  primaryButtonText: {
     color: "#b91c1c",
     fontSize: 16,
     fontWeight: "800",
   },
-  version: {
-    color: "rgba(255,255,255,0.6)",
+  hint: {
+    color: "rgba(255,255,255,0.75)",
     fontSize: 12,
     fontWeight: "600",
-    marginTop: 20,
+    marginTop: 12,
+    textAlign: "center",
+  },
+  secondaryButton: {
+    marginTop: 14,
+    paddingHorizontal: 36,
+    height: 44,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: "rgba(255,255,255,0.6)",
+    alignItems: "center",
+    justifyContent: "center",
+    minWidth: 140,
+  },
+  secondaryButtonText: {
+    color: "white",
+    fontSize: 15,
+    fontWeight: "800",
+  },
+  storeLink: {
+    color: "rgba(255,255,255,0.75)",
+    fontSize: 13,
+    fontWeight: "600",
+    textDecorationLine: "underline",
+    marginTop: 18,
+  },
+  version: {
+    color: "rgba(255,255,255,0.55)",
+    fontSize: 12,
+    fontWeight: "600",
+    marginTop: 18,
   },
 });

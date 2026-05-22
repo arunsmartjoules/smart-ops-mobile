@@ -94,6 +94,9 @@ class UpdateService {
     try {
       if (!Updates.isEnabled) {
         logger.debug('expo-updates not enabled (dev build)', { module: 'UPDATE_SERVICE' });
+        // Surface a result so the caller's UI isn't left hanging.
+        this.emit({ status: 'up-to-date' });
+        setTimeout(() => this.emit({ status: 'idle' }), 1500);
         return;
       }
       this.emit({ status: 'checking' });
