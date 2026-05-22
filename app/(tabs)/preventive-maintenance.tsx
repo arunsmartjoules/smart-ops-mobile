@@ -101,6 +101,13 @@ const safeFormat = (date: any, formatStr: string) => {
 
 const STATUS_OPTIONS = ["Pending", "In-progress", "Completed"];
 
+// The PM list date-range filter can target either the due date (default)
+// or the completed date — the advanced filter exposes this as a selector.
+const PM_DATE_FIELD_OPTIONS = [
+  { value: "due_date", label: "Due Date" },
+  { value: "completed_date", label: "Completed Date" },
+];
+
 // IST month bounds as "YYYY-MM-DD" (timezone-pure arithmetic — no DST in IST).
 const istMonthStart = () => {
   const { year, month } = istParts(new Date());
@@ -406,6 +413,11 @@ export default function PreventiveMaintenance() {
   );
   const [tempToDate, setTempToDate] = useState<string | null>(istMonthEnd());
 
+  // Which date column the date-range filter applies to. `dateField` is the
+  // applied value; `tempDateField` is the pending choice inside the modal.
+  const [dateField, setDateField] = useState("due_date");
+  const [tempDateField, setTempDateField] = useState("due_date");
+
   // QR filter state
   const qrScannerRef = useRef<QRScannerRef>(null);
   const [qrAssetFilter, setQrAssetFilter] = useState<string | null>(null);
@@ -419,8 +431,9 @@ export default function PreventiveMaintenance() {
     if (showFiltersModal) {
       setTempFromDate(currentDate);
       setTempToDate(toDate);
+      setTempDateField(dateField);
     }
-  }, [showFiltersModal, currentDate, toDate]);
+  }, [showFiltersModal, currentDate, toDate, dateField]);
 
   // ── High-Performance Data Loader ──────────────────────────────────────────
   const loadPMData = useCallback(
@@ -638,12 +651,15 @@ export default function PreventiveMaintenance() {
       return list;
     }
 
-    // 3. Apply Date Filter in normal browsing mode (no text/QR search)
+    // 3. Apply Date Filter in normal browsing mode (no text/QR search).
+    //    The column compared depends on the selected date field.
     const startRange = istDayStartMsFromYmd(currentDate) ?? 0;
     const endRange = istDayEndMsFromYmd(toDate) ?? Number.MAX_SAFE_INTEGER;
     list = list.filter((i) => {
-      if (!i.start_due_date) return false;
-      const ts = new Date(i.start_due_date).getTime();
+      const dateVal =
+        dateField === "completed_date" ? i.completed_on : i.start_due_date;
+      if (!dateVal) return false;
+      const ts = new Date(dateVal).getTime();
       return ts >= startRange && ts <= endRange;
     });
     return list;
@@ -654,6 +670,7 @@ export default function PreventiveMaintenance() {
     qrAssetFilter,
     currentDate,
     toDate,
+    dateField,
   ]);
 
   const stats = useMemo(() => {
@@ -661,8 +678,10 @@ export default function PreventiveMaintenance() {
     const endRange = istDayEndMsFromYmd(toDate) ?? Number.MAX_SAFE_INTEGER;
 
     const rangeInstances = allInstances.filter((i) => {
-      if (!i.start_due_date) return false;
-      const ts = new Date(i.start_due_date).getTime();
+      const dateVal =
+        dateField === "completed_date" ? i.completed_on : i.start_due_date;
+      if (!dateVal) return false;
+      const ts = new Date(dateVal).getTime();
       return ts >= startRange && ts <= endRange;
     });
 
@@ -681,7 +700,9 @@ export default function PreventiveMaintenance() {
       ).length,
     };
 
-    if (serverStats) {
+    // Server stats are computed against the due-date window only, so they
+    // are not comparable when the user filters by completed date.
+    if (serverStats && dateField !== "completed_date") {
       const serverInProgress =
         (serverStats.byStatus?.["In-progress"] || 0) +
         (serverStats.byStatus?.["In Progress"] || 0) +
@@ -697,57 +718,32 @@ export default function PreventiveMaintenance() {
     }
 
     return localCount;
-  }, [allInstances, currentDate, toDate, serverStats]);
+  }, [allInstances, currentDate, toDate, serverStats, dateField]);
 
-  const handlePMCardPress = useCallback(
-    async (instance: PMInstanceRow) => {
-      const normalizedStatus = (instance.status || "").toLowerCase();
-      const shouldAutoAssign =
-        normalizedStatus === "pending" ||
-        normalizedStatus === "open" ||
-        normalizedStatus === "in-progress" ||
-        normalizedStatus === "in progress" ||
-        normalizedStatus === "inprogress";
+  const handlePMCardPress = useCallback((instance: PMInstanceRow) => {
+    const normalizedStatus = (instance.status || "").toLowerCase();
+    const isNotStarted =
+      normalizedStatus === "pending" ||
+      normalizedStatus === "open" ||
+      normalizedStatus === "";
+    if (isNotStarted) {
+      // Not started yet: capture the before-image and stamp the start time
+      // in a modal before entering the execution screen. Assignment is
+      // stamped there, on confirm — see handleConfirmStart.
+      setStartBeforeImage("");
+      setStartModalInstance(instance);
+      return;
+    }
 
-      // Auto-assign only for active PMs, not completed ones.
-      const userName =
-        (user?.full_name && user.full_name.trim()) ||
-        (user?.name && user.name.trim()) ||
-        user?.email ||
-        "User";
-      if (shouldAutoAssign && instance.assigned_to_name !== userName) {
-        await PMService.updateAssignment(instance.id, userName);
-        // Optimistic update
-        setAllInstances((prev) =>
-          prev.map((inst) =>
-            inst.id === instance.id
-              ? { ...inst, assigned_to_name: userName }
-              : inst,
-          ),
-        );
-      }
-
-      const isNotStarted =
-        normalizedStatus === "pending" ||
-        normalizedStatus === "open" ||
-        normalizedStatus === "";
-      if (isNotStarted) {
-        // New flow: capture the before-image and stamp the start time in a
-        // modal before entering the execution screen.
-        setStartBeforeImage("");
-        setStartModalInstance(instance);
-        return;
-      }
-
-      // Already In-progress or Completed — open execution directly so the
-      // original start time is preserved (no re-start).
-      router.push({
-        pathname: "/pm-execution",
-        params: { instanceId: instance.id },
-      });
-    },
-    [user],
-  );
+    // Already In-progress or Completed — open execution directly so the
+    // original start time is preserved (no re-start). Assignment is
+    // intentionally left untouched here, so reopening a PM from the
+    // In-progress tab never reassigns it away from whoever started it.
+    router.push({
+      pathname: "/pm-execution",
+      params: { instanceId: instance.id },
+    });
+  }, []);
 
   const pickStartBeforeImage = useCallback(
     async (source: "camera" | "library") => {
@@ -814,11 +810,19 @@ export default function PreventiveMaintenance() {
     if (!startModalInstance || !startBeforeImage || starting) return;
     setStarting(true);
     try {
+      // The operator who starts the PM becomes its assignee. This is the
+      // only point where assigned_to is stamped from the list screen.
+      const userName =
+        (user?.full_name && user.full_name.trim()) ||
+        (user?.name && user.name.trim()) ||
+        user?.email ||
+        "User";
       await PMService.startExecution(startModalInstance.id, {
         beforeImage: startBeforeImage,
         startDatetime: new Date().toISOString(),
+        assignedToName: userName,
       });
-      // Optimistic: reflect the In-progress + before_image locally.
+      // Optimistic: reflect In-progress + before_image + assignee locally.
       setAllInstances((prev) =>
         prev.map((inst) =>
           inst.id === startModalInstance.id
@@ -826,6 +830,7 @@ export default function PreventiveMaintenance() {
                 ...inst,
                 status: "In-progress",
                 before_image: startBeforeImage,
+                assigned_to_name: userName,
               }
             : inst,
         ),
@@ -840,14 +845,15 @@ export default function PreventiveMaintenance() {
     } finally {
       setStarting(false);
     }
-  }, [startModalInstance, startBeforeImage, starting]);
+  }, [startModalInstance, startBeforeImage, starting, user]);
 
   const applyAdvancedFilters = useCallback(() => {
     setSearchQuery(tempSearch);
     if (tempFromDate) setCurrentDate(tempFromDate);
     if (tempToDate) setToDate(tempToDate);
+    setDateField(tempDateField);
     setShowFiltersModal(false);
-  }, [tempSearch, tempFromDate, tempToDate]);
+  }, [tempSearch, tempFromDate, tempToDate, tempDateField]);
 
   const handleQRAssetFound = useCallback((assetName: string) => {
     setCurrentDate(istMonthStart());
@@ -868,10 +874,12 @@ export default function PreventiveMaintenance() {
       <PMCard
         instance={item}
         onPress={() => handlePMCardPress(item)}
-        showCompletedDate={statusFilter === "Completed"}
+        showCompletedDate={
+          statusFilter === "Completed" || dateField === "completed_date"
+        }
       />
     ),
-    [handlePMCardPress, statusFilter],
+    [handlePMCardPress, statusFilter, dateField],
   );
 
   const keyExtractor = useCallback((item: PMInstanceRow) => item.id, []);
@@ -942,8 +950,9 @@ export default function PreventiveMaintenance() {
   const dateRangePreview = useMemo(() => {
     const from = safeFormat(currentDate, "d MMM yyyy");
     const to = safeFormat(toDate, "d MMM yyyy");
-    return `Date: ${from} - ${to}`;
-  }, [currentDate, toDate]);
+    const label = dateField === "completed_date" ? "Completed" : "Due";
+    return `${label}: ${from} - ${to}`;
+  }, [currentDate, toDate, dateField]);
 
   return (
     <View className="flex-1 bg-slate-50 dark:bg-slate-950">
@@ -1136,6 +1145,9 @@ export default function PreventiveMaintenance() {
           user={user}
           statusFilter={statusFilter}
           setStatusFilter={setStatusFilter}
+          dateFieldOptions={PM_DATE_FIELD_OPTIONS}
+          selectedDateField={tempDateField}
+          setSelectedDateField={setTempDateField}
           applyAdvancedFilters={applyAdvancedFilters}
         />
 

@@ -1,3 +1,5 @@
+import Constants from "expo-constants";
+import { Platform } from "react-native";
 import logger from "./logger";
 import { authEvents } from "./authEvents";
 import { auth } from "@/services/firebase";
@@ -7,7 +9,26 @@ import {
   getValidAuthToken,
   isSessionRevokedError,
 } from "../services/AuthTokenManager";
+import VersionGateService from "../services/VersionGateService";
 import { API_TIMEOUT } from "../constants/api";
+
+/**
+ * Identifies this client to the backend version gate. The gate only ever
+ * acts on requests carrying `X-Client: jouleops-mobile`; sending these on
+ * every request lets the server force outdated builds to update (HTTP 426).
+ */
+export const APP_VERSION: string =
+  Constants.expoConfig?.version ??
+  (typeof Constants.expoConfig?.runtimeVersion === "string"
+    ? Constants.expoConfig.runtimeVersion
+    : undefined) ??
+  "0.0.0";
+
+const VERSION_HEADERS: Record<string, string> = {
+  "X-Client": "jouleops-mobile",
+  "X-App-Version": APP_VERSION,
+  "X-Platform": Platform.OS,
+};
 
 /**
  * Enhanced fetch with timeout support.
@@ -63,6 +84,7 @@ export const apiFetch = async (
       ...options,
       headers: {
         "Content-Type": "application/json",
+        ...VERSION_HEADERS,
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
         ...options.headers,
       },
@@ -94,6 +116,7 @@ export const apiFetch = async (
               ...options,
               headers: {
                 "Content-Type": "application/json",
+                ...VERSION_HEADERS,
                 Authorization: `Bearer ${refreshedToken}`,
                 ...options.headers,
               },
@@ -114,6 +137,21 @@ export const apiFetch = async (
               ? refreshError.message
               : String(refreshError),
         });
+      }
+    }
+
+    // 426 Upgrade Required — the backend version gate has blocked this build.
+    // Surface it globally so the full-screen "update required" screen takes
+    // over, regardless of which call triggered it.
+    if (response.status === 426) {
+      try {
+        const body = await response.clone().json();
+        VersionGateService.reportBlocked({
+          message: body?.error,
+          reason: body?.details?.reason,
+        });
+      } catch {
+        VersionGateService.reportBlocked({});
       }
     }
 

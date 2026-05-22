@@ -1,0 +1,134 @@
+/**
+ * VersionGateService
+ *
+ * Drives the mobile force-update gate. The app is blocked from use when the
+ * backend version gate decides this build is too old — either proactively via
+ * the public `/api/app-versions/check` endpoint on launch/resume, or
+ * reactively when any request comes back 426 (see utils/apiHelper.ts).
+ *
+ * Offline safety: a failed check never blocks the app. Field operators in
+ * basements with no signal keep working — the gate only engages on an
+ * explicit "blocked" verdict from the server.
+ */
+
+import Constants from "expo-constants";
+import { Platform, Linking } from "react-native";
+import logger from "@/utils/logger";
+import { API_BASE_URL } from "@/constants/api";
+
+export interface VersionGateState {
+  blocked: boolean;
+  message?: string;
+  reason?: string;
+}
+
+type Listener = (state: VersionGateState) => void;
+
+// iOS deep-linking needs the numeric App Store ID — fill this in once the app
+// is published. Android works out of the box from the package name.
+const IOS_APP_STORE_ID = "";
+
+const DEFAULT_MESSAGE =
+  "A newer version of JouleOps is required to continue. Please update to keep using the app.";
+
+class VersionGateService {
+  private state: VersionGateState = { blocked: false };
+  private listeners = new Set<Listener>();
+
+  /** App version baked into this build (app.json `version`). */
+  get appVersion(): string {
+    return (
+      Constants.expoConfig?.version ??
+      (typeof Constants.expoConfig?.runtimeVersion === "string"
+        ? Constants.expoConfig.runtimeVersion
+        : undefined) ??
+      "0.0.0"
+    );
+  }
+
+  subscribe(listener: Listener): () => void {
+    this.listeners.add(listener);
+    listener(this.state);
+    return () => this.listeners.delete(listener);
+  }
+
+  private emit() {
+    this.listeners.forEach((fn) => fn(this.state));
+  }
+
+  /** Mark the app as blocked. Called by apiHelper on a 426, and by check(). */
+  reportBlocked(details: { message?: string; reason?: string }) {
+    if (this.state.blocked) return; // Already blocked — keep the first reason.
+    this.state = {
+      blocked: true,
+      message: details.message || DEFAULT_MESSAGE,
+      reason: details.reason,
+    };
+    logger.warn("App version blocked by backend gate", {
+      module: "VERSION_GATE",
+      version: this.appVersion,
+      reason: details.reason,
+    });
+    this.emit();
+  }
+
+  /**
+   * Proactively ask the backend whether this build is still allowed.
+   * Safe to call on launch and on every foreground. Network failures are
+   * swallowed — they must never block the app.
+   */
+  async check(): Promise<void> {
+    if (this.state.blocked) return;
+    const url =
+      `${API_BASE_URL}/api/app-versions/check` +
+      `?platform=${encodeURIComponent(Platform.OS)}` +
+      `&version=${encodeURIComponent(this.appVersion)}`;
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 10000);
+    try {
+      const res = await fetch(url, { signal: controller.signal });
+      if (!res.ok) return; // Includes 426 — apiHelper handles those paths.
+      const body = await res.json();
+      if (body?.success && body?.data?.blocked) {
+        this.reportBlocked({ reason: body.data.reason });
+      }
+    } catch {
+      // Offline or server unreachable — do not block.
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  /** Open the platform app store so the user can update. */
+  async openStore(): Promise<void> {
+    const androidPkg =
+      Constants.expoConfig?.android?.package || "com.arundev2025.jouleops";
+    const iosId = IOS_APP_STORE_ID;
+
+    const candidates =
+      Platform.OS === "android"
+        ? [
+            `market://details?id=${androidPkg}`,
+            `https://play.google.com/store/apps/details?id=${androidPkg}`,
+          ]
+        : iosId
+          ? [
+              `itms-apps://apps.apple.com/app/id${iosId}`,
+              `https://apps.apple.com/app/id${iosId}`,
+            ]
+          : ["https://apps.apple.com/"];
+
+    for (const target of candidates) {
+      try {
+        await Linking.openURL(target);
+        return;
+      } catch {
+        // Try the next candidate (e.g. market:// not available).
+      }
+    }
+    logger.warn("Could not open app store", { module: "VERSION_GATE" });
+  }
+}
+
+export default new VersionGateService();

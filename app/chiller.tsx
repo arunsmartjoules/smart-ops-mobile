@@ -28,7 +28,7 @@ import {
   CheckCircle2,
 } from "lucide-react-native";
 import { SiteLogService } from "@/services/SiteLogService";
-import { formatAssignee } from "@/utils/assignee";
+import { formatAssignee, operatorLabel } from "@/utils/assignee";
 import AssetService from "@/services/AssetService";
 import AttendanceService from "@/services/AttendanceService";
 import { useAuth } from "@/contexts/AuthContext";
@@ -314,13 +314,11 @@ export default function ChillerEntry() {
         equipmentId: formData.chillerId,
         assetName,
         assetType: selectedAsset?.description || "Chiller",
-        assignedTo:
-          user?.full_name?.trim() ||
-          user?.name?.trim() ||
-          user?.employee_code ||
-          "unknown",
-        executorId:
-          user?.employee_code || user?.user_id || user?.id || "unknown",
+        // Both columns get the same human-readable label (name ->
+        // employee_code -> email local-part). Never the user's UUID — a UUID
+        // in executor_id renders verbatim on the history screen.
+        assignedTo: operatorLabel(user),
+        executorId: operatorLabel(user),
         status: "Inprogress",
         readingTime: params.readingTime ? parseInt(params.readingTime) : now,
         startDatetime: now,
@@ -704,13 +702,8 @@ export default function ChillerEntry() {
           const now = Date.now();
           const created = await SiteLogService.saveChillerReading({
             ...basePayload,
-            assignedTo:
-              user?.full_name?.trim() ||
-              user?.name?.trim() ||
-              user?.employee_code ||
-              "unknown",
-            executorId:
-              user?.employee_code || user?.user_id || user?.id || "unknown",
+            assignedTo: operatorLabel(user),
+            executorId: operatorLabel(user),
             status: "Completed",
             readingTime: params.readingTime
               ? parseInt(params.readingTime)

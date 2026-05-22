@@ -550,7 +550,11 @@ const PMService = {
    */
   async startExecution(
     instanceServerId: string,
-    options: { beforeImage: string; startDatetime: string },
+    options: {
+      beforeImage: string;
+      startDatetime: string;
+      assignedToName?: string;
+    },
   ): Promise<void> {
     const beforeImageValue = await queueAttachmentIfLocal(
       options.beforeImage,
@@ -561,12 +565,19 @@ const PMService = {
     );
 
     const now = Date.now();
+    // Assignment is stamped here — at the moment the PM is started — and
+    // never re-touched when the same PM is reopened from the In-progress
+    // tab, so it always reflects who actually started the work.
+    const assignment = options.assignedToName
+      ? { assigned_to_name: options.assignedToName }
+      : {};
     // Local pm_instances has no start_datetime column; it lives only in the
     // sync payload (backend pm_instances does have it).
     const localUpdate = {
       status: "In-progress",
       before_image: beforeImageValue,
       updated_at: now,
+      ...assignment,
     };
     await db
       .update(pmInstances)
@@ -579,6 +590,7 @@ const PMService = {
       before_image: beforeImageValue,
       start_datetime: options.startDatetime,
       updated_at: now,
+      ...assignment,
     };
 
     await this.prunePendingInstanceUpdates(instanceServerId);

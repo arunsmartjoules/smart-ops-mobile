@@ -9,13 +9,15 @@ import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { ThemeProvider } from "@/contexts/ThemeContext";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { useEffect } from "react";
-import { View, Text } from "react-native";
+import { View, Text, AppState } from "react-native";
 import { syncEngine, registerBackgroundSyncAsync } from "@/services/SyncEngine";
 import { syncManager } from "@/services/SyncManager";
 import { initDatabase } from "@/database";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import UpdateService from "@/services/UpdateService";
 import UpdateBanner from "@/components/UpdateBanner";
+import VersionGateService from "@/services/VersionGateService";
+import UpdateRequiredScreen from "@/components/UpdateRequiredScreen";
 import * as SplashScreen from "expo-splash-screen";
 import * as Location from "expo-location";
 import * as Notifications from "expo-notifications";
@@ -117,11 +119,18 @@ export default function RootLayout() {
         await setupAndroidChannels();
         await registerBackgroundSyncAsync();
         UpdateService.checkForUpdate();
+        // Force-update gate: verify this build is still allowed by the backend.
+        VersionGateService.check();
       } catch (e) {
         console.error("Init error:", e);
       }
     };
     init();
+
+    // Re-check the version gate whenever the app returns to the foreground.
+    const appStateSub = AppState.addEventListener("change", (next) => {
+      if (next === "active") VersionGateService.check();
+    });
 
     const handleNotificationResponse = (
       response: Notifications.NotificationResponse,
@@ -137,6 +146,7 @@ export default function RootLayout() {
     return () => {
       syncManager.cleanup();
       cleanupNotifications();
+      appStateSub.remove();
     };
   }, []);
 
@@ -147,6 +157,7 @@ export default function RootLayout() {
           <AuthGuard>
             <ThemeProvider>
               <UpdateBanner />
+              <UpdateRequiredScreen />
               <PendingNotificationNavigation />
               <Stack screenOptions={{ headerShown: false }}>
                 <Stack.Screen name="index" />

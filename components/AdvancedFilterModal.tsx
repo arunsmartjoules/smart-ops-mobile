@@ -109,6 +109,13 @@ interface AdvancedFilterModalProps {
   applyAdvancedFilters: () => void;
   /** 'single-date' for PM, 'date-range' for Tickets/Logs */
   dateMode?: "single-date" | "date-range";
+  /**
+   * Optional date-column selector. When provided, the date range applies to
+   * whichever field is chosen here (e.g. PM: due date vs completed date).
+   */
+  dateFieldOptions?: { value: string; label: string }[];
+  selectedDateField?: string;
+  setSelectedDateField?: (value: string) => void;
 }
 
 const AdvancedFilterModal = ({
@@ -133,6 +140,9 @@ const AdvancedFilterModal = ({
   title = "Filter Tickets",
   applyAdvancedFilters,
   dateMode = "date-range",
+  dateFieldOptions,
+  selectedDateField,
+  setSelectedDateField,
 }: AdvancedFilterModalProps) => {
   const { isDark } = useTheme();
 
@@ -320,6 +330,51 @@ const AdvancedFilterModal = ({
                 >
                   {dateMode === "date-range" ? "Date Range" : "Select Date"}
                 </Text>
+
+                {/* Date Field Selector — choose which date column the range
+                    applies to (e.g. Due Date vs Completed Date). */}
+                {dateFieldOptions &&
+                  dateFieldOptions.length > 0 &&
+                  setSelectedDateField && (
+                    <View
+                      style={{
+                        flexDirection: "row",
+                        gap: 8,
+                        marginBottom: 12,
+                      }}
+                    >
+                      {dateFieldOptions.map((opt) => {
+                        const active = selectedDateField === opt.value;
+                        return (
+                          <TouchableOpacity
+                            key={opt.value}
+                            onPress={() => setSelectedDateField(opt.value)}
+                            style={{
+                              flex: 1,
+                              paddingVertical: 10,
+                              borderRadius: 12,
+                              borderWidth: 1,
+                              alignItems: "center",
+                              backgroundColor: active ? pillActiveBg : pillBg,
+                              borderColor: active
+                                ? pillActiveBorder
+                                : borderColor,
+                            }}
+                          >
+                            <Text
+                              style={{
+                                fontSize: 12,
+                                fontWeight: "800",
+                                color: active ? "#dc2626" : textMuted,
+                              }}
+                            >
+                              {opt.label}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                  )}
 
                 {/* Quick Range Presets (date-range mode only) */}
                 {dateMode === "date-range" && (
@@ -646,6 +701,7 @@ const AdvancedFilterModal = ({
                 setTempToDate?.(format(new Date(), "yyyy-MM-dd"));
                 setStatusFilter?.("Pending");
                 setPriorityFilter?.("All");
+                setSelectedDateField?.(dateFieldOptions?.[0]?.value || "");
                 setSelectedQuickRange(null);
               }}
               style={{
