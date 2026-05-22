@@ -28,6 +28,7 @@ import {
 import { router } from "expo-router";
 import { useState, useCallback, useEffect } from "react";
 import { format } from "date-fns";
+import { APP_VERSION_DISPLAY } from "@/constants/version";
 
 export default function Profile() {
   const { user, signOut, refreshProfile } = useAuth();
@@ -114,7 +115,7 @@ export default function Profile() {
       icon: Info,
       label: "App Version",
       color: "#8b5cf6",
-      value: "1.0.79.6(Beta)",
+      value: APP_VERSION_DISPLAY,
     },
     {
       icon: ArrowUpCircle,

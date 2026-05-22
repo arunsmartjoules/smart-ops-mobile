@@ -1,4 +1,3 @@
-import Constants from "expo-constants";
 import { Platform } from "react-native";
 import logger from "./logger";
 import { authEvents } from "./authEvents";
@@ -11,19 +10,14 @@ import {
 } from "../services/AuthTokenManager";
 import VersionGateService from "../services/VersionGateService";
 import { API_TIMEOUT } from "../constants/api";
+import { APP_VERSION } from "../constants/version";
 
 /**
  * Identifies this client to the backend version gate. The gate only ever
  * acts on requests carrying `X-Client: jouleops-mobile`; sending these on
  * every request lets the server force outdated builds to update (HTTP 426).
+ * APP_VERSION is the release version bumped on every OTA/native release.
  */
-export const APP_VERSION: string =
-  Constants.expoConfig?.version ??
-  (typeof Constants.expoConfig?.runtimeVersion === "string"
-    ? Constants.expoConfig.runtimeVersion
-    : undefined) ??
-  "0.0.0";
-
 const VERSION_HEADERS: Record<string, string> = {
   "X-Client": "jouleops-mobile",
   "X-App-Version": APP_VERSION,

@@ -15,6 +15,7 @@ import Constants from "expo-constants";
 import { Platform, Linking } from "react-native";
 import logger from "@/utils/logger";
 import { API_BASE_URL } from "@/constants/api";
+import { APP_VERSION } from "@/constants/version";
 
 export interface VersionGateState {
   blocked: boolean;
@@ -35,15 +36,9 @@ class VersionGateService {
   private state: VersionGateState = { blocked: false };
   private listeners = new Set<Listener>();
 
-  /** App version baked into this build (app.json `version`). */
+  /** Release version of this build — see constants/version.ts. */
   get appVersion(): string {
-    return (
-      Constants.expoConfig?.version ??
-      (typeof Constants.expoConfig?.runtimeVersion === "string"
-        ? Constants.expoConfig.runtimeVersion
-        : undefined) ??
-      "0.0.0"
-    );
+    return APP_VERSION;
   }
 
   subscribe(listener: Listener): () => void {
