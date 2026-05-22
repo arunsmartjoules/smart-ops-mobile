@@ -7,14 +7,19 @@ import {
   getValidAuthToken,
   isSessionRevokedError,
 } from "../services/AuthTokenManager";
+import { API_TIMEOUT } from "../constants/api";
 
 /**
- * Enhanced fetch with timeout support
+ * Enhanced fetch with timeout support.
+ *
+ * Defaults to API_TIMEOUT (30s). The previous 5s default was too aggressive
+ * for field networks (plant rooms, basements) and surfaced false
+ * "Request timed out after 5000ms" failures during site-log pulls and sync.
  */
 export const fetchWithTimeout = async (
   url: string,
   options: RequestInit = {},
-  timeout = 5000,
+  timeout = API_TIMEOUT,
 ): Promise<Response> => {
   const controller = new AbortController();
   const id = setTimeout(() => {
