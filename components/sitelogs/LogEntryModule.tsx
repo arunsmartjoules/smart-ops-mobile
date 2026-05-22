@@ -256,6 +256,12 @@ export const LogEntryModule = ({
     // Fire a one-shot Start event the first time this task receives input.
     // recordLogActivityStartOnce dedupes per session and is best-effort —
     // failures must not block the existing offline-first flow.
+    //
+    // assigned_to is deliberately NOT sent: the server derives the assignee
+    // from the authenticated Firebase user, and the row is write-once on the
+    // backend (see logActivityMasterController.event + repository COALESCE
+    // guard). Sending it from mobile creates an override vector that reassigns
+    // the row to whoever last touched it — wrong on shared devices.
     if (val && String(val).trim().length > 0 && siteCode) {
       recordLogActivityStartOnce({
         action: "start",
@@ -264,7 +270,6 @@ export const LogEntryModule = ({
         due_date: scheduledDate,
         shift_label: uiShiftToLabel(shift),
         executor_id: user?.name || null,
-        assigned_to: user?.name || null,
       }).catch(() => {});
     }
 
@@ -640,6 +645,11 @@ export const LogEntryModule = ({
                   String(editVal.rh).trim()
                 );
         if (editIsCompleted && siteCode) {
+          const finishIso = new Date().toISOString();
+          // Do NOT pass startdatetime: the server keeps the existing start
+          // (or derives one from enddatetime via lamTimestampHelper). Sending
+          // finishIso here caused start==end / 0-duration rows when the
+          // Start event never reached the server (flaky LAN, app restart).
           recordLogActivityEvent({
             action: "finish",
             site_id: siteCode,
@@ -647,8 +657,7 @@ export const LogEntryModule = ({
             due_date: scheduledDate,
             shift_label: uiShiftToLabel(shift),
             executor_id: user?.name || null,
-            assigned_to: user?.name || null,
-            enddatetime: new Date().toISOString(),
+            enddatetime: finishIso,
           }).catch(() => {});
         }
 
@@ -695,6 +704,12 @@ export const LogEntryModule = ({
       // of truth for the field data; this just keeps activity master in sync.
       try {
         const finishShiftLabel = uiShiftToLabel(shift);
+        const finishIso = new Date().toISOString();
+        // startdatetime omitted: server preserves the row's existing start
+        // (set on first keystroke via recordLogActivityStartOnce) or derives
+        // one from enddatetime if missing. assigned_to omitted: server is
+        // the source of truth from the auth token + COALESCE write-once
+        // protection on assigned_to.
         const finishCalls = (payload as any[])
           .filter((p) => p && p.status === "Completed")
           .map((p) =>
@@ -705,8 +720,7 @@ export const LogEntryModule = ({
               due_date: p.scheduled_date,
               shift_label: finishShiftLabel,
               executor_id: p.executor_id,
-              assigned_to: user?.name || user?.user_id || null,
-              enddatetime: new Date().toISOString(),
+              enddatetime: finishIso,
             }),
           );
         await Promise.allSettled(finishCalls);

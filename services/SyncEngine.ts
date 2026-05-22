@@ -922,6 +922,14 @@ class SyncEngineImpl implements SyncEngine {
       endpoint = `/api/complaints/${payload.ticket_id}/line-items`;
       method = "POST";
 
+    // ── Log activity master start/finish events ──────────────────────────
+    // The server endpoint is idempotent (COALESCE write-once on startdatetime
+    // + assigned_to) so replaying a queued start after the row has been
+    // completed is safe — the original values stick.
+    } else if (entity_type === "lam_event") {
+      endpoint = "/api/log-activity-master/event";
+      method = "POST";
+
     // ── Attachment upload (delegated to AttachmentQueueService) ────────────
     } else if (entity_type === "attachment_upload") {
       // Will be handled by AttachmentQueueService in Phase 3

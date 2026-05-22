@@ -14,6 +14,7 @@
 
 import { apiFetch } from "@/utils/apiHelper";
 import { API_BASE_URL } from "@/constants/api";
+import cacheManager from "./CacheManager";
 
 export type LogActivityShiftLabel = "1/3" | "2/3" | "3/3" | string;
 
@@ -36,6 +37,13 @@ export interface LogActivityEventResult {
   status?: number;
   data?: any;
   error?: string;
+  /**
+   * True when the live POST failed transiently (network drop / 5xx) and the
+   * payload was placed on the offline_queue for SyncEngine to flush later.
+   * Callers should treat this the same as `ok: true` — the event is durably
+   * recorded client-side and will be delivered.
+   */
+  queued?: boolean;
 }
 
 const ENDPOINT = "/api/log-activity-master/event";
@@ -43,6 +51,20 @@ const ENDPOINT = "/api/log-activity-master/event";
 function buildUrl(): string {
   const base = (API_BASE_URL || "").replace(/\/$/, "");
   return `${base}${ENDPOINT}`;
+}
+
+async function enqueueEvent(payload: Record<string, unknown>): Promise<void> {
+  try {
+    await cacheManager.enqueue({
+      entity_type: "lam_event",
+      operation: "create",
+      payload,
+    });
+  } catch {
+    // Last-resort swallow: enqueue failure shouldn't crash the UI path. The
+    // server's nightly LAM cron + the data-repair scripts in backend/scripts/
+    // are the safety net.
+  }
 }
 
 /**
@@ -96,6 +118,18 @@ export async function recordLogActivityEvent(
       body = null;
     }
     if (!res.ok) {
+      // 5xx is transient — durable retry via offline_queue. 4xx is a validation
+      // problem (e.g. row not found, missing shift_label) and will never
+      // succeed on replay, so drop it instead of polluting the queue.
+      if (res.status >= 500) {
+        await enqueueEvent(payload);
+        return {
+          ok: false,
+          queued: true,
+          status: res.status,
+          error: body?.error || `HTTP ${res.status} — queued for retry`,
+        };
+      }
       return {
         ok: false,
         status: res.status,
@@ -104,7 +138,15 @@ export async function recordLogActivityEvent(
     }
     return { ok: true, status: res.status, data: body?.data ?? body };
   } catch (err: any) {
-    return { ok: false, error: err?.message || String(err) };
+    // Network / DNS / offline — enqueue and resolve as queued. The server
+    // event endpoint is COALESCE-idempotent so a stale start delivered after
+    // finish is a safe no-op (existing startdatetime/assigned_to stick).
+    await enqueueEvent(payload);
+    return {
+      ok: false,
+      queued: true,
+      error: err?.message || String(err),
+    };
   }
 }
 
@@ -140,7 +182,11 @@ export async function recordLogActivityStartOnce(
     return { ok: true, status: 0, data: { skipped: "already-started-this-session" } };
   }
   const result = await recordLogActivityEvent({ ...options, action: "start" });
-  if (result.ok) startedKeys.add(key);
+  // Mark started after either a successful POST OR a successful enqueue.
+  // Without this, every keystroke during a network outage would re-enqueue
+  // the same start event — wasting queue slots even though the backend's
+  // COALESCE guard would have made the replays no-ops.
+  if (result.ok || result.queued) startedKeys.add(key);
   return result;
 }
 

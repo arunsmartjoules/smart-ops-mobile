@@ -87,7 +87,8 @@ export interface OfflineQueueItem {
     | "chiller_reading_delete"
     | "pm_response_upsert"
     | "pm_instance_update"
-    | "attachment_upload";
+    | "attachment_upload"
+    | "lam_event";
   operation: "create" | "update" | "delete";
   payload: Record<string, any>;
 }
