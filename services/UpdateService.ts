@@ -82,6 +82,39 @@ class UpdateService {
     }
   }
 
+  /**
+   * Check for an OTA update and, if one exists, download it — emitting
+   * progress the whole way (`checking` → `downloading` → `ready`). Used by the
+   * force-update screen, which needs to know whether an OTA can fix the block
+   * before falling back to the app store.
+   */
+  async checkAndPrepare(): Promise<void> {
+    if (this.isChecking) return;
+    this.isChecking = true;
+    try {
+      if (!Updates.isEnabled) {
+        logger.debug('expo-updates not enabled (dev build)', { module: 'UPDATE_SERVICE' });
+        return;
+      }
+      this.emit({ status: 'checking' });
+      const result = await Updates.checkForUpdateAsync();
+      if (result.isAvailable) {
+        this.emit({ status: 'downloading' });
+        await Updates.fetchUpdateAsync();
+        this.updateAvailable = true;
+        this.emit({ status: 'ready', restart: () => this.reloadApp() });
+      } else {
+        this.emit({ status: 'up-to-date' });
+        setTimeout(() => this.emit({ status: 'idle' }), 1500);
+      }
+    } catch (e: any) {
+      logger.warn('checkAndPrepare failed', { module: 'UPDATE_SERVICE', error: e.message });
+      this.emit({ status: 'error', message: e.message });
+    } finally {
+      this.isChecking = false;
+    }
+  }
+
   async fetchUpdate() {
     try {
       if (!Updates.isEnabled) return { success: false, error: 'Updates not enabled' };

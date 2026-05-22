@@ -4,27 +4,48 @@ import {
   View,
   Text,
   TouchableOpacity,
+  ActivityIndicator,
   StyleSheet,
 } from "react-native";
 import VersionGateService, {
   type VersionGateState,
 } from "@/services/VersionGateService";
+import UpdateService, { type UpdateState } from "@/services/UpdateService";
 
 /**
  * Full-screen, non-dismissible "update required" gate.
  *
  * Renders nothing until the backend version gate blocks this build, then
- * covers the entire app — there is no way past it except updating. Mounted
- * once near the root (see app/_layout.tsx).
+ * covers the entire app. If an OTA update can fix the block it offers an
+ * in-place "Update & Restart" — the fast path that resolves most version
+ * blocks without a trip to the app store. Only when no OTA is available does
+ * it fall back to the store. Mounted once near the root (see app/_layout.tsx).
  */
 export default function UpdateRequiredScreen() {
-  const [state, setState] = useState<VersionGateState>({ blocked: false });
+  const [gate, setGate] = useState<VersionGateState>({ blocked: false });
+  const [update, setUpdate] = useState<UpdateState>({ status: "idle" });
 
   useEffect(() => {
-    return VersionGateService.subscribe(setState);
+    const unsubGate = VersionGateService.subscribe(setGate);
+    const unsubUpdate = UpdateService.subscribe(setUpdate);
+    return () => {
+      unsubGate();
+      unsubUpdate();
+    };
   }, []);
 
-  if (!state.blocked) return null;
+  // When the gate blocks, look for an OTA that can resolve it in place.
+  useEffect(() => {
+    if (gate.blocked) {
+      UpdateService.checkAndPrepare();
+    }
+  }, [gate.blocked]);
+
+  if (!gate.blocked) return null;
+
+  const otaReady = update.status === "ready";
+  const otaBusy =
+    update.status === "checking" || update.status === "downloading";
 
   return (
     <Modal
@@ -43,17 +64,36 @@ export default function UpdateRequiredScreen() {
         <Text style={styles.title}>Update Required</Text>
 
         <Text style={styles.message}>
-          {state.message ||
-            "A newer version of JouleOps is required to continue."}
+          {otaReady
+            ? "An update is ready to install. Restart now to continue."
+            : gate.message ||
+              "A newer version of JouleOps is required to continue."}
         </Text>
 
-        <TouchableOpacity
-          style={styles.button}
-          onPress={() => VersionGateService.openStore()}
-          activeOpacity={0.85}
-        >
-          <Text style={styles.buttonText}>Update Now</Text>
-        </TouchableOpacity>
+        {otaBusy ? (
+          <View style={styles.busyRow}>
+            <ActivityIndicator color="white" />
+            <Text style={styles.busyText}>Preparing update…</Text>
+          </View>
+        ) : otaReady ? (
+          <TouchableOpacity
+            style={styles.button}
+            onPress={() => {
+              if (update.status === "ready") update.restart();
+            }}
+            activeOpacity={0.85}
+          >
+            <Text style={styles.buttonText}>Update &amp; Restart</Text>
+          </TouchableOpacity>
+        ) : (
+          <TouchableOpacity
+            style={styles.button}
+            onPress={() => VersionGateService.openStore()}
+            activeOpacity={0.85}
+          >
+            <Text style={styles.buttonText}>Update Now</Text>
+          </TouchableOpacity>
+        )}
 
         <Text style={styles.version}>
           Installed version {VersionGateService.appVersion}
@@ -99,6 +139,17 @@ const styles = StyleSheet.create({
     lineHeight: 22,
     textAlign: "center",
     marginBottom: 32,
+  },
+  busyRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingVertical: 14,
+  },
+  busyText: {
+    color: "white",
+    fontSize: 15,
+    fontWeight: "700",
   },
   button: {
     backgroundColor: "white",

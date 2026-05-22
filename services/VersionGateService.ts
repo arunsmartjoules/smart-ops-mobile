@@ -16,6 +16,7 @@ import { Platform, Linking } from "react-native";
 import logger from "@/utils/logger";
 import { API_BASE_URL } from "@/constants/api";
 import { APP_VERSION } from "@/constants/version";
+import ServerStatusService from "@/services/ServerStatusService";
 
 export interface VersionGateState {
   blocked: boolean;
@@ -68,12 +69,15 @@ class VersionGateService {
   }
 
   /**
-   * Proactively ask the backend whether this build is still allowed.
-   * Safe to call on launch and on every foreground. Network failures are
-   * swallowed — they must never block the app.
+   * Ask the backend whether this build is still allowed and whether
+   * maintenance mode is on. Safe to call on launch, on every foreground, and
+   * on a poll. Doubles as a health ping — the result feeds ServerStatusService
+   * so the version gate and the server-status overlay stay in sync.
+   *
+   * A network failure never hard-blocks the app; it only flags a possible
+   * outage (which shows a non-blocking banner, not a lockout).
    */
   async check(): Promise<void> {
-    if (this.state.blocked) return;
     const url =
       `${API_BASE_URL}/api/app-versions/check` +
       `?platform=${encodeURIComponent(Platform.OS)}` +
@@ -83,13 +87,21 @@ class VersionGateService {
     const timer = setTimeout(() => controller.abort(), 10000);
     try {
       const res = await fetch(url, { signal: controller.signal });
-      if (!res.ok) return; // Includes 426 — apiHelper handles those paths.
+      if (!res.ok) {
+        ServerStatusService.reportUnreachable();
+        return;
+      }
       const body = await res.json();
-      if (body?.success && body?.data?.blocked) {
-        this.reportBlocked({ reason: body.data.reason });
+      ServerStatusService.reportReachable();
+      if (body?.success && body?.data) {
+        if (body.data.blocked) {
+          this.reportBlocked({ reason: body.data.reason });
+        }
+        ServerStatusService.setMaintenance(body.data.maintenance);
       }
     } catch {
-      // Offline or server unreachable — do not block.
+      // Offline or server unreachable — flag it, but never hard-block.
+      ServerStatusService.reportUnreachable();
     } finally {
       clearTimeout(timer);
     }

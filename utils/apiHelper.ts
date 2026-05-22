@@ -9,6 +9,7 @@ import {
   isSessionRevokedError,
 } from "../services/AuthTokenManager";
 import VersionGateService from "../services/VersionGateService";
+import ServerStatusService from "../services/ServerStatusService";
 import { API_TIMEOUT } from "../constants/api";
 import { APP_VERSION } from "../constants/version";
 
@@ -149,8 +150,32 @@ export const apiFetch = async (
       }
     }
 
+    // Server-status signalling for the maintenance / outage overlay.
+    if (response.status === 503) {
+      try {
+        const body = await response.clone().json();
+        if (body?.code === "MAINTENANCE_MODE") {
+          ServerStatusService.setMaintenance({
+            active: true,
+            message: body?.details?.message || body?.error || "",
+          });
+          ServerStatusService.reportReachable();
+        } else {
+          ServerStatusService.reportUnreachable();
+        }
+      } catch {
+        ServerStatusService.reportUnreachable();
+      }
+    } else if (response.status === 502 || response.status === 504) {
+      ServerStatusService.reportUnreachable();
+    } else {
+      ServerStatusService.reportReachable();
+    }
+
     return response;
   } catch (error) {
+    // fetch() threw — network error, timeout, DNS, connection refused.
+    ServerStatusService.reportUnreachable();
     logger.error(`apiFetch failure: ${url}`, { error });
     throw error;
   }

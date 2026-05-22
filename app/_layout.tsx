@@ -18,6 +18,7 @@ import UpdateService from "@/services/UpdateService";
 import UpdateBanner from "@/components/UpdateBanner";
 import VersionGateService from "@/services/VersionGateService";
 import UpdateRequiredScreen from "@/components/UpdateRequiredScreen";
+import ServerStatusOverlay from "@/components/ServerStatusOverlay";
 import * as SplashScreen from "expo-splash-screen";
 import * as Location from "expo-location";
 import * as Notifications from "expo-notifications";
@@ -157,6 +158,7 @@ export default function RootLayout() {
           <AuthGuard>
             <ThemeProvider>
               <UpdateBanner />
+              <ServerStatusOverlay />
               <UpdateRequiredScreen />
               <PendingNotificationNavigation />
               <Stack screenOptions={{ headerShown: false }}>
