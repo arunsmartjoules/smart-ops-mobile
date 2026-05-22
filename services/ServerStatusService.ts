@@ -20,6 +20,8 @@ import logger from "@/utils/logger";
 export interface MaintenanceInfo {
   active: boolean;
   message: string;
+  /** ISO timestamp the window ends — drives the countdown. null = open-ended. */
+  endAt: string | null;
 }
 
 export interface ServerStatusState {
@@ -43,7 +45,7 @@ class ServerStatusService {
   private state: ServerStatusState = {
     serverDown: false,
     deviceOnline: true,
-    maintenance: { active: false, message: "" },
+    maintenance: { active: false, message: "", endAt: null },
   };
 
   constructor() {
@@ -99,10 +101,13 @@ class ServerStatusService {
     const next: MaintenanceInfo = {
       active: info?.active === true,
       message: String(info?.message ?? ""),
+      endAt: info?.endAt ?? null,
     };
+    const cur = this.state.maintenance;
     if (
-      next.active !== this.state.maintenance.active ||
-      next.message !== this.state.maintenance.message
+      next.active !== cur.active ||
+      next.message !== cur.message ||
+      next.endAt !== cur.endAt
     ) {
       this.state = { ...this.state, maintenance: next };
       this.emit();

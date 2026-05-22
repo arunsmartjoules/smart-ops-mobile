@@ -45,7 +45,12 @@ export default function ServerStatusOverlay() {
   }, [inMaintenance, serverDown]);
 
   if (inMaintenance) {
-    return <MaintenanceModal message={status.maintenance.message} />;
+    return (
+      <MaintenanceModal
+        message={status.maintenance.message}
+        endAt={status.maintenance.endAt}
+      />
+    );
   }
   if (serverDown) {
     return <ServerDownBanner />;
@@ -53,7 +58,47 @@ export default function ServerStatusOverlay() {
   return null;
 }
 
-function MaintenanceModal({ message }: { message: string }) {
+/** Format milliseconds as H:MM:SS (or MM:SS under an hour). */
+function formatRemaining(ms: number): string {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
+}
+
+function MaintenanceModal({
+  message,
+  endAt,
+}: {
+  message: string;
+  endAt: string | null;
+}) {
+  const [remaining, setRemaining] = useState<number | null>(null);
+
+  // Live countdown to the end of the maintenance window.
+  useEffect(() => {
+    if (!endAt) {
+      setRemaining(null);
+      return;
+    }
+    const end = new Date(endAt).getTime();
+    let recheckFired = false;
+    const update = () => {
+      const left = end - Date.now();
+      setRemaining(left);
+      // When the window elapses, re-check once so the screen clears itself.
+      if (left <= 0 && !recheckFired) {
+        recheckFired = true;
+        VersionGateService.check();
+      }
+    };
+    update();
+    const id = setInterval(update, 1000);
+    return () => clearInterval(id);
+  }, [endAt]);
+
   return (
     <Modal
       visible
@@ -72,6 +117,14 @@ function MaintenanceModal({ message }: { message: string }) {
           {message ||
             "JouleOps is temporarily down for maintenance. Please try again shortly."}
         </Text>
+
+        {remaining !== null && remaining > 0 && (
+          <View style={styles.timerBox}>
+            <Text style={styles.timerLabel}>EXPECTED BACK IN</Text>
+            <Text style={styles.timerValue}>{formatRemaining(remaining)}</Text>
+          </View>
+        )}
+
         <TouchableOpacity
           style={styles.maintButton}
           onPress={() => VersionGateService.check()}
@@ -148,6 +201,23 @@ const styles = StyleSheet.create({
     color: "#0f172a",
     fontSize: 16,
     fontWeight: "800",
+  },
+  timerBox: {
+    alignItems: "center",
+    marginBottom: 28,
+  },
+  timerLabel: {
+    color: "rgba(245,158,11,0.9)",
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 1.5,
+    marginBottom: 6,
+  },
+  timerValue: {
+    color: "white",
+    fontSize: 40,
+    fontWeight: "800",
+    fontVariant: ["tabular-nums"],
   },
   // Server-down banner
   bannerSafe: {

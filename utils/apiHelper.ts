@@ -158,6 +158,7 @@ export const apiFetch = async (
           ServerStatusService.setMaintenance({
             active: true,
             message: body?.details?.message || body?.error || "",
+            endAt: body?.details?.endAt ?? null,
           });
           ServerStatusService.reportReachable();
         } else {
