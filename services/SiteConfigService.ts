@@ -3,7 +3,6 @@ import { db, areas, siteLogs, chillerReadings, logMaster } from "../database";
 import logger from "../utils/logger";
 import { addDays } from "date-fns";
 import { istDateString, istDayStartMs, istDayEndMs } from "../utils/istDate";
-import NetInfo from "@react-native-community/netinfo";
 import { apiFetch as centralApiFetch } from "../utils/apiHelper";
 import { API_BASE_URL } from "../constants/api";
 
@@ -25,7 +24,7 @@ export interface TaskItem {
  * Helper: get the canonical log_name variants for fuzzy matching.
  * The server may store "Temp & Humidity" while mobile uses "Temp RH", etc.
  */
-function getLogVariants(logName: string): string[] {
+export function getLogVariants(logName: string): string[] {
   const lower = logName.toLowerCase();
   if (lower.includes("temp") || lower.includes("rh")) {
     return ["Temp RH", "Temp & Humidity", "Temperature & Humidity", "Temp/RH"];

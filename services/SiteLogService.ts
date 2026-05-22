@@ -7,6 +7,7 @@ import {
   gte,
   lte,
   lt,
+  like,
   inArray,
   count,
   sql,
@@ -18,7 +19,7 @@ import { db, siteLogs, chillerReadings, logMaster } from "../database";
 import logger from "../utils/logger";
 import { authEvents } from "../utils/authEvents";
 import { apiFetch as centralApiFetch } from "../utils/apiHelper";
-import { SiteConfigService } from "./SiteConfigService";
+import { getLogVariants } from "./SiteConfigService";
 import type { TaskItem } from "./SiteConfigService";
 import cacheManager from "./CacheManager";
 import { AttachmentQueueService } from "./AttachmentQueueService";
@@ -113,6 +114,13 @@ interface ISiteLogService {
   ): Promise<any[]>;
   observeLogsByType(siteCode: string, logType: string, options?: any): any;
   saveBulkSiteLogs(logs: any[]): Promise<void>;
+  finalizeShiftLogs(params: {
+    siteCode: string;
+    logName: string;
+    scheduledDate: string;
+    shiftMarker: string | null;
+    signature?: string | null;
+  }): Promise<number>;
   saveSiteLog(data: any): Promise<any>;
   saveChillerReading(data: any): Promise<any>;
   updateChillerReading(id: string, data: Partial<any>): Promise<any>;
@@ -448,12 +456,27 @@ export const SiteLogService: ISiteLogService = {
             });
           }
           if (!response.ok) {
+            const text = await response.text().catch(() => "");
             if (response.status >= 500) {
               shouldRetryFromQueue = true;
-            } else {
-              const text = await response.text().catch(() => "");
+            } else if (isExisting) {
+              // 4xx on an UPDATE (PUT): never drop it. A silently-lost PUT
+              // strands the row at its last server status (e.g. an
+              // auto-saved "Inprogress") while the local copy shows
+              // "Completed" — the row then looks done on this device but
+              // pending everywhere else. PUT is idempotent and the queue
+              // caps retries (retry_count > 5 -> dead_letter), so enqueue
+              // it for a bounded retry instead of discarding it.
+              shouldRetryFromQueue = true;
               logger.warn(
-                `saveBulkSiteLogs: backend ${response.status} (${isExisting ? "PUT" : "POST"}): ${text.slice(0, 200)}`,
+                `saveBulkSiteLogs: backend ${response.status} (PUT) — queued for retry: ${text.slice(0, 200)}`,
+                { module: "SITE_LOG_SERVICE", id: record.id },
+              );
+            } else {
+              // 4xx on a CREATE (POST): re-POSTing risks a duplicate row
+              // (backend generates its own id), so log and drop.
+              logger.warn(
+                `saveBulkSiteLogs: backend ${response.status} (POST): ${text.slice(0, 200)}`,
                 { module: "SITE_LOG_SERVICE", id: record.id },
               );
             }
@@ -490,6 +513,94 @@ export const SiteLogService: ISiteLogService = {
         error: e.message,
       });
       throw e;
+    }
+  },
+
+  /**
+   * Safety net for the bulk "Complete & sign" submit.
+   *
+   * LogEntryModule.handleSubmit builds its Completed-write batch from the
+   * in-memory task list. Any row that was auto-saved earlier (status
+   * "Inprogress") but is missing from that list — it dropped out of the
+   * pending query, or was filled in an earlier screen session — never
+   * receives the Completed write and is stranded at "Inprogress" forever
+   * despite having full readings.
+   *
+   * This sweeps the LOCAL site_logs table for the shift and finalizes every
+   * row that has complete data but isn't Completed yet. Best-effort: a
+   * straggler write that fails is enqueued by saveBulkSiteLogs and retried
+   * by SyncEngine. Returns the number of rows finalized.
+   */
+  async finalizeShiftLogs(params: {
+    siteCode: string;
+    logName: string;
+    scheduledDate: string;
+    shiftMarker: string | null; // "1/3" | "2/3" | "3/3" | null (null = no shift)
+    signature?: string | null;
+  }): Promise<number> {
+    const { siteCode, logName, scheduledDate, shiftMarker, signature } = params;
+    try {
+      const conditions = [
+        eq(siteLogs.site_code, siteCode),
+        inArray(siteLogs.log_name, getLogVariants(logName)),
+        sql`substr(${siteLogs.scheduled_date}, 1, 10) = ${scheduledDate}`,
+        ne(siteLogs.status, "Completed"),
+      ];
+      if (shiftMarker) {
+        conditions.push(like(siteLogs.remarks, `%${shiftMarker}%`));
+      }
+      const rows = await db
+        .select()
+        .from(siteLogs)
+        .where(and(...conditions));
+
+      // Keep only rows whose readings are actually complete (the app's own
+      // completion rule) — genuinely half-filled rows stay "Inprogress".
+      const isComplete = (r: any): boolean => {
+        const n = normalizeLogName(r.log_name);
+        if (n === "Temp RH") return r.temperature != null && r.rh != null;
+        if (n === "Water")
+          return r.tds != null || r.ph != null || r.hardness != null;
+        if (n === "Chemical Dosing")
+          return !!(r.chemical_dosing && String(r.chemical_dosing).trim());
+        return false;
+      };
+      const stragglers = rows.filter(isComplete);
+      if (stragglers.length === 0) return 0;
+
+      logger.info(
+        `finalizeShiftLogs: finalizing ${stragglers.length} straggler row(s)`,
+        { module: "SITE_LOG_SERVICE", siteCode, logName, scheduledDate },
+      );
+
+      await this.saveBulkSiteLogs(
+        stragglers.map((r) => ({
+          id: r.id,
+          site_code: r.site_code,
+          executor_id: r.executor_id,
+          log_name: r.log_name,
+          task_name: r.task_name,
+          scheduled_date: scheduledDate,
+          status: "Completed",
+          temperature: r.temperature,
+          rh: r.rh,
+          tds: r.tds,
+          ph: r.ph,
+          hardness: r.hardness,
+          chemical_dosing: r.chemical_dosing,
+          remarks: r.remarks,
+          main_remarks: r.main_remarks,
+          attachment: r.attachment,
+          signature: r.signature || signature || null,
+        })),
+      );
+      return stragglers.length;
+    } catch (e: any) {
+      logger.warn("finalizeShiftLogs failed", {
+        module: "SITE_LOG_SERVICE",
+        error: e?.message,
+      });
+      return 0;
     }
   },
 

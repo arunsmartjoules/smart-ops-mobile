@@ -209,6 +209,16 @@ export const AttachmentQueueService = {
       uploadedUrl,
     );
 
+    // The local record now carries the public URL, but the backend still has
+    // the stale local file:// URI it received at capture time. Re-push so the
+    // backend (and downstream Fieldproxy) get the public URL.
+    await this._repushUploadedUrl(
+      item.related_entity_type,
+      item.related_entity_id,
+      item.related_field,
+      uploadedUrl,
+    );
+
     // Mark as completed
     await db
       .update(attachmentQueue)
@@ -288,6 +298,49 @@ export const AttachmentQueueService = {
       }
     } catch (error: any) {
       logger.error("AttachmentQueueService: failed to update related record", {
+        module: "ATTACHMENT_QUEUE",
+        entityType,
+        entityId,
+        field,
+        error: error.message,
+      });
+    }
+  },
+
+  /**
+   * Re-push a freshly uploaded attachment URL to the backend.
+   *
+   * Capture-time sync sends the local file:// URI; the public URL is only
+   * known once the Firebase upload finishes here. Without this re-push the
+   * backend keeps the dead file:// URI forever and Fieldproxy never receives
+   * the image/signature.
+   *
+   * Scoped to pm_instance (before_image / after_image / client_sign). The
+   * site_log, chiller_reading and pm_response attachment paths have the same
+   * latent gap and should get equivalent re-pushes when next touched.
+   */
+  async _repushUploadedUrl(
+    entityType: string,
+    entityId: string,
+    field: string,
+    url: string,
+  ): Promise<void> {
+    try {
+      if (entityType === "pm_instance") {
+        await cacheManager.enqueue({
+          entity_type: "pm_instance_update",
+          operation: "update",
+          payload: { id: entityId, [field]: url },
+        });
+        logger.info("AttachmentQueueService: re-pushed uploaded URL to backend", {
+          module: "ATTACHMENT_QUEUE",
+          entityType,
+          entityId,
+          field,
+        });
+      }
+    } catch (error: any) {
+      logger.error("AttachmentQueueService: failed to re-push uploaded URL", {
         module: "ATTACHMENT_QUEUE",
         entityType,
         entityId,

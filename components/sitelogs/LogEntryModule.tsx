@@ -698,6 +698,21 @@ export const LogEntryModule = ({
 
       await SiteLogService.saveBulkSiteLogs(payload as any);
 
+      // Safety net: the payload above is built from the in-memory task list,
+      // which can miss a room that was auto-saved (status "Inprogress") but
+      // dropped out of the pending list. Without this sweep that room stays
+      // "Inprogress" forever despite having full readings. finalizeShiftLogs
+      // re-scans local SQLite for the shift and finalizes any such straggler.
+      const finalizeShiftMarker =
+        shift === "A" ? "1/3" : shift === "B" ? "2/3" : shift === "C" ? "3/3" : null;
+      await SiteLogService.finalizeShiftLogs({
+        siteCode,
+        logName,
+        scheduledDate,
+        shiftMarker: finalizeShiftMarker,
+        signature: effectiveSignature,
+      });
+
       // Mark each completed task as Finished in log_activity_master (DB + FP)
       // so the row's enddatetime + executor_id + status reflect the user's
       // submission. Best-effort — already-saved local + queue is the source
