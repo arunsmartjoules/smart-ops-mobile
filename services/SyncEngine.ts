@@ -189,29 +189,53 @@ class SyncEngineImpl implements SyncEngine {
           return;
         }
 
+        // Same gating as pm_instances: only stamp the domain fresh when every
+        // site succeeded, so a transient per-site failure doesn't lock a
+        // partial cache in for TTL.tickets (10 min).
+        const failures: Array<{ siteCode: string; error: any }> = [];
         for (const siteCode of siteCodes) {
-          const response = await apiFetch(
-            `/api/complaints/site/${siteCode}?limit=100`,
-          );
-          if (!response.ok) continue;
-          const result = await response.json();
-          const records = (result.data || []).map((t: any) => ({
-            id: t.id,
-            site_code: t.site_code || siteCode,
-            ticket_number: t.ticket_no || t.ticket_number || "",
-            title: t.title || "",
-            description: t.internal_remarks || t.description || "",
-            status: t.status || "",
-            priority: t.priority || "",
-            category: t.category || "",
-            area: t.area_asset || t.location || "",
-            assigned_to: t.assigned_to || "",
-            created_by: t.created_user || "",
-            created_at: t.created_at ? new Date(t.created_at).getTime() : Date.now(),
-            updated_at: Date.now(),
-          }));
-          await cacheManager.write("tickets", records);
+          try {
+            const response = await apiFetch(
+              `/api/complaints/site/${siteCode}?limit=100`,
+            );
+            if (!response.ok) {
+              const err: any = new Error(`tickets API ${response.status}`);
+              err.statusCode = response.status;
+              throw err;
+            }
+            const result = await response.json();
+            const records = (result.data || []).map((t: any) => ({
+              id: t.id,
+              site_code: t.site_code || siteCode,
+              ticket_number: t.ticket_no || t.ticket_number || "",
+              title: t.title || "",
+              description: t.internal_remarks || t.description || "",
+              status: t.status || "",
+              priority: t.priority || "",
+              category: t.category || "",
+              area: t.area_asset || t.location || "",
+              assigned_to: t.assigned_to || "",
+              created_by: t.created_user || "",
+              created_at: t.created_at ? new Date(t.created_at).getTime() : Date.now(),
+              updated_at: Date.now(),
+            }));
+            await cacheManager.write("tickets", records, { stampSync: false });
+          } catch (error) {
+            failures.push({ siteCode, error });
+            logger.warn("SyncEngine.tickets: site sync failed", {
+              module: "SYNC_ENGINE",
+              siteCode,
+              error,
+            });
+          }
         }
+
+        if (failures.length > 0) {
+          throw new Error(
+            `tickets sync partial: ${failures.length}/${siteCodes.length} sites failed`,
+          );
+        }
+        await cacheManager.stampSyncedAt("tickets");
       },
     },
 
@@ -231,48 +255,71 @@ class SyncEngineImpl implements SyncEngine {
           return;
         }
 
+        const failures: Array<{ siteCode: string; error: any }> = [];
         for (const siteCode of siteCodes) {
-          const response = await apiFetch(`/api/incidents?site_code=${encodeURIComponent(siteCode)}&limit=100`);
-          if (!response.ok) continue;
-          const result = await response.json();
-          const records = (result.data || []).map((i: any) => ({
-            id: i.id,
-            incident_id: i.incident_id || "",
-            source: i.source || "Incident",
-            ticket_id: i.ticket_id || null,
-            site_code: i.site_code || siteCode,
-            asset_location: i.asset_location || null,
-            raised_by: i.raised_by || null,
-            incident_created_time: i.incident_created_time
-              ? new Date(i.incident_created_time).getTime()
-              : Date.now(),
-            incident_updated_time: i.incident_updated_time
-              ? new Date(i.incident_updated_time).getTime()
-              : null,
-            incident_resolved_time: i.incident_resolved_time
-              ? new Date(i.incident_resolved_time).getTime()
-              : null,
-            fault_symptom: i.fault_symptom || "",
-            fault_type: i.fault_type || "Others",
-            severity: i.severity || "Moderate",
-            operating_condition: i.operating_condition || null,
-            immediate_action_taken: i.immediate_action_taken || null,
-            attachments: JSON.stringify(i.attachments || []),
-            rca_attachments: JSON.stringify(i.rca_attachments || []),
-            remarks: i.remarks || null,
-            status: i.status || "Open",
-            rca_status: i.rca_status || "Open",
-            assigned_by: i.assigned_by || null,
-            assignment_type: i.assignment_type || null,
-            vendor_tagged: i.vendor_tagged || null,
-            rca_maker: i.rca_maker || null,
-            rca_checker: i.rca_checker || null,
-            assigned_to: JSON.stringify(i.assigned_to || []),
-            created_at: i.created_at ? new Date(i.created_at).getTime() : Date.now(),
-            updated_at: i.updated_at ? new Date(i.updated_at).getTime() : Date.now(),
-          }));
-          await cacheManager.write("incidents", records);
+          try {
+            const response = await apiFetch(
+              `/api/incidents?site_code=${encodeURIComponent(siteCode)}&limit=100`,
+            );
+            if (!response.ok) {
+              const err: any = new Error(`incidents API ${response.status}`);
+              err.statusCode = response.status;
+              throw err;
+            }
+            const result = await response.json();
+            const records = (result.data || []).map((i: any) => ({
+              id: i.id,
+              incident_id: i.incident_id || "",
+              source: i.source || "Incident",
+              ticket_id: i.ticket_id || null,
+              site_code: i.site_code || siteCode,
+              asset_location: i.asset_location || null,
+              raised_by: i.raised_by || null,
+              incident_created_time: i.incident_created_time
+                ? new Date(i.incident_created_time).getTime()
+                : Date.now(),
+              incident_updated_time: i.incident_updated_time
+                ? new Date(i.incident_updated_time).getTime()
+                : null,
+              incident_resolved_time: i.incident_resolved_time
+                ? new Date(i.incident_resolved_time).getTime()
+                : null,
+              fault_symptom: i.fault_symptom || "",
+              fault_type: i.fault_type || "Others",
+              severity: i.severity || "Moderate",
+              operating_condition: i.operating_condition || null,
+              immediate_action_taken: i.immediate_action_taken || null,
+              attachments: JSON.stringify(i.attachments || []),
+              rca_attachments: JSON.stringify(i.rca_attachments || []),
+              remarks: i.remarks || null,
+              status: i.status || "Open",
+              rca_status: i.rca_status || "Open",
+              assigned_by: i.assigned_by || null,
+              assignment_type: i.assignment_type || null,
+              vendor_tagged: i.vendor_tagged || null,
+              rca_maker: i.rca_maker || null,
+              rca_checker: i.rca_checker || null,
+              assigned_to: JSON.stringify(i.assigned_to || []),
+              created_at: i.created_at ? new Date(i.created_at).getTime() : Date.now(),
+              updated_at: i.updated_at ? new Date(i.updated_at).getTime() : Date.now(),
+            }));
+            await cacheManager.write("incidents", records, { stampSync: false });
+          } catch (error) {
+            failures.push({ siteCode, error });
+            logger.warn("SyncEngine.incidents: site sync failed", {
+              module: "SYNC_ENGINE",
+              siteCode,
+              error,
+            });
+          }
         }
+
+        if (failures.length > 0) {
+          throw new Error(
+            `incidents sync partial: ${failures.length}/${siteCodes.length} sites failed`,
+          );
+        }
+        await cacheManager.stampSyncedAt("incidents");
       },
     },
 
@@ -295,18 +342,37 @@ class SyncEngineImpl implements SyncEngine {
         // Pull each log type separately to avoid the 500-record limit cutting off any type
         const fromDateObj = startOfDay(addDays(new Date(), -7));
         const toDateObj = endOfDay(addDays(new Date(), 7));
-        
+
         const logTypes = ["Temp RH", "Water", "Chemical Dosing"];
+        const failures: Array<{ siteCode: string; logName: string; error: any }> = [];
         for (const siteCode of siteCodes) {
           for (const logName of logTypes) {
-            await SiteLogService.pullSiteLogs(siteCode, { 
-              logName,
-              fromDate: fromDateObj.getTime(),
-              toDate: toDateObj.getTime()
-            });
+            try {
+              await SiteLogService.pullSiteLogs(siteCode, {
+                logName,
+                fromDate: fromDateObj.getTime(),
+                toDate: toDateObj.getTime(),
+                stampSync: false,
+                throwOnError: true,
+              });
+            } catch (error) {
+              failures.push({ siteCode, logName, error });
+              logger.warn("SyncEngine.site_logs: site/log pull failed", {
+                module: "SYNC_ENGINE",
+                siteCode,
+                logName,
+                error,
+              });
+            }
           }
         }
-        await cacheManager.write("site_logs", []);
+
+        if (failures.length > 0) {
+          throw new Error(
+            `site_logs sync partial: ${failures.length} site/log pulls failed`,
+          );
+        }
+        await cacheManager.stampSyncedAt("site_logs");
       },
     },
 
@@ -331,9 +397,40 @@ class SyncEngineImpl implements SyncEngine {
         const toDate = new Date();
         toDate.setDate(toDate.getDate() + 60);
 
+        // Pull each site with `stampSync: false` so per-site cacheManager.write
+        // does not mark the whole domain fresh. If any site fails, throw so
+        // _runSync skips the final stamp — the next sync tick (TTL still
+        // expired) re-attempts the failed site(s). Without this, a transient
+        // failure on one site silently locks the domain "fresh" with a
+        // partial cache for TTL.pm_instances (5 min).
+        const failures: Array<{ siteCode: string; error: any }> = [];
         for (const siteCode of siteCodes) {
-          await PMService.fetchFromAPI(siteCode, 500, 0, fromDate, toDate);
+          try {
+            await PMService.fetchFromAPI(
+              siteCode,
+              500,
+              0,
+              fromDate,
+              toDate,
+              undefined,
+              { stampSync: false, throwOnError: true },
+            );
+          } catch (error) {
+            failures.push({ siteCode, error });
+            logger.warn("SyncEngine.pm_instances: site sync failed", {
+              module: "SYNC_ENGINE",
+              siteCode,
+              error,
+            });
+          }
         }
+
+        if (failures.length > 0) {
+          throw new Error(
+            `pm_instances sync partial: ${failures.length}/${siteCodes.length} sites failed`,
+          );
+        }
+        await cacheManager.stampSyncedAt("pm_instances");
       },
     },
 
@@ -392,10 +489,29 @@ class SyncEngineImpl implements SyncEngine {
           return;
         }
 
+        const failures: Array<{ siteCode: string; error: any }> = [];
         for (const siteCode of siteCodes) {
-          await SiteLogService.pullChillerReadings(siteCode);
+          try {
+            await SiteLogService.pullChillerReadings(siteCode, {
+              stampSync: false,
+              throwOnError: true,
+            });
+          } catch (error) {
+            failures.push({ siteCode, error });
+            logger.warn("SyncEngine.chiller_readings: site sync failed", {
+              module: "SYNC_ENGINE",
+              siteCode,
+              error,
+            });
+          }
         }
-        await cacheManager.write("chiller_readings", []);
+
+        if (failures.length > 0) {
+          throw new Error(
+            `chiller_readings sync partial: ${failures.length}/${siteCodes.length} sites failed`,
+          );
+        }
+        await cacheManager.stampSyncedAt("chiller_readings");
       },
     },
 

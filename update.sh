@@ -11,6 +11,12 @@ echo "Channel: $CHANNEL"
 echo "Message: $MESSAGE"
 echo ""
 
+# Load env variables from eas.json build profile if it exists
+if [ -f "scripts/load-eas-env.js" ]; then
+  echo "🔍 Loading env variables from eas.json profile '$CHANNEL'..."
+  eval "$(node scripts/load-eas-env.js "$CHANNEL")"
+fi
+
 # Run the update
 eas update --channel "$CHANNEL" --message "$MESSAGE"
 

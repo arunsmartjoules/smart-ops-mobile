@@ -137,11 +137,18 @@ interface ISiteLogService {
       logName?: string;
       status?: string;
       siteCodes?: string[];
+      stampSync?: boolean;
+      throwOnError?: boolean;
     },
   ): Promise<void>;
   pullChillerReadings(
     siteCode: string,
-    options?: { fromDate?: number; toDate?: number },
+    options?: {
+      fromDate?: number;
+      toDate?: number;
+      stampSync?: boolean;
+      throwOnError?: boolean;
+    },
   ): Promise<void>;
   prefetchPendingForCategory(siteCode: string, logName: string): Promise<void>;
   getTodayChillerReadingCount(siteCode: string, targetDate?: Date): Promise<number>;
@@ -1285,6 +1292,8 @@ export const SiteLogService: ISiteLogService = {
    * Pull logs from server
    */
   async pullSiteLogs(siteCode: string, options: any = {}) {
+    const stampSync = options?.stampSync !== false;
+    const throwOnError = options?.throwOnError === true;
     try {
       let finalSiteCode = siteCode;
 
@@ -1309,7 +1318,15 @@ export const SiteLogService: ISiteLogService = {
       }
 
       const response = await apiFetch(url);
-      if (response.ok) {
+      if (!response.ok) {
+        if (throwOnError) {
+          const err: any = new Error(`site-logs API ${response.status}`);
+          err.statusCode = response.status;
+          throw err;
+        }
+        return;
+      }
+      {
         const result = await response.json();
         const serverLogs = result.data || [];
         logger.debug("pullSiteLogs API response", {
@@ -1411,13 +1428,14 @@ export const SiteLogService: ISiteLogService = {
             updated_at: Date.now(),
           };
         });
-        await cacheManager.write("site_logs", normalizedLogs);
+        await cacheManager.write("site_logs", normalizedLogs, { stampSync });
       }
     } catch (error: any) {
       logger.error("Error pulling site logs", {
         module: "SITE_LOG_SERVICE",
         error: error.message,
       });
+      if (throwOnError) throw error;
     }
   },
 
@@ -1425,6 +1443,8 @@ export const SiteLogService: ISiteLogService = {
    * Pull chiller readings from server
    */
   async pullChillerReadings(siteCode: string, options: any = {}) {
+    const stampSync = options?.stampSync !== false;
+    const throwOnError = options?.throwOnError === true;
     try {
       let url = `/api/chiller-readings/site/${siteCode}?limit=100`;
       if (options.fromDate) url += `&fromDate=${options.fromDate}`;
@@ -1432,7 +1452,15 @@ export const SiteLogService: ISiteLogService = {
 
       const response = await apiFetch(url);
 
-      if (response.ok) {
+      if (!response.ok) {
+        if (throwOnError) {
+          const err: any = new Error(`chiller-readings API ${response.status}`);
+          err.statusCode = response.status;
+          throw err;
+        }
+        return;
+      }
+      {
         const result = await response.json();
         const serverReadingIds = new Set(result.data.map((r: any) => r.id));
 
@@ -1538,13 +1566,14 @@ export const SiteLogService: ISiteLogService = {
             : Date.now(),
           updated_at: Date.now(),
         }));
-        await cacheManager.write("chiller_readings", normalizedReadings);
+        await cacheManager.write("chiller_readings", normalizedReadings, { stampSync });
       }
     } catch (error: any) {
       logger.error("Error pulling chiller readings", {
         module: "SITE_LOG_SERVICE",
         error: error.message,
       });
+      if (throwOnError) throw error;
     }
   },
 

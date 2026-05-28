@@ -204,8 +204,13 @@ class CacheManagerImpl {
 
   // ── write ─────────────────────────────────────────────────────────────────
 
-  async write(domain: DataDomain, records: Record<string, any>[]): Promise<void> {
+  async write(
+    domain: DataDomain,
+    records: Record<string, any>[],
+    opts?: { stampSync?: boolean },
+  ): Promise<void> {
     if (!records || records.length === 0) return;
+    const stampSync = opts?.stampSync !== false;
 
     try {
       ensureDatabaseConnection();
@@ -305,7 +310,21 @@ class CacheManagerImpl {
       return;
     }
 
-    // Update sync_meta
+    // Update sync_meta. Callers that need to write records but defer the
+    // domain-freshness stamp until later (e.g. a multi-site sync where every
+    // site must succeed before the domain counts as fresh) pass
+    // `stampSync: false` and call `stampSyncedAt` after all writes succeed.
+    if (stampSync) {
+      await this.stampSyncedAt(domain);
+    }
+  }
+
+  /**
+   * Bump `last_synced_at` for a domain without writing records. Used by
+   * multi-site domain handlers that want to gate freshness on all sites
+   * succeeding, not just the first one's cacheManager.write.
+   */
+  async stampSyncedAt(domain: DataDomain): Promise<void> {
     try {
       await db
         .insert(syncMeta)
@@ -315,7 +334,7 @@ class CacheManagerImpl {
           set: { last_synced_at: Date.now() },
         });
     } catch (metaError) {
-      logger.error("CacheManager.write: sync_meta update failed (non-fatal)", {
+      logger.error("CacheManager.stampSyncedAt failed (non-fatal)", {
         module: "CACHE_MANAGER",
         domain,
         error: metaError,

@@ -671,6 +671,7 @@ export default function PMExecutionScreen() {
 
         // Optimistic UI update: Immediately reflect status transition
         if (nextStatus && nextStatus !== sourceInstance?.status) {
+          previousInstanceRef.current = sourceInstance;
           setInstance({
             ...sourceInstance,
             status: nextStatus,
@@ -700,6 +701,9 @@ export default function PMExecutionScreen() {
           if (updated) setInstance(updated);
         }
 
+        previousInstanceRef.current = null;
+        lastSaveErrorRef.current = null;
+
         if (!quiet) {
           Alert.alert("Saved", "Progress saved locally.", [
             { text: "OK", onPress: () => router.back() },
@@ -707,6 +711,11 @@ export default function PMExecutionScreen() {
         }
         return true;
       } catch (err) {
+        lastSaveErrorRef.current = err;
+        if (previousInstanceRef.current) {
+          setInstance(previousInstanceRef.current);
+          previousInstanceRef.current = null;
+        }
         logger.error("Failed to save responses", { error: err });
         if (!quiet) Alert.alert("Error", "Failed to save. Please try again.");
         return false;
@@ -1015,6 +1024,15 @@ export default function PMExecutionScreen() {
   // ── Response handler ──────────────────────────────────────────────────────
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Carry the most recent saveExecutionProgress error from handleSave's catch
+  // up to handleComplete, since handleSave swallows + returns false. Without
+  // this, completion failures collapse to a generic "Failed to complete" alert
+  // and the user never sees the server's real reason (e.g. missing remarks).
+  const lastSaveErrorRef = useRef<any>(null);
+  // Optimistic UI snapshot used to roll back the visible status if the save
+  // is rejected — keeps the screen and the local DB in sync after rollback.
+  const previousInstanceRef = useRef<any>(null);
+
   const handleResponseChange = useCallback(
     (
       itemId: string,
@@ -1170,7 +1188,11 @@ export default function PMExecutionScreen() {
           clientSign: signature,
           completed_on: now,
         });
-        if (!saved) throw new Error("Failed to complete instance.");
+        if (!saved) {
+          const stashed = lastSaveErrorRef.current;
+          lastSaveErrorRef.current = null;
+          throw stashed || new Error("Failed to complete instance.");
+        }
 
         setShowCompletionModal(false);
         Alert.alert("Completed", "PM task marked as complete!", [
@@ -1182,7 +1204,40 @@ export default function PMExecutionScreen() {
           (err as any)?.response?.error ||
           (err as any)?.message ||
           "Failed to complete. Please try again.";
-        Alert.alert("Error", apiErrorMessage);
+        // The server's validation result lists exactly which mandatory
+        // fields are still missing on the backend side (e.g. responses
+        // that haven't synced yet). Render them under the main message so
+        // the user can act on it instead of seeing only a generic line.
+        const details = (err as any)?.details;
+        const detailLines: string[] = [];
+        if (details) {
+          if (details.missing_responses?.length) {
+            detailLines.push(
+              `• ${details.missing_responses.length} task(s) missing response`,
+            );
+          }
+          if (details.missing_measure_readings?.length) {
+            detailLines.push(
+              `• ${details.missing_measure_readings.length} task(s) missing readings`,
+            );
+          }
+          if (details.missing_mandatory_remarks?.length) {
+            detailLines.push(
+              `• ${details.missing_mandatory_remarks.length} task(s) missing remarks`,
+            );
+          }
+          if (details.missing_mandatory_images?.length) {
+            detailLines.push(
+              `• ${details.missing_mandatory_images.length} task(s) missing images`,
+            );
+          }
+          if (details.missing_before_image) detailLines.push(`• Before photo missing`);
+          if (details.missing_after_image) detailLines.push(`• After photo missing`);
+        }
+        const fullMessage = detailLines.length > 0
+          ? `${apiErrorMessage}\n\n${detailLines.join("\n")}`
+          : apiErrorMessage;
+        Alert.alert("Cannot complete PM", fullMessage);
       } finally {
         setSaving(false);
       }

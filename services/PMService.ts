@@ -84,6 +84,15 @@ const PMService = {
 
   /**
    * Fetch PM instances from API and cache them to local DB.
+   *
+   * `opts.stampSync` (default true) controls whether `cacheManager.write`
+   * bumps the domain `last_synced_at`. SyncEngine's multi-site loop passes
+   * `false` and stamps once at the end, so a per-site failure can't lock
+   * the whole domain "fresh" with a partial pull.
+   *
+   * `opts.throwOnError` (default false) lets the caller distinguish a real
+   * fetch failure from an empty server response — the multi-site loop uses
+   * this to abort and leave the domain eligible for the next sync tick.
    */
   async fetchFromAPI(
     siteCode: string,
@@ -92,7 +101,10 @@ const PMService = {
     fromDate?: string | Date,
     toDate?: string | Date,
     status?: string,
+    opts?: { stampSync?: boolean; throwOnError?: boolean },
   ): Promise<any[]> {
+    const stampSync = opts?.stampSync !== false;
+    const throwOnError = opts?.throwOnError === true;
     try {
       let endpoint = `/api/pm-instances/site/${siteCode}`;
       const params = new URLSearchParams();
@@ -126,6 +138,17 @@ const PMService = {
       if (params.toString()) endpoint += `?${params.toString()}`;
 
       const response = await apiFetch(endpoint);
+      if (!response.ok) {
+        // Surface real failures (auth, 5xx, etc.) to a sync caller that
+        // gates domain freshness on every site succeeding. Otherwise keep
+        // the legacy silent-empty contract that the screen relies on.
+        if (throwOnError) {
+          const err: any = new Error(`pm-instances API ${response.status}`);
+          err.statusCode = response.status;
+          throw err;
+        }
+        return [];
+      }
       const data = await response.json();
 
       if (data.success && data.data?.length > 0) {
@@ -158,7 +181,7 @@ const PMService = {
         const finalRecords = records.filter((r: any) => !pendingIds.includes(r.id));
 
         if (finalRecords.length > 0) {
-          await cacheManager.write("pm_instances", finalRecords);
+          await cacheManager.write("pm_instances", finalRecords, { stampSync });
         }
         
         // Pre-fetch linked checklists
@@ -172,6 +195,7 @@ const PMService = {
       return [];
     } catch (error) {
       logger.error("Failed to fetch PM instances from API", { module: "PM_SERVICE", error, siteCode });
+      if (throwOnError) throw error;
       return [];
     }
   },
@@ -403,6 +427,11 @@ const PMService = {
     if (!localInstance) {
       localInstance = await this.fetchInstanceFromAPI(instanceServerId);
     }
+    // Capture pre-mutation status/completed_on so a server-side rejection on
+    // a Completed-transition can roll the local row back. Without this, the
+    // local cache shows Completed while the server still says In-progress.
+    const previousStatus = localInstance?.status ?? null;
+    const previousCompletedOn = localInstance?.completed_on ?? null;
 
     for (const data of responses) {
       if (data.response_value === undefined) continue;
@@ -509,25 +538,122 @@ const PMService = {
     // Try immediate synchronization
     const netState = await NetInfo.fetch();
     if (netState.isConnected) {
+      // The server validates Completed transitions against its own DB. Any
+      // pm_response_upsert items still queued for this instance must reach
+      // the server first, otherwise validation reports "missing responses"
+      // for the rows the user typed in moments ago while offline.
+      if (options?.status === "Completed") {
+        try {
+          await this.flushPendingResponsesForInstance(instanceServerId);
+        } catch (err) {
+          logger.warn("Pre-completion response flush failed", {
+            module: "PM_SERVICE",
+            instanceId: instanceServerId,
+            error: err,
+          });
+        }
+      }
+
       try {
         const response = await apiFetch(`/api/pm-instances/${instanceServerId}`, {
           method: "PUT",
           body: JSON.stringify(apiPayload),
         });
-        // Only dequeue if the server actually accepted the update.
-        // If we dequeue on failure, fetchFromAPI will overwrite our local
-        // "Completed" with the stale server "In-progress".
         if (response.ok) {
           await cacheManager.dequeue(queueItemId);
         } else {
+          const isCompletionAttempt = options?.status === "Completed";
+          const is4xx = response.status >= 400 && response.status < 500;
+
+          if (isCompletionAttempt && is4xx) {
+            // Server rejected the completion (mandatory field missing,
+            // permission, etc.). Roll back the optimistic local status so
+            // cache and server agree, drop the queued PUT — it would 4xx
+            // every retry until dead-letter — and surface the message so
+            // the caller can show it to the user instead of swallowing it.
+            let errorBody: any = null;
+            try {
+              errorBody = await response.json();
+            } catch {
+              // No JSON body — fall back to a generic message below.
+            }
+
+            // pm_instances.status is NOT NULL — skip the row update if we
+            // never had a previous local row to roll back to. Either way,
+            // dequeue the bad PUT so SyncEngine doesn't burn retries on a
+            // request the server will reject every time.
+            if (previousStatus) {
+              await db
+                .update(pmInstances)
+                .set({
+                  status: previousStatus,
+                  completed_on: previousCompletedOn,
+                  updated_at: Date.now(),
+                })
+                .where(eq(pmInstances.id, instanceServerId));
+            }
+
+            await cacheManager.dequeue(queueItemId);
+
+            const message =
+              errorBody?.error ||
+              "PM completion was rejected by the server.";
+            const err: any = new Error(message);
+            err.name = "PMCompletionBlockedError";
+            err.statusCode = response.status;
+            err.details = errorBody?.details?.validation ?? null;
+            throw err;
+          }
+
           logger.warn("PM instance PUT returned non-OK, keeping in queue", {
             module: "PM_SERVICE",
             status: response.status,
             instanceId: instanceServerId,
           });
         }
-      } catch (err) {
+      } catch (err: any) {
+        if (err?.name === "PMCompletionBlockedError") throw err;
         logger.warn("Immediate PM update failed, staying in queue", { module: "PM_SERVICE", error: err });
+      }
+    }
+  },
+
+  /**
+   * Push any queued pm_response_upsert items for `instanceServerId` to the
+   * server before a completion attempt. Items that POST successfully are
+   * dequeued; failures are left in the queue for SyncEngine to retry on its
+   * next flush.
+   */
+  async flushPendingResponsesForInstance(instanceServerId: string): Promise<void> {
+    const rows = await db
+      .select({ id: offlineQueue.id, payload: offlineQueue.payload })
+      .from(offlineQueue)
+      .where(
+        and(
+          eq(offlineQueue.entity_type, "pm_response_upsert"),
+          eq(offlineQueue.status, "pending"),
+        ),
+      );
+
+    for (const row of rows) {
+      let parsed: any;
+      try {
+        parsed = JSON.parse(row.payload);
+      } catch {
+        continue;
+      }
+      if (parsed?.instance_id !== instanceServerId) continue;
+
+      try {
+        const response = await apiFetch(`/api/pm-response`, {
+          method: "POST",
+          body: JSON.stringify(parsed),
+        });
+        if (response.ok) {
+          await cacheManager.dequeue(row.id);
+        }
+      } catch {
+        // Transient — leave in queue for SyncEngine to retry.
       }
     }
   },
