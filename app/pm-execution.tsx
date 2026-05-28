@@ -170,9 +170,11 @@ const TaskRow = React.memo(
               return (
                 <TouchableOpacity
                   key={opt}
-                  onPress={() =>
-                    onResponseChange(item.id, "response_value", opt)
-                  }
+                  onPress={() => {
+                    if (isCompleted) return;
+                    onResponseChange(item.id, "response_value", opt);
+                  }}
+                  disabled={isCompleted}
                   style={[
                     styles.choiceBtn,
                     showRequiredErrors &&
@@ -192,6 +194,7 @@ const TaskRow = React.memo(
                         : isDark
                           ? "#334155"
                           : "#e2e8f0",
+                      opacity: isCompleted && !selected ? 0.5 : 1,
                     },
                   ]}
                   activeOpacity={0.7}
@@ -220,6 +223,7 @@ const TaskRow = React.memo(
             onChangeText={(val) =>
               onResponseChange(item.id, "response_value", val)
             }
+            editable={!isCompleted}
             placeholder={`Enter ${fieldType.toLowerCase()}...`}
             placeholderTextColor={isDark ? "#64748b" : "#94a3b8"}
             keyboardType={fieldType === "Number" ? "decimal-pad" : "default"}
@@ -239,6 +243,7 @@ const TaskRow = React.memo(
                 borderColor: "#334155",
                 color: "#f8fafc",
               },
+              isCompleted && { opacity: 0.7 },
             ]}
           />
         )}
@@ -256,6 +261,7 @@ const TaskRow = React.memo(
           <TextInput
             value={response?.readings || ""}
             onChangeText={(val) => onResponseChange(item.id, "readings", val)}
+            editable={!isCompleted}
             placeholder={
               readingsRequired
                 ? "Enter readings (required for this task)..."
@@ -303,6 +309,7 @@ const TaskRow = React.memo(
             <View style={styles.imagePickRow}>
               <TouchableOpacity
                 onPress={() => onImageChange(item.id, "CAMERA")}
+                disabled={isCompleted}
                 style={[
                   styles.imageBtn,
                   styles.imageBtnHalf,
@@ -315,12 +322,14 @@ const TaskRow = React.memo(
                     backgroundColor: "#1e293b",
                     borderColor: "#334155",
                   },
+                  isCompleted && { opacity: 0.5 },
                 ]}
               >
                 <Camera size={14} color={isDark ? "#94a3b8" : "#64748b"} />
               </TouchableOpacity>
               <TouchableOpacity
                 onPress={() => onImageChange(item.id, "LIBRARY")}
+                disabled={isCompleted}
                 style={[
                   styles.imageBtn,
                   styles.imageBtnHalf,
@@ -333,6 +342,7 @@ const TaskRow = React.memo(
                     backgroundColor: "#1e293b",
                     borderColor: "#334155",
                   },
+                  isCompleted && { opacity: 0.5 },
                 ]}
               >
                 <ImagePlus size={14} color={isDark ? "#94a3b8" : "#64748b"} />
@@ -347,6 +357,7 @@ const TaskRow = React.memo(
                 onChangeText={(val) =>
                   onResponseChange(item.id, "remarks", val || null)
                 }
+                editable={!isCompleted}
                 placeholder="Add remarks..."
                 placeholderTextColor={isDark ? "#64748b" : "#94a3b8"}
                 style={[
@@ -729,6 +740,8 @@ export default function PMExecutionScreen() {
   // ── Image handler (checklist items): menu, camera, library, or clear ───────
   const handleImageChange = useCallback(
     async (itemId: string, action: ChecklistImageAction) => {
+      // Belt-and-suspenders: refuse all writes while the gate forbids editing.
+      if (!canEdit) return;
       const processPickedUri = async (pickedUri: string) => {
         if (!isConnected) {
           setResponses((prev) => {
@@ -878,7 +891,7 @@ export default function PMExecutionScreen() {
         });
       }
     },
-    [handleSave, isConnected],
+    [handleSave, isConnected, canEdit],
   );
 
   useEffect(() => {
@@ -1039,6 +1052,9 @@ export default function PMExecutionScreen() {
       field: "response_value" | "remarks" | "readings",
       value: string | null,
     ) => {
+      // Belt-and-suspenders: refuse all writes while the gate forbids editing
+      // (locked / read-only). UI also disables the inputs.
+      if (!canEdit) return;
       setResponses((prev) => {
         const next = {
           ...prev,
@@ -1064,7 +1080,7 @@ export default function PMExecutionScreen() {
         return next;
       });
     },
-    [handleSave],
+    [handleSave, canEdit],
   );
 
   // Clean up timer on unmount

@@ -5,6 +5,7 @@ import {
   Alert,
   ActivityIndicator,
   Image,
+  ScrollView,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
@@ -119,19 +120,59 @@ export default function Profile() {
     [refreshProfile, user?.id, user?.user_id],
   );
 
+  const removePhoto = useCallback(async () => {
+    try {
+      setIsUploadingPhoto(true);
+      const response = await apiFetch(
+        `${API_BASE_URL}/api/auth/profile-photo`,
+        {
+          method: "PUT",
+          body: JSON.stringify({ profile_photo_url: null }),
+        },
+      );
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        Alert.alert(
+          "Remove Failed",
+          body?.error || "Couldn't remove your profile picture. Try again.",
+        );
+        return;
+      }
+      await refreshProfile();
+    } catch (err: any) {
+      Alert.alert("Error", err?.message || "Failed to remove profile picture.");
+    } finally {
+      setIsUploadingPhoto(false);
+    }
+  }, [refreshProfile]);
+
   const handlePhotoPress = useCallback(() => {
     if (isUploadingPhoto) return;
-    Alert.alert(
-      "Profile Picture",
-      "Choose a source",
-      [
-        { text: "Take Photo", onPress: () => pickAndUploadPhoto("camera") },
-        { text: "Choose from Gallery", onPress: () => pickAndUploadPhoto("gallery") },
-        { text: "Cancel", style: "cancel" },
-      ],
-      { cancelable: true },
-    );
-  }, [isUploadingPhoto, pickAndUploadPhoto]);
+    const hasPhoto = !!user?.profile_photo_url;
+    const buttons: Parameters<typeof Alert.alert>[2] = [
+      { text: "Take Photo", onPress: () => pickAndUploadPhoto("camera") },
+      { text: "Choose from Gallery", onPress: () => pickAndUploadPhoto("gallery") },
+    ];
+    if (hasPhoto) {
+      buttons.push({
+        text: "Remove Photo",
+        style: "destructive",
+        onPress: () =>
+          Alert.alert(
+            "Remove Profile Picture?",
+            "Your profile picture will be removed.",
+            [
+              { text: "Cancel", style: "cancel" },
+              { text: "Remove", style: "destructive", onPress: removePhoto },
+            ],
+          ),
+      });
+    }
+    buttons.push({ text: "Cancel", style: "cancel" });
+    Alert.alert("Profile Picture", "Choose an option", buttons, {
+      cancelable: true,
+    });
+  }, [isUploadingPhoto, pickAndUploadPhoto, removePhoto, user?.profile_photo_url]);
 
   useEffect(() => {
     refreshProfile();
@@ -396,7 +437,11 @@ export default function Profile() {
         </View>
 
         {/* Menu Items */}
-        <View className="px-5 mb-4">
+        <ScrollView
+          className="flex-1"
+          contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 16 }}
+          showsVerticalScrollIndicator={false}
+        >
           <View
             className="bg-white dark:bg-slate-900 rounded-2xl overflow-hidden"
             style={{
@@ -464,7 +509,7 @@ export default function Profile() {
               </TouchableOpacity>
             ))}
           </View>
-        </View>
+        </ScrollView>
 
         {/* Sign Out */}
         <View className="px-5 mb-4">
