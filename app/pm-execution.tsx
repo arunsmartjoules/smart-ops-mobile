@@ -30,6 +30,7 @@ import * as ImagePicker from "expo-image-picker";
 import PMService from "@/services/PMService";
 import { pmChecklistItems } from "@/database";
 import { useNetworkStatus } from "@/hooks/useNetworkStatus";
+import { useAttendanceGate } from "@/contexts/AttendanceGateContext";
 import SignaturePad from "@/components/SignaturePad";
 import logger from "@/utils/logger";
 import Skeleton from "@/components/Skeleton";
@@ -481,6 +482,7 @@ const ChecklistSkeleton = ({
 export default function PMExecutionScreen() {
   const { instanceId } = useLocalSearchParams<{ instanceId: string }>();
   const { isConnected } = useNetworkStatus();
+  const { canEdit } = useAttendanceGate();
 
   const [instance, setInstance] = useState<any>(null);
   const [checklistItems, setChecklistItems] = useState<PMChecklistItemRow[]>(
@@ -1108,26 +1110,19 @@ export default function PMExecutionScreen() {
       };
     }
 
-    const missingBeforeImage = !instance?.before_image;
-    const missingAfterImage = !instance?.after_image;
-
     return {
       missingResponses,
       missingReadings: Array.from(missingReadingsByTask),
       missingRemarks: Array.from(missingRemarksByTask),
       missingImages: Array.from(missingImagesByTask),
-      missingBeforeImage,
-      missingAfterImage,
       byItemId,
       hasAny:
         missingResponses.length > 0 ||
         missingReadingsByTask.size > 0 ||
         missingRemarksByTask.size > 0 ||
-        missingImagesByTask.size > 0 ||
-        missingBeforeImage ||
-        missingAfterImage,
+        missingImagesByTask.size > 0,
     };
-  }, [checklistItems, instance?.after_image, instance?.before_image, responses]);
+  }, [checklistItems, responses]);
 
   const showCompletionBlockedPopup = useCallback(() => {
     const lines: string[] = [];
@@ -1148,12 +1143,6 @@ export default function PMExecutionScreen() {
       lines.push(
         `- ${missingMandatoryValidation.missingImages.length} task(s) missing mandatory images`,
       );
-    }
-    if (missingMandatoryValidation.missingBeforeImage) {
-      lines.push("- Before image is missing");
-    }
-    if (missingMandatoryValidation.missingAfterImage) {
-      lines.push("- After image is missing");
     }
     Alert.alert(
       "Cannot complete PM",
@@ -1212,7 +1201,7 @@ export default function PMExecutionScreen() {
         onImageChange={handleImageChange}
         onPreview={setPreviewImageUrl}
         isUploading={uploadingItems[item.id]}
-        isCompleted={instance?.status === "Completed"}
+        isCompleted={instance?.status === "Completed" || !canEdit}
         showRequiredErrors={completionAttempted}
         missingEvidenceImage={missingMandatoryValidation.byItemId[item.id]?.missingImage}
         missingRemarks={missingMandatoryValidation.byItemId[item.id]?.missingRemarks}
@@ -1227,6 +1216,7 @@ export default function PMExecutionScreen() {
       handleImageChange,
       uploadingItems,
       instance?.status,
+      canEdit,
       cardBg,
       borderColor,
     ],
@@ -1290,9 +1280,7 @@ export default function PMExecutionScreen() {
   const canComplete =
     total > 0 &&
     answered === total &&
-    missingMeasureReadings.length === 0 &&
-    !!instance?.before_image &&
-    !!instance?.after_image;
+    missingMeasureReadings.length === 0;
 
   if (loading && !instance) {
     return (
@@ -1418,9 +1406,6 @@ export default function PMExecutionScreen() {
               }}
               style={[
                 styles.compactEvidenceBtn,
-                completionAttempted &&
-                  !instance?.before_image &&
-                  (isDark ? styles.requiredFieldBorderDark : styles.requiredFieldBorder),
                 {
                   backgroundColor: isDark ? "#1e293b" : "#f8fafc",
                   borderColor: isDark ? "#334155" : "#e2e8f0",
@@ -1449,9 +1434,6 @@ export default function PMExecutionScreen() {
               >
                 Before
               </Text>
-              {!instance?.before_image && (
-                <Text style={styles.mandatoryDot}>•</Text>
-              )}
             </TouchableOpacity>
 
             <TouchableOpacity
@@ -1471,9 +1453,6 @@ export default function PMExecutionScreen() {
               }}
               style={[
                 styles.compactEvidenceBtn,
-                completionAttempted &&
-                  !instance?.after_image &&
-                  (isDark ? styles.requiredFieldBorderDark : styles.requiredFieldBorder),
                 {
                   backgroundColor: isDark ? "#1e293b" : "#f8fafc",
                   borderColor: isDark ? "#334155" : "#e2e8f0",
@@ -1505,9 +1484,6 @@ export default function PMExecutionScreen() {
               >
                 After
               </Text>
-              {!instance?.after_image && (
-                <Text style={styles.mandatoryDot}>•</Text>
-              )}
             </TouchableOpacity>
           </View>
         </View>
@@ -1538,7 +1514,7 @@ export default function PMExecutionScreen() {
         )}
 
         {/* Footer Actions */}
-        {!isCompleted && (
+        {!isCompleted && canEdit && (
           <View
             style={[
               styles.footer,

@@ -14,6 +14,7 @@ import {
 } from "react-native";
 import { FlashList } from "@shopify/flash-list";
 import { SafeAreaView } from "react-native-safe-area-context";
+import EmptyState from "@/components/EmptyState";
 import { LinearGradient } from "expo-linear-gradient";
 import {
   ArrowLeft,
@@ -443,14 +444,10 @@ export default function AllTasks() {
           // @ts-ignore
           estimatedItemSize={80}
           ListEmptyComponent={
-            <View className="items-center py-12">
-              <Text className="text-slate-400 dark:text-slate-500 text-base">
-                No tasks found
-              </Text>
-              <Text className="text-slate-300 text-sm mt-1">
-                Try adjusting your filters
-              </Text>
-            </View>
+            <EmptyState
+              title="No tasks found"
+              subtitle="Try adjusting your filters"
+            />
           }
         />
       </SafeAreaView>

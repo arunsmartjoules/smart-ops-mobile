@@ -135,6 +135,20 @@ export const apiFetch = async (
       }
     }
 
+    // 403 USER_BLOCKED — an admin has deactivated this account from the
+    // Mobile App admin page. Force the auth context to drop the session so
+    // the next render bounces the user to /sign-in.
+    if (response.status === 403) {
+      try {
+        const body = await response.clone().json();
+        if (body?.code === "USER_BLOCKED") {
+          authEvents.emitUnauthorized("session_revoked");
+        }
+      } catch {
+        // No JSON body — leave the 403 to the caller to handle.
+      }
+    }
+
     // 426 Upgrade Required — the backend version gate has blocked this build.
     // Surface it globally so the full-screen "update required" screen takes
     // over, regardless of which call triggered it.

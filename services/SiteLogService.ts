@@ -24,6 +24,7 @@ import type { TaskItem } from "./SiteConfigService";
 import cacheManager from "./CacheManager";
 import { AttachmentQueueService } from "./AttachmentQueueService";
 import { getISTDateString } from "./AttendanceService";
+import { toIstYmd } from "../utils/istDate";
 
 import { API_BASE_URL } from "../constants/api";
 
@@ -831,26 +832,55 @@ export const SiteLogService: ISiteLogService = {
     );
 
     // Try the immediate POST first. Only enqueue if it fails transiently —
-    // otherwise the queue would re-POST on the next syncNow and the backend
-    // (which generates its own row id and ignores the client's) would create
-    // a duplicate row. Backend 4xx errors are NOT retried because the same
-    // payload would just keep failing.
+    // otherwise the queue would re-POST on the next syncNow and (pre-fix)
+    // duplicate. The backend now honors the client-supplied id (validation
+    // schema accepts it) and is idempotent via ON CONFLICT (id) DO NOTHING,
+    // so a retried POST returns the same row instead of creating another.
+    // 4xx errors are still not retried because the same payload keeps failing.
     let shouldRetryFromQueue = false;
+    let serverId: string | undefined;
     try {
       const response = await apiFetch("/api/chiller-readings", {
         method: "POST",
         body: JSON.stringify(record),
       });
-      if (!response.ok) {
-        if (response.status >= 500) {
-          shouldRetryFromQueue = true;
-        } else {
-          const text = await response.text().catch(() => "");
-          logger.warn(
-            `saveChillerReading: backend ${response.status}: ${text.slice(0, 200)}`,
-            { module: "SITE_LOG_SERVICE", id: record.id },
-          );
+      if (response.ok) {
+        // Reconcile: if the server (older deploy) ignored our id and assigned
+        // its own, rewrite the local row's id so subsequent PUTs target the
+        // row the server knows about. Without this, every later update PUT
+        // /api/chiller-readings/<localId> would 404 silently and the row
+        // would stay stuck in its initial state on the server.
+        try {
+          const body = await response.json();
+          const returnedId =
+            body?.data?.id ?? body?.id ?? undefined;
+          if (returnedId && returnedId !== record.id) {
+            await db
+              .update(chillerReadings)
+              .set({ id: returnedId, updated_at: Date.now() })
+              .where(eq(chillerReadings.id, record.id));
+            serverId = returnedId;
+            logger.info("saveChillerReading: reconciled local id with server", {
+              module: "SITE_LOG_SERVICE",
+              localId: record.id,
+              serverId: returnedId,
+            });
+          }
+        } catch (parseErr: any) {
+          logger.warn("saveChillerReading: could not parse create response", {
+            module: "SITE_LOG_SERVICE",
+            id: record.id,
+            error: parseErr?.message,
+          });
         }
+      } else if (response.status >= 500) {
+        shouldRetryFromQueue = true;
+      } else {
+        const text = await response.text().catch(() => "");
+        logger.warn(
+          `saveChillerReading: backend ${response.status}: ${text.slice(0, 200)}`,
+          { module: "SITE_LOG_SERVICE", id: record.id },
+        );
       }
     } catch (err: any) {
       shouldRetryFromQueue = true;
@@ -869,6 +899,17 @@ export const SiteLogService: ISiteLogService = {
       });
     }
 
+    // Return the row by whatever id it now lives under (reconciled or original)
+    // so the caller's currentReadingRef points at a row the server also knows.
+    const finalId = serverId ?? record.id;
+    if (serverId) {
+      const [updated] = await db
+        .select()
+        .from(chillerReadings)
+        .where(eq(chillerReadings.id, finalId))
+        .limit(1);
+      return updated ?? { ...record, id: finalId };
+    }
     return record;
   },
 
@@ -983,22 +1024,60 @@ export const SiteLogService: ISiteLogService = {
       },
     );
 
-    // Enqueue for offline sync
-    await cacheManager.enqueue({
-      entity_type: "chiller_reading_update",
-      operation: "update",
-      payload: { id, ...updateFields },
-    });
-
-    // Best-effort API call
+    // Try the immediate PUT first; only enqueue if it fails transiently.
+    // Pre-fix this always enqueued AND fired, and a 404 (id the server
+    // doesn't know about) was silently ignored — the user's values appeared
+    // saved locally but the server row never changed, leaving the reading
+    // stuck Inprogress when reopened from server-pulled history.
+    let shouldRetryFromQueue = false;
     try {
-      await apiFetch(`/api/chiller-readings/${id}`, {
+      const response = await apiFetch(`/api/chiller-readings/${id}`, {
         method: "PUT",
         body: JSON.stringify(updateFields),
       });
-    } catch {
-      logger.debug("updateChillerReading: API call failed, will sync later", {
+      if (!response.ok) {
+        if (response.status === 404) {
+          // The server has no row with this id — almost certainly an
+          // orphan from before the id-reconciliation fix. Retrying with
+          // the same payload will keep 404'ing, so don't enqueue. Surface
+          // it so the caller can decide (typically: recreate the row).
+          const text = await response.text().catch(() => "");
+          logger.warn(
+            `updateChillerReading: 404 — server has no row ${id}; not enqueueing retry`,
+            { module: "SITE_LOG_SERVICE", body: text.slice(0, 200) },
+          );
+          throw new Error(`Chiller reading ${id} not found on server (404)`);
+        }
+        if (response.status >= 500) {
+          shouldRetryFromQueue = true;
+        } else {
+          const text = await response.text().catch(() => "");
+          logger.warn(
+            `updateChillerReading: backend ${response.status}: ${text.slice(0, 200)}`,
+            { module: "SITE_LOG_SERVICE", id },
+          );
+        }
+      }
+    } catch (err: any) {
+      // Only treat true network errors as retryable. The 404 throw above
+      // intentionally falls through here, but we re-throw it instead of
+      // enqueueing so the caller surfaces it to the user.
+      if (err?.message?.includes("not found on server (404)")) {
+        throw err;
+      }
+      shouldRetryFromQueue = true;
+      logger.debug("updateChillerReading: network error, queuing for retry", {
         module: "SITE_LOG_SERVICE",
+        id,
+        error: err?.message,
+      });
+    }
+
+    if (shouldRetryFromQueue) {
+      await cacheManager.enqueue({
+        entity_type: "chiller_reading_update",
+        operation: "update",
+        payload: { id, ...updateFields },
       });
     }
 
@@ -1289,12 +1368,13 @@ export const SiteLogService: ISiteLogService = {
 
         // 2. Upsert all server logs via CacheManager (Req 1.6, 10.4)
         const normalizedLogs = serverLogs.map((serverLog: any) => {
-          let scheduledDate: string | null = null;
-          if (serverLog.scheduled_date) {
-            // Server DATE column is returned as a midnight-UTC ISO instant;
-            // render it as the IST calendar day (centralised, DST-free).
-            scheduledDate = getISTDateString(new Date(serverLog.scheduled_date));
-          }
+          // Server DATE columns come back as "YYYY-MM-DD" strings via the
+          // shared pg type parser; toIstYmd takes that fast path verbatim and
+          // only invokes `new Date(...)` when the value is actually a
+          // timestamp. This avoids the Hermes/non-IST device bug where
+          // round-tripping "2026-06-01" through `new Date()` produces a
+          // May 31 IST instant on some phones.
+          const scheduledDate: string | null = toIstYmd(serverLog.scheduled_date);
 
           const safeParseFloat = (val: any) => {
             if (val === null || val === undefined || val === "") return null;
@@ -1939,14 +2019,7 @@ export const SiteLogService: ISiteLogService = {
     }
     result.serverFound = serverRows.length;
 
-    const serverDateOnly = (raw: any): string | null => {
-      if (!raw) return null;
-      if (typeof raw === "string" && /^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
-      const d = new Date(raw);
-      if (isNaN(d.getTime())) return null;
-      // Server returns DATE as midnight-UTC; render as the IST calendar day.
-      return getISTDateString(d);
-    };
+    const serverDateOnly = (raw: any): string | null => toIstYmd(raw);
     const contentKey = (logNameVal: string | null, scheduledDate: string | null, taskName: string | null) =>
       `${(logNameVal || "").toLowerCase().trim()}|${scheduledDate || ""}|${(taskName || "").toLowerCase().trim()}`;
 

@@ -7,6 +7,7 @@ import { AttachmentQueueService } from "./AttachmentQueueService";
 import logger from "../utils/logger";
 import { API_BASE_URL } from "../constants/api";
 import NetInfo from "@react-native-community/netinfo";
+import { toIstDayMs } from "../utils/istDate";
 
 const BACKEND_URL = API_BASE_URL;
 
@@ -139,10 +140,7 @@ const PMService = {
           status: inst.status || "",
           progress: inst.progress || "0/0",
           assigned_to_name: inst.assigned_to_name || null,
-          start_due_date: (() => {
-            const d = new Date(inst.start_due_date);
-            return isNaN(d.getTime()) ? null : d.getTime();
-          })(),
+          start_due_date: toIstDayMs(inst.start_due_date),
           maintenance_id: inst.maintenance_id || inst.checklist_id || null,
           client_sign: inst.client_sign || null,
           before_image: inst.before_image || null,
@@ -261,10 +259,7 @@ const PMService = {
           status: inst.status || "",
           progress: inst.progress || "0/0",
           assigned_to_name: inst.assigned_to_name || null,
-          start_due_date: (() => {
-            const d = new Date(inst.start_due_date);
-            return isNaN(d.getTime()) ? null : d.getTime();
-          })(),
+          start_due_date: toIstDayMs(inst.start_due_date),
           maintenance_id: inst.maintenance_id || inst.checklist_id || null,
           client_sign: inst.client_sign || null,
           before_image: inst.before_image || null,

@@ -110,6 +110,61 @@ export const istDayStartMs = (input?: DateInput): number =>
 export const istDayEndMs = (input?: DateInput): number =>
   istDayEndMsFromYmd(istDateString(input)) ?? NaN;
 
+/**
+ * Parse a server-shaped date value to an epoch ms anchored to IST.
+ *
+ * Use this in place of `new Date(value).getTime()` whenever the server sends a
+ * calendar date (Postgres DATE → "YYYY-MM-DD" string). `new Date("2026-06-01")`
+ * is engine- and timezone-sensitive: spec says UTC midnight, Hermes has
+ * historically parsed date-only strings as *local* midnight, and even
+ * spec-compliant engines collapse to the wrong IST calendar day on devices
+ * whose offset is ahead of UTC+05:30 — landing the resulting epoch ms inside
+ * the previous IST day's [start, end] window. That is the failure mode behind
+ * the Sunshine "Jun 1 leaking into May filter, displayed as May 31" PM bug.
+ *
+ * - "YYYY-MM-DD" → IST 00:00 ms of that calendar day (no `new Date` round-trip)
+ * - ISO timestamp / number / Date → as parsed (already an instant, not a date)
+ * - null / undefined / empty / invalid → null
+ */
+export const toIstDayMs = (input?: DateInput): number | null => {
+  if (input == null || input === "") return null;
+  if (typeof input === "number") return Number.isFinite(input) ? input : null;
+  if (input instanceof Date) {
+    const t = input.getTime();
+    return Number.isNaN(t) ? null : t;
+  }
+  if (typeof input === "string") {
+    const ymd = istDayStartMsFromYmd(input);
+    if (ymd != null) return ymd;
+    const d = new Date(input);
+    return Number.isNaN(d.getTime()) ? null : d.getTime();
+  }
+  return null;
+};
+
+/**
+ * Coerce a server-shaped date value to a "YYYY-MM-DD" IST calendar day string.
+ *
+ * Companion to {@link toIstDayMs} for stored-as-string columns (site_logs
+ * `scheduled_date`, etc.). Same reason: never round-trip a date-only string
+ * through `new Date(string)`, which on Hermes / non-IST devices can roll the
+ * calendar day backward and produce e.g. "2026-05-31" for a server value of
+ * "2026-06-01".
+ *
+ * - "YYYY-MM-DD" → returned verbatim (fast path)
+ * - ISO timestamp / number / Date → converted to the IST calendar day
+ * - null / undefined / empty / invalid → null
+ */
+export const toIstYmd = (input?: DateInput): string | null => {
+  if (input == null || input === "") return null;
+  if (typeof input === "string" && /^\d{4}-\d{2}-\d{2}$/.test(input)) return input;
+  if (typeof input === "string" || typeof input === "number" || input instanceof Date) {
+    const d = input instanceof Date ? input : new Date(input);
+    return Number.isNaN(d.getTime()) ? null : istDateString(d);
+  }
+  return null;
+};
+
 /** ISO instant (UTC, for the wire) at IST 00:00 of the given day. */
 export const istDayStartIso = (ymd: string | null | undefined): string | undefined => {
   const ms = istDayStartMsFromYmd(ymd);

@@ -22,11 +22,19 @@ import {
 import SiteLogService from "@/services/SiteLogService";
 import { formatAssignee } from "@/utils/assignee";
 import { useAuth } from "@/contexts/AuthContext";
+import { useAttendanceGate } from "@/contexts/AttendanceGateContext";
+import { ViewOnlyEntryNotice } from "@/components/ViewOnlyEntryNotice";
 import * as ImagePicker from "expo-image-picker";
 import { StorageService } from "@/services/StorageService";
 import SignaturePad from "@/components/SignaturePad";
 
 export default function TempRHEntry() {
+  const { canEdit } = useAttendanceGate();
+  if (!canEdit) return <ViewOnlyEntryNotice what="temperature and RH readings" />;
+  return <TempRHEntryContent />;
+}
+
+function TempRHEntryContent() {
   const { user } = useAuth();
   const params = useLocalSearchParams<{
     id?: string;

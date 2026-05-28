@@ -10,6 +10,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { router } from "expo-router";
 import { useAuth } from "@/contexts/AuthContext";
+import { useAttendanceGate } from "@/contexts/AttendanceGateContext";
 import { useAutoSync } from "@/hooks/useAutoSync";
 import siteLogService from "@/services/SiteLogService";
 import { SiteConfigService } from "@/services/SiteConfigService";
@@ -35,9 +36,12 @@ import { setRouteParams } from "@/utils/routeParams";
 import { startOfDay, endOfDay, addDays } from "date-fns";
 import loggerUtil from "@/utils/logger";
 import Skeleton from "@/components/Skeleton";
+import * as Haptics from "expo-haptics";
+import PressableScale from "@/components/PressableScale";
 
 export default function SiteLogs() {
   const { user } = useAuth();
+  const { canEdit } = useAttendanceGate();
   const isDark = useColorScheme() === "dark";
   const [loading, setLoading] = useState(true);
   const [logProgress, setLogProgress] = useState<
@@ -478,6 +482,7 @@ export default function SiteLogs() {
 
                   const onStart = () => {
                     if (!siteCode) return;
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
 
                     // Non-blocking targeted prefetch for Start flow.
                     void siteLogService
@@ -685,22 +690,23 @@ export default function SiteLogs() {
                           </Text>
                         </TouchableOpacity>
 
-                        <TouchableOpacity
-                          onPress={onStart}
-                          activeOpacity={0.85}
-                          className="flex-1 h-9 rounded-lg flex-row items-center justify-center"
-                          style={{ backgroundColor: item.colors[0] }}
-                        >
-                          <Plus
-                            size={13}
-                            color="white"
-                            strokeWidth={2.6}
-                            style={{ marginRight: 5 }}
-                          />
-                          <Text className="text-white font-bold text-xs">
-                            {completed > 0 ? "Continue" : "Start"}
-                          </Text>
-                        </TouchableOpacity>
+                        {canEdit && (
+                          <PressableScale
+                            onPress={onStart}
+                            className="flex-1 h-9 rounded-lg flex-row items-center justify-center"
+                            style={{ backgroundColor: item.colors[0] }}
+                          >
+                            <Plus
+                              size={13}
+                              color="white"
+                              strokeWidth={2.6}
+                              style={{ marginRight: 5 }}
+                            />
+                            <Text className="text-white font-bold text-xs">
+                              {completed > 0 ? "Continue" : "Start"}
+                            </Text>
+                          </PressableScale>
+                        )}
                       </View>
                     </View>
                   );
@@ -847,6 +853,7 @@ export default function SiteLogs() {
                   <TouchableOpacity
                     key={shift.value}
                     onPress={() => {
+                      Haptics.selectionAsync().catch(() => {});
                       setShiftModalVisible(false);
                       setRouteParams("/temp-rh", {
                         siteCode,

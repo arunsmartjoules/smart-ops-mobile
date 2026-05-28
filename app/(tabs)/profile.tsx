@@ -4,12 +4,17 @@ import {
   TouchableOpacity,
   Alert,
   ActivityIndicator,
+  Image,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
+import * as ImagePicker from "expo-image-picker";
 import { useAuth } from "@/contexts/AuthContext";
 import { useTheme } from "@/contexts/ThemeContext";
 import UpdateService from "@/services/UpdateService";
+import { StorageService } from "@/services/StorageService";
+import { apiFetch } from "@/utils/apiHelper";
+import { API_BASE_URL } from "@/constants/api";
 import {
   Mail,
   User as UserIcon,
@@ -24,6 +29,8 @@ import {
   Monitor,
   ArrowUpCircle,
   Info,
+  MessageSquareWarning,
+  Camera,
 } from "lucide-react-native";
 import { router } from "expo-router";
 import { useState, useCallback, useEffect } from "react";
@@ -36,15 +43,116 @@ export default function Profile() {
 
   const [isCheckingUpdates, setIsCheckingUpdates] = useState(false);
   const [updateAvailable, setUpdateAvailable] = useState(false);
+  const [isSigningOut, setIsSigningOut] = useState(false);
+  const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
+
+  const pickAndUploadPhoto = useCallback(
+    async (source: "camera" | "gallery") => {
+      try {
+        const permission =
+          source === "camera"
+            ? await ImagePicker.requestCameraPermissionsAsync()
+            : await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (!permission.granted) {
+          Alert.alert(
+            "Permission Required",
+            `Please grant ${source === "camera" ? "camera" : "gallery"} access to set a profile picture.`,
+          );
+          return;
+        }
+
+        const result =
+          source === "camera"
+            ? await ImagePicker.launchCameraAsync({
+                mediaTypes: "images",
+                allowsEditing: true,
+                aspect: [1, 1],
+                quality: 0.6,
+              })
+            : await ImagePicker.launchImageLibraryAsync({
+                mediaTypes: "images",
+                allowsEditing: true,
+                aspect: [1, 1],
+                quality: 0.6,
+              });
+
+        if (result.canceled || !result.assets?.[0]?.uri) return;
+
+        setIsUploadingPhoto(true);
+        const uri = result.assets[0].uri;
+        const userKey = user?.user_id || user?.id || "unknown";
+        const remotePath = `profile_photos/${userKey}/${Date.now()}.jpg`;
+        const publicUrl = await StorageService.uploadFile(
+          "jouleops-attachments",
+          remotePath,
+          uri,
+        );
+        if (!publicUrl) {
+          Alert.alert("Upload Failed", "Could not upload the picture. Try again.");
+          return;
+        }
+
+        const response = await apiFetch(
+          `${API_BASE_URL}/api/auth/profile-photo`,
+          {
+            method: "PUT",
+            body: JSON.stringify({ profile_photo_url: publicUrl }),
+          },
+        );
+        if (!response.ok) {
+          const body = await response.json().catch(() => ({}));
+          Alert.alert(
+            "Save Failed",
+            body?.error ||
+              "Picture uploaded but couldn't be saved to your profile.",
+          );
+          return;
+        }
+
+        await refreshProfile();
+      } catch (err: any) {
+        Alert.alert("Error", err?.message || "Failed to update profile picture.");
+      } finally {
+        setIsUploadingPhoto(false);
+      }
+    },
+    [refreshProfile, user?.id, user?.user_id],
+  );
+
+  const handlePhotoPress = useCallback(() => {
+    if (isUploadingPhoto) return;
+    Alert.alert(
+      "Profile Picture",
+      "Choose a source",
+      [
+        { text: "Take Photo", onPress: () => pickAndUploadPhoto("camera") },
+        { text: "Choose from Gallery", onPress: () => pickAndUploadPhoto("gallery") },
+        { text: "Cancel", style: "cancel" },
+      ],
+      { cancelable: true },
+    );
+  }, [isUploadingPhoto, pickAndUploadPhoto]);
 
   useEffect(() => {
     refreshProfile();
   }, [refreshProfile]);
 
   const handleLogout = useCallback(async () => {
-    await signOut();
-    router.replace("/sign-in");
-  }, [signOut]);
+    if (isSigningOut) return;
+    setIsSigningOut(true);
+    try {
+      await signOut();
+      router.replace("/sign-in");
+    } catch (err: any) {
+      Alert.alert(
+        "Can't sign out yet",
+        err?.message ||
+          "Some of your changes haven't synced. Check your connection and try again.",
+      );
+    } finally {
+      setIsSigningOut(false);
+    }
+  }, [signOut, isSigningOut]);
 
   const handleCheckUpdates = useCallback(async () => {
     setIsCheckingUpdates(true);
@@ -116,6 +224,7 @@ export default function Profile() {
     { icon: Bell, label: "Notifications", color: "#3b82f6" },
     { icon: Shield, label: "Change Password", color: "#22c55e" },
     { icon: Settings, label: "Offline & Sync", color: "#64748b" },
+    { icon: MessageSquareWarning, label: "Report an Issue", color: "#f97316" },
     {
       icon: theme === "light" ? Sun : theme === "dark" ? Moon : Monitor,
       label: "Appearance",
@@ -160,18 +269,58 @@ export default function Profile() {
             }}
           >
             <View className="flex-row items-center">
-              <LinearGradient
-                colors={["#dc2626", "#b91c1c"]}
-                style={{
-                  width: 64,
-                  height: 64,
-                  borderRadius: 32,
-                  alignItems: "center",
-                  justifyContent: "center",
-                }}
+              <TouchableOpacity
+                onPress={handlePhotoPress}
+                disabled={isUploadingPhoto}
+                activeOpacity={0.85}
+                accessibilityLabel="Change profile picture"
+                style={{ width: 64, height: 64 }}
               >
-                <UserIcon size={28} color="white" />
-              </LinearGradient>
+                {user?.profile_photo_url ? (
+                  <Image
+                    source={{ uri: user.profile_photo_url }}
+                    style={{
+                      width: 64,
+                      height: 64,
+                      borderRadius: 32,
+                    }}
+                  />
+                ) : (
+                  <LinearGradient
+                    colors={["#dc2626", "#b91c1c"]}
+                    style={{
+                      width: 64,
+                      height: 64,
+                      borderRadius: 32,
+                      alignItems: "center",
+                      justifyContent: "center",
+                    }}
+                  >
+                    <UserIcon size={28} color="white" />
+                  </LinearGradient>
+                )}
+                <View
+                  style={{
+                    position: "absolute",
+                    right: -2,
+                    bottom: -2,
+                    width: 22,
+                    height: 22,
+                    borderRadius: 11,
+                    backgroundColor: "#dc2626",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    borderWidth: 2,
+                    borderColor: "white",
+                  }}
+                >
+                  {isUploadingPhoto ? (
+                    <ActivityIndicator size="small" color="white" />
+                  ) : (
+                    <Camera size={12} color="white" />
+                  )}
+                </View>
+              </TouchableOpacity>
               <View className="ml-4 flex-1">
                 <Text className="text-slate-900 dark:text-slate-50 text-lg font-bold">
                   {user?.full_name || user?.name || "Team Member"}
@@ -268,6 +417,8 @@ export default function Profile() {
                     router.push("/privacy-security");
                   } else if (item.label === "Offline & Sync") {
                     router.push("/app-settings");
+                  } else if (item.label === "Report an Issue") {
+                    router.push("/report-issue");
                   } else if (item.label === "Check for Updates") {
                     handleCheckUpdates();
                   } else if (item.label === "Appearance") {
@@ -319,6 +470,7 @@ export default function Profile() {
         <View className="px-5 mb-4">
           <TouchableOpacity
             onPress={handleLogout}
+            disabled={isSigningOut}
             className="bg-red-50 rounded-2xl p-3.5 flex-row items-center justify-center"
             style={{
               shadowColor: "#ef4444",
@@ -326,12 +478,24 @@ export default function Profile() {
               shadowOpacity: 0.1,
               shadowRadius: 8,
               elevation: 2,
+              opacity: isSigningOut ? 0.7 : 1,
             }}
           >
-            <LogOut size={18} color="#dc2626" />
-            <Text className="text-red-600 font-semibold ml-2 text-sm">
-              Sign Out
-            </Text>
+            {isSigningOut ? (
+              <>
+                <ActivityIndicator size="small" color="#dc2626" />
+                <Text className="text-red-600 font-semibold ml-2 text-sm">
+                  Syncing your changes…
+                </Text>
+              </>
+            ) : (
+              <>
+                <LogOut size={18} color="#dc2626" />
+                <Text className="text-red-600 font-semibold ml-2 text-sm">
+                  Sign Out
+                </Text>
+              </>
+            )}
           </TouchableOpacity>
         </View>
       </SafeAreaView>

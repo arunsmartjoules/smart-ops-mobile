@@ -10,8 +10,6 @@ import {
   Text,
   TouchableOpacity,
   ActivityIndicator,
-  FlatList,
-  ListRenderItem,
   StyleSheet,
   ScrollView,
   RefreshControl,
@@ -21,8 +19,12 @@ import {
   Image,
   Alert,
 } from "react-native";
+import { FlashList, type ListRenderItem } from "@shopify/flash-list";
+import EmptyState from "@/components/EmptyState";
+import * as Haptics from "expo-haptics";
 import * as ImagePicker from "expo-image-picker";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { useAttendanceGate } from "@/contexts/AttendanceGateContext";
 import {
   ListChecks,
   Wrench,
@@ -50,7 +52,7 @@ import { AttendanceService, type Site } from "@/services/AttendanceService";
 import { useSites } from "@/hooks/useSites";
 import { db, pmInstances } from "@/database";
 import { eq } from "drizzle-orm";
-import { addDays, parseISO, isValid } from "date-fns";
+import { addDays, isValid } from "date-fns";
 import {
   istDateString,
   istTodayString,
@@ -58,6 +60,7 @@ import {
   istDayStartMsFromYmd,
   istDayEndMsFromYmd,
   formatIST,
+  toIstDayMs,
 } from "@/utils/istDate";
 import AdvancedFilterModal from "@/components/AdvancedFilterModal";
 import QRScannerModal, { type QRScannerRef } from "@/components/QRScannerModal";
@@ -79,22 +82,19 @@ const IST_PATTERN_OPTS: Record<string, Intl.DateTimeFormatOptions> = {
 };
 
 const safeFormat = (date: any, formatStr: string) => {
-  if (!date) return "N/A";
-  let d: Date;
-  if (date instanceof Date) {
-    d = date;
-  } else if (typeof date === "number") {
-    d = new Date(date);
-  } else if (typeof date === "string") {
-    if (/^\d+$/.test(date)) {
-      d = new Date(parseInt(date, 10));
-    } else {
-      d = parseISO(date);
-    }
+  if (date == null || date === "") return "N/A";
+  // Route everything through toIstDayMs so a "YYYY-MM-DD" string anchors to IST
+  // 00:00 (not device-local midnight). parseISO/new Date on a date-only string
+  // is timezone-sensitive and can roll the calendar day backward on devices
+  // east of IST — same root cause as the filter-side leak.
+  let ms: number | null;
+  if (typeof date === "string" && /^\d+$/.test(date)) {
+    ms = parseInt(date, 10);
   } else {
-    d = new Date(date);
+    ms = toIstDayMs(date);
   }
-
+  if (ms == null) return "Invalid Date";
+  const d = new Date(ms);
   if (!isValid(d)) return "Invalid Date";
   return formatIST(d, IST_PATTERN_OPTS[formatStr] || IST_PATTERN_OPTS["d MMM yyyy"]);
 };
@@ -176,7 +176,7 @@ const PMCard = React.memo(
       <TouchableOpacity
         onPress={onPress}
         activeOpacity={0.7}
-        className="bg-white dark:bg-slate-900 mb-2.5 border border-slate-200 dark:border-slate-800 rounded-2xl p-3"
+        className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-3"
         style={{
           shadowColor: "#000",
           shadowOffset: { width: 0, height: 2 },
@@ -361,6 +361,7 @@ StatCard.displayName = "StatCard";
 // ─── Main Screen ───────────────────────────────────────────────────────────────
 export default function PreventiveMaintenance() {
   const { user } = useAuth();
+  const { canEdit } = useAttendanceGate();
   const { isConnected } = useNetworkStatus();
   const isDark = useColorScheme() === "dark";
 
@@ -655,12 +656,47 @@ export default function PreventiveMaintenance() {
     //    The column compared depends on the selected date field.
     const startRange = istDayStartMsFromYmd(currentDate) ?? 0;
     const endRange = istDayEndMsFromYmd(toDate) ?? Number.MAX_SAFE_INTEGER;
+    // TEMP DIAGNOSTIC: log the active range and any item that would be
+    // shown but falls outside it. Remove once the Sunshine "June leaking
+    // into May filter" bug is root-caused.
+    logger.debug("pm-filter range", {
+      currentDate,
+      toDate,
+      dateField,
+      startRange,
+      endRange,
+      preDateCount: list.length,
+    });
     list = list.filter((i) => {
       const dateVal =
         dateField === "completed_date" ? i.completed_on : i.start_due_date;
-      if (!dateVal) return false;
+      if (!dateVal) {
+        logger.debug("pm-filter drop:null", {
+          id: i.id,
+          title: i.title,
+          dateField,
+          raw_start_due_date: i.start_due_date,
+          raw_completed_on: i.completed_on,
+        });
+        return false;
+      }
       const ts = new Date(dateVal).getTime();
-      return ts >= startRange && ts <= endRange;
+      const inRange = ts >= startRange && ts <= endRange;
+      // Loud log for the actual smoking gun: an item that PASSES the
+      // filter while its displayed Due date is outside the chosen range.
+      const displayed = safeFormat(i.start_due_date, "d MMM yyyy");
+      if (inRange) {
+        logger.debug("pm-filter keep", {
+          id: i.id,
+          title: i.title,
+          dateField,
+          raw: dateVal,
+          rawType: typeof dateVal,
+          ts,
+          displayed,
+        });
+      }
+      return inRange;
     });
     return list;
   }, [
@@ -721,12 +757,21 @@ export default function PreventiveMaintenance() {
   }, [allInstances, currentDate, toDate, serverStats, dateField]);
 
   const handlePMCardPress = useCallback((instance: PMInstanceRow) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     const normalizedStatus = (instance.status || "").toLowerCase();
     const isNotStarted =
       normalizedStatus === "pending" ||
       normalizedStatus === "open" ||
       normalizedStatus === "";
     if (isNotStarted) {
+      if (!canEdit) {
+        // Read-only mode: nothing to view yet for an un-started PM.
+        Alert.alert(
+          "Read-only mode",
+          "This PM hasn't been started. Start your day to begin it.",
+        );
+        return;
+      }
       // Not started yet: capture the before-image and stamp the start time
       // in a modal before entering the execution screen. Assignment is
       // stamped there, on confirm — see handleConfirmStart.
@@ -743,7 +788,7 @@ export default function PreventiveMaintenance() {
       pathname: "/pm-execution",
       params: { instanceId: instance.id },
     });
-  }, []);
+  }, [canEdit]);
 
   const pickStartBeforeImage = useCallback(
     async (source: "camera" | "library") => {
@@ -807,7 +852,7 @@ export default function PreventiveMaintenance() {
   }, [starting]);
 
   const handleConfirmStart = useCallback(async () => {
-    if (!startModalInstance || !startBeforeImage || starting) return;
+    if (!startModalInstance || starting) return;
     setStarting(true);
     try {
       // The operator who starts the PM becomes its assignee. This is the
@@ -871,49 +916,55 @@ export default function PreventiveMaintenance() {
 
   const renderItem: ListRenderItem<PMInstanceRow> = useCallback(
     ({ item }) => (
-      <PMCard
-        instance={item}
-        onPress={() => handlePMCardPress(item)}
-        showCompletedDate={
-          statusFilter === "Completed" || dateField === "completed_date"
-        }
-      />
+      <View style={{ paddingBottom: 10 }}>
+        <PMCard
+          instance={item}
+          onPress={() => handlePMCardPress(item)}
+          showCompletedDate={
+            statusFilter === "Completed" || dateField === "completed_date"
+          }
+        />
+      </View>
     ),
     [handlePMCardPress, statusFilter, dateField],
   );
 
   const keyExtractor = useCallback((item: PMInstanceRow) => item.id, []);
 
+  const getItemType = useCallback((item: PMInstanceRow) => {
+    const assigned = item.assigned_to_name ? "a" : "u";
+    const done = item.completed_on ? "d" : "p";
+    return `${assigned}${done}`;
+  }, []);
+
   const ListEmpty = useMemo(
     () => (
-      <View style={styles.emptyState}>
-        <View style={styles.emptyIcon}>
-          <Wrench size={32} color="#cbd5e1" />
-        </View>
-        <Text style={styles.emptyTitle}>
-          {allInstances.length > 0
+      <EmptyState
+        icon={Wrench}
+        title={
+          allInstances.length > 0
             ? `Hidden by Filters (${allInstances.length} Tasks)`
-            : "No PM tasks found"}
-        </Text>
-        <Text style={styles.emptyBody}>
-          {allInstances.length > 0
+            : "No PM tasks found"
+        }
+        subtitle={
+          allInstances.length > 0
             ? "Try adjusting your filters"
-            : "No PM tasks found"}
-        </Text>
-        {isConnected && !siteCode && (
-          <TouchableOpacity
-            onPress={async () => {
-              await refreshSites();
-              if (selectedSite?.site_code) {
-                loadPMData(true, 0, false);
+            : undefined
+        }
+        action={
+          isConnected && !siteCode
+            ? {
+                label: "Retry Server Sync",
+                onPress: async () => {
+                  await refreshSites();
+                  if (selectedSite?.site_code) {
+                    loadPMData(true, 0, false);
+                  }
+                },
               }
-            }}
-            className="mt-3 bg-red-600 px-4 py-2 rounded-xl"
-          >
-            <Text className="text-white font-bold">Retry Server Sync</Text>
-          </TouchableOpacity>
-        )}
-      </View>
+            : undefined
+        }
+      />
     ),
     [
       allInstances.length,
@@ -1102,10 +1153,11 @@ export default function PreventiveMaintenance() {
         {loading && allInstances.length === 0 ? (
           <PMSkeleton />
         ) : (
-          <FlatList
+          <FlashList
             data={filteredInstances}
             renderItem={renderItem}
             keyExtractor={keyExtractor}
+            getItemType={getItemType}
             ListEmptyComponent={ListEmpty}
             onEndReached={handleLoadMore}
             onEndReachedThreshold={0.5}
@@ -1120,7 +1172,6 @@ export default function PreventiveMaintenance() {
             }
             contentContainerStyle={styles.listContent}
             showsVerticalScrollIndicator={false}
-            removeClippedSubviews={false}
           />
         )}
 
@@ -1204,7 +1255,7 @@ export default function PreventiveMaintenance() {
                   { color: isDark ? "#cbd5e1" : "#475569" },
                 ]}
               >
-                Before Photo <Text style={{ color: "#ef4444" }}>*</Text>
+                Before Photo
               </Text>
 
               <TouchableOpacity
@@ -1262,7 +1313,7 @@ export default function PreventiveMaintenance() {
                     marginTop: 6,
                   }}
                 >
-                  A before photo is required to start this PM.
+                  Optional — you can add a before photo now or skip and start the PM.
                 </Text>
               )}
 
@@ -1290,12 +1341,11 @@ export default function PreventiveMaintenance() {
                 </TouchableOpacity>
                 <TouchableOpacity
                   onPress={handleConfirmStart}
-                  disabled={!startBeforeImage || starting}
+                  disabled={starting}
                   style={[
                     styles.startBtn,
                     {
-                      backgroundColor:
-                        !startBeforeImage || starting ? "#93c5fd" : "#2563eb",
+                      backgroundColor: starting ? "#93c5fd" : "#2563eb",
                     },
                   ]}
                 >

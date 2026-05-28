@@ -4,13 +4,15 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
-  FlatList,
   RefreshControl,
   Dimensions,
   Alert,
   useColorScheme,
 } from "react-native";
+import { FlashList } from "@shopify/flash-list";
 import { SafeAreaView } from "react-native-safe-area-context";
+import EmptyState from "@/components/EmptyState";
+import { useAttendanceGate } from "@/contexts/AttendanceGateContext";
 import * as Haptics from "expo-haptics";
 import {
   Ticket as TicketIcon,
@@ -146,6 +148,7 @@ const normalizeRealtimeTicket = (source: any): Ticket => ({
 });
 
 export default function Tickets() {
+  const { canEdit } = useAttendanceGate();
   const { user, isLoading } = useAuth();
   const isDark = useColorScheme() === "dark";
   const { isConnected } = useNetworkStatus();
@@ -1445,28 +1448,26 @@ export default function Tickets() {
         />
 
         <View className="flex-1">
-          <FlatList
+          <FlashList
             data={enrichedTickets}
             renderItem={renderTicketItem}
             keyExtractor={keyExtractor}
             ListEmptyComponent={loading ? <TicketSkeleton /> : (
-              <View className="py-20 items-center justify-center">
-                <View className="w-20 h-20 bg-slate-100 rounded-full items-center justify-center mb-4">
-                  <TicketIcon size={36} color="#cbd5e1" />
-                </View>
-                <Text className="text-slate-900 dark:text-slate-50 font-bold text-lg">No tickets found</Text>
-                {isConnected && !sitesLoading && sites.length === 0 && (
-                  <TouchableOpacity
-                    onPress={async () => {
-                      await refreshSites();
-                      resetAndFetch();
-                    }}
-                    className="mt-4 bg-red-600 px-4 py-2 rounded-xl"
-                  >
-                    <Text className="text-white font-bold">Retry Server Sync</Text>
-                  </TouchableOpacity>
-                )}
-              </View>
+              <EmptyState
+                icon={TicketIcon}
+                title="No tickets found"
+                action={
+                  isConnected && !sitesLoading && sites.length === 0
+                    ? {
+                        label: "Retry Server Sync",
+                        onPress: async () => {
+                          await refreshSites();
+                          resetAndFetch();
+                        },
+                      }
+                    : undefined
+                }
+              />
             )}
             ListFooterComponent={isFetchingMore ? <TicketSkeletonItem /> : null}
             onEndReached={handleLoadMore}
@@ -1537,6 +1538,7 @@ export default function Tickets() {
             setCreateIncidentFromTicket={onCreateIncidentFromTicketChange}
             incidentDraft={incidentDraft}
             setIncidentDraft={setIncidentDraft}
+            canEdit={canEdit}
           />
         )}
       </SafeAreaView>

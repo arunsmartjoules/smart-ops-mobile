@@ -3,16 +3,19 @@ import {
   View,
   Text,
   TextInput,
-  TouchableOpacity,
+  Pressable,
   KeyboardAvoidingView,
   ScrollView,
   Platform,
   ActivityIndicator,
+  StatusBar,
 } from "react-native";
-import { Mail, Zap, ArrowLeft, Lock, Eye, EyeOff, Hash } from "lucide-react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
+import { Eye, EyeOff, ArrowLeft } from "lucide-react-native";
 import { router } from "expo-router";
 import { showAlert } from "@/utils/alert";
 import { useAuth } from "@/contexts/AuthContext";
+import { BrandMark } from "@/components/auth/BrandMark";
 
 type Step = "email" | "code" | "password";
 
@@ -25,8 +28,9 @@ export default function ForgotPassword() {
   const [showNew, setShowNew] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [focused, setFocused] = useState<string | null>(null);
 
-  const { sendPasswordResetCode } = useAuth();
+  const { sendPasswordResetCode, resetPasswordWithCode } = useAuth();
 
   const handleSendCode = async () => {
     if (!email) {
@@ -39,9 +43,11 @@ export default function ForgotPassword() {
     if (error) {
       showAlert("Error", error);
     } else {
-      showAlert("Success", "A password reset link has been sent to your email", [
-        { text: "OK", onPress: () => router.replace("/sign-in") }
-      ]);
+      showAlert(
+        "Email sent",
+        "A password reset link has been sent to your email",
+        [{ text: "OK", onPress: () => router.replace("/sign-in") }],
+      );
     }
   };
 
@@ -50,12 +56,8 @@ export default function ForgotPassword() {
       showAlert("Error", "Please enter the 6-digit code sent to your email");
       return;
     }
-    // With our backend flow, we don't verify the code separately; 
-    // we submit it along with the new password in the final step.
     setStep("password");
   };
-
-  const { resetPasswordWithCode } = useAuth();
 
   const handleResetPassword = async () => {
     if (!newPassword || !confirmPassword) {
@@ -70,229 +72,277 @@ export default function ForgotPassword() {
       showAlert("Error", "Passwords do not match");
       return;
     }
-    
+
     setLoading(true);
     const { error } = await resetPasswordWithCode(email, code, newPassword);
     setLoading(false);
-    
+
     if (error) {
-      showAlert("Update Failed", error);
+      showAlert("Update failed", error);
     } else {
       showAlert(
-        "Password Updated",
-        "Your password has been changed successfully. Please sign in.",
-        [{ text: "Sign In", onPress: () => router.replace("/sign-in") }]
+        "Password updated",
+        "Your password has been changed. Please sign in.",
+        [{ text: "Sign In", onPress: () => router.replace("/sign-in") }],
       );
     }
   };
 
-  return (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === "ios" ? "padding" : "height"}
-      className="flex-1 bg-gray-100 dark:bg-slate-950"
-    >
-      <ScrollView
-        contentContainerStyle={{ flexGrow: 1 }}
-        keyboardShouldPersistTaps="handled"
-      >
-        <View className="flex-1 items-center justify-center">
-          <View className="w-full h-full bg-white dark:bg-slate-900 rounded-2xl shadow-2xl overflow-hidden">
-            {/* Header */}
-            <View className="bg-red-700 dark:bg-red-900 p-10 items-center justify-center rounded-t-2xl h-56">
-              <Zap size={40} color="#fecaca" />
-              <Text className="text-white text-4xl font-extrabold mt-2">
-                JouleOps
-              </Text>
-              <Text className="text-red-200 mt-1 text-sm">
-                Password Recovery
-              </Text>
-            </View>
+  const fieldBorder = (field: string) =>
+    focused === field ? "border-red-600" : "border-zinc-200";
 
-            <View className="p-8 mt-2">
-              <TouchableOpacity
+  const titles: Record<Step, { title: string; sub: string }> = {
+    email: {
+      title: "Reset your password",
+      sub: "Enter your email and we'll send you a reset link.",
+    },
+    code: {
+      title: "Enter verification code",
+      sub: `We sent a 6-digit code to ${email}.`,
+    },
+    password: {
+      title: "Set a new password",
+      sub: "Choose a password with at least 8 characters.",
+    },
+  };
+
+  return (
+    <View className="flex-1 bg-zinc-50">
+      <StatusBar barStyle="dark-content" />
+      <View className="h-1 bg-red-600" />
+
+      <SafeAreaView className="flex-1" edges={["top", "bottom"]}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+          className="flex-1"
+        >
+          <ScrollView
+            contentContainerStyle={{ flexGrow: 1, justifyContent: "center" }}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+          >
+            <View className="px-6 py-10 max-w-md w-full mx-auto">
+              <View className="mb-8 mt-2">
+                <BrandMark subtitle="Account recovery" />
+              </View>
+
+              <Pressable
                 onPress={() => {
                   if (step === "email") router.back();
                   else if (step === "code") setStep("email");
                   else setStep("code");
                 }}
                 disabled={loading}
-                className="flex-row items-center mb-6"
+                hitSlop={8}
+                className="flex-row items-center self-start mb-4"
               >
-                <ArrowLeft size={20} color="#dc2626" />
-                <Text className="text-red-600 font-semibold ml-2">
-                  {step === "email" ? "Back to Sign In" : "Back"}
+                <ArrowLeft size={14} color="#52525b" />
+                <Text className="text-zinc-600 font-medium ml-1.5 text-[13px]">
+                  {step === "email" ? "Back to sign in" : "Back"}
                 </Text>
-              </TouchableOpacity>
+              </Pressable>
+
+              <Text className="text-zinc-900 text-[22px] font-bold tracking-tight">
+                {titles[step].title}
+              </Text>
+              <Text className="text-zinc-500 text-[14px] mt-1.5 leading-[20px]">
+                {titles[step].sub}
+              </Text>
+
+              <View className="h-6" />
 
               {step === "email" && (
                 <>
-                  <Text className="text-2xl font-bold text-gray-800 dark:text-slate-50 text-center mb-2">
-                    Reset Password
-                  </Text>
-                  <Text className="text-gray-600 dark:text-slate-400 text-center mb-6">
-                    Enter your email and we'll send you a password reset link
-                  </Text>
-
-                  <View className="mb-6">
-                    <View className="absolute left-3 top-1/2 -translate-y-1/2 z-10">
-                      <Mail size={20} color="#dc2626" />
-                    </View>
+                  <View className="mb-3">
                     <TextInput
-                      placeholder="Your email address"
+                      placeholder="Email"
+                      placeholderTextColor="#a1a1aa"
                       value={email}
                       onChangeText={setEmail}
+                      onFocus={() => setFocused("email")}
+                      onBlur={() => setFocused(null)}
                       keyboardType="email-address"
                       autoCapitalize="none"
+                      autoComplete="email"
                       editable={!loading}
-                      className="pl-12 pr-4 py-3 border border-gray-300 dark:border-slate-700 rounded-lg text-gray-800 dark:text-slate-50 dark:bg-slate-800"
+                      className={`bg-white border ${fieldBorder("email")} rounded-xl px-4 py-3.5 text-[15px] text-zinc-900`}
                     />
                   </View>
 
-                  <TouchableOpacity
+                  <View className="h-3" />
+
+                  <Pressable
                     onPress={handleSendCode}
                     disabled={loading}
-                    className="bg-red-700 py-3 rounded-lg shadow-md active:scale-95"
+                    style={({ pressed }) => ({
+                      opacity: loading ? 0.85 : pressed ? 0.9 : 1,
+                    })}
+                    className="bg-red-600 rounded-xl py-3.5 items-center justify-center"
                   >
                     {loading ? (
-                      <ActivityIndicator color="white" />
+                      <ActivityIndicator color="#ffffff" />
                     ) : (
-                      <Text className="text-center text-white font-semibold">
-                        Send Reset Link
+                      <Text className="text-white font-semibold text-[15px]">
+                        Send reset link
                       </Text>
                     )}
-                  </TouchableOpacity>
+                  </Pressable>
                 </>
               )}
 
               {step === "code" && (
                 <>
-                  <Text className="text-2xl font-bold text-gray-800 dark:text-slate-50 text-center mb-2">
-                    Verify Code
-                  </Text>
-                  <Text className="text-gray-600 dark:text-slate-400 text-center mb-6 leading-5 px-4">
-                    We've sent a code to {"\n"}
-                    <Text className="font-semibold text-gray-800 dark:text-slate-200">
-                      {email}
-                    </Text>
-                  </Text>
-
-                  <View className="mb-6">
-                    <View className="absolute left-3 top-1/2 -translate-y-1/2 z-10">
-                      <Hash size={20} color="#dc2626" />
-                    </View>
+                  <View className="mb-3">
                     <TextInput
-                      placeholder="6-digit verification code"
+                      placeholder="000000"
+                      placeholderTextColor="#d4d4d8"
                       value={code}
-                      onChangeText={(val) => setCode(val.replace(/[^0-9]/g, ""))}
+                      onChangeText={(v) => setCode(v.replace(/[^0-9]/g, ""))}
+                      onFocus={() => setFocused("code")}
+                      onBlur={() => setFocused(null)}
                       keyboardType="number-pad"
                       maxLength={6}
                       editable={!loading}
-                      className="pl-12 pr-4 py-3 border border-gray-300 dark:border-slate-700 rounded-lg text-gray-800 dark:text-slate-50 dark:bg-slate-800 text-center text-xl font-bold tracking-widest"
+                      className={`bg-white border ${fieldBorder("code")} rounded-xl px-4 py-3.5 text-center text-[22px] font-semibold tracking-[6px] text-zinc-900`}
                     />
                   </View>
 
-                  <TouchableOpacity
+                  <View className="h-3" />
+
+                  <Pressable
                     onPress={handleVerifyCode}
                     disabled={loading}
-                    className="bg-red-700 py-3 rounded-lg shadow-md active:scale-95 mb-4"
+                    style={({ pressed }) => ({
+                      opacity: loading ? 0.85 : pressed ? 0.9 : 1,
+                    })}
+                    className="bg-red-600 rounded-xl py-3.5 items-center justify-center"
                   >
                     {loading ? (
-                      <ActivityIndicator color="white" />
+                      <ActivityIndicator color="#ffffff" />
                     ) : (
-                      <Text className="text-center text-white font-semibold">
-                        Verify Code
+                      <Text className="text-white font-semibold text-[15px]">
+                        Verify code
                       </Text>
                     )}
-                  </TouchableOpacity>
+                  </Pressable>
 
-                  <TouchableOpacity
+                  <Pressable
                     onPress={handleSendCode}
                     disabled={loading}
-                    className="py-2"
+                    hitSlop={8}
+                    className="py-4 mt-2"
                   >
-                    <Text className="text-center text-red-600 font-medium">
-                      Didn't receive email? Resend
+                    <Text className="text-center text-zinc-500 text-[13px]">
+                      Didn&apos;t receive it?{" "}
+                      <Text className="text-red-600 font-semibold">
+                        Resend
+                      </Text>
                     </Text>
-                  </TouchableOpacity>
+                  </Pressable>
                 </>
               )}
 
               {step === "password" && (
                 <>
-                  <Text className="text-2xl font-bold text-gray-800 dark:text-slate-50 text-center mb-2">
-                    New Password
-                  </Text>
-                  <Text className="text-gray-600 dark:text-slate-400 text-center mb-6">
-                    Choose a strong password (min 8 characters)
-                  </Text>
-
-                  <View className="mb-4">
-                    <View className="absolute left-3 top-1/2 -translate-y-1/2 z-10">
-                      <Lock size={20} color="#dc2626" />
-                    </View>
-                    <TextInput
-                      placeholder="New password"
-                      value={newPassword}
-                      onChangeText={setNewPassword}
-                      secureTextEntry={!showNew}
-                      editable={!loading}
-                      className="pl-12 pr-12 py-3 border border-gray-300 dark:border-slate-700 rounded-lg text-gray-800 dark:text-slate-50 dark:bg-slate-800"
-                    />
-                    <TouchableOpacity
-                      onPress={() => setShowNew((v) => !v)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 z-10"
+                  <View className="mb-3">
+                    <View
+                      className={`flex-row items-center bg-white border ${fieldBorder("new")} rounded-xl`}
                     >
-                      {showNew ? (
-                        <EyeOff size={20} color="#94a3b8" />
-                      ) : (
-                        <Eye size={20} color="#94a3b8" />
-                      )}
-                    </TouchableOpacity>
+                      <TextInput
+                        placeholder="New password"
+                        placeholderTextColor="#a1a1aa"
+                        value={newPassword}
+                        onChangeText={setNewPassword}
+                        onFocus={() => setFocused("new")}
+                        onBlur={() => setFocused(null)}
+                        secureTextEntry={!showNew}
+                        editable={!loading}
+                        className="flex-1 px-4 py-3.5 text-[15px] text-zinc-900"
+                      />
+                      <Pressable
+                        onPress={() => setShowNew((v) => !v)}
+                        hitSlop={10}
+                        className="px-4 py-2"
+                      >
+                        {showNew ? (
+                          <EyeOff size={18} color="#71717a" />
+                        ) : (
+                          <Eye size={18} color="#71717a" />
+                        )}
+                      </Pressable>
+                    </View>
                   </View>
 
-                  <View className="mb-6">
-                    <View className="absolute left-3 top-1/2 -translate-y-1/2 z-10">
-                      <Lock size={20} color="#dc2626" />
-                    </View>
-                    <TextInput
-                      placeholder="Confirm new password"
-                      value={confirmPassword}
-                      onChangeText={setConfirmPassword}
-                      secureTextEntry={!showConfirm}
-                      editable={!loading}
-                      className="pl-12 pr-12 py-3 border border-gray-300 dark:border-slate-700 rounded-lg text-gray-800 dark:text-slate-50 dark:bg-slate-800"
-                    />
-                    <TouchableOpacity
-                      onPress={() => setShowConfirm((v) => !v)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 z-10"
+                  <View className="mb-3">
+                    <View
+                      className={`flex-row items-center bg-white border ${fieldBorder("confirm")} rounded-xl`}
                     >
-                      {showConfirm ? (
-                        <EyeOff size={20} color="#94a3b8" />
-                      ) : (
-                        <Eye size={20} color="#94a3b8" />
-                      )}
-                    </TouchableOpacity>
+                      <TextInput
+                        placeholder="Confirm new password"
+                        placeholderTextColor="#a1a1aa"
+                        value={confirmPassword}
+                        onChangeText={setConfirmPassword}
+                        onFocus={() => setFocused("confirm")}
+                        onBlur={() => setFocused(null)}
+                        secureTextEntry={!showConfirm}
+                        editable={!loading}
+                        className="flex-1 px-4 py-3.5 text-[15px] text-zinc-900"
+                      />
+                      <Pressable
+                        onPress={() => setShowConfirm((v) => !v)}
+                        hitSlop={10}
+                        className="px-4 py-2"
+                      >
+                        {showConfirm ? (
+                          <EyeOff size={18} color="#71717a" />
+                        ) : (
+                          <Eye size={18} color="#71717a" />
+                        )}
+                      </Pressable>
+                    </View>
                   </View>
 
-                  <TouchableOpacity
+                  <View className="h-3" />
+
+                  <Pressable
                     onPress={handleResetPassword}
                     disabled={loading}
-                    className="bg-red-700 py-3 rounded-lg shadow-md active:scale-95"
+                    style={({ pressed }) => ({
+                      opacity: loading ? 0.85 : pressed ? 0.9 : 1,
+                    })}
+                    className="bg-red-600 rounded-xl py-3.5 items-center justify-center"
                   >
                     {loading ? (
-                      <ActivityIndicator color="white" />
+                      <ActivityIndicator color="#ffffff" />
                     ) : (
-                      <Text className="text-center text-white font-semibold">
-                        Update Password
+                      <Text className="text-white font-semibold text-[15px]">
+                        Update password
                       </Text>
                     )}
-                  </TouchableOpacity>
+                  </Pressable>
                 </>
               )}
             </View>
+          </ScrollView>
+
+          <View className="border-t border-zinc-200 py-4 items-center bg-white">
+            <View className="flex-row">
+              <Text className="text-zinc-500 text-[13px]">
+                Remember your password?{" "}
+              </Text>
+              <Pressable
+                onPress={() => router.replace("/sign-in")}
+                disabled={loading}
+                hitSlop={6}
+              >
+                <Text className="text-red-600 font-semibold text-[13px]">
+                  Sign in
+                </Text>
+              </Pressable>
+            </View>
           </View>
-        </View>
-      </ScrollView>
-    </KeyboardAvoidingView>
+        </KeyboardAvoidingView>
+      </SafeAreaView>
+    </View>
   );
 }

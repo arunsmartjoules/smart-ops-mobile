@@ -1,7 +1,8 @@
 // @ts-nocheck
 import React, { useState, useEffect } from "react";
-import { Platform, View, Text } from "react-native";
-import { Tabs } from "expo-router";
+import { Platform, View, Text, Pressable } from "react-native";
+import { Tabs, router } from "expo-router";
+import { ShieldOff, LogIn, X } from "lucide-react-native";
 import {
   LayoutDashboard,
   Activity,
@@ -14,9 +15,10 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTheme } from "@/contexts/ThemeContext";
 import { AnimatedTabBarButton } from "@/components/AnimatedTabBarButton";
 import { SiteAccessGate } from "@/components/SiteAccessGate";
+import { useAttendanceGate } from "@/contexts/AttendanceGateContext";
 import UpdateService from "@/services/UpdateService";
 
-function TabsContent() {
+function TabsContent({ hideTabBar = false }: { hideTabBar?: boolean }) {
   const { isDark } = useTheme();
   const insets = useSafeAreaInsets();
   const [hasUpdate, setHasUpdate] = useState(false);
@@ -67,18 +69,20 @@ function TabsContent() {
             {String(children)}
           </Text>
         ),
-        tabBarStyle: {
-          backgroundColor: isDark ? "#0f172a" : "#ffffff",
-          borderTopWidth: 0,
-          height: TAB_CONTENT_HEIGHT + bottomInset,
-          paddingTop: 8,
-          paddingBottom: bottomInset,
-          shadowColor: "#000",
-          shadowOffset: { width: 0, height: -4 },
-          shadowOpacity: 0.08,
-          shadowRadius: 16,
-          elevation: 25,
-        },
+        tabBarStyle: hideTabBar
+          ? { display: "none" }
+          : {
+              backgroundColor: isDark ? "#0f172a" : "#ffffff",
+              borderTopWidth: 0,
+              height: TAB_CONTENT_HEIGHT + bottomInset,
+              paddingTop: 8,
+              paddingBottom: bottomInset,
+              shadowColor: "#000",
+              shadowOffset: { width: 0, height: -4 },
+              shadowOpacity: 0.08,
+              shadowRadius: 16,
+              elevation: 25,
+            },
         tabBarItemStyle: {
           paddingHorizontal: 0,
         },
@@ -222,10 +226,67 @@ function TabsContent() {
   );
 }
 
+function ReadOnlyBanner() {
+  const { disableReadOnly } = useAttendanceGate();
+  const insets = useSafeAreaInsets();
+  return (
+    <View
+      className="flex-row items-center bg-amber-100 dark:bg-amber-900/30 border-b border-amber-200 dark:border-amber-800 px-4"
+      style={{ paddingTop: insets.top + 6, paddingBottom: 8 }}
+    >
+      <Pressable
+        onPress={() => {
+          disableReadOnly();
+          router.replace("/(tabs)/dashboard");
+        }}
+        hitSlop={8}
+        className="w-7 h-7 rounded-full bg-amber-200 dark:bg-amber-800 items-center justify-center mr-2"
+      >
+        <X size={14} color="#92400e" />
+      </Pressable>
+      <ShieldOff size={14} color="#b45309" />
+      <Text className="ml-2 text-xs font-medium text-amber-900 dark:text-amber-100 flex-1">
+        Read-only mode — start your day for full access
+      </Text>
+      <Pressable
+        onPress={() => router.push("/attendance")}
+        hitSlop={8}
+        className="flex-row items-center px-2.5 py-1 bg-amber-600 rounded-full active:opacity-90"
+      >
+        <LogIn size={11} color="white" />
+        <Text className="ml-1 text-[11px] font-semibold text-white">
+          Start Day
+        </Text>
+      </Pressable>
+    </View>
+  );
+}
+
+function AttendanceGatedTabs() {
+  const { isPrivileged, isPunchedIn, isReadOnlyMode } = useAttendanceGate();
+
+  if (isPrivileged || isPunchedIn) return <TabsContent />;
+  if (isReadOnlyMode) {
+    return (
+      <View style={{ flex: 1 }}>
+        <ReadOnlyBanner />
+        <View style={{ flex: 1 }}>
+          <TabsContent hideTabBar />
+        </View>
+      </View>
+    );
+  }
+  // Locked: reuse the dashboard as the restricted screen — it already has
+  // the Start Day widget. Tab bar is hidden so users can't escape to other
+  // tabs without punching in. Dashboard hides its outbound nav buttons when
+  // canEdit is false.
+  return <TabsContent hideTabBar />;
+}
+
 export default function TabLayout() {
   return (
     <SiteAccessGate>
-      <TabsContent />
+      <AttendanceGatedTabs />
     </SiteAccessGate>
   );
 }

@@ -574,6 +574,8 @@ class SyncEngineImpl implements SyncEngine {
   // ── cleanup ───────────────────────────────────────────────────────────────
 
   async cleanup(): Promise<void> {
+    // Stop reacting to new triggers first so no fresh sync can start while
+    // we wait for the in-flight one to finish.
     this.netUnsubscribe?.();
     this.netUnsubscribe = null;
 
@@ -583,6 +585,19 @@ class SyncEngineImpl implements SyncEngine {
     if (this.intervalHandle !== null) {
       clearInterval(this.intervalHandle);
       this.intervalHandle = null;
+    }
+
+    // Wait for any in-flight sync to finish before releasing userId, so
+    // its cache writes can't race with a follow-up clearDatabase().
+    if (this.syncPromise) {
+      try {
+        await this.syncPromise;
+      } catch (err) {
+        logger.warn("SyncEngine.cleanup: in-flight sync ended with error", {
+          module: "SYNC_ENGINE",
+          error: err,
+        });
+      }
     }
 
     this.userId = null;

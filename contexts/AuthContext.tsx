@@ -27,6 +27,7 @@ import {
   User as FirebaseUser
 } from "firebase/auth";
 import { syncEngine } from "../services/SyncEngine";
+import { cacheManager } from "../services/CacheManager";
 import siteResolver from "../services/SiteResolver";
 import {
   clearStoredAuthToken,
@@ -69,6 +70,7 @@ interface AuthUser {
   name?: string;
   full_name?: string;
   role?: string;
+  is_superadmin?: boolean;
   work_location_type?: "WHF" | "WFH" | null;
   department?: string;
   designation?: string;
@@ -78,6 +80,7 @@ interface AuthUser {
   /** ISO or backend string, for offline "Joined" display */
   created_at?: string;
   date_of_joining?: string;
+  profile_photo_url?: string | null;
 }
 
 interface AuthContextType {
@@ -166,6 +169,9 @@ function mapFirebaseUser(
     name: profile?.name ?? display,
     full_name: profile?.full_name ?? profile?.name ?? display,
     role: profile?.role ?? "",
+    is_superadmin: Boolean(
+      (profile as { is_superadmin?: unknown } | undefined)?.is_superadmin,
+    ),
     work_location_type: workLocationType,
     department: profile?.department ?? "",
     designation: profile?.designation ?? "",
@@ -174,6 +180,9 @@ function mapFirebaseUser(
     employee_code: profile?.employee_code,
     created_at: pickOptionalString(profile?.created_at),
     date_of_joining: pickOptionalString(profile?.date_of_joining),
+    profile_photo_url:
+      (profile as { profile_photo_url?: string | null } | undefined)
+        ?.profile_photo_url ?? null,
   };
 }
 
@@ -558,6 +567,36 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   );
 
   const signOut = useCallback(async () => {
+    // Step 0: Drain the offline queue before touching anything else.
+    // Logout must not lose unsynced work, and must not leave queued
+    // mutations behind for the next user on a shared device to push
+    // under their identity.
+    const pendingBefore = await cacheManager.getQueueCount();
+    if (pendingBefore > 0) {
+      logger.info(
+        `Logout: flushing ${pendingBefore} pending mutation(s) before sign-out`,
+        { module: "AUTH_CONTEXT" },
+      );
+      try {
+        await syncEngine.flushQueue();
+      } catch (flushErr: any) {
+        logger.error("Logout: queue flush threw", {
+          module: "AUTH_CONTEXT",
+          error: flushErr?.message,
+        });
+      }
+      const pendingAfter = await cacheManager.getQueueCount();
+      if (pendingAfter > 0) {
+        logger.error("Logout blocked: queue still has items after flush", {
+          module: "AUTH_CONTEXT",
+          pendingAfter,
+        });
+        throw new Error(
+          `Cannot sign out: ${pendingAfter} change(s) couldn't be synced. Check your connection and try again.`,
+        );
+      }
+    }
+
     try {
       const activeToken = (await getStoredAuthToken()) || token;
       if (activeToken) {
@@ -569,31 +608,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         module: "AUTH_CONTEXT",
         error: error.message,
       });
-    } finally {
-      // Cleanup local data regardless of signout result
-      logger.info("Starting logout cleanup of all local data", { module: "AUTH_CONTEXT" });
-      
-      try {
-        // Step 1: Cleanup Sync Engine
-        syncEngine.cleanup();
-
-        // Step 2: Wipe SQLite Database
-        await clearDatabase();
-
-        // Step 3: Clear AsyncStorage completely
-        await AsyncStorage.clear();
-        
-        logger.activity("LOGOUT_DATA_WIPED", "AUTH", "All local database and cache data cleared successfully");
-      } catch (cleanupError: any) {
-        logger.error("Logout cleanup failed", {
-          module: "AUTH_CONTEXT",
-          error: cleanupError.message,
-        });
-      }
-      setToken(null);
-      setUser(null);
-      setIsEmailVerified(false);
     }
+
+    // Cleanup local data. If the wipe fails, do NOT clear the auth state —
+    // keeping the user logged in is safer than dropping them at a login
+    // screen with another user's data still sitting in SQLite.
+    logger.info("Starting logout cleanup of all local data", { module: "AUTH_CONTEXT" });
+    await syncEngine.cleanup();
+    await clearDatabase();
+    await AsyncStorage.clear();
+    logger.activity("LOGOUT_DATA_WIPED", "AUTH", "All local database and cache data cleared successfully");
+
+    setToken(null);
+    setUser(null);
+    setIsEmailVerified(false);
   }, [token]);
 
   // Listen for global auth events, but do not sign users out on generic 401s.

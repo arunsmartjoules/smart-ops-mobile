@@ -2,12 +2,11 @@
   "expo": {
     "name": "Jouleops",
     "slug": "smart-ops",
-    "version": "1.0.7",
+    "version": "1.0.8",
     "orientation": "portrait",
     "icon": "./assets/images/jouleops-icon.png",
     "scheme": "jouleops",
     "userInterfaceStyle": "automatic",
-    "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.arundev2025.jouleops",
@@ -25,7 +24,6 @@
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/images/jouleops-icon.png"
       },
-      "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
       "package": "com.arundev2025.jouleops",
       "permissions": [
@@ -52,11 +50,13 @@
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#b91c1c",
-          "image": "./assets/images/Jouleops-spash-screen.png",
+          "backgroundColor": "#E11111",
+          "image": "./assets/images/jouleops-splash.png",
+          "imageWidth": 220,
+          "resizeMode": "contain",
           "dark": {
-            "backgroundColor": "#b91c1c",
-            "image": "./assets/images/Jouleops-spash-screen.png"
+            "backgroundColor": "#E11111",
+            "image": "./assets/images/jouleops-splash.png"
           }
         }
       ],
@@ -78,6 +78,13 @@
         "expo-camera",
         {
           "cameraPermission": "Jouleops needs camera access to scan QR codes on assets."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "cameraPermission": "Jouleops needs camera access to take your profile picture and attach photos to logs.",
+          "photosPermission": "Jouleops needs photo library access to set your profile picture and attach photos to logs."
         }
       ]
     ],

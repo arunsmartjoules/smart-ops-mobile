@@ -298,6 +298,16 @@ function init() {
           created_at REAL NOT NULL,
           updated_at REAL NOT NULL
         );
+        -- Performance Indexes (extended) — added for list/queue hot paths
+        CREATE INDEX IF NOT EXISTS idx_areas_site_code ON areas (site_code);
+        CREATE INDEX IF NOT EXISTS idx_user_sites_user_id ON user_sites (user_id);
+        CREATE INDEX IF NOT EXISTS idx_offline_queue_status ON offline_queue (status, entity_type);
+        CREATE INDEX IF NOT EXISTS idx_pm_instances_site ON pm_instances (site_code, status);
+        CREATE INDEX IF NOT EXISTS idx_pm_checklist_items_checklist ON pm_checklist_items (checklist_id, sequence_no);
+        CREATE INDEX IF NOT EXISTS idx_pm_responses_instance ON pm_responses (instance_id, checklist_item_id);
+        CREATE INDEX IF NOT EXISTS idx_attendance_logs_user_date ON attendance_logs (user_id, date);
+        CREATE INDEX IF NOT EXISTS idx_attachment_queue_status ON attachment_queue (status);
+        CREATE INDEX IF NOT EXISTS idx_log_master_log_name ON log_master (log_name);
     `);
 
     // Run column migrations
@@ -322,6 +332,43 @@ function init() {
       }
     }
     ensureSiteLogsMainRemarksColumn();
+    // One-shot reset for the IST date-parser fix.
+    //
+    // Prior builds stored server-side DATE values by round-tripping a
+    // "YYYY-MM-DD" string through `new Date(...)`. The resulting ms-epoch (for
+    // pm_instances.start_due_date) and IST-day string (for site_logs
+    // .scheduled_date) are engine/TZ-sensitive: Hermes parses date-only
+    // strings as device-local midnight, and even spec-compliant engines
+    // collapse to the wrong IST day on devices east of UTC+05:30. That's why
+    // the same site/period showed different counts on different phones. The
+    // parser is now IST-anchored everywhere, but already-cached rows stay
+    // wrong until refetched.
+    //
+    // pm_instances: safe to wipe — there is no locally-authored PM, and
+    //   pending mutations live in offline_queue (untouched).
+    // site_logs:    we only clear the TTL gate; we do NOT wipe the table,
+    //   because locally-created drafts/Inprogress rows may not have synced to
+    //   the server yet. SyncEngine's next pull upserts by id, overwriting any
+    //   server-derived row whose scheduled_date got bent by the old parser.
+    //
+    // The sentinel row in sync_meta keeps this one-shot per device.
+    try {
+      const row = sqlite.getFirstSync<{ domain: string }>(
+        "SELECT domain FROM sync_meta WHERE domain = 'pm_instances_dateparser_v2'",
+      );
+      if (!row) {
+        sqlite.execSync("DELETE FROM pm_instances");
+        sqlite.execSync("DELETE FROM sync_meta WHERE domain = 'pm_instances'");
+        sqlite.execSync("DELETE FROM sync_meta WHERE domain = 'site_logs'");
+        sqlite.runSync(
+          "INSERT INTO sync_meta (domain, last_synced_at) VALUES (?, ?)",
+          "pm_instances_dateparser_v2",
+          Date.now(),
+        );
+      }
+    } catch (e) {
+      logger.warn("date-parser one-shot reset failed (non-fatal)", { module: "DATABASE", error: e });
+    }
   } catch (error) {
     logger.error("Database initialization failed", { module: "DATABASE", error });
   }
@@ -395,38 +442,40 @@ export function initDatabase() {
  * Essential for multi-user device security on logout.
  */
 export async function clearDatabase() {
-  try {
-    if (!ensureDatabaseConnection()) return;
-    
-    const tables = [
-      "tickets",
-      "incidents",
-      "ticket_updates",
-      "areas",
-      "categories",
-      "user_sites",
-      "site_logs",
-      "chiller_readings",
-      "pm_instances",
-      "activities",
-      "pm_checklist_master",
-      "pm_checklist_items",
-      "pm_responses",
-      "log_master",
-      "offline_queue",
-      "sync_meta",
-      "attendance_logs",
-      "attachment_queue"
-    ];
+  if (!ensureDatabaseConnection()) {
+    throw new Error("Database connection unavailable; cannot wipe local data");
+  }
 
+  const tables = [
+    "tickets",
+    "incidents",
+    "ticket_updates",
+    "areas",
+    "categories",
+    "user_sites",
+    "site_logs",
+    "chiller_readings",
+    "pm_instances",
+    "activities",
+    "pm_checklist_master",
+    "pm_checklist_items",
+    "pm_responses",
+    "log_master",
+    "offline_queue",
+    "sync_meta",
+    "attendance_logs",
+    "attachment_queue"
+  ];
+
+  try {
     sqlite.withTransactionSync(() => {
       for (const table of tables) {
         sqlite.execSync(`DELETE FROM ${table}`);
       }
     });
-
     logger.info("Database wiped successfully", { module: "DATABASE" });
   } catch (error) {
     logger.error("Failed to wipe database", { module: "DATABASE", error });
+    throw error;
   }
 }

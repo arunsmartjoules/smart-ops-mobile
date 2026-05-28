@@ -23,11 +23,19 @@ import {
 import SiteLogService from "@/services/SiteLogService";
 import { formatAssignee } from "@/utils/assignee";
 import { useAuth } from "@/contexts/AuthContext";
+import { useAttendanceGate } from "@/contexts/AttendanceGateContext";
+import { ViewOnlyEntryNotice } from "@/components/ViewOnlyEntryNotice";
 import * as ImagePicker from "expo-image-picker";
 import { StorageService } from "@/services/StorageService";
 import SignaturePad from "@/components/SignaturePad";
 
 export default function WaterEntry() {
+  const { canEdit } = useAttendanceGate();
+  if (!canEdit) return <ViewOnlyEntryNotice what="water readings" />;
+  return <WaterEntryContent />;
+}
+
+function WaterEntryContent() {
   const { user } = useAuth();
   const params = useLocalSearchParams<{
     id?: string;

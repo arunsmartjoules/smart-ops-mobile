@@ -11,6 +11,7 @@ import {
 } from "react-native";
 import { FlashList } from "@shopify/flash-list";
 import { SafeAreaView } from "react-native-safe-area-context";
+import EmptyState from "@/components/EmptyState";
 import { useLocalSearchParams, router, useFocusEffect } from "expo-router";
 import {
   ChevronLeft,
@@ -821,34 +822,26 @@ export default function SiteHistory() {
               />
             }
             ListEmptyComponent={
-              <View className="py-20 items-center justify-center">
-                <View className="w-20 h-20 bg-slate-100 dark:bg-slate-800 rounded-full items-center justify-center mb-4">
-                  <HistoryIcon size={36} color="#cbd5e1" />
-                </View>
-                <Text className="text-slate-900 dark:text-slate-50 font-bold text-lg text-center">
-                  No records found
-                </Text>
-                <Text className="text-slate-400 dark:text-slate-500 text-sm mt-1 text-center px-10">
-                  {searchQuery
+              <EmptyState
+                icon={HistoryIcon}
+                title="No records found"
+                subtitle={
+                  searchQuery
                     ? "Try a different search term"
-                    : "Try adjusting your filters"}
-                </Text>
-                <TouchableOpacity
-                  onPress={() => {
+                    : "Try adjusting your filters"
+                }
+                action={{
+                  label: "Clear All Filters",
+                  onPress: () => {
                     setSearchQuery("");
                     setSelectedShift("");
                     setSelectedStatus("all");
                     setFromDate(null);
                     setToDate(null);
                     setSiteCode(params.siteCode || "");
-                  }}
-                  className="mt-6 px-6 py-3 bg-red-600 rounded-xl"
-                >
-                  <Text className="text-white font-bold">
-                    Clear All Filters
-                  </Text>
-                </TouchableOpacity>
-              </View>
+                  },
+                }}
+              />
             }
           />
         )}

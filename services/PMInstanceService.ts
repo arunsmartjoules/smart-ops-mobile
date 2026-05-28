@@ -5,6 +5,7 @@ import logger from "../utils/logger";
 import { authEvents } from "../utils/authEvents";
 import { apiFetch as centralApiFetch } from "../utils/apiHelper";
 import { API_BASE_URL } from "../constants/api";
+import { toIstDayMs } from "../utils/istDate";
 
 const BACKEND_URL = API_BASE_URL;
 
@@ -56,9 +57,7 @@ export const PMInstanceService = {
             .where(eq(pmInstances.id, serverId));
 
           const now = Date.now();
-          const startDueDate = serverPM.start_due_date
-            ? new Date(serverPM.start_due_date).getTime()
-            : null;
+          const startDueDate = toIstDayMs(serverPM.start_due_date);
 
           if (existing.length > 0) {
             await db

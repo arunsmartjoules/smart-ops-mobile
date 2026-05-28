@@ -1011,8 +1011,19 @@ export const LogEntryModule = ({
                 className={`flex-1 py-4 rounded-2xl flex-row items-center justify-center gap-2 ${
                   isSubmitting || (!isEditMode && !allScheduledTasksComplete)
                     ? "bg-slate-200 dark:bg-slate-800"
-                    : "bg-purple-600 shadow-lg shadow-purple-500/30"
+                    : "bg-purple-600"
                 }`}
+                style={
+                  !(isSubmitting || (!isEditMode && !allScheduledTasksComplete))
+                    ? {
+                        shadowColor: "#a855f7",
+                        shadowOffset: { width: 0, height: 4 },
+                        shadowOpacity: 0.3,
+                        shadowRadius: 8,
+                        elevation: 4,
+                      }
+                    : undefined
+                }
               >
                 {isSubmitting ? (
                   <ActivityIndicator color="white" />

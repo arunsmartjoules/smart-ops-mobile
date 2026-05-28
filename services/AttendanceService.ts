@@ -85,9 +85,9 @@ async function resolveOptimisticAttendanceId(
       if (!row?.id || row.id.startsWith("opt-")) continue;
       if (row.check_out_time) continue;
       if (row.date && row.date !== today) {
-        // Allow cross-day sessions only if they're still within ~17h.
+        // Allow cross-day sessions only if they're still within ~20h.
         const ci = safeDate(row.check_in_time);
-        if (!ci || Date.now() - ci.getTime() > 17 * 60 * 60 * 1000) continue;
+        if (!ci || Date.now() - ci.getTime() > 20 * 60 * 60 * 1000) continue;
       }
       return row.id;
     }
@@ -252,10 +252,10 @@ export const AttendanceService = {
       if (rows.length > 0) {
         const log = normalizeAttendanceLog(rows[0]);
         if (log && !log.check_out_time && log.check_in_time) {
-          // If still checked in, check 17-hour limit
+          // If still checked in, check 20-hour limit
           const checkIn = new Date(log.check_in_time);
           const diffHours = (Date.now() - checkIn.getTime()) / (1000 * 60 * 60);
-          if (diffHours <= 17) {
+          if (diffHours <= 20) {
             cachedToday = log;
             logger.debug("Found active cross-day/today session", {
               module: "ATTENDANCE_SERVICE",
@@ -263,8 +263,8 @@ export const AttendanceService = {
             });
           }
         }
-        
-        // If no active 17h session found, fall back to simple "is it today?" check for the record
+
+        // If no active 20h session found, fall back to simple "is it today?" check for the record
         if (!cachedToday && log && log.date === today) {
           cachedToday = log;
         }

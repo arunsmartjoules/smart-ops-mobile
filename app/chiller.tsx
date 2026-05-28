@@ -32,6 +32,8 @@ import { formatAssignee, operatorLabel } from "@/utils/assignee";
 import AssetService from "@/services/AssetService";
 import AttendanceService from "@/services/AttendanceService";
 import { useAuth } from "@/contexts/AuthContext";
+import { useAttendanceGate } from "@/contexts/AttendanceGateContext";
+import { ViewOnlyEntryNotice } from "@/components/ViewOnlyEntryNotice";
 import { StorageService } from "@/services/StorageService";
 import { LogImagePicker } from "@/components/sitelogs/LogImagePicker";
 import SearchableSelect, { SelectOption } from "@/components/SearchableSelect";
@@ -45,6 +47,12 @@ import { formatIST, istDayStartMs, istDayEndMs } from "@/utils/istDate";
 import { consumeRouteParams } from "@/utils/routeParams";
 
 export default function ChillerEntry() {
+  const { canEdit } = useAttendanceGate();
+  if (!canEdit) return <ViewOnlyEntryNotice what="chiller readings" />;
+  return <ChillerEntryContent />;
+}
+
+function ChillerEntryContent() {
   const { user } = useAuth();
   const params = useLocalSearchParams<{
     id?: string;
@@ -145,11 +153,44 @@ export default function ChillerEntry() {
   const isEditMode = !!(params.editId || params.id);
   const targetId = (params.editId || params.id || "") as string;
 
+  // Mandatory technical fields. Comp. Suction, Motor Temp, Oil Pressure and
+  // Oil Diff are intentionally NOT mandatory — operators may legitimately
+  // skip them when a chiller doesn't expose those readings.
+  const MANDATORY_FIELDS = [
+    "condenserInletTemp",
+    "condenserOutletTemp",
+    "evaporatorInletTemp",
+    "evaporatorOutletTemp",
+    "saturatedCondenserTemp",
+    "saturatedSuctionTemp",
+    "setPointCelsius",
+    "dischargePressure",
+    "mainSuctionPressure",
+    "condenserInletPressure",
+    "condenserOutletPressure",
+    "evaporatorInletPressure",
+    "evaporatorOutletPressure",
+    "load",
+    "inlineBtuMeter",
+  ] as const;
+
+  const hasValue = (v: unknown) =>
+    v !== null && v !== undefined && String(v).trim().length > 0;
+
   // Derived state to check if any technical field is filled (excluding IDs)
   const isAnyFieldFilled = Object.entries(formData).some(([key, value]) => {
     if (["chillerId", "equipmentId", "remarks", "attachment", "signature"].includes(key)) return false;
     return value !== "" && value !== null && value !== undefined;
   });
+
+  const missingMandatoryFields = MANDATORY_FIELDS.filter(
+    (f) => !hasValue((formData as any)[f]),
+  );
+  const allMandatoryFilled = missingMandatoryFields.length === 0;
+  // Red borders should only appear after the user has touched the form (or is
+  // editing an existing record) — a blank new-entry screen blanketed in red
+  // is jarring.
+  const showFieldErrors = isAnyFieldFilled || isEditMode;
 
   // Clean up timer on unmount
   useEffect(() => {
@@ -384,6 +425,20 @@ export default function ChillerEntry() {
       );
 
     if (!matchedAsset) return;
+
+    // Keep currentReadingRef in sync with the remap. Without this, the
+    // chillerId match check in handleSubmission fails for the rest of the
+    // session — auto-saves silently skip and the Complete & Sign safety-net
+    // creates a SECOND row, producing the empty-row + completed-row dupe.
+    if (
+      currentReadingRef.current &&
+      currentReadingRef.current.chillerId === formData.chillerId
+    ) {
+      currentReadingRef.current = {
+        ...currentReadingRef.current,
+        chillerId: matchedAsset.value,
+      };
+    }
 
     setFormData((prev) => ({
       ...prev,
@@ -632,7 +687,12 @@ export default function ChillerEntry() {
 
     const run = async () => {
       try {
-        setSaving(true);
+        // Only show the user-facing saving spinner / disable the button for
+        // an explicit completion. Auto-saves run silently every 1.5s; if they
+        // flipped this state the Complete & Sign button would spin and refuse
+        // taps on every keystroke, making operators think the reading was
+        // already submitted.
+        if (isCompleting) setSaving(true);
         const selectedAsset = assets.find((a) => a.value === currentFormData.chillerId);
         const assetName = selectedAsset?.label || currentFormData.chillerId;
 
@@ -738,9 +798,14 @@ export default function ChillerEntry() {
           ]);
         }
       } catch (error: any) {
-        Alert.alert("Error", error.message || "Failed to save reading");
+        // Don't surface silent auto-save failures as redboxes — they retry
+        // from the offline queue. Only the explicit completion deserves
+        // user-visible error reporting.
+        if (isCompleting) {
+          Alert.alert("Error", error.message || "Failed to save reading");
+        }
       } finally {
-        setSaving(false);
+        if (isCompleting) setSaving(false);
       }
     };
 
@@ -761,34 +826,53 @@ export default function ChillerEntry() {
     placeholder: string,
     unit?: string,
     widthClass = "w-full",
-  ) => (
-    <View className={`mb-4 ${widthClass}`}>
-      <Text className="text-slate-500 dark:text-slate-400 text-[10px] font-bold uppercase tracking-widest mb-1.5 ml-1">
-        {label}
-      </Text>
-      <View
-        className="bg-white dark:bg-slate-900 rounded-xl border border-slate-100 dark:border-slate-800 px-3 flex-row items-center"
-        style={{
-          shadowColor: "#000",
-          shadowOffset: { width: 0, height: 1 },
-          shadowOpacity: 0.03,
-          shadowRadius: 2,
-          elevation: 1,
-        }}
-      >
-        <TextInput
-          value={(formData as any)[field]}
-          onChangeText={(val) => updateField(field, val)}
-          placeholder={placeholder}
-          keyboardType="numeric"
-          className="flex-1 py-3 font-semibold text-base text-slate-900 dark:text-slate-50"
-        />
-        {unit && (
-          <Text className="text-slate-400 text-xs font-bold ml-1">{unit}</Text>
-        )}
+    required = false,
+  ) => {
+    const filled = hasValue((formData as any)[field]);
+    const showError = required && !filled && showFieldErrors;
+    return (
+      <View className={`mb-4 ${widthClass}`}>
+        <View className="flex-row items-center mb-1.5 ml-1">
+          <Text className="text-slate-500 dark:text-slate-400 text-[10px] font-bold uppercase tracking-widest">
+            {label}
+          </Text>
+          {required && (
+            <Text
+              className="text-red-600 dark:text-red-400 font-bold ml-1"
+              style={{ fontSize: 14, lineHeight: 14 }}
+            >
+              *
+            </Text>
+          )}
+        </View>
+        <View
+          className={`rounded-xl px-3 flex-row items-center ${
+            showError
+              ? "bg-red-50 dark:bg-red-950/30 border-2 border-red-500 dark:border-red-500"
+              : "bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800"
+          }`}
+          style={{
+            shadowColor: showError ? "#ef4444" : "#000",
+            shadowOffset: { width: 0, height: 1 },
+            shadowOpacity: showError ? 0.15 : 0.03,
+            shadowRadius: showError ? 3 : 2,
+            elevation: 1,
+          }}
+        >
+          <TextInput
+            value={(formData as any)[field]}
+            onChangeText={(val) => updateField(field, val)}
+            placeholder={placeholder}
+            keyboardType="numeric"
+            className="flex-1 py-3 font-semibold text-base text-slate-900 dark:text-slate-50"
+          />
+          {unit && (
+            <Text className="text-slate-400 text-xs font-bold ml-1">{unit}</Text>
+          )}
+        </View>
       </View>
-    </View>
-  );
+    );
+  };
 
   const progressSegments = [0, 1, 2].map((index) => {
     const segmentCount = Math.min(Math.max(dailyReadingCount - index * 4, 0), 4);
@@ -913,6 +997,7 @@ export default function ChillerEntry() {
                     "0.0",
                     "°C",
                     "w-[48%]",
+                    true,
                   )}
                   {renderInput(
                     "Cond. Outlet",
@@ -920,6 +1005,7 @@ export default function ChillerEntry() {
                     "0.0",
                     "°C",
                     "w-[48%]",
+                    true,
                   )}
                   {renderInput(
                     "Evap. Inlet",
@@ -927,6 +1013,7 @@ export default function ChillerEntry() {
                     "0.0",
                     "°C",
                     "w-[48%]",
+                    true,
                   )}
                   {renderInput(
                     "Evap. Outlet",
@@ -934,6 +1021,7 @@ export default function ChillerEntry() {
                     "0.0",
                     "°C",
                     "w-[48%]",
+                    true,
                   )}
                   {renderInput(
                     "Sat. Cond.",
@@ -941,6 +1029,7 @@ export default function ChillerEntry() {
                     "0.0",
                     "°C",
                     "w-[48%]",
+                    true,
                   )}
                   {renderInput(
                     "Sat. Suction",
@@ -948,6 +1037,7 @@ export default function ChillerEntry() {
                     "0.0",
                     "°C",
                     "w-[48%]",
+                    true,
                   )}
                   {renderInput(
                     "Comp. Suction",
@@ -969,6 +1059,7 @@ export default function ChillerEntry() {
                     "0.0",
                     "°C",
                     "w-[48%]",
+                    true,
                   )}
                 </View>
 
@@ -986,6 +1077,7 @@ export default function ChillerEntry() {
                     "0.0",
                     "PSI",
                     "w-[48%]",
+                    true,
                   )}
                   {renderInput(
                     "Main Suction",
@@ -993,6 +1085,7 @@ export default function ChillerEntry() {
                     "0.0",
                     "PSI",
                     "w-[48%]",
+                    true,
                   )}
                   {renderInput(
                     "Oil Pressure",
@@ -1014,6 +1107,7 @@ export default function ChillerEntry() {
                     "0.0",
                     "PSI",
                     "w-[48%]",
+                    true,
                   )}
                   {renderInput(
                     "Cond. Outlet P.",
@@ -1021,6 +1115,7 @@ export default function ChillerEntry() {
                     "0.0",
                     "PSI",
                     "w-[48%]",
+                    true,
                   )}
                   {renderInput(
                     "Evap. Inlet P.",
@@ -1028,6 +1123,7 @@ export default function ChillerEntry() {
                     "0.0",
                     "PSI",
                     "w-[48%]",
+                    true,
                   )}
                   {renderInput(
                     "Evap. Outlet P.",
@@ -1035,6 +1131,7 @@ export default function ChillerEntry() {
                     "0.0",
                     "PSI",
                     "w-[48%]",
+                    true,
                   )}
                 </View>
 
@@ -1046,13 +1143,14 @@ export default function ChillerEntry() {
                   </Text>
                 </View>
                 <View className="flex-row flex-wrap justify-between">
-                  {renderInput("Comp. Load", "load", "0", "%", "w-[48%]")}
+                  {renderInput("Comp. Load", "load", "0", "%", "w-[48%]", true)}
                   {renderInput(
                     "BTU Meter",
                     "inlineBtuMeter",
                     "0.0",
                     "TR",
                     "w-[48%]",
+                    true,
                   )}
                 </View>
 
@@ -1106,15 +1204,13 @@ export default function ChillerEntry() {
               disabled={
                 saving ||
                 !formData.chillerId ||
-                (!isEditMode && !isAnyFieldFilled)
+                !allMandatoryFilled
               }
               activeOpacity={0.8}
               className="flex-1 rounded-xl overflow-hidden"
               style={{
                 opacity:
-                  !formData.chillerId || (!isEditMode && !isAnyFieldFilled)
-                    ? 0.6
-                    : 1,
+                  !formData.chillerId || !allMandatoryFilled ? 0.6 : 1,
               }}
             >
               <LinearGradient

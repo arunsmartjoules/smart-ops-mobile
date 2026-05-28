@@ -42,9 +42,11 @@ import {
   History,
   LogIn,
   LogOut,
+  Eye,
 } from "lucide-react-native";
 import { router, useFocusEffect } from "expo-router";
 import { useAuth } from "@/contexts/AuthContext";
+import { useAttendanceGate } from "@/contexts/AttendanceGateContext";
 import { useAutoSync } from "@/hooks/useAutoSync";
 import AttendanceService, {
   type AttendanceLog,
@@ -67,6 +69,7 @@ import { db, userSites } from "@/database";
 import { eq } from "drizzle-orm";
 import { useSites } from "@/hooks/useSites";
 import { WhatsAppService } from "@/services/WhatsAppService";
+import { ReportPickerModal } from "@/components/ReportPickerModal";
 
 function formatLocationFailureMessage(
   message: string,
@@ -420,7 +423,15 @@ LogCountCard.displayName = "LogCountCard";
 export default function Dashboard() {
   const { isConnected } = useNetworkStatus();
   const [refreshing, setRefreshing] = useState(false);
-  const { user } = useAuth();
+  const { user, signOut } = useAuth();
+  const {
+    isPrivileged,
+    isPunchedIn,
+    markPunchedIn: markGatePunchedIn,
+    markPunchedOut: markGatePunchedOut,
+  } = useAttendanceGate();
+  const isLocked = !isPrivileged && !isPunchedIn;
+  const [reportPickerOpen, setReportPickerOpen] = useState(false);
   const [todayAttendance, setTodayAttendance] = useState<AttendanceLog | null>(
     null,
   );
@@ -1178,9 +1189,11 @@ export default function Dashboard() {
           "Checked in. It will sync automatically when your connection is stable.",
         );
         fetchData();
+        markGatePunchedIn();
       } else if (res.success) {
         Alert.alert("Success", "Checked in successfully!");
         fetchData();
+        markGatePunchedIn();
       } else {
         const ext = res as any;
         Alert.alert(
@@ -1226,9 +1239,11 @@ export default function Dashboard() {
             "Checked out. It will sync automatically when your connection is stable.",
           );
           fetchData();
+          markGatePunchedOut();
         } else if (res.success) {
           Alert.alert("Success", "Checked out successfully!");
           fetchData();
+          markGatePunchedOut();
         } else if (res.error?.includes("Early checkout")) {
           // Backend requires a reason; auto-provide a default reason so
           // users can complete checkout directly from the dashboard.
@@ -1354,9 +1369,46 @@ export default function Dashboard() {
               Site Overview
             </Text>
           </View>
-          <TouchableOpacity className="w-10 h-10 rounded-full bg-white dark:bg-slate-900 items-center justify-center border border-slate-200 dark:border-slate-800">
-            <Activity size={18} color="#dc2626" />
-          </TouchableOpacity>
+          {isLocked ? (
+            <View className="flex-row items-center">
+              <TouchableOpacity
+                onPress={() => setReportPickerOpen(true)}
+                className="flex-row items-center bg-slate-100 dark:bg-slate-800 rounded-full px-3 py-2 mr-2 active:opacity-80"
+                hitSlop={6}
+              >
+                <Eye size={14} color="#475569" />
+                <Text className="ml-1.5 text-xs font-semibold text-slate-700 dark:text-slate-200">
+                  Reports
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() =>
+                  Alert.alert(
+                    "Sign out",
+                    "Are you sure you want to sign out?",
+                    [
+                      { text: "Cancel", style: "cancel" },
+                      {
+                        text: "Sign out",
+                        style: "destructive",
+                        onPress: () => {
+                          void signOut();
+                        },
+                      },
+                    ],
+                  )
+                }
+                className="w-10 h-10 rounded-full bg-white dark:bg-slate-900 items-center justify-center border border-slate-200 dark:border-slate-800"
+                hitSlop={6}
+              >
+                <LogOut size={16} color="#475569" />
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <TouchableOpacity className="w-10 h-10 rounded-full bg-white dark:bg-slate-900 items-center justify-center border border-slate-200 dark:border-slate-800">
+              <Activity size={18} color="#dc2626" />
+            </TouchableOpacity>
+          )}
         </View>
 
         {/* Attendance Card */}
@@ -1512,11 +1564,13 @@ export default function Dashboard() {
               <Text className="text-slate-900 dark:text-slate-50 text-base font-black">
                 Pending Tickets
               </Text>
-              <TouchableOpacity onPress={() => router.push("/(tabs)/tickets")}>
-                <Text className="text-red-600 text-[10px] font-black uppercase tracking-wider">
-                  View All
-                </Text>
-              </TouchableOpacity>
+              {!isLocked && (
+                <TouchableOpacity onPress={() => router.push("/(tabs)/tickets")}>
+                  <Text className="text-red-600 text-[10px] font-black uppercase tracking-wider">
+                    View All
+                  </Text>
+                </TouchableOpacity>
+              )}
             </View>
           </View>
 
@@ -1597,6 +1651,11 @@ export default function Dashboard() {
           setAfterTemp={setAfterTemp}
           attachmentUri={attachmentUri}
           setAttachmentUri={setAttachmentUri}
+        />
+
+        <ReportPickerModal
+          visible={reportPickerOpen}
+          onClose={() => setReportPickerOpen(false)}
         />
       </SafeAreaView>
     </View>

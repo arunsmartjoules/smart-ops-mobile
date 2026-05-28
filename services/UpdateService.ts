@@ -125,8 +125,13 @@ class UpdateService {
       this.emit({ status: 'ready', restart: () => this.reloadApp() });
       return { success: true };
     } catch (e: any) {
-      this.emit({ status: 'error', message: e.message });
-      return { success: false, error: e.message };
+      const message = e?.message || 'Download failed';
+      logger.warn('Update download failed', {
+        module: 'UPDATE_SERVICE',
+        error: message,
+      });
+      this.emit({ status: 'error', message });
+      return { success: false, error: message };
     }
   }
 

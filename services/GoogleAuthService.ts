@@ -28,6 +28,15 @@ export async function getNativeGoogleIdToken(): Promise<string> {
   ensureConfigured();
   await GoogleSignin.hasPlayServices({ showPlayServicesUpdateDialog: true });
 
+  // Clear any cached account selection so the native account picker is always
+  // shown. Without this, signIn() silently reuses the last-chosen Google
+  // account and users can't switch between accounts available on the device.
+  try {
+    await GoogleSignin.signOut();
+  } catch {
+    // signOut throws if no user is signed in — safe to ignore.
+  }
+
   const result: any = await GoogleSignin.signIn();
   const idToken = result?.data?.idToken || result?.idToken;
 

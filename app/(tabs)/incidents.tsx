@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   Alert,
   Image,
-  FlatList,
   Modal,
   Platform,
   RefreshControl,
@@ -13,7 +12,12 @@ import {
   useColorScheme,
   View,
 } from "react-native";
+import { FlashList } from "@shopify/flash-list";
 import { SafeAreaView } from "react-native-safe-area-context";
+import EmptyState from "@/components/EmptyState";
+import * as Haptics from "expo-haptics";
+import PressableScale from "@/components/PressableScale";
+import { useAttendanceGate } from "@/contexts/AttendanceGateContext";
 import * as ImagePicker from "expo-image-picker";
 import { ChevronDown, Filter, MapPin, Plus, RefreshCw, Camera, Image as ImageIcon, X, Clock, AlertTriangle, UserCircle } from "lucide-react-native";
 import { useLocalSearchParams } from "expo-router";
@@ -166,6 +170,7 @@ interface IncidentCreateForm {
 export default function IncidentsTab() {
   const isDark = useColorScheme() === "dark";
   const { user } = useAuth();
+  const { canEdit } = useAttendanceGate();
   const { isConnected } = useNetworkStatus();
   const { sites, selectedSite, selectSite, loading: sitesLoading, refresh: refreshSites } = useSites(
     user?.user_id || user?.id,
@@ -177,7 +182,8 @@ export default function IncidentsTab() {
   }>();
   const selectedSiteCode = selectedSite?.site_code || "";
   const siteName = selectedSite?.site_name || selectedSite?.site_code || "Select Site";
-  const canEditRca = ["admin", "manager"].includes(String(user?.role || "").toLowerCase());
+  const roleAllowsRca = ["admin", "manager"].includes(String(user?.role || "").toLowerCase());
+  const canEditRca = roleAllowsRca && canEdit;
   const canEditMeta = canEditRca;
 
   const [incidents, setIncidents] = useState<IncidentItem[]>([]);
@@ -972,20 +978,21 @@ export default function IncidentsTab() {
       loading ? (
         <TicketSkeleton />
       ) : (
-        <View className="py-20 items-center justify-center">
-          <Text className="text-slate-900 dark:text-slate-50 font-bold text-lg">No incidents found</Text>
-          {isConnected && !sitesLoading && sites.length === 0 && (
-            <TouchableOpacity
-              onPress={async () => {
-                await refreshSites();
-                fetchData();
-              }}
-              className="mt-4 bg-red-600 px-4 py-2 rounded-xl"
-            >
-              <Text className="text-white font-bold">Retry Server Sync</Text>
-            </TouchableOpacity>
-          )}
-        </View>
+        <EmptyState
+          icon={AlertTriangle}
+          title="No incidents found"
+          action={
+            isConnected && !sitesLoading && sites.length === 0
+              ? {
+                  label: "Retry Server Sync",
+                  onPress: async () => {
+                    await refreshSites();
+                    fetchData();
+                  },
+                }
+              : undefined
+          }
+        />
       ),
     [loading, isConnected, sitesLoading, sites.length, refreshSites, fetchData],
   );
@@ -1061,7 +1068,7 @@ export default function IncidentsTab() {
           </View>
         ) : null}
 
-        <FlatList
+        <FlashList
           data={incidents}
           renderItem={renderCard}
           keyExtractor={(item) => item.id}
@@ -1070,18 +1077,21 @@ export default function IncidentsTab() {
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#dc2626" />
           }
           showsVerticalScrollIndicator={false}
-          contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: 120, flexGrow: 1 }}
+          contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: 120 }}
         />
 
-        <TouchableOpacity
-          onPress={() => {
-            resetCreateForm();
-            setCreating(true);
-          }}
-          className="absolute right-6 bottom-8 w-14 h-14 rounded-full bg-red-600 items-center justify-center"
-        >
-          <Plus color="#fff" size={24} />
-        </TouchableOpacity>
+        {canEdit && (
+          <PressableScale
+            onPress={() => {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+              resetCreateForm();
+              setCreating(true);
+            }}
+            className="absolute right-6 bottom-8 w-14 h-14 rounded-full bg-red-600 items-center justify-center"
+          >
+            <Plus color="#fff" size={24} />
+          </PressableScale>
+        )}
 
         <AdvancedFilterModal
           visible={showFilter}

@@ -2,21 +2,24 @@ import "react-native-gesture-handler";
 // Dev-only diagnostic: import BEFORE anything else so it patches console.error
 // before any other module logs. See utils/navContextErrorTrap.ts.
 import "@/utils/navContextErrorTrap";
-import { Stack, useRouter, useSegments, router } from "expo-router";
+import { Stack, useRouter, useSegments, usePathname, router } from "expo-router";
 import "react-native-reanimated";
 import "./global.css";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
+import { AttendanceGateProvider } from "@/contexts/AttendanceGateContext";
 import { ThemeProvider } from "@/contexts/ThemeContext";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { useEffect } from "react";
-import { View, Text, AppState } from "react-native";
+import { View, Image, AppState } from "react-native";
 import { syncEngine, registerBackgroundSyncAsync } from "@/services/SyncEngine";
 import { syncManager } from "@/services/SyncManager";
 import { initDatabase } from "@/database";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
+import { KeyboardProvider } from "react-native-keyboard-controller";
 import UpdateService from "@/services/UpdateService";
 import UpdateBanner from "@/components/UpdateBanner";
 import VersionGateService from "@/services/VersionGateService";
+import { presenceService } from "@/services/PresenceService";
 import UpdateRequiredScreen from "@/components/UpdateRequiredScreen";
 import ServerStatusOverlay from "@/components/ServerStatusOverlay";
 import * as SplashScreen from "expo-splash-screen";
@@ -40,11 +43,37 @@ if (!global.crypto) {
   });
 }
 
-// Keep the native splash visible until JS is ready
+// Keep the native splash visible until React has mounted its first frame.
+// The JS-level splash in AuthGuard is rendered to look identical to the
+// native splash, so the handoff is invisible. Hiding too early (e.g. at
+// module load) causes a visible flash of a blank/different screen.
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
-// Hide native splash immediately — JS splash takes over
-SplashScreen.hideAsync().catch(() => {});
+// Splash background — must match app.json -> expo-splash-screen.backgroundColor
+// and the native splash colors in android/res/values/colors.xml +
+// ios/.../SplashScreenBackground.colorset.
+const SPLASH_BG = "#E11111";
+const SPLASH_LOGO_WIDTH = 220;
+const SPLASH_LOGO = require("@/assets/images/jouleops-splash.png");
+
+function SplashView() {
+  return (
+    <View
+      style={{
+        flex: 1,
+        backgroundColor: SPLASH_BG,
+        alignItems: "center",
+        justifyContent: "center",
+      }}
+    >
+      <Image
+        source={SPLASH_LOGO}
+        style={{ width: SPLASH_LOGO_WIDTH, height: SPLASH_LOGO_WIDTH }}
+        resizeMode="contain"
+      />
+    </View>
+  );
+}
 
 function AuthGuard({ children }: { children: React.ReactNode }) {
   const { token, isLoading, isEmailVerified } = useAuth();
@@ -78,44 +107,60 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
     if (isLoading) return;
   }, [token, isLoading]);
 
-  // Show full-screen JS splash while auth is resolving
+  // While auth is resolving, render a screen that visually matches the native
+  // splash (same color, same logo, same size) so users don't perceive a second
+  // splash when the native one hands off to React.
   if (isLoading) {
-    return (
-      <View
-        style={{
-          flex: 1,
-          backgroundColor: "#b91c1c",
-          alignItems: "center",
-          justifyContent: "center",
-        }}
-      >
-        <Text
-          style={{
-            color: "white",
-            fontSize: 36,
-            fontWeight: "800",
-            letterSpacing: 1,
-          }}
-        >
-          JouleOps
-        </Text>
-      </View>
-    );
+    return <SplashView />;
   }
 
   return <>{children}</>;
 }
 
+/**
+ * Drives PresenceService from app context: starts when authenticated, stops
+ * on sign-out, and forwards every route change so the admin dashboard can
+ * show which screen the user is on.
+ */
+function PresenceTracker() {
+  const { token } = useAuth();
+  const pathname = usePathname();
+
+  useEffect(() => {
+    if (token) {
+      presenceService.setAuthenticated(true);
+      presenceService.start();
+    } else {
+      presenceService.setAuthenticated(false);
+      presenceService.stop();
+    }
+  }, [token]);
+
+  useEffect(() => {
+    presenceService.setRoute(pathname || null);
+  }, [pathname]);
+
+  return null;
+}
+
 export default function RootLayout() {
   useEffect(() => {
+    // First-frame is mounted — hand off from the native splash to the JS
+    // SplashView, which is rendered to look identical. Done in a useEffect
+    // (not at module load) so React paints at least one frame first.
+    SplashScreen.hideAsync().catch(() => {});
+
     const init = async () => {
       try {
         // Initialize local SQLite database
         initDatabase();
-        // Request all permissions on startup
-        await Location.requestForegroundPermissionsAsync();
-        await ImagePicker.requestCameraPermissionsAsync();
-        await ImagePicker.requestMediaLibraryPermissionsAsync();
+        // Permission prompts are independent — fire in parallel so cold start
+        // isn't waiting on three sequential native bridges.
+        await Promise.all([
+          Location.requestForegroundPermissionsAsync(),
+          ImagePicker.requestCameraPermissionsAsync(),
+          ImagePicker.requestMediaLibraryPermissionsAsync(),
+        ]);
         syncManager.initialize();
         await setupAndroidChannels();
         await registerBackgroundSyncAsync();
@@ -153,43 +198,48 @@ export default function RootLayout() {
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
-      <SafeAreaProvider>
-        <AuthProvider>
-          <AuthGuard>
-            <ThemeProvider>
-              <UpdateBanner />
-              <ServerStatusOverlay />
-              <UpdateRequiredScreen />
-              <PendingNotificationNavigation />
-              <Stack screenOptions={{ headerShown: false }}>
-                <Stack.Screen name="index" />
-                <Stack.Screen name="sign-in" />
-                <Stack.Screen name="sign-up" />
-                <Stack.Screen name="verify-email" />
-                <Stack.Screen name="(tabs)" />
-                <Stack.Screen name="forgot-password" />
-                <Stack.Screen name="reset-password" />
-                <Stack.Screen name="all-tasks" />
-                <Stack.Screen name="attendance" />
-                <Stack.Screen name="privacy-security" />
-                <Stack.Screen name="app-settings" />
-                <Stack.Screen name="notification-settings" />
-                <Stack.Screen name="notifications" />
-                <Stack.Screen name="sitelog-detail" />
-                <Stack.Screen name="chemical-entry" />
-                <Stack.Screen name="temp-rh-entry" />
-                <Stack.Screen name="water-entry" />
-                <Stack.Screen name="chemical" />
-                <Stack.Screen name="temp-rh" />
-                <Stack.Screen name="water" />
-                <Stack.Screen name="chiller" />
-                <Stack.Screen name="history/site-history" />
-                <Stack.Screen name="pm-execution" />
-              </Stack>
-            </ThemeProvider>
-          </AuthGuard>
+      <KeyboardProvider>
+        <SafeAreaProvider>
+          <AuthProvider>
+          <AttendanceGateProvider>
+            <AuthGuard>
+              <ThemeProvider>
+                <UpdateBanner />
+                <ServerStatusOverlay />
+                <UpdateRequiredScreen />
+                <PendingNotificationNavigation />
+                <PresenceTracker />
+                <Stack screenOptions={{ headerShown: false }}>
+                  <Stack.Screen name="index" />
+                  <Stack.Screen name="sign-in" />
+                  <Stack.Screen name="sign-up" />
+                  <Stack.Screen name="verify-email" />
+                  <Stack.Screen name="(tabs)" />
+                  <Stack.Screen name="forgot-password" />
+                  <Stack.Screen name="reset-password" />
+                  <Stack.Screen name="all-tasks" />
+                  <Stack.Screen name="attendance" />
+                  <Stack.Screen name="privacy-security" />
+                  <Stack.Screen name="app-settings" />
+                  <Stack.Screen name="notification-settings" />
+                  <Stack.Screen name="notifications" />
+                  <Stack.Screen name="sitelog-detail" />
+                  <Stack.Screen name="chemical-entry" />
+                  <Stack.Screen name="temp-rh-entry" />
+                  <Stack.Screen name="water-entry" />
+                  <Stack.Screen name="chemical" />
+                  <Stack.Screen name="temp-rh" />
+                  <Stack.Screen name="water" />
+                  <Stack.Screen name="chiller" />
+                  <Stack.Screen name="history/site-history" />
+                  <Stack.Screen name="pm-execution" />
+                </Stack>
+              </ThemeProvider>
+            </AuthGuard>
+          </AttendanceGateProvider>
         </AuthProvider>
-      </SafeAreaProvider>
+        </SafeAreaProvider>
+      </KeyboardProvider>
     </GestureHandlerRootView>
   );
 }

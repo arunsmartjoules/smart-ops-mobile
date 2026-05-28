@@ -52,6 +52,8 @@ interface TicketDetailModalProps {
   setCreateIncidentFromTicket?: (v: boolean) => void;
   incidentDraft?: TicketIncidentDraft;
   setIncidentDraft?: React.Dispatch<React.SetStateAction<TicketIncidentDraft>>;
+  /** When false (e.g., read-only mode), all write surfaces are hidden. */
+  canEdit?: boolean;
 }
 
 const TicketDetailModal = React.memo(
@@ -87,6 +89,7 @@ const TicketDetailModal = React.memo(
     setCreateIncidentFromTicket,
     incidentDraft,
     setIncidentDraft,
+    canEdit = true,
   }: TicketDetailModalProps) => {
     const isDirty = React.useMemo(() => {
       if (!ticket) return false;
@@ -173,35 +176,37 @@ const TicketDetailModal = React.memo(
 
                   <TicketDetailInfo ticket={ticket} />
 
-                  <TicketDetailStatusUpdate
-                    ticket={ticket}
-                    updateStatus={updateStatus}
-                    setUpdateStatus={setUpdateStatus}
-                    updateRemarks={updateRemarks}
-                    setUpdateRemarks={setUpdateRemarks}
-                    updateArea={updateArea}
-                    setUpdateArea={setUpdateArea}
-                    updateCategory={updateCategory}
-                    setUpdateCategory={setUpdateCategory}
-                    areaOptions={areaOptions}
-                    categoryOptions={categoryOptions}
-                    areasLoading={areasLoading}
-                    beforeTemp={beforeTemp}
-                    setBeforeTemp={setBeforeTemp}
-                    afterTemp={afterTemp}
-                    setAfterTemp={setAfterTemp}
-                    attachmentUri={attachmentUri}
-                    setAttachmentUri={setAttachmentUri}
-                    areaSearchQuery={areaSearchQuery}
-                    setAreaSearchQuery={setAreaSearchQuery}
-                    loadMoreAreas={loadMoreAreas}
-                    hasMoreAreas={hasMoreAreas}
-                    loadingMoreAreas={loadingMoreAreas}
-                    createIncidentFromTicket={createIncidentFromTicket}
-                    setCreateIncidentFromTicket={setCreateIncidentFromTicket}
-                    incidentDraft={incidentDraft}
-                    setIncidentDraft={setIncidentDraft}
-                  />
+                  {canEdit ? (
+                    <TicketDetailStatusUpdate
+                      ticket={ticket}
+                      updateStatus={updateStatus}
+                      setUpdateStatus={setUpdateStatus}
+                      updateRemarks={updateRemarks}
+                      setUpdateRemarks={setUpdateRemarks}
+                      updateArea={updateArea}
+                      setUpdateArea={setUpdateArea}
+                      updateCategory={updateCategory}
+                      setUpdateCategory={setUpdateCategory}
+                      areaOptions={areaOptions}
+                      categoryOptions={categoryOptions}
+                      areasLoading={areasLoading}
+                      beforeTemp={beforeTemp}
+                      setBeforeTemp={setBeforeTemp}
+                      afterTemp={afterTemp}
+                      setAfterTemp={setAfterTemp}
+                      attachmentUri={attachmentUri}
+                      setAttachmentUri={setAttachmentUri}
+                      areaSearchQuery={areaSearchQuery}
+                      setAreaSearchQuery={setAreaSearchQuery}
+                      loadMoreAreas={loadMoreAreas}
+                      hasMoreAreas={hasMoreAreas}
+                      loadingMoreAreas={loadingMoreAreas}
+                      createIncidentFromTicket={createIncidentFromTicket}
+                      setCreateIncidentFromTicket={setCreateIncidentFromTicket}
+                      incidentDraft={incidentDraft}
+                      setIncidentDraft={setIncidentDraft}
+                    />
+                  ) : null}
 
                   {/* Comments & Timeline */}
                   <TicketLineItems ticketId={ticket.id || ticket.ticket_no} />
@@ -209,6 +214,7 @@ const TicketDetailModal = React.memo(
               </ScrollView>
             </View>
 
+            {canEdit ? (
             <View
               className="border-t border-slate-100 dark:border-slate-800 pt-3"
             >
@@ -245,6 +251,7 @@ const TicketDetailModal = React.memo(
                 )}
               </TouchableOpacity>
             </View>
+            ) : null}
           </View>
         </View>
       </Modal>

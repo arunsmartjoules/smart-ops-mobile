@@ -13,7 +13,10 @@ import {
   AppState,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import EmptyState from "@/components/EmptyState";
 import { LinearGradient } from "expo-linear-gradient";
+import * as Haptics from "expo-haptics";
+import PressableScale from "@/components/PressableScale";
 import NetInfo from "@react-native-community/netinfo";
 import {
   AlertTriangle,
@@ -31,6 +34,7 @@ import {
 import { router, useFocusEffect } from "expo-router";
 import * as Location from "expo-location";
 import { useAuth } from "@/contexts/AuthContext";
+import { useAttendanceGate } from "@/contexts/AttendanceGateContext";
 import {
   AttendanceService,
   type AttendanceLog,
@@ -283,6 +287,11 @@ function formatLocationFailureMessage(
 export default function AttendancePage() {
   const { isConnected } = useNetworkStatus();
   const { user, refreshProfile } = useAuth();
+  const {
+    refresh: refreshAttendanceGate,
+    markPunchedIn: markGatePunchedIn,
+    markPunchedOut: markGatePunchedOut,
+  } = useAttendanceGate();
   const userId = user?.user_id || user?.id;
   const candidateUserIds = useMemo(
     () => Array.from(new Set([user?.user_id, user?.id].filter(Boolean))) as string[],
@@ -635,6 +644,7 @@ export default function AttendancePage() {
 
   const handleCheckOutPress = useCallback(async () => {
     if (!todayAttendance) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
 
     setValidatingLocation(true);
     try {
@@ -665,9 +675,15 @@ export default function AttendancePage() {
           "Checked out. It will sync automatically when your connection is stable.",
         );
         fetchData();
+        markGatePunchedOut();
+        refreshAttendanceGate();
+        router.replace("/(tabs)/dashboard");
       } else if (res.success) {
         Alert.alert("Success", "Checked out successfully!");
         fetchData();
+        markGatePunchedOut();
+        refreshAttendanceGate();
+        router.replace("/(tabs)/dashboard");
       } else if (res.isEarlyCheckout) {
         // Revert optimistic update — need reason
         setTodayAttendance(previousAttendance);
@@ -690,7 +706,7 @@ export default function AttendancePage() {
       Alert.alert("Error", error.message);
       setValidatingLocation(false);
     }
-  }, [todayAttendance, ensureLocationForPunch, fetchData]);
+  }, [todayAttendance, ensureLocationForPunch, fetchData, refreshAttendanceGate, markGatePunchedOut]);
 
   const submitEarlyCheckout = useCallback(async () => {
     if (!checkoutReason.trim()) {
@@ -717,17 +733,23 @@ export default function AttendancePage() {
           "Checked out. It will sync automatically when your connection is stable.",
         );
         fetchData();
+        markGatePunchedOut();
+        refreshAttendanceGate();
+        router.replace("/(tabs)/dashboard");
       } else if (res.success) {
         setIsCheckoutModalVisible(false);
         Alert.alert("Success", "Checked out successfully!");
         fetchData();
+        markGatePunchedOut();
+        refreshAttendanceGate();
+        router.replace("/(tabs)/dashboard");
       } else {
         Alert.alert("Failed", res.error || "Check-out failed");
       }
     } catch (error: any) {
       Alert.alert("Error", error.message);
     }
-  }, [todayAttendance, checkoutReason, fetchData, ensureLocationForPunch]);
+  }, [todayAttendance, checkoutReason, fetchData, ensureLocationForPunch, refreshAttendanceGate, markGatePunchedOut]);
 
   const performCheckIn = useCallback(
     async (
@@ -777,11 +799,17 @@ export default function AttendancePage() {
           setIsSiteModalVisible(false);
           pendingPunchCoordsRef.current = null;
           fetchData();
+          markGatePunchedIn();
+          refreshAttendanceGate();
+          router.replace("/(tabs)/dashboard");
         } else if (res.success) {
           Alert.alert("Success", "Checked in successfully!");
           setIsSiteModalVisible(false);
           pendingPunchCoordsRef.current = null;
           fetchData();
+          markGatePunchedIn();
+          refreshAttendanceGate();
+          router.replace("/(tabs)/dashboard");
         } else {
           setTodayAttendance(null);
 
@@ -818,7 +846,7 @@ export default function AttendancePage() {
         Alert.alert("Error", error.message);
       }
     },
-    [userId, fetchData, handleCheckOutPress],
+    [userId, fetchData, handleCheckOutPress, refreshAttendanceGate, markGatePunchedIn],
   );
 
   const handleCheckInPress = useCallback(async () => {
@@ -826,6 +854,7 @@ export default function AttendancePage() {
       Alert.alert("Error", "User session not available. Please sign in again.");
       return;
     }
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
 
     setValidatingLocation(true);
     try {
@@ -908,11 +937,11 @@ export default function AttendancePage() {
         const diffMs = currentTime.getTime() - start.getTime();
         const diffHours = diffMs / (1000 * 60 * 60);
 
-        if (diffHours <= 17) {
+        if (diffHours <= 20) {
           end = currentTime;
         } else {
-          // Cap at 17 hours exactly for sessions that exceeded the limit
-          end = new Date(start.getTime() + 17 * 60 * 60 * 1000);
+          // Cap at 20 hours exactly for sessions that exceeded the limit
+          end = new Date(start.getTime() + 20 * 60 * 60 * 1000);
         }
       }
 
@@ -1129,10 +1158,9 @@ export default function AttendancePage() {
             {/* Action Area */}
             <View className="mt-6">
               {!todayAttendance ? (
-                <TouchableOpacity
+                <PressableScale
                   onPress={handleCheckInPress}
                   disabled={validatingLocation}
-                  activeOpacity={0.8}
                   style={{
                     backgroundColor: "white",
                     borderRadius: 16,
@@ -1156,11 +1184,10 @@ export default function AttendancePage() {
                       </Text>
                     </>
                   )}
-                </TouchableOpacity>
+                </PressableScale>
               ) : !todayAttendance.check_out_time ? (
-                <TouchableOpacity
+                <PressableScale
                   onPress={handleCheckOutPress}
-                  activeOpacity={0.8}
                   style={{
                     backgroundColor: "rgba(255,255,255,0.15)",
                     borderRadius: 16,
@@ -1176,7 +1203,7 @@ export default function AttendancePage() {
                   <Text className="text-white font-black ml-2 tracking-tight">
                     END DAY
                   </Text>
-                </TouchableOpacity>
+                </PressableScale>
               ) : (
                 <TouchableOpacity
                   onPress={handleCheckInPress}
@@ -1226,11 +1253,7 @@ export default function AttendancePage() {
           {loading ? (
             <AttendanceHistorySkeleton />
           ) : attendanceHistory.length === 0 ? (
-            <View className="items-center py-10">
-              <Text className="text-slate-400">
-                No attendance history found
-              </Text>
-            </View>
+            <EmptyState title="No attendance history found" />
           ) : (
             <View className="gap-3">
               {attendanceHistory.map((log) => (

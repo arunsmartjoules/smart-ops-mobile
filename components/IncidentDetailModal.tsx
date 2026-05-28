@@ -720,33 +720,35 @@ export default function IncidentDetailModal({
               />
             ) : null}
 
-            <TouchableOpacity
-              onPress={onSubmit}
-              disabled={
-                isUpdating ||
-                ((incident.status === "Open" ||
-                  incident.status === "Inprogress") &&
-                  !nextStatus)
-              }
-              className="bg-red-600 rounded-xl py-3 mt-1"
-              style={{
-                opacity:
+            {(canEditMeta || canEditRca) && (
+              <TouchableOpacity
+                onPress={onSubmit}
+                disabled={
                   isUpdating ||
                   ((incident.status === "Open" ||
                     incident.status === "Inprogress") &&
                     !nextStatus)
-                    ? 0.55
-                    : 1,
-              }}
-            >
-              {isUpdating ? (
-                <ActivityIndicator color="#fff" size="small" />
-              ) : (
-                <Text className="text-white text-center font-black">
-                  Update Incident
-                </Text>
-              )}
-            </TouchableOpacity>
+                }
+                className="bg-red-600 rounded-xl py-3 mt-1"
+                style={{
+                  opacity:
+                    isUpdating ||
+                    ((incident.status === "Open" ||
+                      incident.status === "Inprogress") &&
+                      !nextStatus)
+                      ? 0.55
+                      : 1,
+                }}
+              >
+                {isUpdating ? (
+                  <ActivityIndicator color="#fff" size="small" />
+                ) : (
+                  <Text className="text-white text-center font-black">
+                    Update Incident
+                  </Text>
+                )}
+              </TouchableOpacity>
+            )}
           </View>
         </View>
       </KeyboardAvoidingView>
