@@ -22,6 +22,14 @@ export interface MaintenanceInfo {
   message: string;
   /** ISO timestamp the window ends — drives the countdown. null = open-ended. */
   endAt: string | null;
+  /**
+   * The backend has granted this user a bypass (currently: superadmins). When
+   * true the maintenance window is genuinely active but the overlay stays
+   * hidden so the user can keep using the app — they're the one verifying the
+   * fix. The `active` flag remains true so other UI surfaces can still show a
+   * "maintenance is on" indicator if they want to.
+   */
+  bypass: boolean;
 }
 
 export interface ServerStatusState {
@@ -45,7 +53,7 @@ class ServerStatusService {
   private state: ServerStatusState = {
     serverDown: false,
     deviceOnline: true,
-    maintenance: { active: false, message: "", endAt: null },
+    maintenance: { active: false, message: "", endAt: null, bypass: false },
   };
 
   constructor() {
@@ -97,17 +105,19 @@ class ServerStatusService {
   }
 
   /** Apply the maintenance flag reported by the backend. */
-  setMaintenance(info: MaintenanceInfo | undefined | null) {
+  setMaintenance(info: Partial<MaintenanceInfo> | undefined | null) {
     const next: MaintenanceInfo = {
       active: info?.active === true,
       message: String(info?.message ?? ""),
       endAt: info?.endAt ?? null,
+      bypass: info?.bypass === true,
     };
     const cur = this.state.maintenance;
     if (
       next.active !== cur.active ||
       next.message !== cur.message ||
-      next.endAt !== cur.endAt
+      next.endAt !== cur.endAt ||
+      next.bypass !== cur.bypass
     ) {
       this.state = { ...this.state, maintenance: next };
       this.emit();

@@ -30,7 +30,11 @@ export default function ServerStatusOverlay() {
 
   useEffect(() => ServerStatusService.subscribe(setStatus), []);
 
-  const inMaintenance = status.maintenance.active;
+  // Superadmins keep using the app during maintenance — they're the ones
+  // verifying the fix, so the blocking modal would just lock them out of
+  // their own validation work.
+  const inMaintenance =
+    status.maintenance.active && !status.maintenance.bypass;
   // Only a "real" outage — the device has internet but the backend is down.
   const serverDown = status.serverDown && status.deviceOnline;
 

@@ -15,6 +15,9 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
+import DateTimePicker, {
+  DateTimePickerAndroid,
+} from "@react-native-community/datetimepicker";
 import {
   ChevronLeft,
   Snowflake,
@@ -26,6 +29,8 @@ import {
   Gauge,
   PenTool,
   CheckCircle2,
+  Calendar,
+  Clock,
 } from "lucide-react-native";
 import { SiteLogService } from "@/services/SiteLogService";
 import { formatAssignee, operatorLabel } from "@/utils/assignee";
@@ -121,6 +126,23 @@ function ChillerEntryContent() {
   const [signatureModalVisible, setSignatureModalVisible] = useState(false);
   const [dailyReadingCount, setDailyReadingCount] = useState(0);
   const [loadingDailyProgress, setLoadingDailyProgress] = useState(false);
+  // User-controllable reading timestamp. Defaults to "now" so opening the
+  // screen and immediately submitting works without the operator having to
+  // touch this field. The backend derives the LAM `due_date` and the
+  // Fieldproxy task mapping from this value (chillerReadingsController →
+  // toYmd(reading_time)), so a mis-set time silently routes the reading to
+  // the wrong LAM row.
+  const [readingTime, setReadingTime] = useState<number>(() => {
+    const fromParams = params.readingTime ? parseInt(params.readingTime) : NaN;
+    return Number.isFinite(fromParams) ? fromParams : Date.now();
+  });
+  // iOS only — Android uses the imperative DateTimePickerAndroid API.
+  const [iosPickerVisible, setIosPickerVisible] = useState(false);
+  // Persist a user-edited reading_time to the existing row. Debounced so
+  // rapid picker interactions don't spam the DB.
+  const readingTimePersistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const formDataRef = useRef(formData);
   // Tracks the row id of the in-progress reading and the chiller it belongs
@@ -192,12 +214,39 @@ function ChillerEntryContent() {
   // is jarring.
   const showFieldErrors = isAnyFieldFilled || isEditMode;
 
-  // Clean up timer on unmount
+  // Clean up timers on unmount
   useEffect(() => {
     return () => {
       if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+      if (readingTimePersistTimerRef.current)
+        clearTimeout(readingTimePersistTimerRef.current);
     };
   }, []);
+
+  // Persist a user-edited reading_time to the existing row. Skipped on the
+  // very first mount-set (no existing row yet) and when no row has been
+  // created — those cases get the latest value via ensureChillerRow /
+  // handleSubmission. Debounced so opening/closing the picker repeatedly
+  // doesn't spam writes.
+  const readingTimeMountedRef = useRef(false);
+  useEffect(() => {
+    if (!readingTimeMountedRef.current) {
+      readingTimeMountedRef.current = true;
+      return;
+    }
+    const rowId = isEditMode ? targetId : currentReadingRef.current?.id;
+    if (!rowId) return;
+    if (completedRef.current) return;
+
+    if (readingTimePersistTimerRef.current)
+      clearTimeout(readingTimePersistTimerRef.current);
+    readingTimePersistTimerRef.current = setTimeout(() => {
+      // Fire-and-forget: SyncEngine retries from offline_queue on failure.
+      SiteLogService.updateChillerReading(rowId, { readingTime }).catch(
+        (e) => console.error("Failed to persist reading_time edit", e),
+      );
+    }, 500);
+  }, [readingTime, isEditMode, targetId]);
 
   useEffect(() => {
     formDataRef.current = formData;
@@ -361,7 +410,7 @@ function ChillerEntryContent() {
         assignedTo: operatorLabel(user),
         executorId: operatorLabel(user),
         status: "Inprogress",
-        readingTime: params.readingTime ? parseInt(params.readingTime) : now,
+        readingTime,
         startDatetime: now,
       });
       if (created?.id) {
@@ -385,7 +434,7 @@ function ChillerEntryContent() {
     user?.employee_code,
     user?.user_id,
     user?.id,
-    params.readingTime,
+    readingTime,
   ]);
 
   useEffect(() => {
@@ -507,6 +556,16 @@ function ChillerEntryContent() {
               user?.employee_code ||
               "—",
           );
+          // Preserve the original reading_time when editing — operators must
+          // be able to correct values without silently shifting the LAM
+          // mapping to "now". Fall back to created_at, then to the existing
+          // state value, so we never reset to current time if the record
+          // somehow lacks a timestamp.
+          const recordReadingTime =
+            (record as any).reading_time ?? (record as any).created_at;
+          if (Number.isFinite(recordReadingTime)) {
+            setReadingTime(Number(recordReadingTime));
+          }
           setFormData({
             chillerId: record.equipment_id || record.chiller_id || "",
             equipmentId: record.equipment_id || "",
@@ -765,9 +824,7 @@ function ChillerEntryContent() {
             assignedTo: operatorLabel(user),
             executorId: operatorLabel(user),
             status: "Completed",
-            readingTime: params.readingTime
-              ? parseInt(params.readingTime)
-              : now,
+            readingTime,
             startDatetime: now,
             endDatetime: now,
           });
@@ -846,16 +903,16 @@ function ChillerEntryContent() {
           )}
         </View>
         <View
-          className={`rounded-xl px-3 flex-row items-center ${
+          className={`bg-white dark:bg-slate-900 rounded-xl px-3 flex-row items-center ${
             showError
-              ? "bg-red-50 dark:bg-red-950/30 border-2 border-red-500 dark:border-red-500"
-              : "bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800"
+              ? "border-2 border-red-500"
+              : "border border-slate-100 dark:border-slate-800"
           }`}
           style={{
-            shadowColor: showError ? "#ef4444" : "#000",
+            shadowColor: "#000",
             shadowOffset: { width: 0, height: 1 },
-            shadowOpacity: showError ? 0.15 : 0.03,
-            shadowRadius: showError ? 3 : 2,
+            shadowOpacity: 0.03,
+            shadowRadius: 2,
             elevation: 1,
           }}
         >
@@ -872,6 +929,47 @@ function ChillerEntryContent() {
         </View>
       </View>
     );
+  };
+
+  // Open the platform-native date+time picker. Android chains the two
+  // dialogs imperatively (matches IncidentDetailModal); iOS shows a single
+  // inline datetime picker via the iosPickerVisible modal. Future readings
+  // are blocked — a reading "in the future" would silently route to the
+  // wrong LAM row.
+  const openReadingTimePicker = () => {
+    if (Platform.OS === "android") {
+      const base = new Date(readingTime);
+      const now = new Date();
+      DateTimePickerAndroid.open({
+        value: base,
+        mode: "date",
+        is24Hour: true,
+        maximumDate: now,
+        onChange: (_evt, d1) => {
+          if (!d1) return;
+          DateTimePickerAndroid.open({
+            value: d1,
+            mode: "time",
+            is24Hour: true,
+            onChange: (_evt2, d2) => {
+              if (!d2) return;
+              const merged = new Date(d1);
+              merged.setHours(d2.getHours(), d2.getMinutes(), 0, 0);
+              if (merged.getTime() > Date.now()) {
+                Alert.alert(
+                  "Invalid time",
+                  "Reading time cannot be in the future.",
+                );
+                return;
+              }
+              setReadingTime(merged.getTime());
+            },
+          });
+        },
+      });
+      return;
+    }
+    setIosPickerVisible(true);
   };
 
   const progressSegments = [0, 1, 2].map((index) => {
@@ -969,6 +1067,51 @@ function ChillerEntryContent() {
                   loading={loadingAssets}
                   placeholder="Select Chiller"
                 />
+
+                {/* Reading date & time — defaults to "now". Drives the LAM
+                    due_date and Fieldproxy mapping on the server. */}
+                <View className="mb-4">
+                  <View className="flex-row items-center mb-1.5 ml-1">
+                    <Text className="text-slate-500 dark:text-slate-400 text-[10px] font-bold uppercase tracking-widest">
+                      Reading Date & Time
+                    </Text>
+                    <Text
+                      className="text-red-600 dark:text-red-400 font-bold ml-1"
+                      style={{ fontSize: 14, lineHeight: 14 }}
+                    >
+                      *
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    onPress={() => openReadingTimePicker()}
+                    activeOpacity={0.7}
+                    className="bg-white dark:bg-slate-900 rounded-xl border border-slate-100 dark:border-slate-800 px-3 py-3 flex-row items-center"
+                    style={{
+                      shadowColor: "#000",
+                      shadowOffset: { width: 0, height: 1 },
+                      shadowOpacity: 0.03,
+                      shadowRadius: 2,
+                      elevation: 1,
+                    }}
+                  >
+                    <Calendar size={16} color="#0d9488" />
+                    <Text className="ml-2 flex-1 font-semibold text-base text-slate-900 dark:text-slate-50">
+                      {formatIST(new Date(readingTime), {
+                        day: "2-digit",
+                        month: "short",
+                        year: "numeric",
+                      })}
+                    </Text>
+                    <Clock size={14} color="#64748b" />
+                    <Text className="ml-1.5 font-semibold text-sm text-slate-600 dark:text-slate-300">
+                      {formatIST(new Date(readingTime), {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                        hour12: true,
+                      })}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
 
                 {isEditMode && (
                   <View className="mb-2">
@@ -1239,6 +1382,44 @@ function ChillerEntryContent() {
           </View>
         </KeyboardAvoidingView>
       </SafeAreaView>
+
+      {/* iOS reading-time picker. Android uses the imperative API above. */}
+      <Modal
+        visible={iosPickerVisible && Platform.OS === "ios"}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setIosPickerVisible(false)}
+      >
+        <View className="flex-1 bg-black/50 justify-end">
+          <View className="bg-white dark:bg-slate-900 rounded-t-3xl pb-8">
+            <View className="flex-row items-center justify-between px-6 py-4 border-b border-slate-100 dark:border-slate-800">
+              <Text className="text-slate-900 dark:text-slate-50 font-bold text-lg">
+                Reading Date & Time
+              </Text>
+              <TouchableOpacity onPress={() => setIosPickerVisible(false)}>
+                <Text className="text-teal-600 font-bold">Done</Text>
+              </TouchableOpacity>
+            </View>
+            <DateTimePicker
+              value={new Date(readingTime)}
+              mode="datetime"
+              display="spinner"
+              maximumDate={new Date()}
+              onChange={(_, selected) => {
+                if (!selected) return;
+                if (selected.getTime() > Date.now()) {
+                  Alert.alert(
+                    "Invalid time",
+                    "Reading time cannot be in the future.",
+                  );
+                  return;
+                }
+                setReadingTime(selected.getTime());
+              }}
+            />
+          </View>
+        </View>
+      </Modal>
 
       {/* Signature Modal for 2-Click Streamlined Flow */}
       <Modal

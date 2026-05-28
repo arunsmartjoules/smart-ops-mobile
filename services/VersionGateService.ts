@@ -17,6 +17,10 @@ import logger from "@/utils/logger";
 import { API_BASE_URL } from "@/constants/api";
 import { APP_VERSION } from "@/constants/version";
 import ServerStatusService from "@/services/ServerStatusService";
+import {
+  getStoredAuthToken,
+  getValidAuthToken,
+} from "@/services/AuthTokenManager";
 
 export interface VersionGateState {
   blocked: boolean;
@@ -94,7 +98,19 @@ class VersionGateService {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 10000);
     try {
-      const res = await fetch(url, { signal: controller.signal });
+      // Send the auth token when we have one so the backend can flag the
+      // response with `maintenance.bypass` for superadmins. Pre-login (no
+      // token) the request stays anonymous and behaves like before.
+      let token: string | null = null;
+      try {
+        token = (await getValidAuthToken()) || (await getStoredAuthToken());
+      } catch {
+        token = null;
+      }
+      const headers: Record<string, string> = token
+        ? { Authorization: `Bearer ${token}` }
+        : {};
+      const res = await fetch(url, { signal: controller.signal, headers });
       if (!res.ok) {
         ServerStatusService.reportUnreachable();
         return;
