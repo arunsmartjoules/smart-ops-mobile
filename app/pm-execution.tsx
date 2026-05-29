@@ -27,6 +27,7 @@ import {
   X,
 } from "lucide-react-native";
 import * as ImagePicker from "expo-image-picker";
+import * as Haptics from "expo-haptics";
 import PMService from "@/services/PMService";
 import { pmChecklistItems } from "@/database";
 import { useNetworkStatus } from "@/hooks/useNetworkStatus";
@@ -648,6 +649,7 @@ export default function PMExecutionScreen() {
         status?: string;
         clientSign?: string;
         completed_on?: number;
+        background?: boolean;
       },
       overridingResponses?: ResponseMap,
       overridingInstance?: any,
@@ -701,6 +703,11 @@ export default function PMExecutionScreen() {
             afterImage: sourceInstance?.after_image || null,
             clientSign: executionOptions?.clientSign,
             completed_on: executionOptions?.completed_on,
+            // Background mode → service writes locally + queues, fires the
+            // network call without awaiting, lets the caller navigate away.
+            // Rollbacks from server rejection are surfaced via Alert in
+            // PMService itself.
+            awaitNetwork: executionOptions?.background !== true,
           },
         );
 
@@ -1203,6 +1210,10 @@ export default function PMExecutionScreen() {
           status: "Completed",
           clientSign: signature,
           completed_on: now,
+          // Optimistic: PMService writes locally + queues, fires the
+          // completion PUT in the background. Server rejections surface as a
+          // non-blocking Alert from PMService and roll back the local row.
+          background: true,
         });
         if (!saved) {
           const stashed = lastSaveErrorRef.current;
@@ -1211,9 +1222,13 @@ export default function PMExecutionScreen() {
         }
 
         setShowCompletionModal(false);
-        Alert.alert("Completed", "PM task marked as complete!", [
-          { text: "OK", onPress: () => router.back() },
-        ]);
+        // Skip the success Alert + OK tap — go straight back. The haptic
+        // and the PM row updating to Completed in the list is the
+        // confirmation. Saves ~one full network roundtrip of waiting.
+        Haptics.notificationAsync(
+          Haptics.NotificationFeedbackType.Success,
+        ).catch(() => {});
+        router.back();
       } catch (err) {
         logger.error("Failed to complete PM", { error: err });
         const apiErrorMessage =

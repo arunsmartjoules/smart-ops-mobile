@@ -7,6 +7,7 @@ import { AttachmentQueueService } from "./AttachmentQueueService";
 import logger from "../utils/logger";
 import { API_BASE_URL } from "../constants/api";
 import NetInfo from "@react-native-community/netinfo";
+import { Alert } from "react-native";
 import { toIstDayMs } from "../utils/istDate";
 
 const BACKEND_URL = API_BASE_URL;
@@ -419,7 +420,7 @@ const PMService = {
   async saveExecutionProgress(
     instanceServerId: string,
     responses: PMResponseData[],
-    options?: { status?: string; beforeImage?: string | null; afterImage?: string | null; clientSign?: string | null; completed_on?: number | null }
+    options?: { status?: string; beforeImage?: string | null; afterImage?: string | null; clientSign?: string | null; completed_on?: number | null; awaitNetwork?: boolean }
   ): Promise<void> {
     let localInstance = await this.getInstanceByServerId(instanceServerId);
     // If this PM was opened from API before being cached locally, hydrate once
@@ -535,9 +536,16 @@ const PMService = {
       apiPayload.completed_on = new Date(apiPayload.completed_on).toISOString();
     }
 
-    // Try immediate synchronization
-    const netState = await NetInfo.fetch();
-    if (netState.isConnected) {
+    // Network-side work: response flush (if completion) + completion PUT.
+    // Extracted so the caller can choose to await it (default — keeps the
+    // strict completion-validation semantics) or fire-and-forget it
+    // (`awaitNetwork: false` — used by Sign & Complete to make the UI feel
+    // instant). Background-mode rejections still roll back local state via
+    // the same code path and surface to the user via Alert.alert.
+    const pushToServer = async () => {
+      const netState = await NetInfo.fetch();
+      if (!netState.isConnected) return;
+
       // The server validates Completed transitions against its own DB. Any
       // pm_response_upsert items still queued for this instance must reach
       // the server first, otherwise validation reports "missing responses"
@@ -615,6 +623,31 @@ const PMService = {
         if (err?.name === "PMCompletionBlockedError") throw err;
         logger.warn("Immediate PM update failed, staying in queue", { module: "PM_SERVICE", error: err });
       }
+    };
+
+    if (options?.awaitNetwork === false) {
+      // Fire-and-forget. Rejections from PMCompletionBlockedError surface as
+      // a non-blocking alert — the user may have already navigated away, so
+      // the alert is the only signal that the server rolled back their
+      // completion. The local row was already rolled back inside pushToServer.
+      pushToServer().catch((err) => {
+        if (err?.name === "PMCompletionBlockedError") {
+          const details = (err as any)?.details;
+          const detailLines: string[] = [];
+          if (details?.missing_responses?.length) detailLines.push(`• ${details.missing_responses.length} task(s) missing response`);
+          if (details?.missing_measure_readings?.length) detailLines.push(`• ${details.missing_measure_readings.length} task(s) missing readings`);
+          if (details?.missing_mandatory_remarks?.length) detailLines.push(`• ${details.missing_mandatory_remarks.length} task(s) missing remarks`);
+          if (details?.missing_mandatory_images?.length) detailLines.push(`• ${details.missing_mandatory_images.length} task(s) missing images`);
+          if (details?.missing_before_image) detailLines.push(`• Before photo missing`);
+          if (details?.missing_after_image) detailLines.push(`• After photo missing`);
+          const fullMessage = detailLines.length > 0
+            ? `${err.message}\n\n${detailLines.join("\n")}`
+            : err.message;
+          Alert.alert("PM completion rolled back", fullMessage);
+        }
+      });
+    } else {
+      await pushToServer();
     }
   },
 
@@ -635,27 +668,41 @@ const PMService = {
         ),
       );
 
+    // Filter to this instance's pending responses first so we don't fan out
+    // POSTs for unrelated PMs.
+    const toFlush: { queueId: string; payload: any }[] = [];
     for (const row of rows) {
-      let parsed: any;
       try {
-        parsed = JSON.parse(row.payload);
-      } catch {
-        continue;
-      }
-      if (parsed?.instance_id !== instanceServerId) continue;
-
-      try {
-        const response = await apiFetch(`/api/pm-response`, {
-          method: "POST",
-          body: JSON.stringify(parsed),
-        });
-        if (response.ok) {
-          await cacheManager.dequeue(row.id);
+        const parsed = JSON.parse(row.payload);
+        if (parsed?.instance_id === instanceServerId) {
+          toFlush.push({ queueId: row.id, payload: parsed });
         }
       } catch {
-        // Transient — leave in queue for SyncEngine to retry.
+        // Malformed payload — skip.
       }
     }
+
+    // Parallel POST: each pm_response_upsert is independent and the backend
+    // is idempotent on (instance_id, checklist_id), so request order doesn't
+    // matter. Sequential awaits previously made completion latency = N ×
+    // roundtrip on the critical path of Sign & Complete. allSettled keeps a
+    // single transient failure from cancelling the rest — failed items stay
+    // queued for SyncEngine to retry.
+    await Promise.allSettled(
+      toFlush.map(async ({ queueId, payload }) => {
+        try {
+          const response = await apiFetch(`/api/pm-response`, {
+            method: "POST",
+            body: JSON.stringify(payload),
+          });
+          if (response.ok) {
+            await cacheManager.dequeue(queueId);
+          }
+        } catch {
+          // Transient — leave in queue for SyncEngine to retry.
+        }
+      }),
+    );
   },
 
   /**

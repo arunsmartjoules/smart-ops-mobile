@@ -716,38 +716,39 @@ export const SiteLogService: ISiteLogService = {
       },
     });
 
-    // Best-effort API call
-    try {
-      await apiFetch("/api/site-logs", {
-        method: "POST",
-        body: JSON.stringify({
-          id,
-          site_code: data.siteCode,
-          executor_id: data.executorId,
-          assigned_to: data.assignedTo || null,
-          log_name: data.logName,
-          task_name: data.taskName || null,
-          temperature: data.temperature || null,
-          rh: data.rh || null,
-          tds: data.tds || null,
-          ph: data.ph || null,
-          hardness: data.hardness || null,
-          chemical_dosing: data.chemicalDosing || null,
-          remarks: data.remarks || null,
-          main_remarks: data.mainRemarks || data.main_remarks || null,
-          entry_time: data.entryTime || null,
-          end_time: data.endTime || null,
-          signature: data.signature || null,
-          attachment: data.attachment || null,
-          status: data.status || null,
-          scheduled_date: scheduledDate,
-        }),
-      });
-    } catch {
+    // Fire-and-forget API call. Same rationale as updateSiteLog — the local
+    // INSERT + offline_queue entry are the source of truth, SyncEngine
+    // retries failures, and not awaiting lets the entry screen navigate
+    // away the moment SQLite is written.
+    apiFetch("/api/site-logs", {
+      method: "POST",
+      body: JSON.stringify({
+        id,
+        site_code: data.siteCode,
+        executor_id: data.executorId,
+        assigned_to: data.assignedTo || null,
+        log_name: data.logName,
+        task_name: data.taskName || null,
+        temperature: data.temperature || null,
+        rh: data.rh || null,
+        tds: data.tds || null,
+        ph: data.ph || null,
+        hardness: data.hardness || null,
+        chemical_dosing: data.chemicalDosing || null,
+        remarks: data.remarks || null,
+        main_remarks: data.mainRemarks || data.main_remarks || null,
+        entry_time: data.entryTime || null,
+        end_time: data.endTime || null,
+        signature: data.signature || null,
+        attachment: data.attachment || null,
+        status: data.status || null,
+        scheduled_date: scheduledDate,
+      }),
+    }).catch(() => {
       logger.debug("saveSiteLog: API call failed, will sync later", {
         module: "SITE_LOG_SERVICE",
       });
-    }
+    });
 
     return record;
   },
@@ -1262,20 +1263,27 @@ export const SiteLogService: ISiteLogService = {
         payload: { id, ...updateFields },
       });
 
-      // Best-effort API call
-      try {
-        const response = await apiFetch(`/api/site-logs/${id}`, {
-          method: "PUT",
-          body: JSON.stringify(updateFields),
+      // Fire-and-forget API call. The local row + offline_queue entry above
+      // is the source of truth; SyncEngine retries on failure. Removing the
+      // await here makes Save / Sign-to-Complete return as soon as local
+      // SQLite is written, so the entry screen can navigate immediately.
+      apiFetch(`/api/site-logs/${id}`, {
+        method: "PUT",
+        body: JSON.stringify(updateFields),
+      })
+        .then((response) => {
+          if (!response.ok) {
+            logger.debug("updateSiteLog: API returned non-OK, will sync later", {
+              module: "SITE_LOG_SERVICE",
+              status: response.status,
+            });
+          }
+        })
+        .catch(() => {
+          logger.debug("updateSiteLog: API call failed, will sync later", {
+            module: "SITE_LOG_SERVICE",
+          });
         });
-        if (!response.ok) {
-          throw new Error(`PUT /api/site-logs/${id} failed: ${response.status}`);
-        }
-      } catch {
-        logger.debug("updateSiteLog: API call failed, will sync later", {
-          module: "SITE_LOG_SERVICE",
-        });
-      }
 
       return record;
     } catch (error: any) {

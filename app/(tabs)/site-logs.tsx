@@ -89,78 +89,84 @@ export default function SiteLogs() {
     return () => clearTimeout(timer);
   }, []);
 
-  // Fetch log progress for the currently active siteCode
+  // Fetch log progress for the currently active siteCode.
+  // Cache-first: render from local SQLite immediately, then sync in the
+  // background and silently re-read once fresh rows have been written.
   const fetchLogs = useCallback(async (targetSite: string) => {
     if (!targetSite) return;
-    try {
-      const now = Date.now();
-      const lastSyncTime = lastSyncRef.current[targetSite] || 0;
-      const shouldSync =
-        isConnected && (refreshingRef.current || lastSyncTime === 0 || now - lastSyncTime > 1000 * 60 * 10);
 
-      if (shouldSync) {
-        try {
-          // Prefetch covers the user's selected filter range, with a ±7-day
-          // minimum so the cache stays useful even when the filter is narrow.
-          const minFrom = startOfDay(addDays(new Date(), -7));
-          const minTo = endOfDay(addDays(new Date(), 7));
-          const fromDateObj = fromDate && fromDate < minFrom ? fromDate : minFrom;
-          const toDateObj = toDate && toDate > minTo ? toDate : minTo;
-
-          await Promise.all([
-            siteLogService.pullSiteLogs(targetSite, {
-              fromDate: fromDateObj.getTime(),
-              toDate: toDateObj.getTime()
-            }),
-            siteLogService.pullChillerReadings(targetSite, {
-              fromDate: fromDateObj.getTime(),
-              toDate: toDateObj.getTime()
-            }),
-            siteLogService.pullLogMaster(),
-          ]);
-          lastSyncRef.current = { ...lastSyncRef.current, [targetSite]: now };
-        } catch (e) {
-          console.log("Sync warning", e);
-        }
-      }
-
-      // Progress is filter-range based; due counts are today-only and must
-      // ignore fromDate/toDate entirely. "Today" is the IST calendar day —
-      // toISOString() is UTC, which rolls over a day early between IST
-      // 00:00–05:30 and made the due count show the previous day.
-      const td = new Date();
-      const shiftProgress = async (sh: "A" | "B" | "C") => {
-        const tasks = await SiteConfigService.getLogTasks(
-          targetSite,
-          "Temp RH",
-          td,
-          td,
-          sh,
-          true,
-        );
-        return {
-          completed: tasks.filter((t: { isCompleted?: boolean }) => t.isCompleted)
-            .length,
-          total: tasks.length,
-        };
+    // "Today" is the IST calendar day — toISOString() is UTC, which rolls
+    // over a day early between IST 00:00–05:30.
+    const td = new Date();
+    const shiftProgress = async (sh: "A" | "B" | "C") => {
+      const tasks = await SiteConfigService.getLogTasks(
+        targetSite,
+        "Temp RH",
+        td,
+        td,
+        sh,
+        true,
+      );
+      return {
+        completed: tasks.filter((t: { isCompleted?: boolean }) => t.isCompleted)
+          .length,
+        total: tasks.length,
       };
+    };
 
-      const [progress, shA, shB, shC] = await Promise.all([
-        // Card progress is TODAY-only. getCategoryProgress yields
-        // { total, completed } per category (incl. "Chiller Logs"), which is
-        // exactly the "completed out of total" insight the cards show.
-        siteLogService.getCategoryProgress(targetSite, td, td),
-        shiftProgress("A"),
-        shiftProgress("B"),
-        shiftProgress("C"),
-      ]);
-      setLogProgress(progress);
-      setTempRhShiftProgress({ A: shA, B: shB, C: shC });
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoading(false);
-      refreshingRef.current = false;
+    const readCache = async () => {
+      try {
+        const [progress, shA, shB, shC] = await Promise.all([
+          siteLogService.getCategoryProgress(targetSite, td, td),
+          shiftProgress("A"),
+          shiftProgress("B"),
+          shiftProgress("C"),
+        ]);
+        setLogProgress(progress);
+        setTempRhShiftProgress({ A: shA, B: shB, C: shC });
+      } catch (e) {
+        loggerUtil.warn("Site logs cache read failed", { module: "SITE_LOGS_SCREEN", error: e });
+      }
+    };
+
+    // Capture sync gate BEFORE we clear refreshingRef below — otherwise a
+    // manual refresh racing with the cache read would lose its flag.
+    const now = Date.now();
+    const lastSyncTime = lastSyncRef.current[targetSite] || 0;
+    const shouldSync =
+      isConnected && (refreshingRef.current || lastSyncTime === 0 || now - lastSyncTime > 1000 * 60 * 10);
+
+    // 1) Render whatever the local cache has, immediately.
+    await readCache();
+    setLoading(false);
+    refreshingRef.current = false;
+
+    // 2) Background sync — fire-and-forget. On success re-read cache so the
+    // UI updates silently. Failures are logged, never surfaced.
+    if (shouldSync) {
+      const minFrom = startOfDay(addDays(new Date(), -7));
+      const minTo = endOfDay(addDays(new Date(), 7));
+      const fromDateObj = fromDate && fromDate < minFrom ? fromDate : minFrom;
+      const toDateObj = toDate && toDate > minTo ? toDate : minTo;
+
+      Promise.all([
+        siteLogService.pullSiteLogs(targetSite, {
+          fromDate: fromDateObj.getTime(),
+          toDate: toDateObj.getTime(),
+        }),
+        siteLogService.pullChillerReadings(targetSite, {
+          fromDate: fromDateObj.getTime(),
+          toDate: toDateObj.getTime(),
+        }),
+        siteLogService.pullLogMaster(),
+      ])
+        .then(() => {
+          lastSyncRef.current = { ...lastSyncRef.current, [targetSite]: now };
+          return readCache();
+        })
+        .catch((e) => {
+          loggerUtil.warn("Site logs background sync failed", { module: "SITE_LOGS_SCREEN", error: e });
+        });
     }
   }, [fromDate, toDate, isConnected]);
 

@@ -26,6 +26,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useAttendanceGate } from "@/contexts/AttendanceGateContext";
 import { ViewOnlyEntryNotice } from "@/components/ViewOnlyEntryNotice";
 import * as ImagePicker from "expo-image-picker";
+import * as Haptics from "expo-haptics";
 import { StorageService } from "@/services/StorageService";
 import SignaturePad from "@/components/SignaturePad";
 
@@ -330,11 +331,13 @@ function WaterEntryContent() {
         if (created?.id) currentLogIdRef.current = created.id;
       }
 
-      Alert.alert(
-        "Success",
-        isEditMode ? "Log updated successfully" : "Log saved successfully",
-        [{ text: "OK", onPress: () => router.back() }],
-      );
+      // Optimistic UX: SiteLogService writes to SQLite + queue and fires the
+      // network call without awaiting, so by here the user's data is durable
+      // and we can navigate back instantly.
+      Haptics.notificationAsync(
+        Haptics.NotificationFeedbackType.Success,
+      ).catch(() => {});
+      router.back();
     } catch (error: any) {
       Alert.alert("Error", error.message || "Failed to save log");
     } finally {

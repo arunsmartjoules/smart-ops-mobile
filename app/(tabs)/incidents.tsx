@@ -32,6 +32,8 @@ import IncidentStats from "@/components/IncidentStats";
 import IncidentTopFilters from "@/components/IncidentTopFilters";
 import IncidentDetailModal from "@/components/IncidentDetailModal";
 import { IncidentsService } from "@/services/IncidentsService";
+import { db, incidents as incidentsTable } from "@/database";
+import { eq, and, gte, lte, desc } from "drizzle-orm";
 import { StorageService } from "@/services/StorageService";
 import FullscreenPicker from "@/components/FullscreenPicker";
 import { type SelectOption } from "@/components/SearchableSelect";
@@ -298,39 +300,80 @@ export default function IncidentsTab() {
 
     const requestGen = ++fetchGenRef.current;
     const hasVisibleData = incidentsCountRef.current > 0;
-    const shouldShowBlockingLoader = !hasVisibleData && reason !== "background";
 
-    if (shouldShowBlockingLoader) {
-      setLoading(true);
-    } else {
-      setIsSwitchingFilters(true);
+    // 1) Read cache first — mirrors the offline branch in IncidentsService so
+    // the UI shows local rows immediately, before the network response lands.
+    try {
+      const whereParts: any[] = [eq(incidentsTable.site_code, selectedSiteCode)];
+      if (statusFilter) {
+        whereParts.push(eq(incidentsTable.status, statusFilter));
+      }
+      if (fromDate) {
+        const from = Date.parse(fromDate);
+        if (!Number.isNaN(from)) whereParts.push(gte(incidentsTable.incident_created_time, from));
+      }
+      if (toDate) {
+        const to = Date.parse(toDate);
+        if (!Number.isNaN(to)) whereParts.push(lte(incidentsTable.incident_created_time, to));
+      }
+      const localRows = await db
+        .select()
+        .from(incidentsTable)
+        .where(whereParts.length > 1 ? and(...whereParts) : whereParts[0])
+        .orderBy(desc(incidentsTable.incident_created_time));
+
+      const needle = search?.trim().toLowerCase();
+      const filtered = localRows.filter((r) => {
+        if (rcaFilter && rcaFilter !== "All" && r.rca_status !== rcaFilter) return false;
+        if (!needle) return true;
+        const hay = `${r.incident_id} ${r.fault_symptom} ${r.asset_location || ""}`.toLowerCase();
+        return hay.includes(needle);
+      });
+
+      if (requestGen !== fetchGenRef.current) return;
+
+      if (filtered.length > 0) {
+        setIncidents(filtered as IncidentItem[]);
+        setLoading(false);
+      } else if (!hasVisibleData && reason !== "background") {
+        // True cold-start with no cache — show skeleton until network lands.
+        setLoading(true);
+      } else {
+        setIsSwitchingFilters(true);
+      }
+    } catch (e) {
+      console.warn("Incidents cache read failed", e);
     }
 
-    const [listRes, statsRes] = await Promise.all([
-      IncidentsService.getIncidents(selectedSiteCode, {
-        status: statusFilter,
-        rca_status: rcaFilter === "All" ? undefined : rcaFilter,
-        search,
-        fromDate,
-        toDate,
-      }),
-      IncidentsService.getStats(selectedSiteCode),
-    ]);
+    // 2) Network fetch in the background — silent on failure. The
+    // service writes new rows to SQLite, then we re-read into state.
+    try {
+      const [listRes, statsRes] = await Promise.all([
+        IncidentsService.getIncidents(selectedSiteCode, {
+          status: statusFilter,
+          rca_status: rcaFilter === "All" ? undefined : rcaFilter,
+          search,
+          fromDate,
+          toDate,
+        }),
+        IncidentsService.getStats(selectedSiteCode),
+      ]);
 
-    if (requestGen !== fetchGenRef.current) {
-      return;
-    }
+      if (requestGen !== fetchGenRef.current) return;
 
-    if (listRes?.success) {
-      setIncidents((listRes.data || []) as IncidentItem[]);
+      if (listRes?.success) {
+        setIncidents((listRes.data || []) as IncidentItem[]);
+      }
+      if (statsRes?.success) {
+        setStats(statsRes.data?.byStatus || statsRes.data || {});
+      }
+    } catch (e) {
+      console.warn("Incidents background fetch failed", e);
+    } finally {
+      setLoading(false);
+      setIsSwitchingFilters(false);
+      setRefreshing(false);
     }
-    if (statsRes?.success) {
-      setStats(statsRes.data?.byStatus || statsRes.data || {});
-    }
-
-    setLoading(false);
-    setIsSwitchingFilters(false);
-    setRefreshing(false);
   }, [selectedSiteCode, statusFilter, rcaFilter, search, fromDate, toDate]);
 
   const uploadUrisToStorage = useCallback(
