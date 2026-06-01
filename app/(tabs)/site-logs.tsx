@@ -5,7 +5,6 @@ import {
   TouchableOpacity,
   Modal,
   ScrollView,
-  useColorScheme,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { router } from "expo-router";
@@ -14,7 +13,7 @@ import { useAttendanceGate } from "@/contexts/AttendanceGateContext";
 import { useAutoSync } from "@/hooks/useAutoSync";
 import siteLogService from "@/services/SiteLogService";
 import { SiteConfigService } from "@/services/SiteConfigService";
-import { istTodayString, formatISTDate } from "@/utils/istDate";
+import { istTodayString, formatISTDate, istDateString } from "@/utils/istDate";
 import {
   RefreshCw,
   MapPin,
@@ -42,7 +41,6 @@ import PressableScale from "@/components/PressableScale";
 export default function SiteLogs() {
   const { user } = useAuth();
   const { canEdit } = useAttendanceGate();
-  const isDark = useColorScheme() === "dark";
   const [loading, setLoading] = useState(true);
   const [logProgress, setLogProgress] = useState<
     Record<string, { total: number; completed: number; inProgress?: number }>
@@ -141,13 +139,52 @@ export default function SiteLogs() {
     setLoading(false);
     refreshingRef.current = false;
 
-    // 2) Background sync — fire-and-forget. On success re-read cache so the
-    // UI updates silently. Failures are logged, never surfaced.
+    // 2) When online, ask the server for today's pre-aggregated tile counts.
+    // This replaces the legacy "pull every row for the last 14 days just to
+    // count them" path on this screen. ~200 bytes instead of MBs. Falls
+    // back silently to the local cache read above on offline / non-OK.
+    if (isConnected) {
+      siteLogService
+        .fetchProgress(targetSite, istDateString(td))
+        .then((srv) => {
+          if (!srv) return;
+          setLogProgress((prev) => ({
+            ...prev,
+            "Temp RH": { ...srv.categories["Temp RH"] },
+            Water: { ...srv.categories.Water },
+            "Chemical Dosing": { ...srv.categories["Chemical Dosing"] },
+            // Chiller "total" still comes from local config (configured
+            // chiller slots) — server only gives us the dynamic counts, so
+            // merge into whatever local readCache produced.
+            "Chiller Logs": {
+              total: prev["Chiller Logs"]?.total ?? srv.chiller.completed + srv.chiller.inProgress,
+              completed: srv.chiller.completed,
+              inProgress: srv.chiller.inProgress,
+            },
+          }));
+          const shifts = srv.categories["Temp RH"].byShift;
+          if (shifts) {
+            setTempRhShiftProgress({
+              A: { ...shifts.A },
+              B: { ...shifts.B },
+              C: { ...shifts.C },
+            });
+          }
+        })
+        .catch((e) => {
+          loggerUtil.warn("Site logs progress fetch failed", { module: "SITE_LOGS_SCREEN", error: e });
+        });
+    }
+
+    // 3) Background row pre-warm for offline category browsing. Narrowed
+    // from ±7 days to TODAY only — the tile screen no longer depends on
+    // these rows (handled by /progress above), so we just keep enough
+    // cached for the operator to enter a category offline. The dedicated
+    // `pullLatestForSite` path used by the Start flow still uses the wider
+    // ±7-day window for the history screen.
     if (shouldSync) {
-      const minFrom = startOfDay(addDays(new Date(), -7));
-      const minTo = endOfDay(addDays(new Date(), 7));
-      const fromDateObj = fromDate && fromDate < minFrom ? fromDate : minFrom;
-      const toDateObj = toDate && toDate > minTo ? toDate : minTo;
+      const fromDateObj = startOfDay(new Date());
+      const toDateObj = endOfDay(new Date());
 
       Promise.all([
         siteLogService.pullSiteLogs(targetSite, {
@@ -162,6 +199,8 @@ export default function SiteLogs() {
       ])
         .then(() => {
           lastSyncRef.current = { ...lastSyncRef.current, [targetSite]: now };
+          // Silent local re-read so offline-mode tile counts catch up if
+          // /progress was unreachable but the row pull succeeded.
           return readCache();
         })
         .catch((e) => {
@@ -304,6 +343,8 @@ export default function SiteLogs() {
     }
     const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
     return { total, completed, pct, allDone: total > 0 && completed >= total };
+    // `categories` is a static config array (stable contents); only logProgress varies.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [logProgress]);
 
   return (
@@ -740,7 +781,7 @@ export default function SiteLogs() {
                   Select Site
                 </Text>
                 <Text className="text-slate-400 text-sm mt-0.5">
-                  Switch the site you're logging for
+                  Switch the site you&apos;re logging for
                 </Text>
               </View>
               <TouchableOpacity

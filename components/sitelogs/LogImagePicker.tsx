@@ -7,13 +7,10 @@ import {
   Modal,
   ActivityIndicator,
   Alert,
-  Dimensions,
 } from "react-native";
 import { Camera, Image as ImageIcon, X, Maximize2, RefreshCw, Trash2 } from "lucide-react-native";
 import * as ImagePicker from "expo-image-picker";
 import { StorageService } from "@/services/StorageService";
-
-const { width, height } = Dimensions.get("window");
 
 interface LogImagePickerProps {
   value?: string;

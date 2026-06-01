@@ -40,7 +40,6 @@ import { type SelectOption } from "@/components/SearchableSelect";
 import { TicketsService } from "@/services/TicketsService";
 import { getStatusVisual, getInitials } from "@/utils/ticketVisuals";
 import {
-  istDateString,
   istTodayString,
   istParts,
   istDayStartMsFromYmd,
@@ -55,8 +54,6 @@ import {
 import { v4 as uuidv4 } from "uuid";
 
 type IncidentStatus = "Open" | "Inprogress" | "Resolved";
-
-const toLocalYmd = (date: Date) => istDateString(date);
 
 /** Normalize incidents.attachments from API (array) or local cache (JSON string). */
 function parseIncidentAttachments(raw: unknown): string[] {

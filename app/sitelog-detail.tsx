@@ -20,7 +20,6 @@ import {
   FlaskRound,
   Snowflake,
   Activity,
-  ChevronRight,
 } from "lucide-react-native";
 import { db, siteLogs, chillerReadings } from "@/database";
 import { eq } from "drizzle-orm";
@@ -101,7 +100,7 @@ export default function SiteLogDetail() {
           </Svg>
         </View>
       );
-    } catch (e) {
+    } catch {
       return (
         <View className="bg-white rounded-2xl h-48 w-full border border-slate-100 items-center justify-center">
           <Text className="text-slate-400 text-xs italic">
@@ -354,7 +353,7 @@ export default function SiteLogDetail() {
                   Remarks
                 </Text>
                 <Text className="text-slate-700 dark:text-slate-300 text-sm font-medium italic">
-                  "{log.remarks || "No additional remarks provided"}"
+                  &quot;{log.remarks || "No additional remarks provided"}&quot;
                 </Text>
               </View>
             </View>

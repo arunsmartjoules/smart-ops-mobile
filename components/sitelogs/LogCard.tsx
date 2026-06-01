@@ -9,7 +9,6 @@ import {
   Droplets,
   FlaskRound,
   Snowflake,
-  ChevronRight,
 } from "lucide-react-native";
 import { format } from "date-fns";
 

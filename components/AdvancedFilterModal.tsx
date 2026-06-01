@@ -24,7 +24,7 @@ import {
 } from "date-fns";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { type Site } from "@/services/AttendanceService";
-import SearchableSelect, { type SelectOption } from "./SearchableSelect";
+import SearchableSelect from "./SearchableSelect";
 
 const parseLocal = (dateStr: string | null) => {
   if (!dateStr) return new Date();

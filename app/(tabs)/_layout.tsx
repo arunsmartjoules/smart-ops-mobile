@@ -2,8 +2,7 @@
 import React, { useState, useEffect } from "react";
 import { Platform, View, Text, Pressable } from "react-native";
 import { Tabs, router } from "expo-router";
-import { ShieldOff, LogIn, X } from "lucide-react-native";
-import {
+import { ShieldOff, LogIn, X ,
   LayoutDashboard,
   Activity,
   ListChecks,

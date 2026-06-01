@@ -1,6 +1,6 @@
 import React from "react";
 import { View, Text, TouchableOpacity, ScrollView } from "react-native";
-import { format, subDays } from "date-fns";
+import { subDays } from "date-fns";
 
 interface DateRangePickerProps {
   onRangeSelect: (start: Date | null, end: Date | null) => void;

@@ -119,7 +119,7 @@ export default function NotificationsPage() {
 
   // Memoized Notification Item Component
   const NotificationItem = memo(
-    ({
+    function NotificationItem({
       notification,
       onMarkAsRead,
       onDelete,
@@ -127,7 +127,7 @@ export default function NotificationsPage() {
       notification: any;
       onMarkAsRead: (id: number) => void;
       onDelete: (id: number) => void;
-    }) => {
+    }) {
       const colors = getNotificationColor(notification.type);
       return (
         <TouchableOpacity
@@ -233,7 +233,7 @@ export default function NotificationsPage() {
                 No notifications
               </Text>
               <Text className="text-slate-400 dark:text-slate-600 text-sm mt-1">
-                You're all caught up!
+                You&apos;re all caught up!
               </Text>
             </View>
           ) : (

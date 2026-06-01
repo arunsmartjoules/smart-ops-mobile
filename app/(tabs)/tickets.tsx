@@ -5,7 +5,6 @@ import {
   TextInput,
   TouchableOpacity,
   RefreshControl,
-  Dimensions,
   Alert,
   useColorScheme,
 } from "react-native";
@@ -28,15 +27,11 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useAutoSync } from "@/hooks/useAutoSync";
 import { useNetworkStatus } from "@/hooks/useNetworkStatus";
 import NetInfo from "@react-native-community/netinfo";
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import SearchableSelect, {
-  type SelectOption,
-} from "@/components/SearchableSelect";
+import { type SelectOption } from "@/components/SearchableSelect";
 import { TicketsService, type Ticket } from "@/services/TicketsService";
 import { ticketsRealtimeService, type TicketRealtimeEvent } from "@/services/TicketsRealtimeService";
-import { AttendanceService, type Site } from "@/services/AttendanceService";
 import { useSites } from "@/hooks/useSites";
-import { db, tickets as ticketsTable, areas, categories } from "@/database";
+import { db, tickets as ticketsTable, areas } from "@/database";
 import { eq, desc } from "drizzle-orm";
 import logger from "@/utils/logger";
 import {
@@ -53,7 +48,6 @@ import { v4 as uuidv4 } from "uuid";
 import TicketDetailModal from "@/components/TicketDetailModal";
 import { isTempMandatoryCategory } from "@/components/TicketDetailStatusUpdate";
 import {
-  DEFAULT_TICKET_INCIDENT_DRAFT,
   makeTicketIncidentDraft,
   type TicketIncidentDraft,
 } from "@/constants/incidentFormOptions";
@@ -65,8 +59,6 @@ import TicketFilters from "@/components/TicketFilters";
 import TicketSkeleton, {
   TicketSkeletonItem,
 } from "@/components/TicketSkeleton";
-
-const { width } = Dimensions.get("window");
 
 const parseCreatedAtMs = (value: unknown) => {
   if (typeof value === "number") return value;
@@ -149,7 +141,7 @@ const normalizeRealtimeTicket = (source: any): Ticket => ({
 
 export default function Tickets() {
   const { canEdit } = useAttendanceGate();
-  const { user, isLoading } = useAuth();
+  const { user } = useAuth();
   const isDark = useColorScheme() === "dark";
   const { isConnected } = useNetworkStatus();
 
@@ -175,7 +167,6 @@ export default function Tickets() {
     const t = setTimeout(() => setLoading(false), 6000);
     return () => clearTimeout(t);
   }, []);
-  const [assets, setAssets] = useState<any[]>([]);
   const [stats, setStats] = useState<any>(null);
 
   // Pagination
@@ -382,7 +373,7 @@ export default function Tickets() {
       // cards render real counts instead of a perpetual skeleton.
       const local = await computeLocalStats();
       if (local) setStats(local);
-    } catch (e) {
+    } catch {
       const local = await computeLocalStats();
       if (local) setStats(local);
     }
@@ -767,17 +758,6 @@ export default function Tickets() {
       }
       ticketsRealtimeService.disconnect();
     };
-  }, []);
-
-  const clearFilters = useCallback(() => {
-    setSearchQuery("");
-    setTempSearch("");
-    setFromDate(null);
-    setToDate(null);
-    setTempFromDate(null);
-    setTempToDate(null);
-    setStatusFilter("Open");
-    setPriorityFilter("All");
   }, []);
 
   const handleLoadMore = useCallback(() => {
@@ -1345,7 +1325,7 @@ export default function Tickets() {
         fetchStats();
         resetAndFetch();
       }
-    } catch (error: any) {
+    } catch {
       // updateTicket already persisted the change locally and enqueued it;
       // a throw here means the network attempt failed, which is invisible to
       // the operator. Show the same success confirmation as the online path.

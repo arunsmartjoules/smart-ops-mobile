@@ -1,6 +1,5 @@
 import React, {
   useState,
-  useRef,
   useImperativeHandle,
   forwardRef,
 } from "react";
@@ -23,7 +22,7 @@ export interface SignaturePadHandle {
 }
 
 export const SignaturePad = forwardRef<SignaturePadHandle, SignaturePadProps>(
-  ({ onClear, onChange }, ref) => {
+  function SignaturePad({ onClear, onChange }, ref) {
     const [paths, setPaths] = useState<string[]>([]);
     const [currentPath, setCurrentPath] = useState<string>("");
 

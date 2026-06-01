@@ -107,6 +107,29 @@ const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
   }
 };
 
+/**
+ * Server response shape for GET /api/site-logs/site/:siteCode/progress.
+ * Keeps the tile screen's per-category math entirely server-side so the
+ * mobile tab no longer has to pull thousands of rows to count them.
+ */
+export interface SiteProgressResponse {
+  date: string;
+  categories: {
+    "Temp RH": {
+      total: number;
+      completed: number;
+      byShift?: {
+        A: { total: number; completed: number };
+        B: { total: number; completed: number };
+        C: { total: number; completed: number };
+      };
+    };
+    Water: { total: number; completed: number };
+    "Chemical Dosing": { total: number; completed: number };
+  };
+  chiller: { completed: number; inProgress: number };
+}
+
 interface ISiteLogService {
   getLogsByType(
     siteCode: string,
@@ -151,6 +174,10 @@ interface ISiteLogService {
     },
   ): Promise<void>;
   prefetchPendingForCategory(siteCode: string, logName: string): Promise<void>;
+  fetchProgress(
+    siteCode: string,
+    date: string,
+  ): Promise<SiteProgressResponse | null>;
   getTodayChillerReadingCount(siteCode: string, targetDate?: Date): Promise<number>;
   findOpenChillerReadingForToday(
     siteCode: string,
@@ -1582,6 +1609,41 @@ export const SiteLogService: ISiteLogService = {
         error: error.message,
       });
       if (throwOnError) throw error;
+    }
+  },
+
+  /**
+   * Pre-aggregated tile-screen progress from the backend. Replaces the old
+   * "pull every row to count them" path on the Site Logs tab. Returns null
+   * on offline / non-OK / parse failure so the caller can fall back to the
+   * local `getCategoryProgress` (cache-derived) result.
+   *
+   * `date` is `YYYY-MM-DD` in IST (use `istDateString(new Date())`).
+   */
+  async fetchProgress(
+    siteCode: string,
+    date: string,
+  ): Promise<SiteProgressResponse | null> {
+    if (!siteCode || !date) return null;
+    const netState = await NetInfo.fetch();
+    if (netState.isConnected === false) return null;
+
+    try {
+      const response = await apiFetch(
+        `/api/site-logs/site/${encodeURIComponent(siteCode)}/progress?date=${encodeURIComponent(date)}`,
+      );
+      if (!response.ok) return null;
+      const body = await response.json();
+      if (!body?.success || !body?.data) return null;
+      return body.data as SiteProgressResponse;
+    } catch (error: any) {
+      logger.warn("fetchProgress failed; falling back to local", {
+        module: "SITE_LOG_SERVICE",
+        siteCode,
+        date,
+        error: error?.message ?? String(error),
+      });
+      return null;
     }
   },
 

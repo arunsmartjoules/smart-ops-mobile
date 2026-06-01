@@ -16,33 +16,24 @@ import {
   Alert,
   Platform,
 } from "react-native";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import NetInfo from "@react-native-community/netinfo";
 import * as Location from "expo-location";
 import { SafeAreaView } from "react-native-safe-area-context";
 import {
-  UserCheck,
   Ticket as TicketIcon,
-  ListChecks,
   Activity,
   Thermometer,
-  User,
   ChevronRight,
-  Bell,
   MapPin,
-  Clock,
-  Calendar,
   Droplets,
   Beaker,
   ClipboardList,
   ThermometerSun,
   Zap,
-  Navigation,
-  ShieldCheck,
-  History,
   LogIn,
   LogOut,
   Eye,
+  WifiOff,
 } from "lucide-react-native";
 import { router, useFocusEffect } from "expo-router";
 import { useAuth } from "@/contexts/AuthContext";
@@ -55,11 +46,8 @@ import AttendanceService, {
 } from "@/services/AttendanceService";
 import { format } from "date-fns";
 import { useNetworkStatus } from "@/hooks/useNetworkStatus";
-import { WifiOff } from "lucide-react-native";
 import Skeleton from "@/components/Skeleton";
 import TicketsService, { type Ticket } from "@/services/TicketsService";
-import { API_BASE_URL } from "@/constants/api";
-import TicketItem from "@/components/TicketItem";
 import TicketDetailModal from "@/components/TicketDetailModal";
 import { isTempMandatoryCategory } from "@/components/TicketDetailStatusUpdate";
 import { type SelectOption } from "@/components/SearchableSelect";
@@ -67,7 +55,6 @@ import SiteLogService from "@/services/SiteLogService";
 import logger from "@/utils/logger";
 import { db, userSites } from "@/database";
 import { eq } from "drizzle-orm";
-import { useSites } from "@/hooks/useSites";
 import { WhatsAppService } from "@/services/WhatsAppService";
 import { ReportPickerModal } from "@/components/ReportPickerModal";
 
@@ -443,8 +430,6 @@ export default function Dashboard() {
   const [loadingPending, setLoadingPending] = useState(true);
   const [validatingLocation, setValidatingLocation] = useState(false);
   const [currentTime, setCurrentTime] = useState(new Date());
-  const [earlyCheckoutReason, setEarlyCheckoutReason] = useState("");
-  const [showEarlyCheckoutModal, setShowEarlyCheckoutModal] = useState(false);
   const [sites, setSites] = useState<Site[]>([]);
   const [currentSiteLabel, setCurrentSiteLabel] = useState<string>("");
 
@@ -554,23 +539,20 @@ export default function Dashboard() {
       }
 
       // 1. Load cached data FIRST for instant UI (Drizzle/PowerSync local query)
-      const [localSiteRows, lastSiteCode] = await Promise.all([
-        db
-          .select()
-          .from(userSites)
-          .where(eq(userSites.user_id, userId))
-          .catch(
-            () =>
-              [] as {
-                id: string;
-                user_id: string;
-                site_id: string | null;
-                site_code: string;
-                site_name: string;
-              }[],
-          ),
-        AsyncStorage.getItem(`last_site_${userId}`).catch(() => null),
-      ]);
+      const localSiteRows = await db
+        .select()
+        .from(userSites)
+        .where(eq(userSites.user_id, userId))
+        .catch(
+          () =>
+            [] as {
+              id: string;
+              user_id: string;
+              site_id: string | null;
+              site_code: string;
+              site_name: string;
+            }[],
+        );
 
       // Map local userSites rows to the Site shape expected by the rest of the component
       const cachedSitesList: Site[] = localSiteRows.map(
@@ -1011,7 +993,7 @@ export default function Dashboard() {
       // Only refetch when the server confirmed; a queued-offline update would
       // otherwise be overwritten by the stale server row on upsert.
       if (apiConfirmed) fetchData();
-    } catch (error: any) {
+    } catch {
       // Local DB write already happened — surface as a queued save, not an error.
       Alert.alert(
         "Saved",
@@ -1026,11 +1008,6 @@ export default function Dashboard() {
     () => router.push("/attendance"),
     [],
   );
-  const navigateToNotifications = useCallback(
-    () => router.push("/notifications" as any),
-    [],
-  );
-  const navigateToProfile = useCallback(() => router.push("/app-settings"), []);
 
   // Detect which site the user is currently near (or WFH / Away)
   const detectCurrentSite = useCallback(async () => {
@@ -1271,10 +1248,6 @@ export default function Dashboard() {
     await performCheckOut();
   };
 
-  const navigateToAllTasks = useCallback(() => {
-    router.push("/all-tasks");
-  }, []);
-
   const lastFetchRef = useRef<number>(0);
 
   // Unified Auto-Sync for Dashboard (Handles Focus, AppState, and 60s Polling)
@@ -1290,12 +1263,6 @@ export default function Dashboard() {
       setRefreshing(false);
     }, 1000);
   }, [fetchData]);
-
-  const getStatusBgColor = useMemo(() => {
-    if (!todayAttendance) return "bg-slate-50 dark:bg-slate-900"; // Neutral
-    if (todayAttendance.check_out_time) return "bg-blue-50 dark:bg-blue-950/20"; // Completed
-    return "bg-emerald-50 dark:bg-emerald-950/20"; // Active
-  }, [todayAttendance]);
 
   const getStatusBorderColor = useMemo(() => {
     if (!todayAttendance) return "border-slate-100 dark:border-slate-800";

@@ -1,4 +1,4 @@
-import "react-native-gesture-handler";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
 // Dev-only diagnostic: import BEFORE anything else so it patches console.error
 // before any other module logs. See utils/navContextErrorTrap.ts.
 import "@/utils/navContextErrorTrap";
@@ -11,10 +11,9 @@ import { ThemeProvider } from "@/contexts/ThemeContext";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { useEffect } from "react";
 import { View, Image, AppState } from "react-native";
-import { syncEngine, registerBackgroundSyncAsync } from "@/services/SyncEngine";
+import { registerBackgroundSyncAsync } from "@/services/SyncEngine";
 import { syncManager } from "@/services/SyncManager";
 import { initDatabase } from "@/database";
-import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import UpdateService from "@/services/UpdateService";
 import UpdateBanner from "@/components/UpdateBanner";
@@ -101,7 +100,7 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
     } else if (token && isEmailVerified && isUnauthenticatedInternal) {
       router.replace("/(tabs)/dashboard");
     }
-  }, [token, isLoading, isEmailVerified, segments]);
+  }, [token, isLoading, isEmailVerified, segments, router]);
 
   useEffect(() => {
     if (isLoading) return;

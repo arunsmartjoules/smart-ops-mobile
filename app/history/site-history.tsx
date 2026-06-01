@@ -30,6 +30,13 @@ import {
 } from "lucide-react-native";
 import SiteLogService from "@/services/SiteLogService";
 import { format } from "date-fns";
+import LogFilterModal from "@/components/sitelogs/LogFilterModal";
+import AttendanceService, { type Site } from "@/services/AttendanceService";
+import { useAuth } from "@/contexts/AuthContext";
+import Skeleton from "@/components/Skeleton";
+import UserLookupService from "@/services/UserLookupService";
+import { formatAssignee } from "@/utils/assignee";
+import { setRouteParams } from "@/utils/routeParams";
 
 // Parse YYYY-MM-DD as a local-calendar date (no UTC shift) and format it.
 const formatScheduledDate = (raw: string | null | undefined) => {
@@ -41,13 +48,6 @@ const formatScheduledDate = (raw: string | null | undefined) => {
     "dd MMM yyyy",
   );
 };
-import LogFilterModal from "@/components/sitelogs/LogFilterModal";
-import AttendanceService, { type Site } from "@/services/AttendanceService";
-import { useAuth } from "@/contexts/AuthContext";
-import Skeleton from "@/components/Skeleton";
-import UserLookupService from "@/services/UserLookupService";
-import { formatAssignee } from "@/utils/assignee";
-import { setRouteParams } from "@/utils/routeParams";
 
 // Memoized History Item Component
 const HistoryItem = memo(
@@ -329,6 +329,8 @@ export default function SiteHistory() {
 
   useEffect(() => {
     loadSites();
+    // Mount-only load; loadSites is recreated each render and would loop if included.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -400,7 +402,7 @@ export default function SiteHistory() {
     resolveCodes();
   }, [logs]);
 
-  const [previewImage, setPreviewImage] = useState<string | null>(null);
+  const [, setPreviewImage] = useState<string | null>(null);
 
   const loadSites = async () => {
     if (!user) return;
@@ -523,7 +525,7 @@ export default function SiteHistory() {
                 }
                 setLogs((prev) => prev.filter((l) => l.id !== item.id));
                 Alert.alert("Success", "Record deleted successfully");
-              } catch (e) {
+              } catch {
                 Alert.alert("Error", "Failed to delete record");
               }
             },
@@ -537,6 +539,8 @@ export default function SiteHistory() {
   const onRefresh = useCallback(() => {
     setRefreshing(true);
     loadHistory();
+    // loadHistory is recreated each render; the deps below are its real inputs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [siteCode, fromDate, toDate]);
 
   const getRoute = useCallback(() => {

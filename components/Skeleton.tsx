@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from "react";
-import { View, Animated, StyleSheet, ViewStyle, useColorScheme } from "react-native";
+import { Animated, ViewStyle, useColorScheme } from "react-native";
 
 interface SkeletonProps {
   width?: number | string;

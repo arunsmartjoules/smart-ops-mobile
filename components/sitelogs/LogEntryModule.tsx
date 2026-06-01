@@ -60,7 +60,7 @@ export const LogEntryModule = ({
   const [tasks, setTasks] = useState<TaskItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [searchQuery, setSearchQuery] = useState("");
+  const [searchQuery] = useState("");
   const [shift, setShift] = useState<string | null>(
     type === "TempRH" ? (initialShift ?? "A") : null,
   );
@@ -104,6 +104,9 @@ export const LogEntryModule = ({
       } catch {}
     };
     loadSites();
+    // Mount-only: seed the initial site once. Intentionally not re-run when
+    // siteCode/user change — the guard above only ever sets an empty siteCode.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Resolve a human site name for the header subtitle.
@@ -125,7 +128,7 @@ export const LogEntryModule = ({
     if (siteCode) {
       AsyncStorage.setItem(`last_site_${user?.id}`, siteCode);
     }
-  }, [siteCode]);
+  }, [siteCode, user?.id]);
 
   // Load Tasks
   // Load Tasks
@@ -229,6 +232,9 @@ export const LogEntryModule = ({
 
   useEffect(() => {
     loadTasks();
+    // loadTasks is recreated every render; including it would loop. The deps below
+    // are the real inputs that should trigger a reload.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [siteCode, scheduledDate, shift, editId]);
 
   const handleRefresh = async () => {
@@ -242,7 +248,7 @@ export const LogEntryModule = ({
       const draftKey = `draft_${type.toLowerCase()}_${siteCode}_${user?.id}_${scheduledDate}${shift ? `_${shift}` : ""}`;
       AsyncStorage.setItem(draftKey, JSON.stringify({ values: logValues, signature }));
     }
-  }, [logValues, signature, editId]);
+  }, [logValues, signature, editId, siteCode, scheduledDate, shift, type, user?.id]);
 
   const updateValue = (taskId: string, field: string, val: string) => {
     setLogValues((prev) => ({
@@ -448,7 +454,6 @@ export const LogEntryModule = ({
       scheduledDate,
       user,
       logName,
-      isTaskComplete,
       isEditMode,
       editId,
     ],
@@ -462,9 +467,12 @@ export const LogEntryModule = ({
 
   // On unmount, clear pending timers and flush any queued saves immediately.
   useEffect(() => {
+    // autoSaveTimers.current is a stable Map instance (never reassigned), so capturing
+    // it here is safe — the cleanup still sees the timers accumulated over the lifetime.
+    const timers = autoSaveTimers.current;
     return () => {
-      const pending = Array.from(autoSaveTimers.current.entries());
-      autoSaveTimers.current.clear();
+      const pending = Array.from(timers.entries());
+      timers.clear();
       pending.forEach(([taskId, timer]) => {
         clearTimeout(timer);
         autoSaveTaskRef.current(taskId).catch(() => {});

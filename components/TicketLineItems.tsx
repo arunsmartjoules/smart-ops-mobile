@@ -35,6 +35,8 @@ const TicketLineItems = ({ ticketId }: TicketLineItemsProps) => {
     if (ticketId) {
       fetchItems();
     }
+    // fetchItems is recreated each render; re-run only when ticketId changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ticketId]);
 
   const fetchItems = async () => {

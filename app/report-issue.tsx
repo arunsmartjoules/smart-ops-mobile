@@ -42,7 +42,7 @@ const MAX_ATTACHMENTS = 5;
 type Category = "bug" | "crash" | "ui" | "performance" | "sync" | "feature" | "other";
 type Severity = "low" | "medium" | "high" | "critical";
 
-const CATEGORIES: Array<{ value: Category; label: string; icon: LucideIcon; color: string }> = [
+const CATEGORIES: { value: Category; label: string; icon: LucideIcon; color: string }[] = [
   { value: "bug", label: "Bug", icon: Bug, color: "#ef4444" },
   { value: "crash", label: "Crash", icon: AlertTriangle, color: "#dc2626" },
   { value: "performance", label: "Slow / Lag", icon: Zap, color: "#f59e0b" },
@@ -52,7 +52,7 @@ const CATEGORIES: Array<{ value: Category; label: string; icon: LucideIcon; colo
   { value: "other", label: "Other", icon: HelpCircle, color: "#64748b" },
 ];
 
-const SEVERITIES: Array<{ value: Severity; label: string; color: string }> = [
+const SEVERITIES: { value: Severity; label: string; color: string }[] = [
   { value: "low", label: "Low", color: "#64748b" },
   { value: "medium", label: "Medium", color: "#f59e0b" },
   { value: "high", label: "High", color: "#ef4444" },

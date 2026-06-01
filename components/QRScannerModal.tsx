@@ -8,7 +8,6 @@ import {
   Alert,
   TouchableOpacity,
 } from "react-native";
-import { useTheme } from "@/contexts/ThemeContext";
 import { X } from "lucide-react-native";
 import { AssetService } from "@/services/AssetService";
 import { CameraView, useCameraPermissions } from "expo-camera";
@@ -25,7 +24,6 @@ interface QRScannerModalProps {
 
 const QRScannerModal = React.forwardRef<QRScannerRef, QRScannerModalProps>(
   ({ siteCode, onClose, onAssetFound }, ref) => {
-    const { isDark } = useTheme();
     const [visible, setVisible] = useState(false);
     const [validating, setValidating] = useState(false);
     const scannedRef = useRef(false);
@@ -91,6 +89,9 @@ const QRScannerModal = React.forwardRef<QRScannerRef, QRScannerModalProps>(
           }
 
           // 2. Resolve current site ID for validation
+          // Lazy require keeps SiteResolver out of the module graph at load time
+          // (avoids a circular import with the services layer).
+          // eslint-disable-next-line @typescript-eslint/no-require-imports
           const { siteResolver } = require("@/services/SiteResolver");
           const currentSites = siteResolver.getSites();
           const currentSite = currentSites.find(
@@ -124,7 +125,7 @@ const QRScannerModal = React.forwardRef<QRScannerRef, QRScannerModalProps>(
 
           close();
           onAssetFound(asset.asset_name);
-        } catch (err) {
+        } catch {
           setValidating(false);
           scannedRef.current = false;
           Alert.alert("Error", "Failed to validate QR code. Please try again.");
@@ -132,8 +133,6 @@ const QRScannerModal = React.forwardRef<QRScannerRef, QRScannerModalProps>(
       },
       [siteCode, onAssetFound, close],
     );
-
-    const bg = isDark ? "#000" : "#000";
 
     return (
       <Modal

@@ -427,6 +427,17 @@ export default function PreventiveMaintenance() {
   const isFetchingRef = useRef(false);
   const [syncing, setSyncing] = useState(false);
 
+  // Mirror allInstances into a ref so loadPMData can check "do we already
+  // have rendered data?" without putting allInstances.length in its deps.
+  // Closing over the length there created a re-entry cascade: setAllInstances
+  // → length changes → useCallback recomputes → useEffect re-fires →
+  // loadPMData(true) again → setAllInstances again → flicker + bouncing
+  // counts in the In-progress tab.
+  const allInstancesRef = useRef<PMInstanceRow[]>([]);
+  useEffect(() => {
+    allInstancesRef.current = allInstances;
+  }, [allInstances]);
+
   // Sync temp dates when modal opens
   useEffect(() => {
     if (showFiltersModal) {
@@ -440,7 +451,7 @@ export default function PreventiveMaintenance() {
   const loadPMData = useCallback(
     async (isInitial = false, currentOffset = 0, showLoadingSpinner = true) => {
       if (!siteCode || siteCode === "all") return;
-      const hasRenderedData = allInstances.length > 0;
+      const hasRenderedData = allInstancesRef.current.length > 0;
 
       // Avoid skeleton flash when data already exists on screen.
       if (isInitial && showLoadingSpinner && !hasRenderedData) {
@@ -557,14 +568,9 @@ export default function PreventiveMaintenance() {
         setRefreshing(false);
       }
     },
-    [
-      siteCode,
-      currentDate,
-      toDate,
-      isConnected,
-      PAGE_SIZE,
-      allInstances.length,
-    ],
+    // PAGE_SIZE is a stable in-component const (200); allInstances.length is
+    // tracked via allInstancesRef so it doesn't churn the callback identity.
+    [siteCode, currentDate, toDate, isConnected],
   );
 
   const handleLoadMore = useCallback(() => {

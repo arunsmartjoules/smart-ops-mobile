@@ -7,7 +7,6 @@ import {
   TextInput,
   Alert,
   ActivityIndicator,
-  Image,
   StyleSheet,
   KeyboardAvoidingView,
   Platform,
@@ -20,14 +19,9 @@ import DateTimePicker, {
 } from "@react-native-community/datetimepicker";
 import {
   ChevronLeft,
-  Snowflake,
-  Info,
-  Camera,
-  Trash2,
   Thermometer,
   Activity,
   Gauge,
-  PenTool,
   CheckCircle2,
   Calendar,
   Clock,
@@ -39,7 +33,6 @@ import AttendanceService from "@/services/AttendanceService";
 import { useAuth } from "@/contexts/AuthContext";
 import { useAttendanceGate } from "@/contexts/AttendanceGateContext";
 import { ViewOnlyEntryNotice } from "@/components/ViewOnlyEntryNotice";
-import { StorageService } from "@/services/StorageService";
 import { LogImagePicker } from "@/components/sitelogs/LogImagePicker";
 import SearchableSelect, { SelectOption } from "@/components/SearchableSelect";
 import SignaturePad from "@/components/SignaturePad";
@@ -122,7 +115,7 @@ function ChillerEntryContent() {
   const [assignedToDisplay, setAssignedToDisplay] = useState("");
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [uploading, setUploading] = useState(false);
+  const [uploading] = useState(false);
   const [signatureModalVisible, setSignatureModalVisible] = useState(false);
   const [dailyReadingCount, setDailyReadingCount] = useState(0);
   const [loadingDailyProgress, setLoadingDailyProgress] = useState(false);
@@ -252,12 +245,17 @@ function ChillerEntryContent() {
     formDataRef.current = formData;
   }, [formData]);
 
+  const chillerUserId = user?.user_id || user?.id;
   useEffect(() => {
     loadSites();
-  }, [user?.user_id || user?.id]);
+    // loadSites is recreated each render; re-run only when the user changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chillerUserId]);
 
   useEffect(() => {
     loadAssets();
+    // loadAssets is recreated each render; re-run only when the site changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedSite]);
 
   const loadDailyProgress = useCallback(
@@ -424,6 +422,9 @@ function ChillerEntryContent() {
     } finally {
       creatingRowRef.current = false;
     }
+    // operatorLabel(user) reads several user fields; the specific sub-properties used
+    // are listed explicitly below rather than the whole `user` object.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     isEditMode,
     selectedSite,
@@ -445,6 +446,8 @@ function ChillerEntryContent() {
     if (targetId) {
       loadReading();
     }
+    // loadReading is recreated each render; re-run only when the target changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [targetId]);
 
   useEffect(() => {

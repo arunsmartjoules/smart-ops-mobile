@@ -4,7 +4,6 @@ import {
   Text,
   ScrollView,
   TouchableOpacity,
-  TextInput,
   Alert,
   ActivityIndicator,
   Image,

@@ -411,7 +411,7 @@ function WaterEntryContent() {
             </Text>
             {formData.remarks ? (
               <Text className="text-slate-400 text-[10px] italic mt-0.5" numberOfLines={1}>
-                "{formData.remarks}"
+                &quot;{formData.remarks}&quot;
               </Text>
             ) : null}
           </View>

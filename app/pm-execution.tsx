@@ -19,9 +19,6 @@ import {
   ArrowLeft,
   Camera,
   CheckCircle2,
-  Circle,
-  Loader2,
-  Pen,
   RefreshCw,
   ImagePlus,
   X,
@@ -1305,6 +1302,8 @@ export default function PMExecutionScreen() {
       canEdit,
       cardBg,
       borderColor,
+      completionAttempted,
+      missingMandatoryValidation.byItemId,
     ],
   );
 
