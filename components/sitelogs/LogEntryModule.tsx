@@ -725,6 +725,14 @@ export const LogEntryModule = ({
       // so the row's enddatetime + executor_id + status reflect the user's
       // submission. Best-effort — already-saved local + queue is the source
       // of truth for the field data; this just keeps activity master in sync.
+      //
+      // The backend re-counts the shift's rooms from site_logs before flipping
+      // the activity row to Completed (a partial device cache can otherwise let
+      // an operator sign off a shift that still has empty rooms). When it keeps
+      // the row Inprogress it returns `shift_incomplete: { filled, total }`,
+      // which we surface below so the operator knows the shift isn't done and
+      // can pull-to-refresh the rooms their device is missing.
+      let shiftIncomplete: { filled: number; total: number } | null = null;
       try {
         const finishShiftLabel = uiShiftToLabel(shift);
         const finishIso = new Date().toISOString();
@@ -746,7 +754,17 @@ export const LogEntryModule = ({
               enddatetime: finishIso,
             }),
           );
-        await Promise.allSettled(finishCalls);
+        const finishResults = await Promise.allSettled(finishCalls);
+        // All calls target the same shift row, so any incomplete verdict speaks
+        // for the whole shift — take the first one reported.
+        for (const r of finishResults) {
+          const verdict =
+            r.status === "fulfilled" ? r.value?.data?.shift_incomplete : null;
+          if (verdict && typeof verdict.total === "number") {
+            shiftIncomplete = verdict;
+            break;
+          }
+        }
       } catch {
         // Silent — server cron will reconcile with FP next 1AM IST tick.
       }
@@ -755,9 +773,17 @@ export const LogEntryModule = ({
       const draftKey = `draft_${type.toLowerCase()}_${siteCode}_${user?.id}_${scheduledDate}${shift ? `_${shift}` : ""}`;
       await AsyncStorage.removeItem(draftKey);
 
-      Alert.alert("Success", "Logs submitted successfully!", [
-        { text: "OK", onPress: () => loadTasks() }
-      ]);
+      if (shiftIncomplete) {
+        Alert.alert(
+          "Saved — shift not yet complete",
+          `Your entries were saved, but this shift still has empty rooms: only ${shiftIncomplete.filled} of ${shiftIncomplete.total} scheduled rooms are logged.\n\nThe missing rooms aren't loaded on this device. Pull down to refresh to load them, then log the rest to complete the shift.`,
+          [{ text: "OK", onPress: () => loadTasks(true, true) }],
+        );
+      } else {
+        Alert.alert("Success", "Logs submitted successfully!", [
+          { text: "OK", onPress: () => loadTasks() },
+        ]);
+      }
     } catch {
       Alert.alert("Error", "Failed to save logs. Please try again.");
     } finally {

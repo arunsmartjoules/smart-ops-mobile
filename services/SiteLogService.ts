@@ -325,6 +325,14 @@ const _fetchLogs = async (
   }
 };
 
+// Row cap for the pending site-logs pull. The stale-log cleanup below treats
+// "absent from the server response" as "completed elsewhere" — that inference is
+// only safe when we received the COMPLETE pending set. If the response is capped
+// at this limit it may be truncated, so the cleanup is skipped to avoid silently
+// auto-completing genuinely-pending rooms (which then vanish from the operator's
+// list while staying Open on the server — a known false-completion cause).
+const PULL_SITE_LOGS_LIMIT = 2000;
+
 export const SiteLogService: ISiteLogService = {
   /**
    * Fetch logs for a site by type
@@ -1342,7 +1350,7 @@ export const SiteLogService: ISiteLogService = {
         finalSiteCode = options.siteCodes[0];
       }
 
-      let url = `/api/site-logs/site/${finalSiteCode}?limit=2000`;
+      let url = `/api/site-logs/site/${finalSiteCode}?limit=${PULL_SITE_LOGS_LIMIT}`;
       if (options.logName)
         url += `&log_name=${encodeURIComponent(options.logName)}`;
       if (options.fromDate) url += `&fromDate=${options.fromDate}`;
@@ -1380,7 +1388,19 @@ export const SiteLogService: ISiteLogService = {
 
         // 1. STALE LOG CLEANUP: If we're pulling pending logs, any local log that has
         // matching site(s)/logName but is NOT in the server response should be marked Completed.
-        if (options.status === "pending") {
+        //
+        // Guard: only trust "absent ⇒ completed" when the response is the FULL
+        // pending set. A truncated page (length hit the cap) means a room could
+        // be missing simply because it didn't fit — auto-completing it would
+        // hide genuinely-pending work and leave the room Open on the server.
+        const responseTruncated = serverLogs.length >= PULL_SITE_LOGS_LIMIT;
+        if (responseTruncated) {
+          logger.warn(
+            "pullSiteLogs response hit the row cap — skipping stale-log cleanup to avoid false completions",
+            { module: "SITE_LOG_SERVICE", count: serverLogs.length, siteCode },
+          );
+        }
+        if (options.status === "pending" && !responseTruncated) {
           const normalizedName = normalizeLogName(options.logName);
           const conditions: any[] = [
             eq(siteLogs.log_name, normalizedName),
