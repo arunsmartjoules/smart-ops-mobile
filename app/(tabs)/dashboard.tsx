@@ -15,6 +15,7 @@ import {
   AppState,
   Alert,
   Platform,
+  InteractionManager,
 } from "react-native";
 import NetInfo from "@react-native-community/netinfo";
 import * as Location from "expo-location";
@@ -1097,17 +1098,23 @@ export default function Dashboard() {
     detectCurrentSite();
   }, [detectCurrentSite]);
 
-  // Refresh current site every 15 seconds.
-  useEffect(() => {
-    const interval = setInterval(() => {
-      detectCurrentSite();
-    }, 15000);
-    return () => clearInterval(interval);
-  }, [detectCurrentSite]);
-
+  // Detect the current site on focus and poll every 15s — but ONLY while the
+  // Dashboard is the focused tab. Previously the interval ran unconditionally,
+  // so its setState kept re-rendering a hidden Dashboard while the user was on
+  // another tab, stealing JS-thread time from the active screen. The focus
+  // call is deferred past the tab-switch transition so the switch stays smooth.
   useFocusEffect(
     useCallback(() => {
-      detectCurrentSite();
+      const handle = InteractionManager.runAfterInteractions(() => {
+        detectCurrentSite();
+      });
+      const interval = setInterval(() => {
+        detectCurrentSite();
+      }, 15000);
+      return () => {
+        handle.cancel?.();
+        clearInterval(interval);
+      };
     }, [detectCurrentSite]),
   );
 

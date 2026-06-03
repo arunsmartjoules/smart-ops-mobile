@@ -4,7 +4,13 @@ import { GestureHandlerRootView } from "react-native-gesture-handler";
 import "@/utils/navContextErrorTrap";
 import { Stack, useRouter, useSegments, usePathname, router } from "expo-router";
 import "react-native-reanimated";
+import { enableFreeze } from "react-native-screens";
 import "./global.css";
+
+// Freeze blurred screens: a tab that isn't focused stops re-rendering, so its
+// timers/websocket setState/context updates no longer steal JS-thread time from
+// the tab the user is actually looking at. Must run before any navigator mounts.
+enableFreeze(true);
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { AttendanceGateProvider } from "@/contexts/AttendanceGateContext";
 import { ThemeProvider } from "@/contexts/ThemeContext";

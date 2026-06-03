@@ -7,6 +7,7 @@ import {
   RefreshControl,
   Alert,
   useColorScheme,
+  InteractionManager,
 } from "react-native";
 import { FlashList } from "@shopify/flash-list";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -799,7 +800,9 @@ export default function Tickets() {
     setUpdateStatus(defaultStatus);
     setUpdateRemarks(getInitialUpdateRemarks(ticket, defaultStatus));
     setUpdateArea(ticket.area_asset || "");
-    setUpdateCategory(ticket.category || "");
+    // Category must be chosen by the operator on each update — don't carry
+    // over the ticket's existing category as a pre-selection.
+    setUpdateCategory("");
     setBeforeTemp(
       ticket.before_temp != null && !Number.isNaN(Number(ticket.before_temp))
         ? String(ticket.before_temp)
@@ -940,19 +943,24 @@ export default function Tickets() {
       if (!selectedSiteCode || !ticketsRealtimeService.isEnabled()) {
         return () => {};
       }
-      void ticketsRealtimeService.connect({
-        siteCode: selectedSiteCode,
-        onEvent: handleRealtimeEvent,
-        onStateChange: (state) => {
-          logger.debug("Tickets realtime connection state", {
-            module: "TICKETS",
-            state,
-            siteCode: selectedSiteCode,
-          });
-        },
+      // Defer the websocket connect past the tab-switch transition so its
+      // synchronous setup doesn't compete with the frame painting this tab.
+      const handle = InteractionManager.runAfterInteractions(() => {
+        void ticketsRealtimeService.connect({
+          siteCode: selectedSiteCode,
+          onEvent: handleRealtimeEvent,
+          onStateChange: (state) => {
+            logger.debug("Tickets realtime connection state", {
+              module: "TICKETS",
+              state,
+              siteCode: selectedSiteCode,
+            });
+          },
+        });
       });
 
       return () => {
+        handle.cancel?.();
         ticketsRealtimeService.disconnect();
       };
     }, [selectedSiteCode, handleRealtimeEvent]),
@@ -1048,7 +1056,9 @@ export default function Tickets() {
     setUpdateStatus("Cancelled");
     setUpdateRemarks("");
     setUpdateArea(ticket.area_asset || "");
-    setUpdateCategory(ticket.category || "");
+    // Category must be chosen by the operator on each update — don't carry
+    // over the ticket's existing category as a pre-selection.
+    setUpdateCategory("");
     setBeforeTemp(
       ticket.before_temp != null && !Number.isNaN(Number(ticket.before_temp))
         ? String(ticket.before_temp)
@@ -1432,6 +1442,10 @@ export default function Tickets() {
             data={enrichedTickets}
             renderItem={renderTicketItem}
             keyExtractor={keyExtractor}
+            // Uniform-height cards (single recycle pool, no getItemType) + a
+            // wider draw distance so fast flings don't outrun cell rendering
+            // and reveal blank space. See PM list for the same config.
+            drawDistance={600}
             ListEmptyComponent={loading ? <TicketSkeleton /> : (
               <EmptyState
                 icon={TicketIcon}

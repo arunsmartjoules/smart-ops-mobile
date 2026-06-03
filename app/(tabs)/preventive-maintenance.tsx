@@ -197,7 +197,8 @@ const PMCard = React.memo(
           <View className="flex-1 min-w-0 mr-2">
             <Text
               className="text-slate-900 dark:text-slate-50 font-semibold text-[14px] leading-5"
-              numberOfLines={2}
+              numberOfLines={1}
+              ellipsizeMode="tail"
             >
               {instance.title || instance.asset_id || "PM Task"}
             </Text>
@@ -937,12 +938,6 @@ export default function PreventiveMaintenance() {
 
   const keyExtractor = useCallback((item: PMInstanceRow) => item.id, []);
 
-  const getItemType = useCallback((item: PMInstanceRow) => {
-    const assigned = item.assigned_to_name ? "a" : "u";
-    const done = item.completed_on ? "d" : "p";
-    return `${assigned}${done}`;
-  }, []);
-
   const ListEmpty = useMemo(
     () => (
       <EmptyState
@@ -1163,7 +1158,11 @@ export default function PreventiveMaintenance() {
             data={filteredInstances}
             renderItem={renderItem}
             keyExtractor={keyExtractor}
-            getItemType={getItemType}
+            // No getItemType: every card renders the identical layout/height,
+            // so a single recycle pool maximizes cell reuse. Splitting into
+            // per-status pools just forced fresh cell mounts mid-fling, which
+            // showed up as blank space during fast scroll.
+            drawDistance={600}
             ListEmptyComponent={ListEmpty}
             onEndReached={handleLoadMore}
             onEndReachedThreshold={0.5}

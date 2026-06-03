@@ -923,7 +923,8 @@ export default function IncidentsTab() {
             <View className="flex-1 min-w-0 mr-2">
               <Text
                 className="text-slate-900 dark:text-slate-50 font-semibold text-[14px] leading-5"
-                numberOfLines={2}
+                numberOfLines={1}
+                ellipsizeMode="tail"
               >
                 {item.fault_symptom}
               </Text>
@@ -1112,6 +1113,9 @@ export default function IncidentsTab() {
           data={incidents}
           renderItem={renderCard}
           keyExtractor={(item) => item.id}
+          // Uniform-height cards (single recycle pool) + wider draw distance so
+          // fast flings don't reveal blank space. See PM list for the same config.
+          drawDistance={600}
           ListEmptyComponent={listEmpty}
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#dc2626" />

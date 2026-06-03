@@ -111,7 +111,10 @@ const TicketDetailModal = React.memo(
         updateStatus !== ticket.status ||
         updateRemarks.trim() !== originalRemarks.trim() ||
         updateArea !== originalArea ||
-        updateCategory !== originalCategory ||
+        // Category now starts unselected; an empty value is "not yet chosen",
+        // not a change away from the ticket's existing category.
+        (updateCategory.trim() !== "" &&
+          updateCategory.trim() !== originalCategory.trim()) ||
         beforeTemp.trim() !== "" ||
         afterTemp.trim() !== "" ||
         Boolean(attachmentUri) ||

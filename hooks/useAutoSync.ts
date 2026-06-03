@@ -1,5 +1,5 @@
 import { useEffect, useCallback, useRef } from "react";
-import { AppState, AppStateStatus } from "react-native";
+import { AppState, AppStateStatus, InteractionManager } from "react-native";
 import { useFocusEffect } from "expo-router";
 
 interface AutoSyncOptions {
@@ -52,11 +52,20 @@ export function useAutoSync(
   useFocusEffect(
     useCallback(() => {
       isFocusedRef.current = true;
+      // Defer the forced refresh until the tab-switch transition has settled.
+      // The fetch + its setState re-renders would otherwise run on the same
+      // frame the new tab is trying to paint, which reads as jank. The screen
+      // is already showing cached data; refreshing one interaction-tick later
+      // is invisible to the user but keeps the switch smooth.
+      let handle: ReturnType<typeof InteractionManager.runAfterInteractions> | null = null;
       if (syncOnFocus) {
-        triggerSync(true); // Force sync on focus to ensure fresh data
+        handle = InteractionManager.runAfterInteractions(() => {
+          if (isFocusedRef.current) triggerSync(true); // Force sync to ensure fresh data
+        });
       }
       return () => {
         isFocusedRef.current = false;
+        handle?.cancel?.();
       };
     }, [triggerSync, syncOnFocus])
   );

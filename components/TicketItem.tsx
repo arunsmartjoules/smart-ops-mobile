@@ -73,7 +73,8 @@ const TicketItem = React.memo(
             <View className="flex-1 min-w-0 mr-2">
               <Text
                 className="text-slate-900 dark:text-slate-50 font-semibold text-[14px] leading-5"
-                numberOfLines={2}
+                numberOfLines={isCompact ? 1 : 2}
+                ellipsizeMode="tail"
               >
                 {item.title}
               </Text>
