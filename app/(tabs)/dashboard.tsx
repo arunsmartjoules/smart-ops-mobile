@@ -50,7 +50,10 @@ import { useNetworkStatus } from "@/hooks/useNetworkStatus";
 import Skeleton from "@/components/Skeleton";
 import TicketsService, { type Ticket } from "@/services/TicketsService";
 import TicketDetailModal from "@/components/TicketDetailModal";
-import { isTempMandatoryCategory } from "@/components/TicketDetailStatusUpdate";
+import {
+  isTempMandatoryCategory,
+  isBreakdownTypeCategory,
+} from "@/components/TicketDetailStatusUpdate";
 import { type SelectOption } from "@/components/SearchableSelect";
 import SiteLogService from "@/services/SiteLogService";
 import logger from "@/utils/logger";
@@ -441,6 +444,7 @@ export default function Dashboard() {
   const [updateRemarks, setUpdateRemarks] = useState("");
   const [updateArea, setUpdateArea] = useState("");
   const [updateCategory, setUpdateCategory] = useState("");
+  const [updateBreakdownType, setUpdateBreakdownType] = useState("");
   const [isUpdating, setIsUpdating] = useState(false);
   const [areaOptions, setAreaOptions] = useState<SelectOption[]>([]);
   const [categoryOptions, setCategoryOptions] = useState<SelectOption[]>([]);
@@ -844,6 +848,7 @@ export default function Dashboard() {
           setUpdateRemarks(getInitialUpdateRemarks(ticket, defaultStatus));
           setUpdateArea(ticket.area_asset || "");
           setUpdateCategory(ticket.category || "");
+          setUpdateBreakdownType(ticket.breakdown_type || "");
           setBeforeTemp(
             ticket.before_temp != null && !Number.isNaN(Number(ticket.before_temp))
               ? String(ticket.before_temp)
@@ -888,6 +893,17 @@ export default function Dashboard() {
       );
       return;
     }
+    if (
+      needsAreaAndCategory &&
+      isBreakdownTypeCategory(updateCategory.trim() || selectedTicket.category || "") &&
+      !updateBreakdownType.trim()
+    ) {
+      Alert.alert(
+        "Required",
+        "Please select Electrical or Mechanical for this breakdown.",
+      );
+      return;
+    }
     if (needsAreaAndCategory) {
       const effectiveCategory = (
         updateCategory.trim() ||
@@ -914,12 +930,23 @@ export default function Dashboard() {
       }
     }
 
+    const effectivePayloadCategory = updateCategory || selectedTicket.category;
     const payload: any = {
       status: updateStatus,
       internal_remarks: updateRemarks,
       area_asset: updateArea || selectedTicket.area_asset,
-      category: updateCategory || selectedTicket.category,
+      category: effectivePayloadCategory,
     };
+    // Only the Inprogress/Resolved flow shows the breakdown-type picker — set it
+    // for a breakdown category, clear it otherwise, and leave it untouched on
+    // other transitions. Mirrors the tickets screen.
+    if (needsAreaAndCategory) {
+      payload.breakdown_type = isBreakdownTypeCategory(
+        effectivePayloadCategory || "",
+      )
+        ? updateBreakdownType || null
+        : null;
+    }
 
     if (beforeTemp.trim() !== "") payload.before_temp = parseFloat(beforeTemp);
     if (afterTemp.trim() !== "") payload.after_temp = parseFloat(afterTemp);
@@ -928,9 +955,22 @@ export default function Dashboard() {
       payload.assigned_to = user.full_name || user.name || "";
     }
 
+    // Send the on-device action time so a ticket actioned offline keeps its true
+    // responded/resolved time. The backend honors these only when the field is
+    // still unset and never overwrites them on a later offline-queue replay.
+    const nowIso = new Date().toISOString();
+    if (
+      (updateStatus === "Inprogress" || updateStatus === "Resolved") &&
+      !selectedTicket.responded_at
+    ) {
+      payload.responded_at = nowIso;
+    }
+    if (updateStatus === "Resolved" && !selectedTicket.resolved_at) {
+      payload.resolved_at = nowIso;
+    }
+
     setIsUpdating(true);
     try {
-      const nowIso = new Date().toISOString();
       const optimisticTicket = {
         ...selectedTicket,
         ...payload,
@@ -939,7 +979,9 @@ export default function Dashboard() {
             ? selectedTicket.responded_at || nowIso
             : selectedTicket.responded_at,
         resolved_at:
-          updateStatus === "Resolved" ? nowIso : selectedTicket.resolved_at,
+          updateStatus === "Resolved"
+            ? selectedTicket.resolved_at || nowIso
+            : selectedTicket.resolved_at,
       };
       const res = await TicketsService.updateTicket(
         selectedTicket.id || selectedTicket.ticket_no,
@@ -1614,6 +1656,8 @@ export default function Dashboard() {
           setUpdateArea={setUpdateArea}
           updateCategory={updateCategory}
           setUpdateCategory={setUpdateCategory}
+          updateBreakdownType={updateBreakdownType}
+          setUpdateBreakdownType={setUpdateBreakdownType}
           isUpdating={isUpdating}
           handleUpdateStatus={handleUpdateStatus}
           areaOptions={areaOptions}

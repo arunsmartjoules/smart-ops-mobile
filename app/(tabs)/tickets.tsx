@@ -47,7 +47,10 @@ import {
 import cacheManager from "@/services/CacheManager";
 import { v4 as uuidv4 } from "uuid";
 import TicketDetailModal from "@/components/TicketDetailModal";
-import { isTempMandatoryCategory } from "@/components/TicketDetailStatusUpdate";
+import {
+  isTempMandatoryCategory,
+  isBreakdownTypeCategory,
+} from "@/components/TicketDetailStatusUpdate";
 import {
   makeTicketIncidentDraft,
   type TicketIncidentDraft,
@@ -128,6 +131,7 @@ const normalizeRealtimeTicket = (source: any): Ticket => ({
   location: source.location || source.area_asset || source.area || "",
   area_asset: source.area_asset || source.area || "",
   category: source.category || "",
+  breakdown_type: source.breakdown_type || "",
   internal_remarks: source.internal_remarks || source.description || "",
   customer_inputs: source.customer_inputs || undefined,
   assigned_to: source.assigned_to || "",
@@ -199,6 +203,7 @@ export default function Tickets() {
   const [updateRemarks, setUpdateRemarks] = useState("");
   const [updateArea, setUpdateArea] = useState("");
   const [updateCategory, setUpdateCategory] = useState("");
+  const [updateBreakdownType, setUpdateBreakdownType] = useState("");
   const [isUpdating, setIsUpdating] = useState(false);
   // Synchronous double-submit guard. `isUpdating` is React state set well
   // after validation; rapid taps re-enter handleUpdateStatus before the
@@ -803,6 +808,7 @@ export default function Tickets() {
     // Category must be chosen by the operator on each update — don't carry
     // over the ticket's existing category as a pre-selection.
     setUpdateCategory("");
+    setUpdateBreakdownType("");
     setBeforeTemp(
       ticket.before_temp != null && !Number.isNaN(Number(ticket.before_temp))
         ? String(ticket.before_temp)
@@ -1059,6 +1065,7 @@ export default function Tickets() {
     // Category must be chosen by the operator on each update — don't carry
     // over the ticket's existing category as a pre-selection.
     setUpdateCategory("");
+    setUpdateBreakdownType("");
     setBeforeTemp(
       ticket.before_temp != null && !Number.isNaN(Number(ticket.before_temp))
         ? String(ticket.before_temp)
@@ -1132,6 +1139,17 @@ export default function Tickets() {
       Alert.alert("Required", "Please select a category before updating the ticket.");
       return;
     }
+    if (
+      needsAreaAndCategory &&
+      isBreakdownTypeCategory(updateCategory.trim() || selectedTicket.category || "") &&
+      !updateBreakdownType.trim()
+    ) {
+      Alert.alert(
+        "Required",
+        "Please select Electrical or Mechanical for this breakdown.",
+      );
+      return;
+    }
     if (needsAreaAndCategory) {
       const effectiveCategory = (
         updateCategory.trim() ||
@@ -1186,12 +1204,24 @@ export default function Tickets() {
       }
     }
 
+    const effectivePayloadCategory = updateCategory || selectedTicket.category;
     const payload: any = {
       status: updateStatus,
       internal_remarks: updateRemarks,
       area_asset: updateArea || selectedTicket.area_asset,
-      category: updateCategory || selectedTicket.category,
+      category: effectivePayloadCategory,
     };
+    // Only the Inprogress/Resolved flow shows the category + breakdown-type
+    // pickers, so only then do we set breakdown_type — set it for a breakdown
+    // category, clear it otherwise so a re-categorised ticket sheds a stale
+    // Electrical/Mechanical tag. Other transitions leave the column untouched.
+    if (needsAreaAndCategory) {
+      payload.breakdown_type = isBreakdownTypeCategory(
+        effectivePayloadCategory || "",
+      )
+        ? updateBreakdownType || null
+        : null;
+    }
     if (createIncidentFromTicket) {
       payload.create_incident = true;
       payload.incident_payload = {
@@ -1218,10 +1248,25 @@ export default function Tickets() {
       payload.assigned_to = user?.full_name || user?.name || "";
     }
 
+    // Capture the moment the operator actually performs the action, on-device.
+    // We send these to the backend (which honors them only when the field is
+    // still unset and never overwrites them) so that a ticket actioned offline
+    // keeps its true action time instead of being stamped whenever the offline
+    // queue eventually flushes. See backend updateComplaint idempotency guard.
+    const nowIso = new Date().toISOString();
+    if (
+      (updateStatus === "Inprogress" || updateStatus === "Resolved") &&
+      !selectedTicket.responded_at
+    ) {
+      payload.responded_at = nowIso;
+    }
+    if (updateStatus === "Resolved" && !selectedTicket.resolved_at) {
+      payload.resolved_at = nowIso;
+    }
+
     isSubmittingRef.current = true;
     setIsUpdating(true);
     try {
-      const nowIso = new Date().toISOString();
       const optimisticTicket = {
         ...selectedTicket,
         ...payload,
@@ -1230,7 +1275,9 @@ export default function Tickets() {
             ? selectedTicket.responded_at || nowIso
             : selectedTicket.responded_at,
         resolved_at:
-          updateStatus === "Resolved" ? nowIso : selectedTicket.resolved_at,
+          updateStatus === "Resolved"
+            ? selectedTicket.resolved_at || nowIso
+            : selectedTicket.resolved_at,
       };
 
       // Always call updateTicket — it writes to local DB + enqueues + attempts
@@ -1512,6 +1559,8 @@ export default function Tickets() {
             setUpdateArea={setUpdateArea}
             updateCategory={updateCategory}
             setUpdateCategory={setUpdateCategory}
+            updateBreakdownType={updateBreakdownType}
+            setUpdateBreakdownType={setUpdateBreakdownType}
             isUpdating={isUpdating}
             handleUpdateStatus={handleUpdateStatus}
             areaOptions={areaOptions}

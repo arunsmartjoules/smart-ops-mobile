@@ -316,6 +316,7 @@ function init() {
       "ALTER TABLE site_logs ADD COLUMN main_remarks TEXT",
       "ALTER TABLE tickets ADD COLUMN before_temp REAL",
       "ALTER TABLE tickets ADD COLUMN after_temp REAL",
+      "ALTER TABLE tickets ADD COLUMN breakdown_type TEXT",
       "ALTER TABLE tickets ADD COLUMN due_date REAL",
       "ALTER TABLE tickets ADD COLUMN closed_at REAL",
       "ALTER TABLE pm_instances ADD COLUMN completed_on REAL",

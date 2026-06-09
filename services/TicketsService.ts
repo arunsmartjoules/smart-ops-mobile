@@ -113,6 +113,7 @@ export interface Ticket {
   location: string;
   area_asset?: string;
   category: string;
+  breakdown_type?: string | null;
   internal_remarks?: string;
   customer_inputs?: string;
   assigned_to?: string;
@@ -245,6 +246,7 @@ export const TicketsService = {
               status: t.status,
               priority: t.priority,
               category: t.category,
+              breakdown_type: t.breakdown_type,
               location: t.area,
               assigned_to: t.assigned_to,
               created_user: t.created_by,
@@ -315,6 +317,7 @@ export const TicketsService = {
           status: t.status || "",
           priority: t.priority || "",
           category: t.category || "",
+          breakdown_type: t.breakdown_type ?? null,
           area: t.area_asset || t.location || "",
           assigned_to: t.assigned_to || "",
           created_by: t.created_user || "",
@@ -425,6 +428,7 @@ export const TicketsService = {
         if (data.internal_remarks !== undefined) updateFields.description = data.internal_remarks;
         if (data.area_asset !== undefined) updateFields.area = data.area_asset;
         if (data.category !== undefined) updateFields.category = data.category;
+        if (data.breakdown_type !== undefined) updateFields.breakdown_type = data.breakdown_type;
         if (data.priority !== undefined) updateFields.priority = data.priority;
         if (data.assigned_to !== undefined) updateFields.assigned_to = data.assigned_to;
         if (data.before_temp !== undefined) updateFields.before_temp = data.before_temp;

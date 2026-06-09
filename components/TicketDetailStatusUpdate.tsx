@@ -22,6 +22,18 @@ export const isTempMandatoryCategory = (category: string) =>
     category.trim(),
   );
 
+/** Category that requires the operator to pick whether it's an electrical or
+ *  mechanical breakdown (stored on the ticket's `breakdown_type` column). */
+export const AHU_FCU_BREAKDOWN_CATEGORY = "AHU and FCU Breakdown";
+
+export const isBreakdownTypeCategory = (category: string) =>
+  category.trim().toLowerCase() === AHU_FCU_BREAKDOWN_CATEGORY.toLowerCase();
+
+const BREAKDOWN_TYPE_OPTIONS: SelectOption[] = [
+  { value: "Electrical", label: "Electrical" },
+  { value: "Mechanical", label: "Mechanical" },
+];
+
 const STATUS_THEME: Record<
   string,
   { bg: string; activeBg: string; text: string; activeText: string }
@@ -74,6 +86,8 @@ interface TicketDetailStatusUpdateProps {
   setUpdateArea: (s: string) => void;
   updateCategory: string;
   setUpdateCategory: (s: string) => void;
+  updateBreakdownType: string;
+  setUpdateBreakdownType: (s: string) => void;
   areaOptions: SelectOption[];
   categoryOptions: SelectOption[];
   areasLoading?: boolean;
@@ -104,6 +118,8 @@ const TicketDetailStatusUpdate = ({
   setUpdateArea,
   updateCategory,
   setUpdateCategory,
+  updateBreakdownType,
+  setUpdateBreakdownType,
   areaOptions,
   categoryOptions,
   areasLoading,
@@ -402,6 +418,17 @@ const TicketDetailStatusUpdate = ({
             searchPlaceholder="Search categories..."
             emptyMessage="No categories found"
           />
+          {isBreakdownTypeCategory(effectiveCategory) && (
+            <FullscreenPicker
+              label="Electrical / Mechanical *"
+              placeholder="Choose type..."
+              value={updateBreakdownType}
+              options={BREAKDOWN_TYPE_OPTIONS}
+              onChange={setUpdateBreakdownType}
+              searchPlaceholder="Search..."
+              emptyMessage="No options"
+            />
+          )}
         </View>
       )}
 

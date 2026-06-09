@@ -32,6 +32,8 @@ interface TicketDetailModalProps {
   setUpdateArea: (s: string) => void;
   updateCategory: string;
   setUpdateCategory: (s: string) => void;
+  updateBreakdownType: string;
+  setUpdateBreakdownType: (s: string) => void;
   isUpdating: boolean;
   handleUpdateStatus: () => void;
   areaOptions: SelectOption[];
@@ -69,6 +71,8 @@ const TicketDetailModal = React.memo(
     setUpdateArea,
     updateCategory,
     setUpdateCategory,
+    updateBreakdownType,
+    setUpdateBreakdownType,
     isUpdating,
     handleUpdateStatus,
     areaOptions,
@@ -190,6 +194,8 @@ const TicketDetailModal = React.memo(
                       setUpdateArea={setUpdateArea}
                       updateCategory={updateCategory}
                       setUpdateCategory={setUpdateCategory}
+                      updateBreakdownType={updateBreakdownType}
+                      setUpdateBreakdownType={setUpdateBreakdownType}
                       areaOptions={areaOptions}
                       categoryOptions={categoryOptions}
                       areasLoading={areasLoading}

@@ -19,6 +19,7 @@ export const tickets = sqliteTable("tickets", {
   status: text("status").notNull(),
   priority: text("priority").notNull(),
   category: text("category"),
+  breakdown_type: text("breakdown_type"),
   area: text("area"),
   assigned_to: text("assigned_to"),
   created_by: text("created_by").notNull(),

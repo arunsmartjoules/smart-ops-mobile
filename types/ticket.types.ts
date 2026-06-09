@@ -16,6 +16,8 @@ export interface Ticket {
   description?: string;
   status: TicketStatus;
   category?: string;
+  /** "Electrical" | "Mechanical" — only for "AHU and FCU Breakdown" tickets. */
+  breakdown_type?: string;
   location?: string;
   site_code: string;
   site_name?: string;

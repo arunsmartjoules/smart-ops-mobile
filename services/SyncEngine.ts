@@ -213,6 +213,7 @@ class SyncEngineImpl implements SyncEngine {
               status: t.status || "",
               priority: t.priority || "",
               category: t.category || "",
+              breakdown_type: t.breakdown_type ?? null,
               area: t.area_asset || t.location || "",
               assigned_to: t.assigned_to || "",
               created_by: t.created_user || "",
