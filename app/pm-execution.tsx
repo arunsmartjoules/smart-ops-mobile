@@ -52,6 +52,14 @@ const MULTIPLE_CHOICE_OPTIONS = ["Done", "Not Done"];
 const isMeasureTask = (taskName?: string | null) =>
   !!taskName && taskName.toLowerCase().includes("measure");
 
+// TEMP (2026-06-10): per-task image-mandatory and measure-task readings are
+// not enforced for PM completion — operators can complete without submitting
+// an image or readings. Flip either back to `true` to re-enable enforcement.
+// NOTE: the backend enforces the same two checks; keep these in sync with
+// ENFORCE_PM_* in backend pmInstancesController.ts.
+const ENFORCE_IMAGE_MANDATORY: boolean = false;
+const ENFORCE_READINGS_MANDATORY: boolean = false;
+
 /** Checklist row image: menu, direct camera/library, or null to remove */
 type ChecklistImageAction = "MENU" | "CAMERA" | "LIBRARY" | null;
 
@@ -100,7 +108,8 @@ const TaskRow = React.memo(
   }) => {
     const isDark = useColorScheme() === "dark";
     const isDone = response?.response_value === "Done";
-    const readingsRequired = isMeasureTask(item.task_name);
+    const readingsRequired =
+      ENFORCE_READINGS_MANDATORY && isMeasureTask(item.task_name);
     const isReadingsMissing = Boolean(
       missingReadings ??
       (readingsRequired &&
@@ -1102,13 +1111,15 @@ export default function PMExecutionScreen() {
 
   const missingMeasureReadings = useMemo(
     () =>
-      checklistItems.filter((item) => {
-        if (!isMeasureTask(item.task_name)) return false;
-        const resp = responses[item.id];
-        // Only enforce after the task has a response (completion already requires all answered).
-        if (!resp?.response_value) return false;
-        return !resp.readings || !resp.readings.trim();
-      }),
+      !ENFORCE_READINGS_MANDATORY
+        ? []
+        : checklistItems.filter((item) => {
+            if (!isMeasureTask(item.task_name)) return false;
+            const resp = responses[item.id];
+            // Only enforce after the task has a response (completion already requires all answered).
+            if (!resp?.response_value) return false;
+            return !resp.readings || !resp.readings.trim();
+          }),
     [checklistItems, responses],
   );
 
@@ -1132,6 +1143,7 @@ export default function PMExecutionScreen() {
       const taskName = item.task_name || "Unnamed task";
       const missingResponse = !response?.response_value;
       const missingReadings =
+        ENFORCE_READINGS_MANDATORY &&
         isMeasureTask(item.task_name) &&
         !!response?.response_value &&
         !String(response?.readings || "").trim();
@@ -1139,6 +1151,7 @@ export default function PMExecutionScreen() {
         Boolean((item as any).remarks_mandatory) &&
         !String(response?.remarks || "").trim();
       const missingImage =
+        ENFORCE_IMAGE_MANDATORY &&
         Boolean((item as any).image_mandatory) &&
         !String(response?.image_url || "").trim();
 
