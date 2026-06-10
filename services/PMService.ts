@@ -1,4 +1,4 @@
-import { eq, and, inArray, or, isNull, gte, lte, asc, sql } from "drizzle-orm";
+import { eq, and, inArray, notInArray, or, isNull, gte, lte, asc, sql } from "drizzle-orm";
 import { db, pmInstances, pmChecklistMaster, pmChecklistItems, pmResponses, offlineQueue } from "@/database";
 import { v4 as uuidv4 } from "uuid";
 import cacheManager from "./CacheManager";
@@ -366,6 +366,27 @@ const PMService = {
           };
         }).filter(Boolean) as Record<string, any>[];
         await cacheManager.write("pm_checklist_items", itemRecords);
+
+        // Reconcile: the server is authoritative for a checklist's item set.
+        // cacheManager.write only upserts, so items removed on the server —
+        // e.g. when a checklist is deleted and recreated — would otherwise
+        // linger locally forever and show up as stale tasks. Delete any cached
+        // item for THIS checklist that the server no longer returns. Guarded on
+        // a non-empty server set so a transient empty/failed fetch can never
+        // wipe a validly-cached checklist while offline.
+        const serverItemIds = itemRecords
+          .map((r) => r.id)
+          .filter(Boolean) as string[];
+        if (serverItemIds.length > 0) {
+          await db
+            .delete(pmChecklistItems)
+            .where(
+              and(
+                eq(pmChecklistItems.checklist_id, checklistId),
+                notInArray(pmChecklistItems.id, serverItemIds),
+              ),
+            );
+        }
         return items;
       }
       return [];
@@ -407,6 +428,47 @@ const PMService = {
         
         if (records.length > 0) {
           await cacheManager.write("pm_responses", records);
+
+          // Reconcile orphans: the server is authoritative for an instance's
+          // response set. When a checklist is deleted and recreated, responses
+          // tied to the OLD checklist items stay attached to this instance
+          // (cacheManager only upserts) and inflate progress — e.g. "20/10".
+          // Delete local responses for this instance that the server no longer
+          // has, but KEEP anything still pending in offline_queue (unsynced
+          // offline work the server hasn't seen yet). Guarded on a non-empty
+          // server set so a transient empty response can't purge a valid draft.
+          const keepItemIds = new Set(
+            records.map((r: any) => r.checklist_item_id).filter(Boolean),
+          );
+          const pendingResponses = await db
+            .select({ payload: offlineQueue.payload })
+            .from(offlineQueue)
+            .where(
+              and(
+                eq(offlineQueue.entity_type, "pm_response_upsert"),
+                eq(offlineQueue.status, "pending"),
+              ),
+            );
+          for (const p of pendingResponses) {
+            try {
+              const parsed = JSON.parse(p.payload);
+              // pm_response_upsert payloads map checklist_item_id -> checklist_id
+              if (parsed?.instance_id === instanceId && parsed?.checklist_id) {
+                keepItemIds.add(parsed.checklist_id);
+              }
+            } catch {
+              // Malformed payload — skip.
+            }
+          }
+          const keepIds = Array.from(keepItemIds) as string[];
+          await db
+            .delete(pmResponses)
+            .where(
+              and(
+                eq(pmResponses.instance_id, instanceId),
+                notInArray(pmResponses.checklist_item_id, keepIds),
+              ),
+            );
         }
         return records;
       }
@@ -475,10 +537,20 @@ const PMService = {
     }
 
     const currentResponses = await this.getResponsesForInstance(instanceServerId);
-    const answeredCount = currentResponses.filter(r => r.response_value).length;
     const checklistItems = localInstance?.maintenance_id
       ? await this.getChecklistItems(localInstance.maintenance_id)
       : [];
+    // Count only responses tied to a CURRENT checklist item. Responses left
+    // over from a deleted/replaced checklist must not inflate progress — that
+    // is what previously produced bogus values like "20/10".
+    const answeredCount =
+      checklistItems.length > 0
+        ? checklistItems.filter((it) =>
+            currentResponses.some(
+              (r) => r.checklist_item_id === it.id && r.response_value,
+            ),
+          ).length
+        : currentResponses.filter((r) => r.response_value).length;
     const totalCount =
       checklistItems.length > 0
         ? checklistItems.length

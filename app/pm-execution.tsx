@@ -553,20 +553,23 @@ export default function PMExecutionScreen() {
           return;
         }
 
-        // Load checklist items - local first, API fallback
+        // Load checklist items - local first, API fallback.
+        // Refetch from the server when nothing is cached OR the user explicitly
+        // pulled to refresh while online. fetchChecklistItemsFromAPI reconciles
+        // the local cache against the server (removing items deleted there), so
+        // we always re-read from the DB afterwards to get the clean set.
         let items = await PMService.getChecklistItems(inst.maintenance_id);
 
-        if (items.length === 0) {
-          logger.info("No local checklist items, fetching from API", {
+        if (items.length === 0 || (forceServerFetch && isConnected)) {
+          logger.info("Fetching checklist from API", {
             module: "PM_EXECUTION",
             maintenanceId: inst.maintenance_id,
+            forced: forceServerFetch,
           });
           setFetchingChecklist(true);
           try {
-            const apiItems = await PMService.fetchChecklistItemsFromAPI(
-              inst.maintenance_id,
-            );
-            items = apiItems;
+            await PMService.fetchChecklistItemsFromAPI(inst.maintenance_id);
+            items = await PMService.getChecklistItems(inst.maintenance_id);
             logger.info("Loaded checklist items from API", {
               module: "PM_EXECUTION",
               maintenanceId: inst.maintenance_id,
@@ -905,8 +908,11 @@ export default function PMExecutionScreen() {
   }, [instanceId, isConnected, loadData]);
 
   // ── Progress derived value ────────────────────────────────────────────────
-  const answered = Object.values(responses).filter(
-    (r) => r.response_value,
+  // Count only responses tied to a current checklist item. Responses left
+  // over from a deleted/replaced checklist must not inflate the count — that
+  // is what previously produced bogus progress like "20/10".
+  const answered = checklistItems.filter(
+    (it) => responses[it.id]?.response_value,
   ).length;
   const total = checklistItems.length;
   // Visual percentage for the progress bar fill
