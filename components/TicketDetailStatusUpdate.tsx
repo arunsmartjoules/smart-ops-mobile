@@ -1,4 +1,4 @@
-import React, { useMemo } from "react";
+import React, { useMemo, useState } from "react";
 import { View, Text, TouchableOpacity, TextInput, Image, Alert, ScrollView } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 import { Camera, Image as ImageIcon, X } from "lucide-react-native";
@@ -33,6 +33,12 @@ const BREAKDOWN_TYPE_OPTIONS: SelectOption[] = [
   { value: "Electrical", label: "Electrical" },
   { value: "Mechanical", label: "Mechanical" },
 ];
+
+/** Sentinel value for the "Others" choice in the area picker. Selecting it
+ *  reveals a free-text box so operators can record an asset/area that isn't in
+ *  the assets table — the typed text is stored on the ticket's `area_asset`
+ *  column only; no row is ever created in the assets table. */
+const OTHER_AREA_VALUE = "__other__";
 
 const STATUS_THEME: Record<
   string,
@@ -151,6 +157,33 @@ const TicketDetailStatusUpdate = ({
     () => OPERATING_CONDITION_OPTIONS.map((value) => ({ value, label: value })),
     [],
   );
+
+  // "Others" lets the operator type a free-text asset/area. While active,
+  // `updateArea` holds the typed text directly (it's what gets sent as
+  // `area_asset`), so the picker shows the sentinel value instead.
+  const [isOtherArea, setIsOtherArea] = useState(false);
+
+  const areaOptionsWithOther = useMemo<SelectOption[]>(
+    () => [
+      ...areaOptions,
+      {
+        value: OTHER_AREA_VALUE,
+        label: "Others",
+        description: "Enter a custom asset / area",
+      },
+    ],
+    [areaOptions],
+  );
+
+  const handleAreaChange = (value: string) => {
+    if (value === OTHER_AREA_VALUE) {
+      setIsOtherArea(true);
+      setUpdateArea("");
+    } else {
+      setIsOtherArea(false);
+      setUpdateArea(value);
+    }
+  };
 
   const statuses = [
     "Inprogress",
@@ -396,9 +429,9 @@ const TicketDetailStatusUpdate = ({
           <FullscreenPicker
             label="Select Area *"
             placeholder="Choose an area..."
-            value={updateArea}
-            options={areaOptions}
-            onChange={setUpdateArea}
+            value={isOtherArea ? OTHER_AREA_VALUE : updateArea}
+            options={areaOptionsWithOther}
+            onChange={handleAreaChange}
             loading={areasLoading}
             searchPlaceholder="Search areas..."
             emptyMessage="No areas found"
@@ -409,6 +442,31 @@ const TicketDetailStatusUpdate = ({
             loadingMore={loadingMoreAreas}
             remoteSearch={Boolean(setAreaSearchQuery)}
           />
+          {isOtherArea && (
+            <View style={{ marginTop: -8, marginBottom: 16 }}>
+              <Text
+                className="text-slate-700 dark:text-slate-300"
+                style={{ fontSize: 14, fontWeight: "600", marginBottom: 8 }}
+              >
+                Other asset / area *
+              </Text>
+              <TextInput
+                style={{
+                  borderWidth: 1,
+                  borderRadius: 12,
+                  padding: 12,
+                  fontWeight: "600",
+                  fontSize: 14,
+                }}
+                className="bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-50 border-slate-200 dark:border-slate-700"
+                placeholder="Enter asset / area name"
+                placeholderTextColor="#94a3b8"
+                value={updateArea}
+                onChangeText={setUpdateArea}
+                autoFocus
+              />
+            </View>
+          )}
           <FullscreenPicker
             label="Select Category *"
             placeholder="Choose a category..."

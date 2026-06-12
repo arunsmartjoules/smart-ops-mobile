@@ -10,7 +10,17 @@ import {
   Clipboard,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { ArrowLeft, Bell, BellOff, Info, Copy, CheckCircle, XCircle, RefreshCw } from "lucide-react-native";
+import {
+  ArrowLeft,
+  Bell,
+  BellOff,
+  Info,
+  Copy,
+  CheckCircle,
+  XCircle,
+  RefreshCw,
+  Lock,
+} from "lucide-react-native";
 import { router } from "expo-router";
 import { useAuth } from "@/contexts/AuthContext";
 import {
@@ -24,31 +34,77 @@ import logger from "@/utils/logger";
 import { formatISTDateTime } from "@/utils/istDate";
 import cacheManager from "@/services/CacheManager";
 
+// Push notifications are MANDATORY for everyone EXCEPT admins/superadmins, who
+// may toggle each category from their phone. (Devices are shared and SLA alerts
+// must reach the field.) Non-admins see read-only "Always On" cards.
+type PrefField =
+  | "attendance_notifications_enabled"
+  | "ticket_notifications_enabled"
+  | "incident_notifications_enabled";
+
+const CATEGORIES: {
+  key: string;
+  title: string;
+  subtitle: string;
+  color: string;
+  trackOn: string;
+  field: PrefField;
+}[] = [
+  {
+    key: "attendance",
+    title: "Attendance Notifications",
+    subtitle: "Check-in and check-out reminders",
+    color: "#dc2626",
+    trackOn: "#fca5a5",
+    field: "attendance_notifications_enabled",
+  },
+  {
+    key: "ticket",
+    title: "Ticket Notifications",
+    subtitle: "New tickets and SLA reminders at your site",
+    color: "#f59e0b",
+    trackOn: "#fed7aa",
+    field: "ticket_notifications_enabled",
+  },
+  {
+    key: "incident",
+    title: "Incident Notifications",
+    subtitle: "Incidents created or status changes",
+    color: "#ca8a04",
+    trackOn: "#fef08a",
+    field: "incident_notifications_enabled",
+  },
+];
+
 export default function NotificationSettingsPage() {
-  const { token } = useAuth();
+  const { user, token } = useAuth();
+  const isAdmin =
+    !!user?.is_superadmin ||
+    ["admin", "superadmin"].includes((user?.role || "").toLowerCase());
+
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [attendanceNotificationsEnabled, setAttendanceNotificationsEnabled] =
-    useState(true);
-  const [ticketNotificationsEnabled, setTicketNotificationsEnabled] =
-    useState(true);
-  const [incidentNotificationsEnabled, setIncidentNotificationsEnabled] =
-    useState(true);
+  const [requesting, setRequesting] = useState(false);
   const [hasSystemPermission, setHasSystemPermission] = useState(false);
+  // Per-category enabled flags — only meaningful (and editable) for admins.
+  const [prefs, setPrefs] = useState<Record<PrefField, boolean>>({
+    attendance_notifications_enabled: true,
+    ticket_notifications_enabled: true,
+    incident_notifications_enabled: true,
+  });
   const [debugToken, setDebugToken] = useState<string | null>(null);
   const [regStatus, setRegStatus] = useState<any>(null);
   const [showDebug, setShowDebug] = useState(false);
 
   const loadDebugInfo = useCallback(async () => {
-    const token = await AsyncStorage.getItem("last_expo_push_token");
+    const t = await AsyncStorage.getItem("last_expo_push_token");
     const status = await AsyncStorage.getItem("last_push_registration_status");
     const time = await AsyncStorage.getItem("last_push_registration_time");
     const error = await AsyncStorage.getItem("last_push_registration_error");
     const pending = await cacheManager.getPendingQueueItemsByType(
       "notification_token_registration",
     );
-    
-    setDebugToken(token);
+    setDebugToken(t);
     setRegStatus({ status, time, error, pendingCount: pending.length });
   }, []);
 
@@ -65,36 +121,28 @@ export default function NotificationSettingsPage() {
   const loadPreferences = useCallback(async () => {
     try {
       setLoading(true);
-
-      // Only attempt to fetch if token exists
-      if (!token) {
-        return;
-      }
-
+      // Only admins can change preferences, so only they need them loaded.
+      if (!isAdmin || !token) return;
       const result = await getNotificationPreferences(token);
-
       if (result.success && result.data) {
-        setAttendanceNotificationsEnabled(
-          result.data.attendance_notifications_enabled ?? true
-        );
-        setTicketNotificationsEnabled(
-          result.data.ticket_notifications_enabled ?? true
-        );
-        setIncidentNotificationsEnabled(
-          result.data.incident_notifications_enabled ?? true
-        );
+        setPrefs({
+          attendance_notifications_enabled:
+            result.data.attendance_notifications_enabled ?? true,
+          ticket_notifications_enabled:
+            result.data.ticket_notifications_enabled ?? true,
+          incident_notifications_enabled:
+            result.data.incident_notifications_enabled ?? true,
+        });
       }
     } catch (error: any) {
       logger.error("Load notification preferences error", {
         module: "NOTIFICATION_SETTINGS",
         error: error.message,
       });
-      // Set defaults
-      setAttendanceNotificationsEnabled(true);
     } finally {
       setLoading(false);
     }
-  }, [token]);
+  }, [isAdmin, token]);
 
   useEffect(() => {
     loadPreferences();
@@ -102,186 +150,77 @@ export default function NotificationSettingsPage() {
     loadDebugInfo();
   }, [checkSystemPermissions, loadDebugInfo, loadPreferences]);
 
-  const handleToggleAttendanceNotifications = useCallback(
-    async (value: boolean) => {
+  const handleEnablePermission = useCallback(async () => {
+    setRequesting(true);
+    try {
+      const granted = await requestNotificationPermissions();
+      setHasSystemPermission(granted);
+      if (!granted) {
+        Alert.alert(
+          "Permission Required",
+          "Notifications are required for this app. Please enable them for JouleOps in your device settings.",
+        );
+      }
+    } finally {
+      setRequesting(false);
+    }
+  }, []);
+
+  // Admin-only: toggle a single preference with optimistic update + rollback.
+  const togglePreference = useCallback(
+    async (field: PrefField, value: boolean) => {
       if (!hasSystemPermission && value) {
         const granted = await requestNotificationPermissions();
         setHasSystemPermission(granted);
         if (!granted) {
           Alert.alert(
             "Permission Required",
-            "Enable notifications to receive attendance reminders.",
-            [{ text: "OK" }]
+            "Enable notifications for JouleOps in your device settings.",
           );
           return;
         }
       }
 
-      const previousValue = attendanceNotificationsEnabled;
-      setAttendanceNotificationsEnabled(value);
-
+      const previous = prefs[field];
+      setPrefs((p) => ({ ...p, [field]: value }));
       if (!token) return;
 
       try {
         setSaving(true);
         const result = await updateNotificationPreferences(token, {
-          attendance_notifications_enabled: value,
+          [field]: value,
         });
-
         if (!result.success) {
-          setAttendanceNotificationsEnabled(previousValue);
-          logger.warn("Attendance notification preference update failed", {
-            module: "NOTIFICATION_SETTINGS",
-            error: result.error,
-          });
+          setPrefs((p) => ({ ...p, [field]: previous }));
           Alert.alert(
             "Update Failed",
-            result.error || "Could not update attendance notification preference.",
+            result.error || "Could not update notification preference.",
           );
         } else if (result.data) {
-          setAttendanceNotificationsEnabled(
-            result.data.attendance_notifications_enabled ?? value,
-          );
-          setTicketNotificationsEnabled(
-            result.data.ticket_notifications_enabled ?? ticketNotificationsEnabled,
-          );
-          setIncidentNotificationsEnabled(
-            result.data.incident_notifications_enabled ?? incidentNotificationsEnabled,
-          );
+          setPrefs({
+            attendance_notifications_enabled:
+              result.data.attendance_notifications_enabled ?? value,
+            ticket_notifications_enabled:
+              result.data.ticket_notifications_enabled ?? value,
+            incident_notifications_enabled:
+              result.data.incident_notifications_enabled ?? value,
+          });
         }
       } catch (error: any) {
-        setAttendanceNotificationsEnabled(previousValue);
+        setPrefs((p) => ({ ...p, [field]: previous }));
         logger.error("Update notification preferences error", {
           module: "NOTIFICATION_SETTINGS",
           error: error.message,
         });
         Alert.alert(
           "Update Failed",
-          error.message || "Could not update attendance notification preference.",
+          error.message || "Could not update notification preference.",
         );
       } finally {
         setSaving(false);
       }
     },
-    [attendanceNotificationsEnabled, hasSystemPermission, ticketNotificationsEnabled, incidentNotificationsEnabled, token]
-  );
-
-  const handleToggleTicketNotifications = useCallback(
-    async (value: boolean) => {
-      if (!hasSystemPermission && value) {
-        const granted = await requestNotificationPermissions();
-        setHasSystemPermission(granted);
-        if (!granted) {
-          Alert.alert(
-            "Permission Required",
-            "Enable notifications to receive ticket alerts.",
-            [{ text: "OK" }]
-          );
-          return;
-        }
-      }
-
-      const previousValue = ticketNotificationsEnabled;
-      setTicketNotificationsEnabled(value);
-
-      if (!token) return;
-
-      try {
-        setSaving(true);
-        const result = await updateNotificationPreferences(token, {
-          ticket_notifications_enabled: value,
-        });
-
-        if (!result.success) {
-          setTicketNotificationsEnabled(previousValue);
-          logger.warn("Ticket notification preference update failed", {
-            module: "NOTIFICATION_SETTINGS",
-            error: result.error,
-          });
-          Alert.alert(
-            "Update Failed",
-            result.error || "Could not update ticket notification preference.",
-          );
-        } else if (result.data) {
-          setAttendanceNotificationsEnabled(
-            result.data.attendance_notifications_enabled ?? attendanceNotificationsEnabled,
-          );
-          setTicketNotificationsEnabled(
-            result.data.ticket_notifications_enabled ?? value,
-          );
-          setIncidentNotificationsEnabled(
-            result.data.incident_notifications_enabled ?? incidentNotificationsEnabled,
-          );
-        }
-      } catch (error: any) {
-        setTicketNotificationsEnabled(previousValue);
-        logger.error("Update ticket notification preferences error", {
-          module: "NOTIFICATION_SETTINGS",
-          error: error.message,
-        });
-        Alert.alert(
-          "Update Failed",
-          error.message || "Could not update ticket notification preference.",
-        );
-      } finally {
-        setSaving(false);
-      }
-    },
-    [attendanceNotificationsEnabled, hasSystemPermission, ticketNotificationsEnabled, incidentNotificationsEnabled, token]
-  );
-
-  const handleToggleIncidentNotifications = useCallback(
-    async (value: boolean) => {
-      if (!hasSystemPermission && value) {
-        const granted = await requestNotificationPermissions();
-        setHasSystemPermission(granted);
-        if (!granted) {
-          Alert.alert(
-            "Permission Required",
-            "Enable notifications to receive incident alerts.",
-            [{ text: "OK" }]
-          );
-          return;
-        }
-      }
-
-      const previousValue = incidentNotificationsEnabled;
-      setIncidentNotificationsEnabled(value);
-      if (!token) return;
-
-      try {
-        setSaving(true);
-        const result = await updateNotificationPreferences(token, {
-          incident_notifications_enabled: value,
-        });
-        if (!result.success) {
-          setIncidentNotificationsEnabled(previousValue);
-          Alert.alert(
-            "Update Failed",
-            result.error || "Could not update incident notification preference.",
-          );
-        } else if (result.data) {
-          setAttendanceNotificationsEnabled(
-            result.data.attendance_notifications_enabled ?? attendanceNotificationsEnabled,
-          );
-          setTicketNotificationsEnabled(
-            result.data.ticket_notifications_enabled ?? ticketNotificationsEnabled,
-          );
-          setIncidentNotificationsEnabled(
-            result.data.incident_notifications_enabled ?? value,
-          );
-        }
-      } catch (error: any) {
-        setIncidentNotificationsEnabled(previousValue);
-        Alert.alert(
-          "Update Failed",
-          error.message || "Could not update incident notification preference.",
-        );
-      } finally {
-        setSaving(false);
-      }
-    },
-    [attendanceNotificationsEnabled, hasSystemPermission, incidentNotificationsEnabled, ticketNotificationsEnabled, token]
+    [hasSystemPermission, prefs, token],
   );
 
   return (
@@ -301,15 +240,14 @@ export default function NotificationSettingsPage() {
               Notification Settings
             </Text>
             <Text className="text-slate-400 dark:text-slate-500 text-xs">
-              Manage your notification preferences
+              {isAdmin
+                ? "Manage your notification preferences"
+                : "Notifications are required and always on"}
             </Text>
           </View>
         </View>
 
-        <ScrollView
-          className="flex-1 px-5"
-          showsVerticalScrollIndicator={false}
-        >
+        <ScrollView className="flex-1 px-5" showsVerticalScrollIndicator={false}>
           {loading ? (
             <View className="py-10 items-center">
               <ActivityIndicator size="large" color="#dc2626" />
@@ -320,142 +258,81 @@ export default function NotificationSettingsPage() {
               {!hasSystemPermission && (
                 <View className="mb-4 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-2xl p-4">
                   <View className="flex-row items-start">
-                    <BellOff
-                      size={20}
-                      color="#f59e0b"
-                      style={{ marginRight: 12 }}
-                    />
+                    <BellOff size={20} color="#f59e0b" style={{ marginRight: 12 }} />
                     <View className="flex-1">
                       <Text className="text-amber-900 dark:text-amber-200 font-semibold mb-1">
-                        Notifications Disabled
+                        Notifications Disabled at Device Level
                       </Text>
-                      <Text className="text-amber-700 dark:text-amber-300 text-sm">
-                        Please enable notifications in your device settings to
-                        receive attendance reminders.
+                      <Text className="text-amber-700 dark:text-amber-300 text-sm mb-3">
+                        Push notifications are required for JouleOps. Please
+                        enable them to receive attendance, ticket and incident
+                        alerts.
                       </Text>
+                      <TouchableOpacity
+                        onPress={handleEnablePermission}
+                        disabled={requesting}
+                        className="bg-amber-500 rounded-xl px-4 py-2.5 self-start"
+                      >
+                        <Text className="text-white font-semibold text-sm">
+                          {requesting ? "Requesting…" : "Enable Notifications"}
+                        </Text>
+                      </TouchableOpacity>
                     </View>
                   </View>
                 </View>
               )}
 
-              {/* Attendance Notifications */}
-              <View
-                className="bg-white dark:bg-slate-900 rounded-2xl p-4 mb-4"
-                style={{
-                  shadowColor: "#000",
-                  shadowOffset: { width: 0, height: 2 },
-                  shadowOpacity: 0.05,
-                  shadowRadius: 8,
-                  elevation: 2,
-                }}
-              >
-                <View className="flex-row items-center mb-3">
-                  <View className="w-10 h-10 rounded-full bg-red-50 dark:bg-red-900/20 items-center justify-center mr-3">
-                    <Bell size={20} color="#dc2626" />
+              {/* Category cards — toggles for admins, "Always On" for everyone else */}
+              {CATEGORIES.map((cat) => (
+                <View
+                  key={cat.key}
+                  className="bg-white dark:bg-slate-900 rounded-2xl p-4 mb-4"
+                  style={{
+                    shadowColor: "#000",
+                    shadowOffset: { width: 0, height: 2 },
+                    shadowOpacity: 0.05,
+                    shadowRadius: 8,
+                    elevation: 2,
+                  }}
+                >
+                  <View className="flex-row items-center">
+                    <View
+                      className="w-10 h-10 rounded-full items-center justify-center mr-3"
+                      style={{ backgroundColor: `${cat.color}1a` }}
+                    >
+                      <Bell size={20} color={cat.color} />
+                    </View>
+                    <View className="flex-1">
+                      <Text className="text-slate-900 dark:text-slate-50 font-semibold text-base">
+                        {cat.title}
+                      </Text>
+                      <Text className="text-slate-500 dark:text-slate-400 text-sm">
+                        {cat.subtitle}
+                      </Text>
+                    </View>
+                    {isAdmin ? (
+                      <Switch
+                        value={prefs[cat.field]}
+                        onValueChange={(v) => togglePreference(cat.field, v)}
+                        disabled={saving}
+                        trackColor={{ false: "#cbd5e1", true: cat.trackOn }}
+                        thumbColor={prefs[cat.field] ? cat.color : "#f1f5f9"}
+                      />
+                    ) : (
+                      <View className="flex-row items-center bg-slate-100 dark:bg-slate-800 rounded-full px-2.5 py-1">
+                        <Lock
+                          size={11}
+                          color="#64748b"
+                          style={{ marginRight: 4 }}
+                        />
+                        <Text className="text-slate-500 dark:text-slate-400 text-[10px] font-bold uppercase tracking-wider">
+                          Always On
+                        </Text>
+                      </View>
+                    )}
                   </View>
-                  <View className="flex-1">
-                    <Text className="text-slate-900 dark:text-slate-50 font-semibold text-base">
-                      Attendance Notifications
-                    </Text>
-                    <Text className="text-slate-500 dark:text-slate-400 text-sm">
-                      Get reminders for check-in and check-out
-                    </Text>
-                  </View>
-                  <Switch
-                    value={attendanceNotificationsEnabled}
-                    onValueChange={handleToggleAttendanceNotifications}
-                    disabled={saving}
-                    trackColor={{ false: "#cbd5e1", true: "#fca5a5" }}
-                    thumbColor={
-                      attendanceNotificationsEnabled ? "#dc2626" : "#f1f5f9"
-                    }
-                  />
                 </View>
-
-                {attendanceNotificationsEnabled && hasSystemPermission && (
-                  <View className="bg-slate-50 dark:bg-slate-800 rounded-xl p-3">
-                    <Text className="text-slate-600 dark:text-slate-400 text-xs">
-                      You&apos;ll receive notifications when:
-                    </Text>
-                    <Text className="text-slate-600 dark:text-slate-400 text-xs mt-1">
-                      • You haven&apos;t checked in by the scheduled time
-                    </Text>
-                    <Text className="text-slate-600 dark:text-slate-400 text-xs">
-                      • You haven&apos;t checked out by the scheduled time
-                    </Text>
-                  </View>
-                )}
-              </View>
-
-              {/* Ticket Notifications */}
-              <View
-                className="bg-white dark:bg-slate-900 rounded-2xl p-4 mb-4"
-                style={{
-                  shadowColor: "#000",
-                  shadowOffset: { width: 0, height: 2 },
-                  shadowOpacity: 0.05,
-                  shadowRadius: 8,
-                  elevation: 2,
-                }}
-              >
-                <View className="flex-row items-center">
-                  <View className="w-10 h-10 rounded-full bg-orange-50 dark:bg-orange-900/20 items-center justify-center mr-3">
-                    <Bell size={20} color="#f59e0b" />
-                  </View>
-                  <View className="flex-1">
-                    <Text className="text-slate-900 dark:text-slate-50 font-semibold text-base">
-                      Ticket Notifications
-                    </Text>
-                    <Text className="text-slate-500 dark:text-slate-400 text-sm">
-                      Get notified when a new ticket is raised at your site
-                    </Text>
-                  </View>
-                  <Switch
-                    value={ticketNotificationsEnabled}
-                    onValueChange={handleToggleTicketNotifications}
-                    disabled={saving}
-                    trackColor={{ false: "#cbd5e1", true: "#fed7aa" }}
-                    thumbColor={
-                      ticketNotificationsEnabled ? "#f59e0b" : "#f1f5f9"
-                    }
-                  />
-                </View>
-              </View>
-
-              {/* Incident Notifications */}
-              <View
-                className="bg-white dark:bg-slate-900 rounded-2xl p-4 mb-4"
-                style={{
-                  shadowColor: "#000",
-                  shadowOffset: { width: 0, height: 2 },
-                  shadowOpacity: 0.05,
-                  shadowRadius: 8,
-                  elevation: 2,
-                }}
-              >
-                <View className="flex-row items-center">
-                  <View className="w-10 h-10 rounded-full bg-yellow-50 dark:bg-yellow-900/20 items-center justify-center mr-3">
-                    <Bell size={20} color="#ca8a04" />
-                  </View>
-                  <View className="flex-1">
-                    <Text className="text-slate-900 dark:text-slate-50 font-semibold text-base">
-                      Incident Notifications
-                    </Text>
-                    <Text className="text-slate-500 dark:text-slate-400 text-sm">
-                      Get notified when incidents are created or status changes
-                    </Text>
-                  </View>
-                  <Switch
-                    value={incidentNotificationsEnabled}
-                    onValueChange={handleToggleIncidentNotifications}
-                    disabled={saving}
-                    trackColor={{ false: "#cbd5e1", true: "#fef08a" }}
-                    thumbColor={
-                      incidentNotificationsEnabled ? "#ca8a04" : "#f1f5f9"
-                    }
-                  />
-                </View>
-              </View>
+              ))}
 
               {/* Info Section */}
               <View className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-2xl p-4 mb-4">
@@ -463,14 +340,14 @@ export default function NotificationSettingsPage() {
                   ℹ️ About Notifications
                 </Text>
                 <Text className="text-blue-700 dark:text-blue-300 text-sm">
-                  Notification times are configured by your administrator. You
-                  will receive reminders based on your work schedule and
-                  assigned sites.
+                  {isAdmin
+                    ? "Timings and message content are configured by your administrator. You will receive alerts based on your assigned sites."
+                    : "Notifications are mandatory and cannot be turned off in the app. Timings and message content are configured by your administrator."}
                 </Text>
               </View>
 
               {/* Debug Tools Label (Hidden toggle) */}
-              <TouchableOpacity 
+              <TouchableOpacity
                 onLongPress={() => setShowDebug(!showDebug)}
                 className="py-4 items-center"
                 activeOpacity={1}
@@ -501,18 +378,23 @@ export default function NotificationSettingsPage() {
                       EXPO PUSH TOKEN
                     </Text>
                     {debugToken ? (
-                      <TouchableOpacity 
+                      <TouchableOpacity
                         onPress={() => copyToClipboard(debugToken)}
                         className="bg-white dark:bg-slate-800 p-3 rounded-xl border border-slate-200 dark:border-slate-700 flex-row items-center justify-between"
                       >
-                        <Text className="text-slate-700 dark:text-slate-300 text-[10px] flex-1 mr-2" numberOfLines={1}>
+                        <Text
+                          className="text-slate-700 dark:text-slate-300 text-[10px] flex-1 mr-2"
+                          numberOfLines={1}
+                        >
                           {debugToken}
                         </Text>
                         <Copy size={12} color="#64748b" />
                       </TouchableOpacity>
                     ) : (
                       <View className="bg-white dark:bg-slate-800 p-3 rounded-xl border border-slate-200 dark:border-slate-700">
-                        <Text className="text-slate-400 italic text-[10px]">Not generated yet</Text>
+                        <Text className="text-slate-400 italic text-[10px]">
+                          Not generated yet
+                        </Text>
                       </View>
                     )}
                   </View>
@@ -524,18 +406,31 @@ export default function NotificationSettingsPage() {
                     </Text>
                     <View className="bg-white dark:bg-slate-800 p-3 rounded-xl border border-slate-200 dark:border-slate-700">
                       <View className="flex-row items-center mb-1">
-                        {regStatus?.status === 'success' ? (
-                          <CheckCircle size={12} color="#22c55e" style={{ marginRight: 6 }} />
+                        {regStatus?.status === "success" ? (
+                          <CheckCircle
+                            size={12}
+                            color="#22c55e"
+                            style={{ marginRight: 6 }}
+                          />
                         ) : regStatus?.status ? (
-                          <XCircle size={12} color="#ef4444" style={{ marginRight: 6 }} />
+                          <XCircle
+                            size={12}
+                            color="#ef4444"
+                            style={{ marginRight: 6 }}
+                          />
                         ) : (
                           <View className="w-3 h-3 rounded-full bg-slate-300 mr-[6px]" />
                         )}
-                        <Text className={`text-[10px] font-bold ${
-                          regStatus?.status === 'success' ? 'text-green-600' : 
-                          regStatus?.status ? 'text-red-500' : 'text-slate-500'
-                        }`}>
-                          {regStatus?.status?.toUpperCase() || 'UNKNOWN'}
+                        <Text
+                          className={`text-[10px] font-bold ${
+                            regStatus?.status === "success"
+                              ? "text-green-600"
+                              : regStatus?.status
+                                ? "text-red-500"
+                                : "text-slate-500"
+                          }`}
+                        >
+                          {regStatus?.status?.toUpperCase() || "UNKNOWN"}
                         </Text>
                       </View>
                       {regStatus?.time && (

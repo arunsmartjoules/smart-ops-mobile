@@ -453,20 +453,33 @@ export const TicketsService = {
         });
       }
 
+      // Optimistic-concurrency baseline: the server `updated_at` this edit was
+      // made against. The backend drops workflow fields (status/responded_at/
+      // resolved_at) if the row has changed since, so a stale local copy or a
+      // delayed offline replay can't revert a status set more recently on the
+      // web. Carried in both the queued payload (for replay) and the live PUT.
+      const baseUpdatedAt =
+        localRows.length > 0 && localRows[0].updated_at
+          ? new Date(localRows[0].updated_at).toISOString()
+          : undefined;
+      const outgoing = baseUpdatedAt
+        ? { ...data, base_updated_at: baseUpdatedAt }
+        : { ...data };
+
       // 2. Queue offline update for sync
       await cacheManager.enqueue({
         entity_type: "ticket_update",
         operation: "update",
         payload: {
           ticket_id: localRows.length > 0 ? localRows[0].id : id,
-          ...data,
+          ...outgoing,
         },
       });
 
       // 3. Attempt API update if online (use server ID)
       return await apiFetch(`/api/complaints?id=${serverId}`, {
         method: "PUT",
-        body: JSON.stringify(data),
+        body: JSON.stringify(outgoing),
       });
     } catch (err) {
       return { success: false, error: "Couldn't save the update. Please try again." };

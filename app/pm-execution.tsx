@@ -117,9 +117,18 @@ const TaskRow = React.memo(
         (!response?.readings || !response.readings.trim())),
     );
     const fieldType = item.field_type || "Multiple Choice";
+    const rowHasError = Boolean(
+      showRequiredErrors &&
+        (missingResponse ||
+          isReadingsMissing ||
+          missingRemarks ||
+          missingEvidenceImage),
+    );
 
     return (
-      <View style={[styles.taskCard, style]}>
+      <View
+        style={[styles.taskCard, style, rowHasError && styles.taskCardError]}
+      >
         <View style={styles.taskHeader}>
           <View
             style={[
@@ -157,15 +166,6 @@ const TaskRow = React.memo(
           >
             {item.task_name}
           </Text>
-          {item.image_mandatory && (
-            <View
-              style={[styles.imgTag, isDark && { backgroundColor: "#431407" }]}
-            >
-              <Text style={[styles.imgTagText, isDark && { color: "#fb923c" }]}>
-                📷
-              </Text>
-            </View>
-          )}
         </View>
 
         {/* Response */}
@@ -1055,6 +1055,10 @@ export default function PMExecutionScreen() {
 
   // ── Response handler ──────────────────────────────────────────────────────
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Ref to the checklist FlashList so a blocked completion can scroll the
+  // operator straight to the first task that still needs attention. Typed as
+  // any to match the existing @ts-ignore'd FlashList usage on this screen.
+  const listRef = useRef<any>(null);
 
   // Carry the most recent saveExecutionProgress error from handleSave's catch
   // up to handleComplete, since handleSave swallows + returns false. Without
@@ -1180,6 +1184,31 @@ export default function PMExecutionScreen() {
         missingImagesByTask.size > 0,
     };
   }, [checklistItems, responses]);
+
+  // Scroll the list to the first task that's missing a required field and give
+  // the operator a light error nudge. Returns true if such a task was found.
+  const scrollToFirstIncomplete = useCallback(() => {
+    const index = checklistItems.findIndex((item) => {
+      const flags = missingMandatoryValidation.byItemId[item.id];
+      return (
+        flags &&
+        (flags.missingResponse ||
+          flags.missingReadings ||
+          flags.missingRemarks ||
+          flags.missingImage)
+      );
+    });
+    if (index < 0) return false;
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(
+      () => {},
+    );
+    listRef.current?.scrollToIndex({
+      index,
+      animated: true,
+      viewPosition: 0.15,
+    });
+    return true;
+  }, [checklistItems, missingMandatoryValidation.byItemId]);
 
   const showCompletionBlockedPopup = useCallback(() => {
     const lines: string[] = [];
@@ -1601,6 +1630,7 @@ export default function PMExecutionScreen() {
           />
         ) : (
           <FlashList
+            ref={listRef}
             data={checklistItems}
             // @ts-ignore
             renderItem={renderItem}
@@ -1633,7 +1663,13 @@ export default function PMExecutionScreen() {
                 onPress={() => {
                   setCompletionAttempted(true);
                   if (!canComplete || missingMandatoryValidation.hasAny) {
-                    showCompletionBlockedPopup();
+                    // Guide the operator straight to the first unfinished card
+                    // (scrolls + red-bordered highlight) instead of a bare
+                    // count popup; fall back to the popup only if there's no
+                    // specific task to point at.
+                    if (!scrollToFirstIncomplete()) {
+                      showCompletionBlockedPopup();
+                    }
                     return;
                   }
                   setShowCompletionModal(true);
@@ -1902,6 +1938,15 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.03,
     shadowRadius: 4,
   },
+  taskCardError: {
+    borderColor: "#ef4444",
+    borderWidth: 2,
+    shadowColor: "#ef4444",
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.22,
+    shadowRadius: 10,
+    elevation: 4,
+  },
   taskHeader: {
     flexDirection: "row",
     alignItems: "flex-start",
@@ -1924,14 +1969,6 @@ const styles = StyleSheet.create({
     color: "inherit", // Handled via Text color in TaskRow
     lineHeight: 20,
   },
-  imgTag: {
-    backgroundColor: "#fff7ed",
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 6,
-    marginLeft: 8,
-  },
-  imgTagText: { fontSize: 11, color: "#f97316" },
 
   choiceRow: { flexDirection: "row", gap: 8 },
   choiceBtn: {

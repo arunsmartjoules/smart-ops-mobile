@@ -218,7 +218,10 @@ class SyncEngineImpl implements SyncEngine {
               assigned_to: t.assigned_to || "",
               created_by: t.created_user || "",
               created_at: t.created_at ? new Date(t.created_at).getTime() : Date.now(),
-              updated_at: Date.now(),
+              // Store the SERVER's updated_at (not the pull time) so it can serve
+              // as the optimistic-concurrency baseline sent back on edits. Falls
+              // back to now() only when the server omits it.
+              updated_at: t.updated_at ? new Date(t.updated_at).getTime() : Date.now(),
             }));
             await cacheManager.write("tickets", records, { stampSync: false });
           } catch (error) {

@@ -40,8 +40,8 @@ import { applyNotificationNavigation } from "@/utils/notificationDeepLink";
 import { PendingNotificationNavigation } from "@/components/PendingNotificationNavigation";
 
 // Fix: crypto.getRandomValues() not supported — required for uuid library in React Native
-if (!global.crypto) {
-  Object.defineProperty(global, "crypto", {
+if (!globalThis.crypto) {
+  Object.defineProperty(globalThis, "crypto", {
     value: {
       getRandomValues: (array: any) => Crypto.getRandomValues(array),
     },
