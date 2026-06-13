@@ -181,6 +181,12 @@ export const chillerReadings = sqliteTable("chiller_readings", {
 
 export const pmInstances = sqliteTable("pm_instances", {
   id: text("id").primaryKey(),
+  // Stable business key (e.g. "INST033558") from the import source. The server
+  // PK `id` is a gen_random_uuid() that rotates whenever a window is deleted +
+  // re-imported; `instance_id` survives that, so completions resolve the
+  // current server row through it instead of the orphaned UUID. Nullable for
+  // rows cached before this column existed — they self-heal on the next pull.
+  instance_id: text("instance_id"),
   site_code: text("site_code").notNull(),
   title: text("title").notNull(),
   asset_id: text("asset_id"),

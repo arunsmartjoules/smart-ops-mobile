@@ -155,6 +155,7 @@ const PMService = {
       if (data.success && data.data?.length > 0) {
         const records = data.data.map((inst: any) => ({
           id: inst.id,
+          instance_id: inst.instance_id || null,
           site_code: (inst.site_code || siteCode).trim().toUpperCase(),
           title: inst.title || "",
           asset_id: inst.asset_id || null,
@@ -370,6 +371,7 @@ const PMService = {
         const inst = data.data;
         const record = {
           id: inst.id,
+          instance_id: inst.instance_id || null,
           site_code: inst.site_code?.trim().toUpperCase() || "",
           title: inst.title || "",
           asset_id: inst.asset_id || null,
@@ -429,6 +431,109 @@ const PMService = {
   async getInstanceByServerId(serverId: string): Promise<PMInstanceRow | null> {
     const results = await db.select().from(pmInstances).where(eq(pmInstances.id, serverId));
     return results.length > 0 ? results[0] : null;
+  },
+
+  /**
+   * Resolve the UUID the server CURRENTLY uses for this PM via its stable
+   * business `instance_id`.
+   *
+   * PM instances are re-imported server-side with fresh `gen_random_uuid()`
+   * primary keys but a preserved `instance_id`. A device holding the pre-import
+   * UUID would 404 on completion — discarding the operator's work and showing
+   * the "no longer on the server" rollback. This probes the server by the
+   * stable key; if the UUID rotated, it re-points the queued offline items at
+   * the live UUID and returns it so the completion (and its responses) land on
+   * the correct row.
+   *
+   * Falls back to `localId` (current behaviour) when offline, when no
+   * `instance_id` is known (rows cached before the column existed), or when the
+   * business key itself is gone server-side — in which case the caller's PUT
+   * legitimately 404s and surfaces the rollback message.
+   */
+  async resolveCurrentServerId(
+    localId: string,
+    businessInstanceId: string | null | undefined,
+  ): Promise<string> {
+    if (!businessInstanceId) return localId;
+    try {
+      const resp = await apiFetch(
+        `/api/pm-instances/${encodeURIComponent(businessInstanceId)}?fields=id`,
+      );
+      if (!resp.ok) return localId; // 404 → genuinely deleted; let the PUT report it
+      const body = await resp.json();
+      const currentId: string | undefined = body?.data?.id;
+      if (!currentId || currentId === localId) return localId;
+
+      logger.warn("PM instance UUID rotated server-side; re-keying to live id", {
+        module: "PM_SERVICE",
+        businessInstanceId,
+        staleId: localId,
+        currentId,
+      });
+      await this.rekeyQueuedInstanceItems(localId, currentId);
+      return currentId;
+    } catch {
+      // Offline / transient — proceed with the local id; the queue retries.
+      return localId;
+    }
+  },
+
+  /**
+   * Re-point this instance's pending offline-queue items from a stale server
+   * UUID to the live one. Backend pm_responses are FK'd to the instance UUID,
+   * so the queued response upserts must carry the live id for the server's
+   * completion validation to see them. Local pm_responses rows stay on the old
+   * id — a subsequent pull + reconcile prunes the orphan once completion lands.
+   */
+  async rekeyQueuedInstanceItems(oldId: string, newId: string): Promise<void> {
+    try {
+      const rows = await db
+        .select({
+          id: offlineQueue.id,
+          entity_type: offlineQueue.entity_type,
+          payload: offlineQueue.payload,
+        })
+        .from(offlineQueue)
+        .where(
+          and(
+            eq(offlineQueue.status, "pending"),
+            inArray(offlineQueue.entity_type, [
+              "pm_response_upsert",
+              "pm_instance_update",
+            ]),
+          ),
+        );
+
+      for (const row of rows) {
+        let parsed: any;
+        try {
+          parsed = JSON.parse(row.payload);
+        } catch {
+          continue;
+        }
+        let changed = false;
+        if (row.entity_type === "pm_response_upsert" && parsed?.instance_id === oldId) {
+          parsed.instance_id = newId;
+          changed = true;
+        } else if (row.entity_type === "pm_instance_update" && parsed?.id === oldId) {
+          parsed.id = newId;
+          changed = true;
+        }
+        if (changed) {
+          await db
+            .update(offlineQueue)
+            .set({ payload: JSON.stringify(parsed) })
+            .where(eq(offlineQueue.id, row.id));
+        }
+      }
+    } catch (error) {
+      logger.error("Failed to re-key queued PM items to live instance id", {
+        module: "PM_SERVICE",
+        oldId,
+        newId,
+        error,
+      });
+    }
   },
 
   async fetchChecklistItemsFromAPI(checklistId: string): Promise<any[]> {
@@ -713,24 +818,40 @@ const PMService = {
       const netState = await NetInfo.fetch();
       if (!netState.isConnected) return;
 
+      // Only on the Completed transition: resolve the UUID the server currently
+      // uses for this PM. If the window was re-imported, our local UUID is a
+      // stale orphan; this re-points the queued responses + completion at the
+      // live UUID (via the stable instance_id) so they don't 404 and discard
+      // the operator's work. Gated to completion so the extra probe never runs
+      // on the frequent in-progress autosaves — a stale in-progress PUT just
+      // stays queued (no data loss, no rollback), and the queued items it
+      // leaves behind are re-keyed here when the PM is finally completed.
+      const serverId =
+        options?.status === "Completed"
+          ? await this.resolveCurrentServerId(
+              instanceServerId,
+              localInstance?.instance_id,
+            )
+          : instanceServerId;
+
       // The server validates Completed transitions against its own DB. Any
       // pm_response_upsert items still queued for this instance must reach
       // the server first, otherwise validation reports "missing responses"
       // for the rows the user typed in moments ago while offline.
       if (options?.status === "Completed") {
         try {
-          await this.flushPendingResponsesForInstance(instanceServerId);
+          await this.flushPendingResponsesForInstance(serverId);
         } catch (err) {
           logger.warn("Pre-completion response flush failed", {
             module: "PM_SERVICE",
-            instanceId: instanceServerId,
+            instanceId: serverId,
             error: err,
           });
         }
       }
 
       try {
-        const response = await apiFetch(`/api/pm-instances/${instanceServerId}`, {
+        const response = await apiFetch(`/api/pm-instances/${serverId}`, {
           method: "PUT",
           body: JSON.stringify(apiPayload),
         });
@@ -753,13 +874,15 @@ const PMService = {
               // No JSON body — fall back to a generic message below.
             }
 
-            // A 404 means the server no longer has this instance: it was
-            // regenerated/replaced server-side (with a new id) and this device
-            // is holding a stale orphan. Rolling back to "In-progress" would
-            // leave the dead row on screen to be re-tapped (and re-404), and
-            // the orphan also inflates the local PM counts. Remove it locally
-            // so the list + counts self-correct, and tell the operator to
-            // refresh for the current instance.
+            // A 404 here means the server has no row for `serverId` even after
+            // resolveCurrentServerId tried to follow the stable instance_id to
+            // the live UUID — i.e. the PM was genuinely deleted server-side (or
+            // this is a legacy local row with no instance_id to resolve by). A
+            // plain re-import / UUID rotation would have been redirected above
+            // and never reach here. Rolling back to "In-progress" would leave a
+            // dead row on screen to be re-tapped (and re-404), and the orphan
+            // also inflates the local PM counts. Remove it locally so the list +
+            // counts self-correct, and tell the operator to refresh.
             if (response.status === 404) {
               await db
                 .delete(pmInstances)

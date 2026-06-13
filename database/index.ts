@@ -173,6 +173,7 @@ function init() {
         );
         CREATE TABLE IF NOT EXISTS pm_instances (
           id TEXT PRIMARY KEY,
+          instance_id TEXT,
           site_code TEXT NOT NULL,
           title TEXT NOT NULL,
           asset_id TEXT,
@@ -320,6 +321,7 @@ function init() {
       "ALTER TABLE tickets ADD COLUMN due_date REAL",
       "ALTER TABLE tickets ADD COLUMN closed_at REAL",
       "ALTER TABLE pm_instances ADD COLUMN completed_on REAL",
+      "ALTER TABLE pm_instances ADD COLUMN instance_id TEXT",
       "ALTER TABLE incidents ADD COLUMN rca_attachments TEXT",
       "ALTER TABLE areas ADD COLUMN asset_id TEXT",
       "ALTER TABLE areas ADD COLUMN equipment_type TEXT",
