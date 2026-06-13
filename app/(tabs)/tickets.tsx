@@ -1345,6 +1345,25 @@ export default function Tickets() {
       if (updateStatus === "Resolved") setIsDetailVisible(false);
 
       setSelectedTicket(optimisticTicket);
+      // Mirror the change into the LIST too — not just the open modal.
+      // Previously the list only refreshed via resetAndFetch(), which runs
+      // only when the API confirmed and whose GET can silently fail on a flaky
+      // network — leaving the row stuck on its old status (e.g. still
+      // "Inprogress" after a successful Resolve). That stale row is exactly
+      // what makes operators re-open and re-tap, firing duplicate
+      // notifications. Apply the same filter-aware merge the realtime path
+      // uses: drop the row if its new status no longer matches the active
+      // filter, otherwise update it in place.
+      setTickets((prev) => {
+        const idx = prev.findIndex((t) => t.id === optimisticTicket.id);
+        if (idx === -1) return prev;
+        if (!matchesCurrentFilters(optimisticTicket)) {
+          return [...prev.slice(0, idx), ...prev.slice(idx + 1)];
+        }
+        const next = [...prev];
+        next[idx] = { ...prev[idx], ...optimisticTicket };
+        return next;
+      });
       setAttachmentUri("");
 
       if (modalStaysOpen) {

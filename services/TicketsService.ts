@@ -466,8 +466,8 @@ export const TicketsService = {
         ? { ...data, base_updated_at: baseUpdatedAt }
         : { ...data };
 
-      // 2. Queue offline update for sync
-      await cacheManager.enqueue({
+      // 2. Queue offline update for sync (durably, before the network attempt)
+      const queueId = await cacheManager.enqueue({
         entity_type: "ticket_update",
         operation: "update",
         payload: {
@@ -477,10 +477,22 @@ export const TicketsService = {
       });
 
       // 3. Attempt API update if online (use server ID)
-      return await apiFetch(`/api/complaints?id=${serverId}`, {
+      const result = await apiFetch(`/api/complaints?id=${serverId}`, {
         method: "PUT",
         body: JSON.stringify(outgoing),
       });
+
+      // 4. When the live PUT confirms, the queued copy is redundant — drop it.
+      // Leaving it caused two regressions: the SyncEngine replayed the same
+      // update later (a phantom second write on the server), and the tickets
+      // screen's realtime handler suppressed incoming status changes for this
+      // ticket while a queue item for it stayed "pending" — so a freshly
+      // resolved ticket kept showing its old status. On any failure we keep the
+      // item for offline replay.
+      if (result?.success === true && queueId) {
+        await cacheManager.dequeue(queueId).catch(() => {});
+      }
+      return result;
     } catch (err) {
       return { success: false, error: "Couldn't save the update. Please try again." };
     }

@@ -8,7 +8,7 @@ import logger from "../utils/logger";
 import { API_BASE_URL } from "../constants/api";
 import NetInfo from "@react-native-community/netinfo";
 import { Alert } from "react-native";
-import { toIstDayMs } from "../utils/istDate";
+import { toIstDayMs, istDayStartMsFromYmd, istDayEndMsFromYmd } from "../utils/istDate";
 
 const BACKEND_URL = API_BASE_URL;
 
@@ -198,6 +198,101 @@ const PMService = {
       logger.error("Failed to fetch PM instances from API", { module: "PM_SERVICE", error, siteCode });
       if (throwOnError) throw error;
       return [];
+    }
+  },
+
+  /**
+   * Reconcile the local PM cache for a due-date window against the server and
+   * delete orphans the server no longer has.
+   *
+   * PM instances are server-authoritative (created via import; never on the
+   * device). When a window is regenerated server-side — e.g. a month is deleted
+   * and re-imported, which assigns brand-new ids — `cacheManager.write` upserts
+   * the new rows by id but never removes the old ones, so stale orphans pile up:
+   * they inflate the on-screen counts and 404 when completed. This fetches the
+   * authoritative id-set for the window and prunes local rows the server no
+   * longer returns.
+   *
+   * Safety: only prunes when it has provably fetched the COMPLETE window
+   * (collected ids === pagination.total), never touches a row with a pending
+   * local change, and is a no-op offline. Worst case (a guard misfires) is a
+   * re-pull on the next sync — no server data is ever touched.
+   */
+  async reconcilePmWindow(
+    siteCode: string,
+    fromDate?: string,
+    toDate?: string,
+  ): Promise<void> {
+    if (!siteCode || siteCode === "all" || !fromDate || !toDate) return;
+    try {
+      const netState = await NetInfo.fetch();
+      if (!netState.isConnected) return;
+
+      const limit = 1000;
+      const serverIds = new Set<string>();
+      let total: number | null = null;
+      let page = 1;
+      // Page through the window collecting only ids (fields=id keeps it light).
+      for (let i = 0; i < 50; i++) {
+        const params = new URLSearchParams({
+          fields: "id",
+          limit: String(limit),
+          page: String(page),
+          from_date: String(fromDate),
+          to_date: String(toDate),
+        });
+        const resp = await apiFetch(
+          `/api/pm-instances/site/${siteCode}?${params.toString()}`,
+        );
+        if (!resp.ok) return; // can't confirm completeness → don't prune
+        const body = await resp.json();
+        if (!body?.success || !Array.isArray(body.data)) return;
+        for (const r of body.data) if (r?.id) serverIds.add(String(r.id));
+        total = body.pagination?.total ?? total;
+        if (body.data.length < limit) break; // last page reached
+        page++;
+      }
+
+      // Completeness guard: never prune unless we truly fetched the whole set.
+      if (total == null || serverIds.size < total) return;
+
+      const lo = istDayStartMsFromYmd(fromDate);
+      const hi = istDayEndMsFromYmd(toDate);
+      if (lo == null || hi == null) return;
+
+      const code = String(siteCode).trim().toUpperCase();
+      const pendingIds = new Set(await this.getPendingInstanceIds());
+
+      const localRows = await db
+        .select({ id: pmInstances.id })
+        .from(pmInstances)
+        .where(
+          and(
+            eq(pmInstances.site_code, code),
+            gte(pmInstances.start_due_date, lo),
+            lte(pmInstances.start_due_date, hi),
+          ),
+        );
+
+      const orphanIds = localRows
+        .map((r) => r.id)
+        .filter((id) => !serverIds.has(String(id)) && !pendingIds.has(id));
+
+      if (orphanIds.length > 0) {
+        await db.delete(pmInstances).where(inArray(pmInstances.id, orphanIds));
+        await db
+          .delete(pmResponses)
+          .where(inArray(pmResponses.instance_id, orphanIds))
+          .catch(() => {});
+        logger.info("reconcilePmWindow: pruned orphaned PM instances", {
+          module: "PM_SERVICE",
+          siteCode: code,
+          pruned: orphanIds.length,
+          serverCount: serverIds.size,
+        });
+      }
+    } catch (err) {
+      logger.warn("reconcilePmWindow failed", { module: "PM_SERVICE", error: err });
     }
   },
 
@@ -658,6 +753,27 @@ const PMService = {
               // No JSON body — fall back to a generic message below.
             }
 
+            // A 404 means the server no longer has this instance: it was
+            // regenerated/replaced server-side (with a new id) and this device
+            // is holding a stale orphan. Rolling back to "In-progress" would
+            // leave the dead row on screen to be re-tapped (and re-404), and
+            // the orphan also inflates the local PM counts. Remove it locally
+            // so the list + counts self-correct, and tell the operator to
+            // refresh for the current instance.
+            if (response.status === 404) {
+              await db
+                .delete(pmInstances)
+                .where(eq(pmInstances.id, instanceServerId))
+                .catch(() => {});
+              await cacheManager.dequeue(queueItemId);
+              const err: any = new Error(
+                "This PM is no longer on the server — it was refreshed/regenerated. It's been removed here; pull to refresh and open the current one.",
+              );
+              err.name = "PMCompletionBlockedError";
+              err.statusCode = 404;
+              throw err;
+            }
+
             // pm_instances.status is NOT NULL — skip the row update if we
             // never had a previous local row to roll back to. Either way,
             // dequeue the bad PUT so SyncEngine doesn't burn retries on a
@@ -946,26 +1062,29 @@ const PMService = {
       
       // Update local DB
       await db.update(pmInstances).set(updateData).where(eq(pmInstances.id, instanceId));
-      
-      // Enqueue sync
-      await db.insert(offlineQueue).values({
-        id: uuidv4(),
+
+      // Enqueue sync (durable), capturing the id so we can drop it on success.
+      const queueId = await cacheManager.enqueue({
         entity_type: "pm_instance_update",
         operation: "update",
-        payload: JSON.stringify({ id: instanceId, ...updateData }),
-        created_at: Date.now(),
-        retry_count: 0,
-        last_error: null,
-        status: "pending",
+        payload: { id: instanceId, ...updateData },
       });
 
-      // Try immediate sync if online
+      // Try immediate sync if online; drop the queued copy once the PUT
+      // confirms. Previously this never dequeued on success, so SyncEngine
+      // re-PUT the same assignment on every sync tick until it dead-lettered.
       const netState = await NetInfo.fetch();
       if (netState.isConnected) {
         apiFetch(`/api/pm-instances/${instanceId}`, {
           method: "PUT",
           body: JSON.stringify(updateData),
-        }).catch(() => {});
+        })
+          .then(async (response: any) => {
+            if (response?.ok && queueId) {
+              await cacheManager.dequeue(queueId).catch(() => {});
+            }
+          })
+          .catch(() => {});
       }
     } catch (error) {
       logger.error("Failed to update PM assignment", { module: "PM_SERVICE", instanceId, error });

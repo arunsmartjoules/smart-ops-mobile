@@ -504,6 +504,12 @@ export default function PreventiveMaintenance() {
               toDate,
             );
 
+            // Prune orphaned instances the server no longer has for this window
+            // (e.g. a re-imported month gets new ids) so stale rows can't
+            // inflate the counts or 404 on completion. Safe: only prunes a
+            // provably-complete window and never a row with pending edits.
+            await PMService.reconcilePmWindow(siteCode, currentDate, toDate);
+
             if (apiData && apiData.length > 0) {
               // Refresh local state after sync, re-applying any pending updates
               // so locally-completed PMs aren't overwritten by stale server data.

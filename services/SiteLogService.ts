@@ -723,67 +723,57 @@ export const SiteLogService: ISiteLogService = {
       },
     );
 
-    // Enqueue for offline sync
-    await cacheManager.enqueue({
+    // Build the create payload once for both the live POST and the offline
+    // queue, so a replay sends exactly what the live call sent.
+    const payload = {
+      id,
+      site_code: data.siteCode,
+      executor_id: data.executorId,
+      assigned_to: data.assignedTo || null,
+      log_name: data.logName,
+      task_name: data.taskName || null,
+      temperature: data.temperature || null,
+      rh: data.rh || null,
+      tds: data.tds || null,
+      ph: data.ph || null,
+      hardness: data.hardness || null,
+      chemical_dosing: data.chemicalDosing || null,
+      remarks: data.remarks || null,
+      main_remarks: data.mainRemarks || data.main_remarks || null,
+      entry_time: data.entryTime || null,
+      end_time: data.endTime || null,
+      signature: data.signature || null,
+      attachment: data.attachment || null,
+      status: data.status || null,
+      scheduled_date: scheduledDate,
+    };
+
+    // Enqueue first (durable), then fire the POST without awaiting so the entry
+    // screen can navigate away the moment SQLite is written. On a confirmed
+    // create, drop the queued copy: leaving it caused SyncEngine to replay the
+    // same POST, and the backend create has no ON CONFLICT (id), so the replay
+    // hit a primary-key conflict (400) and dead-lettered. On failure the item
+    // stays queued for SyncEngine to retry.
+    const queueId = await cacheManager.enqueue({
       entity_type: "site_log_create",
       operation: "create",
-      payload: {
-        id,
-        site_code: data.siteCode,
-        executor_id: data.executorId,
-        assigned_to: data.assignedTo || null,
-        log_name: data.logName,
-        task_name: data.taskName || null,
-        temperature: data.temperature || null,
-        rh: data.rh || null,
-        tds: data.tds || null,
-        ph: data.ph || null,
-        hardness: data.hardness || null,
-        chemical_dosing: data.chemicalDosing || null,
-        remarks: data.remarks || null,
-        main_remarks: data.mainRemarks || data.main_remarks || null,
-        entry_time: data.entryTime || null,
-        end_time: data.endTime || null,
-        signature: data.signature || null,
-        attachment: data.attachment || null,
-        status: data.status || null,
-        scheduled_date: scheduledDate,
-      },
+      payload,
     });
 
-    // Fire-and-forget API call. Same rationale as updateSiteLog — the local
-    // INSERT + offline_queue entry are the source of truth, SyncEngine
-    // retries failures, and not awaiting lets the entry screen navigate
-    // away the moment SQLite is written.
     apiFetch("/api/site-logs", {
       method: "POST",
-      body: JSON.stringify({
-        id,
-        site_code: data.siteCode,
-        executor_id: data.executorId,
-        assigned_to: data.assignedTo || null,
-        log_name: data.logName,
-        task_name: data.taskName || null,
-        temperature: data.temperature || null,
-        rh: data.rh || null,
-        tds: data.tds || null,
-        ph: data.ph || null,
-        hardness: data.hardness || null,
-        chemical_dosing: data.chemicalDosing || null,
-        remarks: data.remarks || null,
-        main_remarks: data.mainRemarks || data.main_remarks || null,
-        entry_time: data.entryTime || null,
-        end_time: data.endTime || null,
-        signature: data.signature || null,
-        attachment: data.attachment || null,
-        status: data.status || null,
-        scheduled_date: scheduledDate,
-      }),
-    }).catch(() => {
-      logger.debug("saveSiteLog: API call failed, will sync later", {
-        module: "SITE_LOG_SERVICE",
+      body: JSON.stringify(payload),
+    })
+      .then(async (response: any) => {
+        if (response?.ok && queueId) {
+          await cacheManager.dequeue(queueId).catch(() => {});
+        }
+      })
+      .catch(() => {
+        logger.debug("saveSiteLog: API call failed, will sync later", {
+          module: "SITE_LOG_SERVICE",
+        });
       });
-    });
 
     return record;
   },

@@ -448,10 +448,11 @@ class CacheManagerImpl {
 
   // ── enqueue ───────────────────────────────────────────────────────────────
 
-  async enqueue(item: OfflineQueueItem): Promise<void> {
+  async enqueue(item: OfflineQueueItem): Promise<string | null> {
+    const id = uuidv4();
     try {
       await db.insert(offlineQueue).values({
-        id: uuidv4(),
+        id,
         entity_type: item.entity_type,
         operation: item.operation,
         payload: JSON.stringify(item.payload),
@@ -460,11 +461,13 @@ class CacheManagerImpl {
         last_error: null,
         status: "pending",
       });
+      return id;
     } catch (error) {
       logger.error("CacheManager.enqueue failed", {
         module: "CACHE_MANAGER",
         error,
       });
+      return null;
     }
   }
 

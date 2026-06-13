@@ -850,6 +850,34 @@ export default function IncidentsTab() {
         }
       }
 
+      // Optimistically reflect the change in the local cache so the list shows
+      // the new state immediately — even offline. The incident mutations only
+      // hit the network + offline queue and never write SQLite, so without this
+      // the local row keeps its old status; after switching to the new status
+      // tab, fetchData's local-first read can't find it and a flaky server
+      // refetch leaves the tab looking empty (operator thinks nothing happened
+      // and re-taps). Best-effort: purely a display optimization.
+      try {
+        const localUpdate: Record<string, any> = { updated_at: now };
+        if (nextStatus) localUpdate.status = nextStatus;
+        if (nextStatus === "Resolved") {
+          localUpdate.remarks = updateRemarks.trim();
+          localUpdate.incident_resolved_time = detailResolvedAt
+            ? detailResolvedAt.getTime()
+            : now;
+        }
+        if (nextStatus === "Inprogress" && detailRespondedAt) {
+          localUpdate.incident_updated_time = detailRespondedAt.getTime();
+        }
+        if (!nextStatus && hasRemarkChange) localUpdate.remarks = updateRemarks.trim();
+        await db
+          .update(incidentsTable)
+          .set(localUpdate)
+          .where(eq(incidentsTable.id, selectedIncident.id));
+      } catch {
+        // optimistic only — ignore
+      }
+
       setIncidentModalVisible(false);
       setSelectedIncident(null);
       setNextStatus(null);
