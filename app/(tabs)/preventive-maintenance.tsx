@@ -749,18 +749,24 @@ export default function PreventiveMaintenance() {
       ).length,
     };
 
-    // Server stats are computed against the due-date window only, so they
-    // are not comparable when the user filters by completed date.
+    // Counts come from ONE source — never a per-field Math.max of two. Mixing
+    // server and local (each windowed/complete differently, and each device's
+    // cache in a different state) made the per-status maxes stop summing to the
+    // total, so the tallies disagreed across devices/screens and drifted as the
+    // cache filled or orphans were pruned. Server stats are computed over the
+    // full DB for the exact due-date window: authoritative, identical on every
+    // device, and internally consistent (buckets partition the total). Use them
+    // when online; fall back to the local windowed aggregation only when
+    // offline, before stats arrive, or when filtering by completed date (the
+    // server stat is due-date-only). The local fallback still reflects
+    // optimistic pending updates, and the list below always renders from local.
     if (serverStats && dateField !== "completed_date") {
-      const serverInProgress =
+      const inProgress =
         (serverStats.byStatus?.["In-progress"] || 0) +
         (serverStats.byStatus?.["In Progress"] || 0) +
         (serverStats.byStatus?.Inprogress || 0);
-      const serverCompleted = serverStats.byStatus?.Completed || 0;
-
-      const total = Math.max(serverStats.total, localCount.total);
-      const inProgress = Math.max(localCount.inProgress, serverInProgress);
-      const completed = Math.max(localCount.completed, serverCompleted);
+      const completed = serverStats.byStatus?.Completed || 0;
+      const total = serverStats.total ?? 0;
       const pending = Math.max(0, total - inProgress - completed);
 
       return { total, pending, inProgress, completed };
