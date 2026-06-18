@@ -12,7 +12,7 @@
 
 import NetInfo, { NetInfoState } from "@react-native-community/netinfo";
 import { startOfDay, endOfDay, addDays } from "date-fns";
-import { AppState, AppStateStatus } from "react-native";
+import { AppState, AppStateStatus, Alert } from "react-native";
 import * as TaskManager from "expo-task-manager";
 import * as BackgroundTask from "expo-background-task";
 import { apiFetch as centralApiFetch } from "../utils/apiHelper";
@@ -23,7 +23,7 @@ import { SiteLogService } from "./SiteLogService";
 import PMService from "./PMService";
 import logger from "../utils/logger";
 import { getValidAuthToken } from "./AuthTokenManager";
-import { db, attendanceLogs } from "../database";
+import { db, attendanceLogs, pmInstances } from "../database";
 import { eq } from "drizzle-orm";
 
 // ─── Background Fetch Task ────────────────────────────────────────────────────
@@ -1044,13 +1044,13 @@ class SyncEngineImpl implements SyncEngine {
       endpoint = "/api/pm-response";
       method = "POST";
     } else if (entity_type === "pm_instance_update") {
-      endpoint = `/api/pm-instances/${payload.id}`;
-      method = "PUT";
-      // Convert ms-epoch completed_on to ISO string for Postgres timestamp column
-      if (payload.completed_on && typeof payload.completed_on === "number") {
-        payload.completed_on = new Date(payload.completed_on).toISOString();
-      }
-      body = JSON.stringify(payload);
+      // Handled specially below — a completion (status="Completed") the server
+      // rejects must roll the optimistic local row back instead of silently
+      // retrying-then-dead-lettering (which leaves the device showing
+      // "Completed" while the server stays Pending — the divergence behind
+      // "I completed N PMs but only M show").
+      await this._processPmInstanceUpdate(payload);
+      return;
 
     // ── Ticket line item ──────────────────────────────────────────────────
     } else if (entity_type === "ticket_line_item") {
@@ -1180,6 +1180,109 @@ class SyncEngineImpl implements SyncEngine {
       serverId,
       requiresCheckout: !!requiresCheckout,
     });
+  }
+
+  /**
+   * Flush a queued PM instance update and handle a rejected completion.
+   *
+   * The mobile completion flow writes status="Completed" locally (optimistic)
+   * and queues this PUT. The PMService foreground path rolls back + alerts on a
+   * 4xx, but an OFFLINE completion is flushed here later — and the generic
+   * handler would just increment retry_count and silently dead-letter it, while
+   * the device keeps showing "Completed". That divergence (device says done,
+   * server says Pending) is exactly the "I completed N PMs but only M show"
+   * report. So on a 4xx completion rejection we reconcile the local row to the
+   * server's authoritative state and surface the reason, instead of retrying a
+   * request the server will reject every time.
+   */
+  private async _processPmInstanceUpdate(
+    payload: Record<string, any>,
+  ): Promise<void> {
+    // Convert ms-epoch completed_on to ISO string for the Postgres timestamp column.
+    if (payload.completed_on && typeof payload.completed_on === "number") {
+      payload.completed_on = new Date(payload.completed_on).toISOString();
+    }
+
+    const response = await apiFetch(`/api/pm-instances/${payload.id}`, {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    });
+    if (response.ok) return;
+
+    const isCompletion = payload.status === "Completed";
+    const is4xx = response.status >= 400 && response.status < 500;
+
+    // 5xx / network / a non-completion 4xx → let the generic retry + dead-letter
+    // logic in _flushQueue handle it (transient, or a normal in-progress save).
+    if (!is4xx || !isCompletion) {
+      const err: any = new Error(
+        `pm_instance_update API error: ${response.status} ${response.statusText}`,
+      );
+      err.statusCode = response.status;
+      throw err;
+    }
+
+    let reason = "The server rejected this PM completion.";
+    try {
+      const errBody = await response.json();
+      reason = errBody?.error || reason;
+    } catch {
+      // No JSON body — keep the generic reason.
+    }
+
+    // Reconcile from the server. If that fails (offline/transient) we must NOT
+    // dequeue — throw a transient error so the item is retried next cycle rather
+    // than dropped with the local row still falsely "Completed".
+    await this._reconcilePmInstanceFromServer(payload.id, reason);
+  }
+
+  /**
+   * Pull the authoritative status for one PM instance and overwrite the local
+   * row, undoing an optimistic "Completed" the server refused. Throws on a
+   * failed fetch so the caller keeps the queue item for a later retry.
+   */
+  private async _reconcilePmInstanceFromServer(
+    id: string,
+    reason: string,
+  ): Promise<void> {
+    const resp = await apiFetch(
+      `/api/pm-instances/${id}?fields=id,status,progress,completed_on`,
+    );
+    if (!resp.ok) {
+      const err: any = new Error(
+        `pm-instance reconcile fetch failed: ${resp.status}`,
+      );
+      // Treat as transient (0) so retry_count isn't burned and it isn't dead-lettered.
+      err.statusCode = 0;
+      throw err;
+    }
+
+    const body = await resp.json();
+    const srv = body?.data;
+    if (srv?.status) {
+      await db
+        .update(pmInstances)
+        .set({
+          status: srv.status,
+          ...(srv.progress != null ? { progress: String(srv.progress) } : {}),
+          completed_on: srv.completed_on
+            ? new Date(srv.completed_on).getTime()
+            : null,
+          updated_at: Date.now(),
+        })
+        .where(eq(pmInstances.id, id))
+        .catch(() => {});
+    }
+
+    logger.error(
+      "SyncEngine: PM completion rejected by server; rolled local row back to server state",
+      { module: "SYNC_ENGINE", instanceId: id, serverStatus: srv?.status, reason },
+    );
+
+    Alert.alert(
+      "PM completion didn't sync",
+      `${reason}\n\nIt's been reverted on this device — please reopen the PM, finish any missing items, and complete it again.`,
+    );
   }
 
   // ── Event handlers ────────────────────────────────────────────────────────
