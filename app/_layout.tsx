@@ -26,6 +26,7 @@ import UpdateBanner from "@/components/UpdateBanner";
 import VersionGateService from "@/services/VersionGateService";
 import { presenceService } from "@/services/PresenceService";
 import UpdateRequiredScreen from "@/components/UpdateRequiredScreen";
+import NotificationGate from "@/components/NotificationGate";
 import ServerStatusOverlay from "@/components/ServerStatusOverlay";
 import * as SplashScreen from "expo-splash-screen";
 import * as Location from "expo-location";
@@ -211,6 +212,7 @@ export default function RootLayout() {
               <ThemeProvider>
                 <UpdateBanner />
                 <ServerStatusOverlay />
+                <NotificationGate />
                 <UpdateRequiredScreen />
                 <PendingNotificationNavigation />
                 <PresenceTracker />
