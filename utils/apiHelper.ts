@@ -1,7 +1,6 @@
 import { Platform } from "react-native";
 import logger from "./logger";
 import { authEvents } from "./authEvents";
-import { auth } from "@/services/firebase";
 import {
   forceRefreshAuthToken,
   getStoredAuthToken,
@@ -85,8 +84,8 @@ export const apiFetch = async (
       },
     }, customTimeout);
 
-    // One-time silent token refresh/retry for expired/invalid Firebase tokens.
-    if (response.status === 401 && auth.currentUser) {
+    // One-time silent token refresh/retry for an expired JouleOps access token.
+    if (response.status === 401) {
       try {
         let shouldRetry = true;
         try {

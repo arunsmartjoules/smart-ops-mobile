@@ -1,7 +1,6 @@
+// Firebase is retained ONLY for Storage (photo/signature uploads). Auth has
+// moved to JouleOps JWTs — do not re-add firebase/auth here.
 import { initializeApp, getApps, getApp } from "firebase/app";
-// @ts-ignore
-import { initializeAuth, getReactNativePersistence } from "firebase/auth";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import Constants from "expo-constants";
 
 // For Mobile, we use environment variables from Expo Constants if available, 
@@ -35,11 +34,8 @@ const firebaseConfig = {
 
 import { getStorage } from "firebase/storage";
 
-// Initialize Firebase
+// Initialize Firebase (Storage only)
 const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
-const auth = initializeAuth(app, {
-  persistence: getReactNativePersistence(AsyncStorage)
-});
 const storage = getStorage(app);
 
-export { app, auth, storage };
+export { app, storage };

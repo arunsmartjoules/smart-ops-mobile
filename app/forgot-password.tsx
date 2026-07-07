@@ -43,11 +43,8 @@ export default function ForgotPassword() {
     if (error) {
       showAlert("Error", error);
     } else {
-      showAlert(
-        "Email sent",
-        "A password reset link has been sent to your email",
-        [{ text: "OK", onPress: () => router.replace("/sign-in") }],
-      );
+      // Advance to the code-entry step (backend sends a 6-digit code, not a link).
+      setStep("code");
     }
   };
 

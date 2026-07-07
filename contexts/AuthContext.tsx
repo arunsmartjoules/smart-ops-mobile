@@ -14,54 +14,25 @@ import {
   unregisterPushToken,
 } from "../services/NotificationService";
 import logger from "../utils/logger";
-import { auth } from "../services/firebase";
-import { 
-  signInWithEmailAndPassword, 
-  createUserWithEmailAndPassword, 
-  signOut as firebaseSignOut, 
-  signInWithCustomToken,
-  sendPasswordResetEmail,
-  sendEmailVerification,
-  onIdTokenChanged,
-  updateProfile,
-  User as FirebaseUser
-} from "firebase/auth";
 import { syncEngine } from "../services/SyncEngine";
 import { cacheManager } from "../services/CacheManager";
 import siteResolver from "../services/SiteResolver";
 import {
   clearStoredAuthToken,
   getStoredAuthToken,
+  getValidAuthToken,
   setStoredAuthToken,
+  setStoredTokens,
 } from "../services/AuthTokenManager";
 import { API_BASE_URL } from "../constants/api";
 import { fetchWithTimeout } from "../utils/apiHelper";
-import { cachedAuthUserMatchesFirebaseSession } from "../utils/authUserCacheMatch";
 import { clearDatabase } from "@/database";
 
 const BACKEND_URL = API_BASE_URL;
-const GOOGLE_SKIP_VERIFY_KEY = "google_skip_verify";
 const LAST_PROFILE_FETCH_STATUS_KEY = "last_profile_fetch_status";
 
 const normalizeEmail = (email?: string | null) =>
   String(email || "").trim().toLowerCase();
-
-const hasGoogleProvider = (firebaseUser?: FirebaseUser | null) =>
-  Boolean(
-    firebaseUser?.providerData?.some(
-      (provider) => provider?.providerId === "google.com",
-    ),
-  );
-
-const getEffectiveEmailVerified = (
-  firebaseUser: FirebaseUser,
-  skipGoogleVerification: boolean,
-) =>
-  Boolean(
-    firebaseUser.emailVerified ||
-      hasGoogleProvider(firebaseUser) ||
-      skipGoogleVerification,
-  );
 
 interface AuthUser {
   id: string;
@@ -140,24 +111,20 @@ function pickOptionalString(value: unknown): string | undefined {
   return String(value);
 }
 
-/** Map a Firebase user + optional profile data into our AuthUser shape */
-function mapFirebaseUser(
-  firebaseUser: FirebaseUser,
-  profile?: Partial<AuthUser> & {
+/** Map a backend profile / login-response user into our AuthUser shape. */
+function mapUser(
+  data: Partial<AuthUser> & {
     id?: string;
+    user_id?: string;
+    email?: string;
+    name?: string;
     mobile?: string;
     date_of_joining?: unknown;
     created_at?: unknown;
   },
 ): AuthUser {
-  const normalized = normalizeEmail(profile?.email || firebaseUser.email);
-  const backendUserId = String(
-    (profile as { user_id?: string } | undefined)?.user_id ||
-      (profile as { id?: string } | undefined)?.id ||
-      "",
-  ).trim();
-  const display = firebaseUser.displayName ?? "";
-  const wltRaw = profile?.work_location_type;
+  const backendUserId = String(data.user_id || data.id || "").trim();
+  const wltRaw = data.work_location_type;
   const workLocationType: AuthUser["work_location_type"] =
     wltRaw == null || String(wltRaw).trim() === ""
       ? null
@@ -165,24 +132,23 @@ function mapFirebaseUser(
   return {
     id: backendUserId,
     user_id: backendUserId,
-    email: normalized,
-    name: profile?.name ?? display,
-    full_name: profile?.full_name ?? profile?.name ?? display,
-    role: profile?.role ?? "",
+    email: normalizeEmail(data.email),
+    name: data.name ?? "",
+    full_name: data.full_name ?? data.name ?? "",
+    role: data.role ?? "",
     is_superadmin: Boolean(
-      (profile as { is_superadmin?: unknown } | undefined)?.is_superadmin,
+      (data as { is_superadmin?: unknown }).is_superadmin,
     ),
     work_location_type: workLocationType,
-    department: profile?.department ?? "",
-    designation: profile?.designation ?? "",
-    phone: profile?.phone || profile?.mobile,
-    site_code: profile?.site_code,
-    employee_code: profile?.employee_code,
-    created_at: pickOptionalString(profile?.created_at),
-    date_of_joining: pickOptionalString(profile?.date_of_joining),
+    department: data.department ?? "",
+    designation: data.designation ?? "",
+    phone: data.phone || data.mobile,
+    site_code: data.site_code,
+    employee_code: data.employee_code,
+    created_at: pickOptionalString(data.created_at),
+    date_of_joining: pickOptionalString(data.date_of_joining),
     profile_photo_url:
-      (profile as { profile_photo_url?: string | null } | undefined)
-        ?.profile_photo_url ?? null,
+      (data as { profile_photo_url?: string | null }).profile_photo_url ?? null,
   };
 }
 
@@ -194,48 +160,41 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   const [isLoading, setIsLoading] = useState(true);
   const [isEmailVerified, setIsEmailVerified] = useState(false);
 
-  // Fetch extended profile from backend and merge into user state
+  // Fetch extended profile from the backend and merge into user state. Also
+  // validates the access token (a dead token surfaces as a non-success here).
   const fetchAndSetProfile = useCallback(
-    async (firebaseUser: FirebaseUser, idToken: string): Promise<AuthUser | null> => {
-      const normalizedEmail = normalizeEmail(firebaseUser.email);
+    async (accessToken: string): Promise<AuthUser | null> => {
       const maxAttempts = 3;
       let lastError = "unknown";
 
       for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
         try {
           const response = await fetchWithTimeout(`${BACKEND_URL}/api/auth/profile`, {
-            headers: { Authorization: `Bearer ${idToken}` },
+            headers: { Authorization: `Bearer ${accessToken}` },
           });
           const result = await response.json();
-          const profileEmail = normalizeEmail(result?.data?.email);
 
           if (
             result.success &&
             result.data &&
             String(result.data.user_id || result.data.id || "").trim()
           ) {
-            // If Firebase email is unavailable (common in custom-token Google flow),
-            // trust backend profile email instead of rejecting by mismatch.
-            if (profileEmail && normalizedEmail && profileEmail !== normalizedEmail) {
-              lastError = "profile email mismatch";
-            } else {
-              const mapped = mapFirebaseUser(firebaseUser, result.data);
-              await AsyncStorage.setItem("auth_user", JSON.stringify(mapped));
-              await AsyncStorage.setItem(
-                LAST_PROFILE_FETCH_STATUS_KEY,
-                JSON.stringify({
-                  status: "success",
-                  normalized_email: normalizeEmail(mapped.email),
-                  attempts: attempt,
-                  at: Date.now(),
-                }),
-              );
-              setUser(mapped);
-              return mapped;
-            }
+            const mapped = mapUser(result.data);
+            await AsyncStorage.setItem("auth_user", JSON.stringify(mapped));
+            await AsyncStorage.setItem(
+              LAST_PROFILE_FETCH_STATUS_KEY,
+              JSON.stringify({
+                status: "success",
+                normalized_email: normalizeEmail(mapped.email),
+                attempts: attempt,
+                at: Date.now(),
+              }),
+            );
+            setUser(mapped);
+            return mapped;
           }
 
-          lastError = result?.error || "profile email mismatch";
+          lastError = result?.error || "no profile data";
         } catch (e: any) {
           lastError = e?.message || "profile fetch failed";
         }
@@ -247,148 +206,108 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
 
       logger.warn("Profile fetch failed after retries", {
         module: "AUTH_CONTEXT",
-        normalizedEmail,
         error: lastError,
       });
-
       await AsyncStorage.setItem(
         LAST_PROFILE_FETCH_STATUS_KEY,
-        JSON.stringify({
-          status: "failed",
-          normalized_email: normalizedEmail,
-          error: lastError,
-          at: Date.now(),
-        }),
+        JSON.stringify({ status: "failed", error: lastError, at: Date.now() }),
       );
 
+      // Keep the session alive with a cached profile if we have one (offline).
       const cached = await AsyncStorage.getItem("auth_user");
       if (cached) {
         const parsed = JSON.parse(cached) as AuthUser;
-        if (cachedAuthUserMatchesFirebaseSession(firebaseUser.email, parsed)) {
-          setUser(parsed);
-          return parsed;
-        }
+        setUser((prev) => (prev?.user_id ? prev : parsed));
+        return parsed;
       }
-
-      // Keep session alive, but do not clobber a known good user.
-      const mapped = mapFirebaseUser(firebaseUser, {
-        user_id: "",
-        id: "",
-        email: normalizedEmail,
-      });
-      setUser((prev) => (prev?.user_id ? prev : mapped));
       return null;
     },
     [],
   );
 
-  useEffect(() => {
-    const unsubscribe = onIdTokenChanged(auth, async (firebaseUser) => {
-      logger.debug(`Firebase auth state change: ${!!firebaseUser}`, { module: "AUTH_CONTEXT" });
+  // Establish an authenticated session from an access token: render a cached
+  // user immediately (offline-friendly), fetch the fresh profile, then boot
+  // the sync engine, site resolver and push registration. Shared by app
+  // startup and every sign-in path.
+  const bootstrapSession = useCallback(
+    async (accessToken: string, knownUser?: AuthUser | null) => {
+      setToken(accessToken);
+      await setStoredAuthToken(accessToken);
+      setIsEmailVerified(true);
 
-      if (firebaseUser) {
-        const skipGoogleVerification = await AsyncStorage.getItem(
-          GOOGLE_SKIP_VERIFY_KEY,
-        );
-        const shouldSkipVerification = skipGoogleVerification === "true";
-        setIsEmailVerified(
-          getEffectiveEmailVerified(firebaseUser, shouldSkipVerification),
-        );
-        // Firebase's getIdToken() can hang on slow networks while it tries to
-        // refresh. Race it with a short timeout and fall back to the stored
-        // token so the splash never blocks UI on a flaky connection.
-        // Crucially: never clobber the existing token with empty — that would
-        // bounce an authenticated user to sign-in (effective auto-logout).
-        const idToken =
-          (await Promise.race<string | null>([
-            firebaseUser.getIdToken(false).catch(() => null),
-            new Promise<string | null>((resolve) =>
-              setTimeout(() => resolve(null), 3000),
-            ),
-          ])) || (await getStoredAuthToken());
-        if (idToken) {
-          setToken(idToken);
-          await setStoredAuthToken(idToken);
-        }
-
-        let releasedLoadingEarly = false;
-        let earlyCachedUser: AuthUser | null = null;
+      let earlyUser: AuthUser | null = knownUser ?? null;
+      if (!earlyUser) {
         try {
           const cached = await AsyncStorage.getItem("auth_user");
-          if (cached) {
-            const parsed = JSON.parse(cached) as AuthUser;
-            if (cachedAuthUserMatchesFirebaseSession(firebaseUser.email, parsed)) {
-              earlyCachedUser = parsed;
-              setUser(parsed);
-              setIsLoading(false);
-              releasedLoadingEarly = true;
-            }
-          }
+          if (cached) earlyUser = JSON.parse(cached) as AuthUser;
         } catch {
           // ignore malformed cache
         }
-
-        // No token available (timeout + no stored): keep the user signed in
-        // with whatever cached profile we have and skip the network bootstrap.
-        // Sync/profile will retry once connectivity returns.
-        const userProfile = idToken
-          ? await fetchAndSetProfile(firebaseUser, idToken)
-          : null;
-
-        const bootstrapUserId =
-          userProfile?.user_id || earlyCachedUser?.user_id || "";
-
-        if (bootstrapUserId && idToken) {
-          const logEmail =
-            userProfile?.email ||
-            earlyCachedUser?.email ||
-            normalizeEmail(firebaseUser.email);
-          logger.activity("LOGIN_SUCCESS", "AUTH", `User ${logEmail} logged in successfully`, {
-            user_id: bootstrapUserId,
-            email: logEmail,
-          });
-          syncEngine.initialize(bootstrapUserId).catch(() => {});
-          siteResolver.initialize(bootstrapUserId).catch(() => {});
-          registerForPushNotifications(bootstrapUserId, idToken)
-            .then((result) => {
-              if (!result.success) {
-                logger.warn("Push registration did not complete during login bootstrap", {
-                  module: "AUTH_CONTEXT",
-                  userId: bootstrapUserId,
-                  error: result.error,
-                });
-              }
-            })
-            .catch((error: any) => {
-              logger.error("Push registration bootstrap failed", {
-                module: "AUTH_CONTEXT",
-                error: error.message,
-              });
-            });
-        } else {
-          logger.warn("Login in degraded profile mode; sync bootstrap deferred", {
-            module: "AUTH_CONTEXT",
-            email: normalizeEmail(firebaseUser.email),
-          });
+      }
+      if (earlyUser) {
+        setUser(earlyUser);
+        if (earlyUser.user_id) {
+          await AsyncStorage.setItem("auth_user", JSON.stringify(earlyUser));
         }
-        if (!releasedLoadingEarly) {
-          setIsLoading(false);
-        }
-      } else {
-        if (token) {
-          logger.activity("LOGOUT", "AUTH", "User logged out");
-        }
-        setToken(null);
-        setUser(null);
-        setIsEmailVerified(false);
-        await clearStoredAuthToken();
         setIsLoading(false);
       }
-    });
 
-    return () => unsubscribe();
-  }, [fetchAndSetProfile]);
+      const profile = await fetchAndSetProfile(accessToken);
+      const bootstrapUserId = profile?.user_id || earlyUser?.user_id || "";
 
+      if (bootstrapUserId) {
+        const logEmail = profile?.email || earlyUser?.email || "";
+        logger.activity("LOGIN_SUCCESS", "AUTH", `User ${logEmail} logged in successfully`, {
+          user_id: bootstrapUserId,
+          email: logEmail,
+        });
+        syncEngine.initialize(bootstrapUserId).catch(() => {});
+        siteResolver.initialize(bootstrapUserId).catch(() => {});
+        registerForPushNotifications(bootstrapUserId, accessToken)
+          .then((result) => {
+            if (!result.success) {
+              logger.warn("Push registration did not complete during login bootstrap", {
+                module: "AUTH_CONTEXT",
+                userId: bootstrapUserId,
+                error: result.error,
+              });
+            }
+          })
+          .catch((error: any) => {
+            logger.error("Push registration bootstrap failed", {
+              module: "AUTH_CONTEXT",
+              error: error.message,
+            });
+          });
+      } else {
+        logger.warn("Login in degraded profile mode; sync bootstrap deferred", {
+          module: "AUTH_CONTEXT",
+        });
+      }
+
+      setIsLoading(false);
+    },
+    [fetchAndSetProfile],
+  );
+
+  // On startup, restore a session from the stored token (if any).
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const stored = await getStoredAuthToken();
+      if (cancelled) return;
+      if (stored) {
+        await bootstrapSession(stored);
+      } else {
+        setIsLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [bootstrapSession]);
+
+  // Re-register for push when connectivity returns.
   useEffect(() => {
     if (!user?.user_id || !token) return;
 
@@ -427,150 +346,107 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     return () => unsubscribe();
   }, [token, user?.user_id]);
 
-  // Ensure data sync bootstrap recovers when profile is refreshed later.
+  // Ensure data sync bootstrap recovers when the profile is refreshed later.
   useEffect(() => {
     if (!token || !user?.user_id) return;
     syncEngine.initialize(user.user_id).catch(() => {});
     siteResolver.initialize(user.user_id).catch(() => {});
   }, [token, user?.user_id]);
 
-  const signIn = useCallback(async (email: string, password: string) => {
-    logger.activity("LOGIN_ATTEMPT", "AUTH", `Login attempt for ${email}`, { email });
-    try {
-      // Ensure email/password sessions are not treated as Google-verified.
-      await AsyncStorage.removeItem(GOOGLE_SKIP_VERIFY_KEY);
-      await signInWithEmailAndPassword(auth, email, password);
-      return { error: null };
-    } catch (error: any) {
-      let msg = error.message || "Sign in failed";
-      let logAction = "LOGIN_FAILURE";
-      
-      if (msg.includes("auth/invalid-credential") || msg.includes("auth/user-not-found") || msg.includes("auth/wrong-password")) {
-        msg = "Invalid email or password. Please try again.";
-        logAction = "WRONG_PASSWORD";
-      } else if (msg.includes("auth/too-many-requests")) {
-        msg = "Too many failed login attempts. Please try again later.";
-      } else if (msg.includes("Firebase: Error")) {
-        msg = msg.replace("Firebase: Error (", "").replace(").", "").trim();
-      }
-      
-      logger.warn("Sign in failed", { module: "AUTH_CONTEXT", error: msg });
-      logger.activity(logAction, "AUTH", `Login failed for ${email}: ${msg}`, { email, error: msg });
-      return { error: msg };
-    }
-  }, []);
+  const signIn = useCallback(
+    async (email: string, password: string) => {
+      logger.activity("LOGIN_ATTEMPT", "AUTH", `Login attempt for ${email}`, { email });
+      try {
+        const res = await fetchWithTimeout(`${BACKEND_URL}/api/auth/login`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email, password }),
+        });
+        const result = await res.json();
 
-  const signInWithGoogleIdToken = useCallback(async (idToken: string) => {
-    try {
-      const response = await fetchWithTimeout(
-        `${BACKEND_URL}/api/auth/google`,
-        {
+        if (!res.ok || !result?.success || !result?.data?.token) {
+          const msg = result?.error || "Invalid email or password. Please try again.";
+          logger.activity("LOGIN_FAILURE", "AUTH", `Login failed for ${email}: ${msg}`, { email, error: msg });
+          return { error: msg };
+        }
+
+        await setStoredTokens(result.data.token, result.data.refresh_token);
+        const mapped = result.data.user ? mapUser(result.data.user) : undefined;
+        await bootstrapSession(result.data.token, mapped);
+        return { error: null };
+      } catch (error: any) {
+        const msg = error?.message || "Sign in failed";
+        logger.warn("Sign in failed", { module: "AUTH_CONTEXT", error: msg });
+        return { error: msg };
+      }
+    },
+    [bootstrapSession],
+  );
+
+  const signInWithGoogleIdToken = useCallback(
+    async (idToken: string) => {
+      try {
+        const response = await fetchWithTimeout(`${BACKEND_URL}/api/auth/google`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ idToken }),
-        },
-      );
+        });
+        const result = await response.json();
 
-      const result = await response.json();
+        if (!response.ok || !result?.success || !result?.data?.token) {
+          return { error: result?.error || "Google authentication failed" };
+        }
 
-      if (!response.ok || !result?.success) {
-        return { error: result?.error || "Google authentication failed" };
+        await setStoredTokens(result.data.token, result.data.refresh_token);
+        const mapped = result.data.user ? mapUser(result.data.user) : undefined;
+        await bootstrapSession(result.data.token, mapped);
+        return { error: null };
+      } catch (e: any) {
+        logger.error("Google sign-in failed", {
+          module: "AUTH_CONTEXT",
+          error: e?.message || String(e),
+        });
+        return { error: e?.message || String(e) };
       }
-
-      const customToken = result?.data?.token;
-      if (!customToken) {
-        return { error: "Missing custom token from Google auth response" };
-      }
-
-      await AsyncStorage.setItem(GOOGLE_SKIP_VERIFY_KEY, "true");
-      await signInWithCustomToken(auth, customToken);
-
-      return { error: null };
-    } catch (e: any) {
-      logger.error("Google sign-in failed", {
-        module: "AUTH_CONTEXT",
-        error: e?.message || String(e),
-      });
-      return { error: e?.message || String(e) };
-    }
-  }, []);
+    },
+    [bootstrapSession],
+  );
 
   const signUp = useCallback(
     async (email: string, password: string, name: string) => {
       logger.activity("SIGNUP_ATTEMPT", "AUTH", `Signup start for ${email}`, { email, name });
-      
       try {
-        // Ensure signup/password flow requires regular email verification.
-        await AsyncStorage.removeItem(GOOGLE_SKIP_VERIFY_KEY);
-        // 1. Create user in Firebase Auth
-        logger.debug("Creating user in Firebase Auth", { module: "AUTH_CONTEXT", email });
-        const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-        const firebaseUser = userCredential.user;
-        
-        logger.activity("FIREBASE_SIGNUP_SUCCESS", "AUTH", `Firebase user created for ${email}`, { 
-          uid: firebaseUser.uid,
-          email 
-        });
-
-        // 2. Set display name in Firebase
-        await updateProfile(firebaseUser, { displayName: name });
-        logger.debug("Firebase profile updated with name", { module: "AUTH_CONTEXT", name });
-
-        // 3. Send email verification
-        logger.debug("Sending Firebase verification email", { module: "AUTH_CONTEXT", email });
-        await sendEmailVerification(firebaseUser);
-        logger.activity("VERIFICATION_EMAIL_SENT", "AUTH", `Firebase verification email sent to ${email}`, { email });
-
-        // 4. Sync with our PostgreSQL backend
-        logger.debug("Syncing user with backend PostgreSQL", { module: "AUTH_CONTEXT", email });
-        const idToken = await firebaseUser.getIdToken();
-        
         const res = await fetchWithTimeout(`${BACKEND_URL}/api/auth/signup`, {
           method: "POST",
-          headers: { 
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${idToken}`
-          },
-          body: JSON.stringify({ email, password, name, firebase_uid: firebaseUser.uid }),
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email, password, name }),
         });
-        
         const result = await res.json();
-        if (!res.ok) {
-          const errorMsg = result.error || "Backend sync failed during signup";
-          logger.activity("BACKEND_SYNC_FAILURE", "AUTH", `Signup backend sync failed for ${email}: ${errorMsg}`, { email, error: errorMsg });
-          // Note: We don't return an error here because the Firebase account is created and verification email is sent.
-          // The backend sync can be retried or fixed later, but user-facing "SignUp" succeeded in terms of account creation.
-        } else {
-          logger.activity("SIGNUP_COMPLETE", "AUTH", `Entire signup flow finished for ${email}`, { email });
+
+        if (!res.ok || !result?.success || !result?.data?.token) {
+          const msg = result?.error || "Signup failed";
+          logger.activity("SIGNUP_FAILURE", "AUTH", `Signup failed for ${email}: ${msg}`, { email, error: msg });
+          return { error: msg };
         }
-        
+
+        await setStoredTokens(result.data.token, result.data.refresh_token);
+        const mapped = result.data.user ? mapUser(result.data.user) : undefined;
+        await bootstrapSession(result.data.token, mapped);
+        logger.activity("SIGNUP_COMPLETE", "AUTH", `Signup finished for ${email}`, { email });
         return { error: null };
       } catch (error: any) {
-        let msg = error.message || "Signup failed";
-        if (msg.includes("auth/email-already-in-use")) {
-          msg = "This email is already registered. Please sign in.";
-        } else if (msg.includes("auth/weak-password")) {
-          msg = "The password is too weak.";
-        } else if (msg.includes("auth/invalid-email")) {
-          msg = "Invalid email address.";
-        }
-        
-        logger.warn("Sign up failed", {
-          module: "AUTH_CONTEXT",
-          error: msg,
-        });
-        logger.activity("SIGNUP_FAILURE", "AUTH", `Signup process failed for ${email}: ${msg}`, { email, error: msg });
+        const msg = error?.message || "Signup failed";
+        logger.warn("Sign up failed", { module: "AUTH_CONTEXT", error: msg });
         return { error: msg };
       }
     },
-    [],
+    [bootstrapSession],
   );
 
   const signOut = useCallback(async () => {
-    // Step 0: Drain the offline queue before touching anything else.
-    // Logout must not lose unsynced work, and must not leave queued
-    // mutations behind for the next user on a shared device to push
-    // under their identity.
+    // Step 0: Drain the offline queue before touching anything else. Logout
+    // must not lose unsynced work, and must not leave queued mutations behind
+    // for the next user on a shared device to push under their identity.
     const pendingBefore = await cacheManager.getQueueCount();
     if (pendingBefore > 0) {
       logger.info(
@@ -602,7 +478,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       if (activeToken) {
         await unregisterPushToken(activeToken).catch(() => {});
       }
-      await firebaseSignOut(auth);
     } catch (error: any) {
       logger.error("Sign out error", {
         module: "AUTH_CONTEXT",
@@ -611,11 +486,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     }
 
     // Cleanup local data. If the wipe fails, do NOT clear the auth state —
-    // keeping the user logged in is safer than dropping them at a login
-    // screen with another user's data still sitting in SQLite.
+    // keeping the user logged in is safer than dropping them at a login screen
+    // with another user's data still sitting in SQLite.
     logger.info("Starting logout cleanup of all local data", { module: "AUTH_CONTEXT" });
     await syncEngine.cleanup();
     await clearDatabase();
+    await clearStoredAuthToken();
     await AsyncStorage.clear();
     logger.activity("LOGOUT_DATA_WIPED", "AUTH", "All local database and cache data cleared successfully");
 
@@ -625,8 +501,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   }, [token]);
 
   // Listen for global auth events, but do not sign users out on generic 401s.
-  // Users should stay logged in unless they explicitly sign out or their
-  // session is revoked (e.g. password/security change).
+  // Users stay logged in unless they explicitly sign out or their session is
+  // revoked (e.g. an admin deactivates the account -> USER_BLOCKED).
   useEffect(() => {
     const unsubscribe = authEvents.subscribe((reason) => {
       if (reason === "session_revoked") {
@@ -648,16 +524,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const sendPasswordResetCode = useCallback(async (email: string) => {
     try {
-      await sendPasswordResetEmail(auth, email);
-      logger.activity("PASSWORD_RESET_REQUEST", "AUTH", `Password reset email sent to ${email}`, { email });
+      const res = await fetchWithTimeout(`${BACKEND_URL}/api/auth/forgot-password`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+      });
+      const result = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        return { error: result?.error || "Error sending reset code" };
+      }
+      logger.activity("PASSWORD_RESET_REQUEST", "AUTH", `Password reset requested for ${email}`, { email });
       return { error: null };
     } catch (e: any) {
-      logger.error("Password reset error", {
-        module: "AUTH_CONTEXT",
-        error: e.message,
-      });
-      logger.activity("PASSWORD_RESET_FAILURE", "AUTH", `Failed to send reset email to ${email}: ${e.message}`, { email, error: e.message });
-      return { error: e.message || "Error sending reset email" };
+      logger.error("Password reset error", { module: "AUTH_CONTEXT", error: e.message });
+      return { error: e.message || "Error sending reset code" };
     }
   }, []);
 
@@ -686,25 +566,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   );
 
   const refreshProfile = useCallback(async () => {
-    if (!auth.currentUser) return;
-    let idToken: string;
+    const accessToken = await getValidAuthToken();
+    if (!accessToken) return;
+    setToken(accessToken);
     try {
-      // Avoid forcing a network round-trip; offline still uses a cached ID token.
-      idToken = await auth.currentUser.getIdToken(false);
-    } catch (e: any) {
-      const stored = await getStoredAuthToken();
-      if (!stored) {
-        logger.warn("refreshProfile: could not get id token", {
-          module: "AUTH_CONTEXT",
-          error: e?.message,
-        });
-        return;
-      }
-      idToken = stored;
-    }
-    setToken(idToken);
-    try {
-      const refreshed = await fetchAndSetProfile(auth.currentUser, idToken);
+      const refreshed = await fetchAndSetProfile(accessToken);
       if (refreshed?.user_id) {
         syncEngine.initialize(refreshed.user_id).catch(() => {});
         siteResolver.initialize(refreshed.user_id).catch(() => {});
@@ -719,14 +585,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const changePassword = useCallback(async (password: string) => {
     try {
-      const idToken = await getStoredAuthToken();
-      if (!idToken) return { error: "Not authenticated" };
+      const accessToken = await getValidAuthToken();
+      if (!accessToken) return { error: "Not authenticated" };
 
       const res = await fetchWithTimeout(`${BACKEND_URL}/api/auth/change-password`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${idToken}`,
+          Authorization: `Bearer ${accessToken}`,
         },
         body: JSON.stringify({ newPassword: password }),
       });
@@ -787,44 +653,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   }, []);
 
   const resendVerificationEmail = useCallback(async () => {
-    if (!auth.currentUser) {
-      logger.warn("Resend ignored: No current user logged in", { module: "AUTH_CONTEXT" });
-      return { error: "You must be signed in to request a verification email." };
+    if (!user?.email) {
+      return { error: "You must be signed in to request a verification code." };
     }
-    try {
-      logger.activity("VERIFICATION_RESEND_ATTEMPT", "AUTH", `Resending verification email to ${auth.currentUser.email}`, { email: auth.currentUser.email });
-      await sendEmailVerification(auth.currentUser);
-      logger.activity("VERIFICATION_RESEND_SUCCESS", "AUTH", `Verification email resent to ${auth.currentUser.email}`, { email: auth.currentUser.email });
-      return { error: null };
-    } catch (e: any) {
-      logger.error("Resend verification failed", { module: "AUTH_CONTEXT", error: e.message });
-      logger.activity("VERIFICATION_RESEND_FAILURE", "AUTH", `Failed to resend verification to ${auth.currentUser?.email}`, { email: auth.currentUser?.email, error: e.message });
-      return { error: e.message || "Failed to resend verification email" };
-    }
-  }, []);
+    return sendVerificationCode(user.email);
+  }, [user?.email, sendVerificationCode]);
 
   const refreshUser = useCallback(async () => {
-    if (!auth.currentUser) return;
-    try {
-      await auth.currentUser.reload();
-      const skipGoogleVerification = await AsyncStorage.getItem(
-        GOOGLE_SKIP_VERIFY_KEY,
-      );
-      const shouldSkipVerification = skipGoogleVerification === "true";
-      const effectiveVerified = getEffectiveEmailVerified(
-        auth.currentUser,
-        shouldSkipVerification,
-      );
-      setIsEmailVerified(effectiveVerified);
-      logger.debug("Firebase user reloaded", {
-        module: "AUTH_CONTEXT",
-        verified: effectiveVerified,
-        emailVerified: auth.currentUser.emailVerified,
-        googleProvider: hasGoogleProvider(auth.currentUser),
-      });
-    } catch (e: any) {
-      logger.error("Failed to reload user", { module: "AUTH_CONTEXT", error: e.message });
-    }
+    // JouleOps sessions are considered verified; nothing to reload from a
+    // provider. Kept for API compatibility with the verification screens.
+    setIsEmailVerified(true);
   }, []);
 
   const value = useMemo(
