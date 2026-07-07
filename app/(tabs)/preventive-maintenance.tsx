@@ -661,55 +661,25 @@ export default function PreventiveMaintenance() {
           (dueDateShort && dueDateShort.includes(q))
         );
       });
-      // Requirement: text search should not be constrained by date window.
-      return list;
+      // Fall through to the date-range filter below: a text search narrows
+      // the list but must still stay inside the selected window, so the
+      // list matches the (date-windowed) Total/Pending/Completed counts.
+      // Users reported May PMs surfacing under a July filter when search
+      // returned early here and skipped the date predicate entirely.
     }
 
-    // 3. Apply Date Filter in normal browsing mode (no text/QR search).
+    // 3. Apply Date Filter. Runs for every mode now — normal browsing, text
+    //    search, and QR asset scan (QR resets the window to the current month
+    //    in handleQRAssetFound, so this keeps it scoped to that month).
     //    The column compared depends on the selected date field.
     const startRange = istDayStartMsFromYmd(currentDate) ?? 0;
     const endRange = istDayEndMsFromYmd(toDate) ?? Number.MAX_SAFE_INTEGER;
-    // TEMP DIAGNOSTIC: log the active range and any item that would be
-    // shown but falls outside it. Remove once the Sunshine "June leaking
-    // into May filter" bug is root-caused.
-    logger.debug("pm-filter range", {
-      currentDate,
-      toDate,
-      dateField,
-      startRange,
-      endRange,
-      preDateCount: list.length,
-    });
     list = list.filter((i) => {
       const dateVal =
         dateField === "completed_date" ? i.completed_on : i.start_due_date;
-      if (!dateVal) {
-        logger.debug("pm-filter drop:null", {
-          id: i.id,
-          title: i.title,
-          dateField,
-          raw_start_due_date: i.start_due_date,
-          raw_completed_on: i.completed_on,
-        });
-        return false;
-      }
+      if (!dateVal) return false;
       const ts = new Date(dateVal).getTime();
-      const inRange = ts >= startRange && ts <= endRange;
-      // Loud log for the actual smoking gun: an item that PASSES the
-      // filter while its displayed Due date is outside the chosen range.
-      const displayed = safeFormat(i.start_due_date, "d MMM yyyy");
-      if (inRange) {
-        logger.debug("pm-filter keep", {
-          id: i.id,
-          title: i.title,
-          dateField,
-          raw: dateVal,
-          rawType: typeof dateVal,
-          ts,
-          displayed,
-        });
-      }
-      return inRange;
+      return ts >= startRange && ts <= endRange;
     });
     return list;
   }, [
