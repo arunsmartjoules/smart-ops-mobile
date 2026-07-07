@@ -911,20 +911,33 @@ export default function Dashboard() {
         ""
       ).trim();
       if (isTempMandatoryCategory(effectiveCategory)) {
+        // Which temps are captured tracks the current ticket status (see
+        // TicketDetailStatusUpdate): Before only while Open; both Before and
+        // After while Inprogress. Validate exactly what's shown.
+        const isOpen = selectedTicket.status === "Open";
+        const isInprogress = selectedTicket.status === "Inprogress";
         const bt = beforeTemp.trim();
         const at = afterTemp.trim();
-        if (!bt || !at) {
+        if (isOpen && !bt) {
+          Alert.alert(
+            "Required",
+            "Please enter before temperature for this category.",
+          );
+          return;
+        }
+        if (isInprogress && (!bt || !at)) {
           Alert.alert(
             "Required",
             "Please enter before and after temperature for this category.",
           );
           return;
         }
-        if (Number.isNaN(parseFloat(bt)) || Number.isNaN(parseFloat(at))) {
-          Alert.alert(
-            "Required",
-            "Before and after temperature must be valid numbers.",
-          );
+        if (bt && Number.isNaN(parseFloat(bt))) {
+          Alert.alert("Required", "Before temperature must be a valid number.");
+          return;
+        }
+        if (isInprogress && at && Number.isNaN(parseFloat(at))) {
+          Alert.alert("Required", "After temperature must be a valid number.");
           return;
         }
       }
