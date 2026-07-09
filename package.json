@@ -55,7 +55,6 @@
     "expo-task-manager": "~55.0.16",
     "expo-updates": "~55.0.24",
     "expo-web-browser": "~55.0.16",
-    "firebase": "^12.11.0",
     "jsqr": "^1.4.0",
     "lucide-react-native": "^0.554.0",
     "nativewind": "^4.2.2",

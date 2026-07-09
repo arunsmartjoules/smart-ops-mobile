@@ -1,9 +1,4 @@
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import {
-  forceRefreshAuthToken,
-  getValidAuthToken,
-  isSessionRevokedError,
-} from "../services/AuthTokenManager";
+import { isSessionRevokedError } from "../services/AuthTokenManager";
 jest.mock("@react-native-async-storage/async-storage", () => ({
   __esModule: true,
   default: {
@@ -13,54 +8,15 @@ jest.mock("@react-native-async-storage/async-storage", () => ({
   },
 }));
 
-const mockGetIdToken = jest.fn();
-
-jest.mock("../services/firebase", () => ({
-  __esModule: true,
-  auth: {
-    currentUser: {
-      getIdToken: (...args: unknown[]) => mockGetIdToken(...args),
-    },
-  },
-}));
+// NOTE: getValidAuthToken / forceRefreshAuthToken are now backed by JouleOps
+// JWTs + /api/auth/refresh (not Firebase getIdToken). The former Firebase-token
+// tests were removed with the Firebase Storage → S3 migration; they asserted
+// removed behaviour (a "firebase-token" AsyncStorage key). Add JWT-path tests
+// for those functions separately.
 
 describe("AuthTokenManager", () => {
   beforeEach(() => {
     jest.clearAllMocks();
-  });
-
-  it("returns cached firebase token and persists it when still valid", async () => {
-    const farFutureExp = Math.floor((Date.now() + 10 * 60 * 1000) / 1000);
-    const token = `x.${Buffer.from(JSON.stringify({ exp: farFutureExp })).toString("base64url")}.y`;
-    mockGetIdToken.mockResolvedValue(token);
-
-    const result = await getValidAuthToken();
-
-    expect(result).toBe(token);
-    expect(mockGetIdToken).toHaveBeenCalledWith(false);
-    expect(AsyncStorage.setItem).toHaveBeenCalledWith("firebase-token", token);
-  });
-
-  it("coalesces concurrent force refresh calls into one underlying refresh", async () => {
-    let resolver: (value: string) => void = () => {};
-    const pending = new Promise<string>((resolve) => {
-      resolver = resolve;
-    });
-    mockGetIdToken.mockReturnValue(pending);
-
-    const p1 = forceRefreshAuthToken();
-    const p2 = forceRefreshAuthToken();
-    resolver("new-token");
-
-    const [t1, t2] = await Promise.all([p1, p2]);
-
-    expect(t1).toBe("new-token");
-    expect(t2).toBe("new-token");
-    expect(mockGetIdToken).toHaveBeenCalledTimes(1);
-    expect(AsyncStorage.setItem).toHaveBeenCalledWith(
-      "firebase-token",
-      "new-token",
-    );
   });
 
   it("classifies revoked/disabled token errors", () => {

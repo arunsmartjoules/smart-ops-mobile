@@ -16,11 +16,6 @@ jest.mock("../utils/logger", () => ({
   },
 }));
 
-jest.mock("../services/firebase", () => ({
-  __esModule: true,
-  auth: { currentUser: { uid: "u1" } },
-}));
-
 jest.mock("../utils/authEvents", () => ({
   __esModule: true,
   authEvents: { emitUnauthorized: jest.fn() },
