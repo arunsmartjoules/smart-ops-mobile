@@ -1253,6 +1253,22 @@ export default function Dashboard() {
 
   const handleQuickCheckOut = async () => {
     if (!todayAttendance?.id) return;
+
+    // Technicians must complete the mandatory shift sign-off before punching
+    // out — route to the sign-off screen, which performs the check-out itself.
+    // Admins / managers / regional managers keep the direct check-out below.
+    const role = String(user?.role || "").toLowerCase();
+    if (role === "technician") {
+      router.push({
+        pathname: "/shift-signoff",
+        params: {
+          attendanceId: todayAttendance.id,
+          siteCode: todayAttendance.site_code || "",
+        },
+      });
+      return;
+    }
+
     setValidatingLocation(true);
 
     const performCheckOut = async (remarks?: string) => {

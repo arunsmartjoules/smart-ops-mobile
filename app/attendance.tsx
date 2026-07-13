@@ -646,6 +646,21 @@ export default function AttendancePage() {
     if (!todayAttendance) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
 
+    // Technicians must complete the mandatory shift sign-off before punching
+    // out — route to the sign-off screen, which performs the check-out itself.
+    // Admins / managers / regional managers keep the direct check-out below.
+    const role = String(user?.role || "").toLowerCase();
+    if (role === "technician") {
+      router.push({
+        pathname: "/shift-signoff",
+        params: {
+          attendanceId: todayAttendance.id,
+          siteCode: todayAttendance.site_code || "",
+        },
+      });
+      return;
+    }
+
     setValidatingLocation(true);
     try {
       const currentLoc = await ensureLocationForPunch();
@@ -706,7 +721,14 @@ export default function AttendancePage() {
       Alert.alert("Error", error.message);
       setValidatingLocation(false);
     }
-  }, [todayAttendance, ensureLocationForPunch, fetchData, refreshAttendanceGate, markGatePunchedOut]);
+  }, [
+    todayAttendance,
+    user?.role,
+    ensureLocationForPunch,
+    fetchData,
+    refreshAttendanceGate,
+    markGatePunchedOut,
+  ]);
 
   const submitEarlyCheckout = useCallback(async () => {
     if (!checkoutReason.trim()) {

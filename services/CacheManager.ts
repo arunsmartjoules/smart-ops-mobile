@@ -78,6 +78,7 @@ export interface OfflineQueueItem {
     | "ticket_line_item"
     | "attendance_check_in"
     | "attendance_check_out"
+    | "shift_signoff"
     | "notification_token_registration"
     | "site_log_create"
     | "site_log_update"

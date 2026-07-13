@@ -240,6 +240,7 @@ export default function RootLayout() {
                   <Stack.Screen name="chiller" />
                   <Stack.Screen name="history/site-history" />
                   <Stack.Screen name="pm-execution" />
+                  <Stack.Screen name="shift-signoff" />
                 </Stack>
               </ThemeProvider>
             </AuthGuard>

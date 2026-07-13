@@ -58,7 +58,7 @@ const isAttendanceForToday = (log: AttendanceLog | null | undefined) => {
  * Returns `null` if no real id can be found (e.g. still offline and never
  * synced) so the caller can surface a friendly error.
  */
-async function resolveOptimisticAttendanceId(
+export async function resolveOptimisticAttendanceId(
   optimisticId: string,
 ): Promise<string | null> {
   // 1. Try a queue flush — best path when network is available.
@@ -247,26 +247,20 @@ export const AttendanceService = {
         .from(attendanceLogs)
         .where(eq(attendanceLogs.user_id, userId))
         .orderBy(desc(attendanceLogs.check_in_time))
-        .limit(1);
+        .limit(5);
 
       if (rows.length > 0) {
-        const log = normalizeAttendanceLog(rows[0]);
-        if (log && !log.check_out_time && log.check_in_time) {
-          // If still checked in, check 20-hour limit
-          const checkIn = new Date(log.check_in_time);
-          const diffHours = (Date.now() - checkIn.getTime()) / (1000 * 60 * 60);
-          if (diffHours <= 20) {
-            cachedToday = log;
-            logger.debug("Found active cross-day/today session", {
-              module: "ATTENDANCE_SERVICE",
-              diffHours,
-            });
-          }
-        }
-
-        // If no active 20h session found, fall back to simple "is it today?" check for the record
-        if (!cachedToday && log && log.date === today) {
-          cachedToday = log;
+        // The current session is the SINGLE MOST RECENT one (rows are ordered by
+        // check_in_time DESC). If it is still open, it's the active session →
+        // End Day, even if it spilled across midnight. If it's checked out, only
+        // surface it when it's dated today (to show the completed card). An OLDER
+        // un-closed row is a stale orphan superseded by a newer session and must
+        // NOT resurface — otherwise a fresh check-in/out still shows End Day.
+        const latest = normalizeAttendanceLog(rows[0]);
+        if (latest && latest.check_in_time && !latest.check_out_time) {
+          cachedToday = latest;
+        } else if (latest && latest.date === today) {
+          cachedToday = latest;
         }
       }
     } catch (err) {

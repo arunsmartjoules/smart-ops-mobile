@@ -1006,6 +1006,13 @@ class SyncEngineImpl implements SyncEngine {
       endpoint = `/api/attendance/${attendanceId}/check-out`;
       method = "POST";
 
+    } else if (entity_type === "shift_signoff") {
+      // Handled specially below — the signature may still be a local file:// URI
+      // (offline capture) that must be uploaded to S3 before the POST, and the
+      // attendance_id may be an `opt-` placeholder that needs reconciling first.
+      await this._processShiftSignoff(payload);
+      return;
+
     } else if (entity_type === "notification_token_registration") {
       endpoint = "/api/notifications/register-token";
       method = "POST";
@@ -1180,6 +1187,77 @@ class SyncEngineImpl implements SyncEngine {
       serverId,
       requiresCheckout: !!requiresCheckout,
     });
+  }
+
+  /**
+   * Flush a queued shift sign-off (End Day review).
+   *
+   * Two cross-step dependencies the generic handler can't express:
+   *  1. The signature may still be a local `file://` URI captured offline — it
+   *     must be uploaded to S3 first so the record stores a durable public URL.
+   *  2. `attendance_id` may be an `opt-${client_request_id}` placeholder from an
+   *     offline check-in; the FK to attendance_logs(id) rejects it, so we
+   *     reconcile it to the real UUID (the earlier check-in queue item flushes
+   *     first under FIFO ordering).
+   */
+  private async _processShiftSignoff(
+    payload: Record<string, any>,
+  ): Promise<void> {
+    // 1. Upload a still-local signature before posting the record.
+    const sig: string | undefined = payload.signature_url;
+    if (typeof sig === "string" && sig.startsWith("file:")) {
+      try {
+        const { StorageService } =
+          require("./StorageService") as typeof import("./StorageService");
+        const url = await StorageService.uploadFromLocalUri(
+          "jouleops-attachments",
+          payload.signature_key ||
+            `shift-signoffs/${payload.attendance_id}_${payload.client_request_id}.jpg`,
+          sig,
+        );
+        if (url) payload.signature_url = url;
+        // If it's still null (S3 unreachable), fall through and POST the record
+        // with the local URI; a later retry re-attempts the upload. The record
+        // is the priority — never block the sign-off on the image.
+      } catch (e) {
+        logger.warn("SyncEngine: signoff signature upload failed; posting record anyway", {
+          module: "SYNC_ENGINE",
+          error: e,
+        });
+      }
+    }
+
+    // 2. Reconcile an optimistic attendance id to the real server UUID.
+    let attendanceId: string = payload.attendance_id || payload.id;
+    if (typeof attendanceId === "string" && attendanceId.startsWith("opt-")) {
+      const { resolveOptimisticAttendanceId } =
+        require("./AttendanceService") as typeof import("./AttendanceService");
+      const real = await resolveOptimisticAttendanceId(attendanceId);
+      if (!real) {
+        // Check-in hasn't reconciled yet — throw a transient error so the queue
+        // retries this item on a later flush (FIFO keeps ordering intact).
+        const err: any = new Error(
+          "shift_signoff: attendance check-in not yet reconciled",
+        );
+        err.statusCode = 503;
+        throw err;
+      }
+      attendanceId = real;
+      payload.attendance_id = real;
+    }
+
+    const response = await apiFetch(`/api/attendance/${attendanceId}/signoff`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      const err: any = new Error(
+        `shift_signoff API error: ${response.status} ${response.statusText}`,
+      );
+      err.statusCode = response.status;
+      throw err;
+    }
   }
 
   /**
