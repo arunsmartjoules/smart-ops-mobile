@@ -214,6 +214,11 @@ class SyncEngineImpl implements SyncEngine {
               priority: t.priority || "",
               category: t.category || "",
               breakdown_type: t.breakdown_type ?? null,
+              // Must stay in sync with the mapping in TicketsService.cacheTickets —
+              // CacheManager builds its upsert SET clause from the record's keys, so
+              // omitting these inserts NULL over values the server actually sent.
+              before_temp: t.before_temp ?? null,
+              after_temp: t.after_temp ?? null,
               area: t.area_asset || t.location || "",
               assigned_to: t.assigned_to || "",
               created_by: t.created_user || "",

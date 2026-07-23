@@ -251,14 +251,22 @@ export const AttendanceService = {
 
       if (rows.length > 0) {
         // The current session is the SINGLE MOST RECENT one (rows are ordered by
-        // check_in_time DESC). If it is still open, it's the active session →
-        // End Day, even if it spilled across midnight. If it's checked out, only
-        // surface it when it's dated today (to show the completed card). An OLDER
-        // un-closed row is a stale orphan superseded by a newer session and must
-        // NOT resurface — otherwise a fresh check-in/out still shows End Day.
+        // check_in_time DESC). Surface it only when it's a live session:
+        //  - open AND checked in within the last 20h → active → End Day (covers
+        //    a forgotten checkout that spilled across midnight).
+        //  - open but older than 20h → EXPIRED → ignored → Start Day (a days-old
+        //    un-closed session must not keep showing End Day).
+        //  - checked out and dated today → today's completed card.
+        // An OLDER un-closed row is a stale orphan superseded by a newer session
+        // and is never considered (we only look at rows[0]).
         const latest = normalizeAttendanceLog(rows[0]);
         if (latest && latest.check_in_time && !latest.check_out_time) {
-          cachedToday = latest;
+          const diffHours =
+            (Date.now() - new Date(latest.check_in_time).getTime()) /
+            (1000 * 60 * 60);
+          if (diffHours <= 20) {
+            cachedToday = latest;
+          }
         } else if (latest && latest.date === today) {
           cachedToday = latest;
         }

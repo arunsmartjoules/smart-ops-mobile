@@ -1264,6 +1264,7 @@ export default function Dashboard() {
         params: {
           attendanceId: todayAttendance.id,
           siteCode: todayAttendance.site_code || "",
+          checkInTime: todayAttendance.check_in_time || "",
         },
       });
       return;

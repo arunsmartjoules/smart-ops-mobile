@@ -27,6 +27,10 @@ export interface TicketSummaryItem {
   title: string;
   site: string;
   status: string;
+  priority: string;
+  area: string;
+  description: string;
+  created_at: number | null;
 }
 
 export interface PMSummaryItem {
@@ -174,6 +178,10 @@ export const ShiftSummaryService = {
           title: t.title,
           site: t.site_code,
           status,
+          priority: t.priority ?? "",
+          area: t.area ?? "",
+          description: t.description ?? "",
+          created_at: (t.created_at as number | null) ?? null,
         });
       }
 

@@ -232,6 +232,16 @@ class CacheManagerImpl {
           Object.keys(r).forEach((k) => {
             normalized[k] = r[k] === undefined ? null : r[k];
           });
+          // attendance_logs.site_code is NOT NULL locally, but the server
+          // returns null for WFH / off-site sessions. Coerce to "" (the app's
+          // WFH sentinel, matching normalizeAttendanceLog) so the insert doesn't
+          // hit a NOT NULL constraint failure.
+          if (
+            domain === "attendance" &&
+            (normalized.site_code === null || normalized.site_code === undefined)
+          ) {
+            normalized.site_code = "";
+          }
           return normalized;
         });
         

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useMemo, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -9,22 +9,27 @@ import {
   ActivityIndicator,
   Platform,
   KeyboardAvoidingView,
+  Image,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { router, useLocalSearchParams } from "expo-router";
+import { router, useLocalSearchParams, useFocusEffect } from "expo-router";
 import * as Location from "expo-location";
 import * as Haptics from "expo-haptics";
+import * as ImagePicker from "expo-image-picker";
 import {
   ArrowLeft,
   ChevronDown,
+  ChevronRight,
   Check,
   Ticket,
   Wrench,
   ClipboardList,
-  PenLine,
   ShieldCheck,
   Eye,
   Lock,
+  Camera,
+  ImagePlus,
+  Trash2,
 } from "lucide-react-native";
 import { useAuth } from "@/contexts/AuthContext";
 import { useAttendanceGate } from "@/contexts/AttendanceGateContext";
@@ -36,11 +41,17 @@ import {
   type ShiftSummary,
 } from "@/services/ShiftSummaryService";
 import { ShiftSignoffService } from "@/services/ShiftSignoffService";
-import SignaturePad from "@/components/SignaturePad";
+import { StorageService } from "@/services/StorageService";
 import Skeleton from "@/components/Skeleton";
+import TicketDetailModal from "@/components/TicketDetailModal";
+import { useTicketDetailModal } from "@/hooks/useTicketDetailModal";
 import appLogger from "@/utils/logger";
+import { formatISTDateTime } from "@/utils/istDate";
 
 type SectionKey = "tickets" | "pm" | "siteLogs";
+
+const MAX_SIGNOFF_IMAGES = 5;
+const S3_BUCKET = "jouleops-attachments";
 
 const LOG_DOT: Record<string, string> = {
   "Temp RH": "#e05555",
@@ -91,9 +102,14 @@ export default function ShiftSignoffScreen() {
   const params = useLocalSearchParams<{
     attendanceId?: string;
     siteCode?: string;
+    checkInTime?: string;
   }>();
   const attendanceId = String(params.attendanceId || "");
   const paramSiteCode = String(params.siteCode || "");
+  const checkInTime = String(params.checkInTime || "");
+  const checkInLabel = checkInTime
+    ? formatISTDateTime(new Date(checkInTime))
+    : "";
 
   const { user } = useAuth();
   const userId = user?.user_id || user?.id || "";
@@ -125,40 +141,46 @@ export default function ShiftSignoffScreen() {
     siteLogs: false,
   });
   const [notes, setNotes] = useState("");
+  const [images, setImages] = useState<string[]>([]);
+  const [uploadingImage, setUploadingImage] = useState(false);
   const [declaration, setDeclaration] = useState(false);
-  const [signatureUri, setSignatureUri] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const signoffSubmittedRef = useRef(false);
 
-  useEffect(() => {
-    let alive = true;
-    (async () => {
-      if (!user) {
-        setLoading(false);
-        return;
-      }
-      try {
-        // Tickets resolve by assignee (no site needed); PM + site-logs use
-        // siteCode, which may still be empty until the resolver settles — the
-        // effect re-runs when siteCode changes and re-fills those sections.
-        const s = await ShiftSummaryService.buildTodaySummary({
-          user,
-          siteCode,
-        });
-        if (alive) setSummary(s);
-      } catch (e: any) {
-        appLogger.warn("ShiftSignoff: summary build failed", {
-          module: "SHIFT_SIGNOFF_SCREEN",
-          error: e?.message,
-        });
-      } finally {
-        if (alive) setLoading(false);
-      }
-    })();
-    return () => {
-      alive = false;
-    };
+  const buildSummary = useCallback(async () => {
+    if (!user) {
+      setLoading(false);
+      return;
+    }
+    try {
+      // Tickets resolve by assignee (no site needed); PM + site-logs use
+      // siteCode, which may still be empty until the resolver settles.
+      const s = await ShiftSummaryService.buildTodaySummary({ user, siteCode });
+      setSummary(s);
+    } catch (e: any) {
+      appLogger.warn("ShiftSignoff: summary build failed", {
+        module: "SHIFT_SIGNOFF_SCREEN",
+        error: e?.message,
+      });
+    } finally {
+      setLoading(false);
+    }
   }, [user, siteCode]);
+
+  // Rebuild on mount and whenever the screen regains focus.
+  useFocusEffect(
+    useCallback(() => {
+      buildSummary();
+    }, [buildSummary]),
+  );
+
+  // Shared in-place ticket detail + status-update flow — same as the dashboard.
+  // Resolving/cancelling a ticket here refreshes the summary via onUpdated.
+  const { openTicket, ticketModalProps } = useTicketDetailModal({
+    siteCode,
+    user,
+    onUpdated: buildSummary,
+  });
 
   const toggle = useCallback((k: SectionKey) => {
     setOpen((prev) => ({ ...prev, [k]: !prev[k] }));
@@ -168,8 +190,59 @@ export default function ShiftSignoffScreen() {
     Haptics.selectionAsync().catch(() => {});
   }, []);
 
+  const pickImage = useCallback(
+    async (useCamera: boolean) => {
+      if (images.length >= MAX_SIGNOFF_IMAGES) {
+        Alert.alert("Limit reached", `You can attach up to ${MAX_SIGNOFF_IMAGES} images.`);
+        return;
+      }
+      try {
+        const perm = useCamera
+          ? await ImagePicker.requestCameraPermissionsAsync()
+          : await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (!perm.granted) {
+          Alert.alert(
+            "Permission needed",
+            `Please grant ${useCamera ? "camera" : "photo"} access to attach images.`,
+          );
+          return;
+        }
+        const res = useCamera
+          ? await ImagePicker.launchCameraAsync({ mediaTypes: "images", quality: 0.6 })
+          : await ImagePicker.launchImageLibraryAsync({ mediaTypes: "images", quality: 0.6 });
+        if (res.canceled || !res.assets?.[0]?.uri) return;
+
+        setUploadingImage(true);
+        const uri = res.assets[0].uri;
+        const key = `shift-signoffs/${attendanceId}_${Date.now()}.jpg`;
+        const url = await StorageService.uploadFile(S3_BUCKET, key, uri);
+        if (url) {
+          setImages((prev) => [...prev, url]);
+        } else {
+          Alert.alert(
+            "Upload failed",
+            "Couldn't upload the image. Please check your connection and try again.",
+          );
+        }
+      } catch (e: any) {
+        appLogger.warn("ShiftSignoff: image pick/upload failed", {
+          module: "SHIFT_SIGNOFF_SCREEN",
+          error: e?.message,
+        });
+        Alert.alert("Error", "Couldn't attach the image. Please try again.");
+      } finally {
+        setUploadingImage(false);
+      }
+    },
+    [images.length, attendanceId],
+  );
+
+  const removeImage = useCallback((url: string) => {
+    setImages((prev) => prev.filter((u) => u !== url));
+  }, []);
+
   const allReviewed = acks.tickets && acks.pm && acks.siteLogs;
-  const canSubmit = allReviewed && declaration && !!signatureUri && !submitting;
+  const canSubmit = allReviewed && declaration && !submitting;
 
   const onSubmit = useCallback(async () => {
     if (!canSubmit || !summary || !attendanceId) return;
@@ -199,7 +272,7 @@ export default function ShiftSignoffScreen() {
           date: summary.date,
           summary,
           notes: notes.trim(),
-          signatureUri: signatureUri!,
+          images,
           sectionsAck: acks,
         });
         if (!r.success) {
@@ -251,7 +324,7 @@ export default function ShiftSignoffScreen() {
     userId,
     siteCode,
     notes,
-    signatureUri,
+    images,
     acks,
     markPunchedOut,
     refreshGate,
@@ -266,16 +339,14 @@ export default function ShiftSignoffScreen() {
             {summary.tickets.completed} tickets done
           </Text>
         </View>
-        {summary.tickets.inProgress > 0 && (
-          <View className="bg-amber-100 dark:bg-amber-900/30 px-2.5 py-1 rounded-full">
-            <Text className="text-amber-700 dark:text-amber-300 text-[11px] font-semibold">
-              {summary.tickets.inProgress} in progress
-            </Text>
-          </View>
-        )}
-        <View className="bg-blue-100 dark:bg-blue-900/30 px-2.5 py-1 rounded-full">
-          <Text className="text-blue-700 dark:text-blue-300 text-[11px] font-semibold">
+        <View className="bg-green-100 dark:bg-green-900/30 px-2.5 py-1 rounded-full">
+          <Text className="text-green-700 dark:text-green-300 text-[11px] font-semibold">
             {summary.pm.done} PM done
+          </Text>
+        </View>
+        <View className="bg-green-100 dark:bg-green-900/30 px-2.5 py-1 rounded-full">
+          <Text className="text-green-700 dark:text-green-300 text-[11px] font-semibold">
+            {summary.siteLogs.reduce((n, c) => n + c.completed, 0)} logs done
           </Text>
         </View>
       </View>
@@ -299,7 +370,9 @@ export default function ShiftSignoffScreen() {
               Shift sign-off
             </Text>
             <Text className="text-slate-400 dark:text-slate-500 text-xs">
-              Review your day before ending the shift
+              {checkInLabel
+                ? `Checked in · ${checkInLabel}`
+                : "Review your day before ending the shift"}
             </Text>
           </View>
         </View>
@@ -369,9 +442,11 @@ export default function ShiftSignoffScreen() {
                     <EmptyRow text="No tickets assigned to you today." />
                   ) : (
                     (summary?.tickets.items ?? []).slice(0, 12).map((t) => (
-                      <View
+                      <TouchableOpacity
                         key={t.id}
-                        className="flex-row items-start py-2 border-b border-slate-100 dark:border-slate-800"
+                        activeOpacity={0.6}
+                        onPress={() => openTicket(t.ticket_number)}
+                        className="flex-row items-center py-2 border-b border-slate-100 dark:border-slate-800"
                       >
                         <Text className="text-slate-400 dark:text-slate-500 text-[11px] w-14">
                           #{t.ticket_number}
@@ -385,7 +460,12 @@ export default function ShiftSignoffScreen() {
                           </Text>
                         </View>
                         <StatusBadge label={t.status} tone={ticketTone(t.status)} />
-                      </View>
+                        <ChevronRight
+                          size={14}
+                          color="#94a3b8"
+                          style={{ marginLeft: 4 }}
+                        />
+                      </TouchableOpacity>
                     ))
                   )}
                 </Section>
@@ -456,51 +536,32 @@ export default function ShiftSignoffScreen() {
                   onReview={() => markReviewed("siteLogs")}
                   reviewLabel="Logs reviewed"
                 >
-                  {(summary?.siteLogs ?? []).map((c) => (
-                    <View
-                      key={c.category}
-                      className="flex-row items-center py-2 gap-2"
-                    >
+                  {(summary?.siteLogs ?? []).map((c) => {
+                    const isChiller = c.category === "Chiller Logs";
+                    return (
                       <View
-                        style={{
-                          width: 8,
-                          height: 8,
-                          borderRadius: 4,
-                          backgroundColor: LOG_DOT[c.category] || "#94a3b8",
-                        }}
-                      />
-                      <Text className="text-slate-700 dark:text-slate-200 text-xs flex-1">
-                        {c.category}
-                      </Text>
-                      <View className="w-20 h-1.5 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
+                        key={c.category}
+                        className="flex-row items-center py-2.5 gap-2 border-b border-slate-100 dark:border-slate-800"
+                      >
                         <View
                           style={{
-                            width: `${c.percent}%`,
-                            height: "100%",
-                            backgroundColor: c.percent >= 100 ? "#22c55e" : "#5b9cf6",
+                            width: 8,
+                            height: 8,
+                            borderRadius: 4,
+                            backgroundColor: LOG_DOT[c.category] || "#94a3b8",
                           }}
                         />
+                        <Text className="text-slate-700 dark:text-slate-200 text-xs flex-1">
+                          {isChiller ? "Chiller readings" : c.category}
+                        </Text>
+                        <Text className="text-slate-900 dark:text-slate-100 text-xs font-bold">
+                          {isChiller
+                            ? `${c.completed}`
+                            : `${c.completed} / ${c.total}`}
+                        </Text>
                       </View>
-                      <Text
-                        className="text-[11px] font-semibold w-9 text-right"
-                        style={{
-                          color:
-                            c.percent >= 100
-                              ? isDark
-                                ? "#4ade80"
-                                : "#16a34a"
-                              : isDark
-                                ? "#60a5fa"
-                                : "#2563eb",
-                        }}
-                      >
-                        {c.percent}%
-                      </Text>
-                      <Text className="text-slate-400 dark:text-slate-500 text-[11px] w-12 text-right">
-                        {c.completed}/{c.total}
-                      </Text>
-                    </View>
-                  ))}
+                    );
+                  })}
                 </Section>
 
                 {/* NOTES */}
@@ -518,48 +579,56 @@ export default function ShiftSignoffScreen() {
                     style={{ minHeight: 70, textAlignVertical: "top" }}
                     maxLength={2000}
                   />
-                </View>
 
-                {/* SIGNATURE */}
-                <View className="mb-3">
-                  <Text className="text-slate-500 dark:text-slate-400 text-[11px] font-semibold uppercase tracking-wide mb-2">
-                    Signature
-                  </Text>
-                  <SignaturePad
-                    description={
-                      signatureUri ? "Signature captured — tap to redo" : "Tap to sign"
-                    }
-                    okText="Save signature"
-                    onOK={(uri) => setSignatureUri(uri)}
-                    onClear={() => setSignatureUri(null)}
-                    trigger={(openPad) => (
-                      <TouchableOpacity
-                        onPress={openPad}
-                        className={`flex-row items-center justify-between p-4 rounded-2xl border ${
-                          signatureUri
-                            ? "bg-green-50 dark:bg-green-900/20 border-green-300 dark:border-green-800"
-                            : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700"
-                        }`}
-                      >
-                        <View className="flex-row items-center gap-2">
-                          <PenLine
-                            size={16}
-                            color={signatureUri ? "#16a34a" : "#64748b"}
+                  {/* Image thumbnails */}
+                  {images.length > 0 && (
+                    <View className="flex-row flex-wrap gap-2 mt-3">
+                      {images.map((uri) => (
+                        <View key={uri} className="relative">
+                          <Image
+                            source={{ uri }}
+                            style={{ width: 64, height: 64, borderRadius: 8 }}
                           />
-                          <Text
-                            className={`text-sm font-semibold ${
-                              signatureUri
-                                ? "text-green-700 dark:text-green-400"
-                                : "text-slate-600 dark:text-slate-300"
-                            }`}
+                          <TouchableOpacity
+                            onPress={() => removeImage(uri)}
+                            className="absolute -top-1.5 -right-1.5 bg-red-600 rounded-full w-5 h-5 items-center justify-center"
                           >
-                            {signatureUri ? "Signature captured" : "Tap to sign"}
-                          </Text>
+                            <Trash2 size={11} color="#ffffff" />
+                          </TouchableOpacity>
                         </View>
-                        {signatureUri && <Check size={18} color="#16a34a" />}
-                      </TouchableOpacity>
-                    )}
-                  />
+                      ))}
+                    </View>
+                  )}
+
+                  {/* Attach buttons */}
+                  <View className="flex-row gap-2 mt-3 pt-3 border-t border-slate-100 dark:border-slate-800">
+                    <TouchableOpacity
+                      onPress={() => pickImage(true)}
+                      disabled={uploadingImage || images.length >= MAX_SIGNOFF_IMAGES}
+                      className="flex-1 flex-row items-center justify-center gap-1.5 py-2 rounded-xl bg-slate-100 dark:bg-slate-800"
+                    >
+                      <Camera size={15} color="#64748b" />
+                      <Text className="text-slate-600 dark:text-slate-300 text-xs font-semibold">
+                        Camera
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => pickImage(false)}
+                      disabled={uploadingImage || images.length >= MAX_SIGNOFF_IMAGES}
+                      className="flex-1 flex-row items-center justify-center gap-1.5 py-2 rounded-xl bg-slate-100 dark:bg-slate-800"
+                    >
+                      {uploadingImage ? (
+                        <ActivityIndicator size="small" color="#64748b" />
+                      ) : (
+                        <>
+                          <ImagePlus size={15} color="#64748b" />
+                          <Text className="text-slate-600 dark:text-slate-300 text-xs font-semibold">
+                            Gallery
+                          </Text>
+                        </>
+                      )}
+                    </TouchableOpacity>
+                  </View>
                 </View>
 
                 {/* DECLARATION */}
@@ -571,7 +640,7 @@ export default function ShiftSignoffScreen() {
                   <View
                     className={`w-5 h-5 rounded-md items-center justify-center mt-0.5 ${
                       declaration
-                        ? "bg-blue-600 border-blue-600"
+                        ? "bg-red-600 border-red-600"
                         : "border-2 border-slate-300 dark:border-slate-600"
                     }`}
                   >
@@ -591,11 +660,9 @@ export default function ShiftSignoffScreen() {
                     <Text className="text-slate-400 dark:text-slate-500 text-[11px]">
                       {!allReviewed
                         ? "Review all 3 sections to continue"
-                        : !signatureUri
-                          ? "Add your signature to continue"
-                          : !declaration
-                            ? "Accept the declaration to continue"
-                            : ""}
+                        : !declaration
+                          ? "Accept the declaration to continue"
+                          : ""}
                     </Text>
                   </View>
                 )}
@@ -603,7 +670,7 @@ export default function ShiftSignoffScreen() {
                   disabled={!canSubmit}
                   onPress={onSubmit}
                   className={`rounded-2xl py-4 items-center flex-row justify-center gap-2 ${
-                    canSubmit ? "bg-blue-600" : "bg-slate-200 dark:bg-slate-800"
+                    canSubmit ? "bg-red-600" : "bg-slate-200 dark:bg-slate-800"
                   }`}
                 >
                   {submitting ? (
@@ -630,6 +697,9 @@ export default function ShiftSignoffScreen() {
             )}
           </ScrollView>
         </KeyboardAvoidingView>
+
+        {/* Shared ticket detail modal (editable — same as tickets/dashboard) */}
+        <TicketDetailModal {...ticketModalProps} />
       </SafeAreaView>
     </View>
   );
@@ -692,24 +762,16 @@ function Section({
           <TouchableOpacity
             onPress={onReview}
             disabled={reviewed}
-            className={`mt-3 py-2.5 rounded-xl flex-row items-center justify-center gap-1.5 border ${
-              reviewed
-                ? "bg-green-50 dark:bg-green-900/20 border-green-300 dark:border-green-800"
-                : "bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700"
+            className={`mt-3 py-3 rounded-xl flex-row items-center justify-center gap-1.5 ${
+              reviewed ? "bg-green-600" : "bg-red-600"
             }`}
           >
             {reviewed ? (
-              <Check size={14} color="#16a34a" />
+              <Check size={15} color="#ffffff" />
             ) : (
-              <Eye size={14} color="#64748b" />
+              <Eye size={15} color="#ffffff" />
             )}
-            <Text
-              className={`text-xs font-semibold ${
-                reviewed
-                  ? "text-green-700 dark:text-green-400"
-                  : "text-slate-600 dark:text-slate-300"
-              }`}
-            >
+            <Text className="text-xs font-bold text-white">
               {reviewed ? `${reviewLabel} ✓` : `Tap to confirm — ${reviewLabel}`}
             </Text>
           </TouchableOpacity>
