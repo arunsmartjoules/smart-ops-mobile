@@ -1661,6 +1661,11 @@ export const SiteLogService: ISiteLogService = {
     const netState = await NetInfo.fetch();
     if (netState.isConnected === false) return;
 
+    // This is a narrow prefetch (one category/site, pending-only, ±1 day). It
+    // must NOT stamp the whole domain fresh — doing so made SyncEngine's TTL
+    // gate skip the broader all-status/all-category/7-day pull for the domain's
+    // TTL, leaving other sites' and categories' data stale after opening one
+    // screen. stampSync:false keeps the real background sync eligible.
     const normalized = normalizeLogName(logName);
     if (normalized === "Chiller Logs") {
       const fromDateObj = startOfDay(addDays(new Date(), -1));
@@ -1668,6 +1673,7 @@ export const SiteLogService: ISiteLogService = {
       await this.pullChillerReadings(siteCode, {
         fromDate: fromDateObj.getTime(),
         toDate: toDateObj.getTime(),
+        stampSync: false,
       });
       return;
     }
@@ -1675,6 +1681,7 @@ export const SiteLogService: ISiteLogService = {
     await this.pullSiteLogs(siteCode, {
       logName: normalized,
       status: "pending",
+      stampSync: false,
     });
   },
 

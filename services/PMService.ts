@@ -396,7 +396,11 @@ const PMService = {
         // Avoid overwriting if this specific instance has a pending local change
         const pendingIds = await this.getPendingInstanceIds();
         if (!pendingIds.includes(record.id)) {
-          await cacheManager.write("pm_instances", [record]);
+          // stampSync:false — caching ONE instance (e.g. opening a PM detail)
+          // must not mark the whole pm_instances domain fresh, which would make
+          // SyncEngine's TTL gate skip the next multi-site pull and leave other
+          // sites' instances stale.
+          await cacheManager.write("pm_instances", [record], { stampSync: false });
         }
         return record as PMInstanceRow;
       }

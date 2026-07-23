@@ -381,8 +381,8 @@ export const TicketsService = {
         });
       }
 
-      // 2. Create offline update record for sync
-      await cacheManager.enqueue({
+      // 2. Create offline update record for sync (durably, before the network attempt)
+      const queueId = await cacheManager.enqueue({
         entity_type: "ticket_update",
         operation: "update",
         payload: {
@@ -398,6 +398,16 @@ export const TicketsService = {
         method: "PATCH",
         body: JSON.stringify({ status, remarks }),
       });
+
+      // 4. When the live PATCH confirms, the queued copy is redundant — drop it.
+      // Same fix as updateTicket: leaving it made SyncEngine replay the status
+      // change (a phantom second write) and made the tickets screen's realtime
+      // handler suppress the incoming status while a pending queue item for this
+      // ticket lingered — so a just-resolved ticket kept showing its old status.
+      // On any failure we keep the item for offline replay.
+      if (result?.success === true && queueId) {
+        await cacheManager.dequeue(queueId).catch(() => {});
+      }
 
       return result;
     } catch (err: any) {

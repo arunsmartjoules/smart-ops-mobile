@@ -667,17 +667,8 @@ class SyncEngineImpl implements SyncEngine {
       (nextState: AppStateStatus) => this.onAppStateChange(nextState),
     );
 
-    // 15-minute background interval (Req 2.3)
-    this.intervalHandle = setInterval(() => {
-      if (this._status.connected) {
-        this.syncNow().catch((e) =>
-          logger.warn("SyncEngine: interval sync failed", {
-            module: "SYNC_ENGINE",
-            error: e,
-          }),
-        );
-      }
-    }, 15 * 60 * 1000);
+    // 15-minute foreground interval (Req 2.3)
+    this.startForegroundInterval();
 
     // Trigger an initial sync if online
     if (this.wasConnected) {
@@ -1368,6 +1359,30 @@ class SyncEngineImpl implements SyncEngine {
     );
   }
 
+  // ── Foreground interval helper ──────────────────────────────────────────
+  //
+  // The 15-minute foreground poll is cleared when the app backgrounds (see
+  // onAppStateChange) and must be recreated on the next foreground. Without a
+  // shared helper the "active" branch never restarted it, so the periodic sync
+  // died permanently after the first background cycle. Always clear before
+  // (re)creating so we can't stack two intervals.
+  private startForegroundInterval(): void {
+    if (this.intervalHandle !== null) {
+      clearInterval(this.intervalHandle);
+      this.intervalHandle = null;
+    }
+    this.intervalHandle = setInterval(() => {
+      if (this._status.connected && this.userId) {
+        this.syncNow().catch((e) =>
+          logger.warn("SyncEngine: interval sync failed", {
+            module: "SYNC_ENGINE",
+            error: e,
+          }),
+        );
+      }
+    }, 15 * 60 * 1000);
+  }
+
   // ── Event handlers ────────────────────────────────────────────────────────
 
   private onNetworkChange(state: NetInfoState): void {
@@ -1391,7 +1406,11 @@ class SyncEngineImpl implements SyncEngine {
 
   private onAppStateChange(nextState: AppStateStatus): void {
     if (nextState === "active") {
-      // App came to foreground — trigger sync if online (Req 2.1)
+      // App came to foreground — restart the periodic poll (it's cleared on
+      // background) and trigger an immediate sync if online (Req 2.1).
+      if (this.userId) {
+        this.startForegroundInterval();
+      }
       if (this._status.connected && this.userId) {
         this.syncNow().catch((e) =>
           logger.warn("SyncEngine: foreground sync failed", {

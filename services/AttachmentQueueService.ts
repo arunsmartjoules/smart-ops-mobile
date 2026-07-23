@@ -173,6 +173,29 @@ export const AttachmentQueueService = {
       return;
     }
 
+    // Dead-letter cap. A failed upload throws a status-less Error, which
+    // SyncEngine classifies as transient (statusCode 0) — so it never
+    // increments the offline_queue retry_count and would re-attempt this upload
+    // on EVERY sync cycle forever (a corrupt/deleted file wedges every flush).
+    // The attachment_queue.retry_count IS bumped on each failure below, so gate
+    // on it here: past the cap, give up and return normally so the offline_queue
+    // item is dequeued instead of looping.
+    const ATTACHMENT_MAX_RETRIES = 5;
+    if ((item.retry_count ?? 0) > ATTACHMENT_MAX_RETRIES) {
+      await db
+        .update(attachmentQueue)
+        .set({ status: "dead_letter", updated_at: Date.now() })
+        .where(eq(attachmentQueue.id, queueItemId))
+        .catch(() => {});
+      logger.warn("AttachmentQueueService: upload exceeded retry cap, dead-lettered", {
+        module: "ATTACHMENT_QUEUE",
+        queueItemId,
+        retryCount: item.retry_count,
+        lastError: item.last_error,
+      });
+      return;
+    }
+
     // Mark as uploading
     await db
       .update(attachmentQueue)
