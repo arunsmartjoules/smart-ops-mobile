@@ -1322,6 +1322,28 @@ class SyncEngineImpl implements SyncEngine {
     const resp = await apiFetch(
       `/api/pm-instances/${id}?fields=id,status,progress,completed_on`,
     );
+
+    // 404 → the server has no such PM (deleted/regenerated, or this local UUID
+    // is a stale orphan after a re-import). There is nothing to reconcile TO and
+    // retrying the reconcile-GET would 404 forever, so remove the dead local row
+    // (which also un-inflates the local PM counts) and return normally — that
+    // lets _flushQueue dequeue the rejected completion instead of looping.
+    if (resp.status === 404) {
+      await db
+        .delete(pmInstances)
+        .where(eq(pmInstances.id, id))
+        .catch(() => {});
+      logger.error(
+        "SyncEngine: PM completion rejected and instance is gone server-side; removed local orphan row",
+        { module: "SYNC_ENGINE", instanceId: id, reason },
+      );
+      Alert.alert(
+        "PM completion didn't sync",
+        `${reason}\n\nThis PM is no longer on the server — it was refreshed/regenerated. It's been removed here; pull to refresh and open the current one.`,
+      );
+      return;
+    }
+
     if (!resp.ok) {
       const err: any = new Error(
         `pm-instance reconcile fetch failed: ${resp.status}`,

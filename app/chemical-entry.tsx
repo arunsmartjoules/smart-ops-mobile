@@ -8,8 +8,13 @@ import {
   ActivityIndicator,
   Image,
   Modal,
+  KeyboardAvoidingView,
+  Platform,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import {
+  SafeAreaView,
+  useSafeAreaInsets,
+} from "react-native-safe-area-context";
 import { router, useLocalSearchParams } from "expo-router";
 import {
   ChevronLeft,
@@ -22,6 +27,7 @@ import {
 import SiteLogService from "@/services/SiteLogService";
 import { formatAssignee } from "@/utils/assignee";
 import { useAuth } from "@/contexts/AuthContext";
+import { useTheme } from "@/contexts/ThemeContext";
 import { useAttendanceGate } from "@/contexts/AttendanceGateContext";
 import { ViewOnlyEntryNotice } from "@/components/ViewOnlyEntryNotice";
 import * as ImagePicker from "expo-image-picker";
@@ -37,6 +43,8 @@ export default function ChemicalEntry() {
 
 function ChemicalEntryContent() {
   const { user } = useAuth();
+  const insets = useSafeAreaInsets();
+  const { isDark } = useTheme();
   const params = useLocalSearchParams<{
     id?: string;
     areaId?: string;
@@ -331,7 +339,7 @@ function ChemicalEntryContent() {
             hitSlop={{ top: 20, bottom: 20, left: 20, right: 20 }}
             className="w-10 h-10 rounded-full bg-slate-50 dark:bg-slate-800 items-center justify-center"
           >
-            <ChevronLeft size={20} color="#0f172a" />
+            <ChevronLeft size={20} color={isDark ? "#e2e8f0" : "#0f172a"} />
           </TouchableOpacity>
           <View className="items-center">
             <Text className="text-slate-900 dark:text-slate-50 font-bold text-lg">
@@ -344,7 +352,15 @@ function ChemicalEntryContent() {
           <View className="w-10" />
         </View>
 
-        <ScrollView className="flex-1 p-5" showsVerticalScrollIndicator={false}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : "height"}
+          style={{ flex: 1 }}
+        >
+        <ScrollView
+          className="flex-1 p-5"
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+        >
           {isEditMode && (
             <View className="mb-1">
               <Text className="text-slate-500 dark:text-slate-400 text-[10px] font-bold uppercase tracking-widest mb-1.5 ml-1">
@@ -427,9 +443,13 @@ function ChemicalEntryContent() {
             <View className="h-24" />
           </View>
         </ScrollView>
+        </KeyboardAvoidingView>
 
         {/* Fixed Bottom Buttons */}
-        <View className="absolute bottom-0 left-0 right-0 bg-white dark:bg-slate-900 border-t border-slate-100 dark:border-slate-800 px-5 pb-8 pt-4 flex-row gap-3">
+        <View
+          className="absolute bottom-0 left-0 right-0 bg-white dark:bg-slate-900 border-t border-slate-100 dark:border-slate-800 px-5 pt-4 flex-row gap-3"
+          style={{ paddingBottom: Math.max(insets.bottom, 16) }}
+        >
           <TouchableOpacity
             onPress={handleSave}
             disabled={saving}

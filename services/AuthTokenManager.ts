@@ -1,5 +1,6 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { API_BASE_URL } from "../constants/api";
+import { authEvents } from "../utils/authEvents";
 
 // JouleOps session tokens (issued by /api/auth/login|google|refresh). Replaces
 // the old Firebase ID token. Kept in AsyncStorage so the session survives app
@@ -105,13 +106,25 @@ export async function forceRefreshAuthToken(): Promise<string | null> {
 
   refreshInFlight = (async () => {
     const refreshToken = await getStoredRefreshToken();
-    if (!refreshToken) return null;
+    if (!refreshToken) {
+      // No refresh token at all — the session can't be refreshed. Re-auth.
+      authEvents.emitUnauthorized("session_expired");
+      return null;
+    }
     try {
       const res = await fetch(`${API_BASE_URL}/api/auth/refresh`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ refresh_token: refreshToken }),
       });
+      // 401 = the refresh token is dead (revoked / expired / logged out). This
+      // is unrecoverable, so signal re-authentication. Other non-2xx (5xx,
+      // network) are transient — return null and let the caller retry later
+      // without disturbing the session.
+      if (res.status === 401) {
+        authEvents.emitUnauthorized("session_expired");
+        return null;
+      }
       if (!res.ok) return null;
       const data = await res.json().catch(() => null);
       const newAccess: string | undefined = data?.data?.token;

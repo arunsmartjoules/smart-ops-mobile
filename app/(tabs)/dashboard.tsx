@@ -1163,9 +1163,15 @@ export default function Dashboard() {
       const handle = InteractionManager.runAfterInteractions(() => {
         detectCurrentSite();
       });
+      // Poll every 60s, not 15s. detectCurrentSite does a GPS fix + a
+      // validateLocation network round-trip; at 15s that was ~240 geo+network
+      // hits/hour of dwell (battery + mobile-data drain in plant rooms) for a
+      // header label that only changes when the operator physically moves
+      // between sites — minutes-scale, not seconds. Foreground/focus + the
+      // mount effect still refresh it promptly on open.
       const interval = setInterval(() => {
         detectCurrentSite();
-      }, 15000);
+      }, 60000);
       return () => {
         handle.cancel?.();
         clearInterval(interval);

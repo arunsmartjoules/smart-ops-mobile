@@ -505,8 +505,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   // revoked (e.g. an admin deactivates the account -> USER_BLOCKED).
   useEffect(() => {
     const unsubscribe = authEvents.subscribe((reason) => {
-      if (reason === "session_revoked") {
-        logger.warn("Session revoked event received. Signing out.", {
+      // A revoked account (admin deactivation) or a genuinely-dead refresh token
+      // (revoked/expired/logged-out) cannot be recovered — sign out so the
+      // operator re-authenticates instead of being stuck on "Token expired".
+      // Generic 401s (which the API layer transparently refresh-and-retries) do
+      // NOT sign the user out.
+      if (reason === "session_revoked" || reason === "session_expired") {
+        logger.warn("Session ended event received. Signing out.", {
           module: "AUTH_CONTEXT",
           reason,
         });

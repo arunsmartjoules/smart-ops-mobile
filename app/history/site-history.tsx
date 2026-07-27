@@ -1,4 +1,11 @@
-import React, { useState, useEffect, useCallback, useMemo, memo } from "react";
+import React, {
+  useState,
+  useEffect,
+  useCallback,
+  useMemo,
+  memo,
+  useDeferredValue,
+} from "react";
 import {
   View,
   Text,
@@ -7,8 +14,8 @@ import {
   Alert,
   RefreshControl,
   ScrollView,
-  Image,
 } from "react-native";
+import { Image } from "expo-image";
 import { FlashList } from "@shopify/flash-list";
 import { SafeAreaView } from "react-native-safe-area-context";
 import EmptyState from "@/components/EmptyState";
@@ -232,10 +239,15 @@ const HistoryItem = memo(
                 className="flex-row items-center"
               >
                 <View className="w-10 h-10 rounded-lg overflow-hidden bg-slate-100 mr-2.5">
-                  <Image 
+                  {/* expo-image: disk+memory cached and decoded to the 40×40
+                      render bounds, instead of RN Image re-decoding the full-res
+                      S3 original into a thumbnail on every mount/scroll. */}
+                  <Image
                     source={{ uri: item.attachment || item.attachments }}
-                    className="w-full h-full"
-                    resizeMode="cover"
+                    style={{ width: "100%", height: "100%" }}
+                    contentFit="cover"
+                    cachePolicy="memory-disk"
+                    transition={100}
                   />
                   <View className="absolute inset-0 bg-black/10 items-center justify-center">
                     <Maximize2 size={10} color="white" />
@@ -314,6 +326,10 @@ export default function SiteHistory() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  // Deferred copy so the TextInput stays responsive: filteredLogs runs a
+  // per-log toLowerCase sweep (and previously a date format) over every log in
+  // memory, which lagged typing when the search ran synchronously per keystroke.
+  const deferredSearchQuery = useDeferredValue(searchQuery);
   const [filterVisible, setFilterVisible] = useState(false);
   const [selectedShift, setSelectedShift] = useState("");
   const [availableSites, setAvailableSites] = useState<Site[]>([]);
@@ -442,8 +458,8 @@ export default function SiteHistory() {
       );
     }
 
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
+    if (deferredSearchQuery.trim()) {
+      const q = deferredSearchQuery.toLowerCase();
       filtered = filtered.filter((log) => {
         const dateStr = format(
           new Date(log.created_at || log.createdAt),
@@ -465,7 +481,7 @@ export default function SiteHistory() {
     }
 
     return filtered;
-  }, [logs, searchQuery, selectedShift]);
+  }, [logs, deferredSearchQuery, selectedShift]);
 
   const statusSummary = useMemo(() => {
     return filteredLogs.reduce(

@@ -1491,7 +1491,13 @@ export const SiteLogService: ISiteLogService = {
     const stampSync = options?.stampSync !== false;
     const throwOnError = options?.throwOnError === true;
     try {
-      let url = `/api/chiller-readings/site/${siteCode}?limit=100`;
+      // Use the same generous cap as pullSiteLogs. The old 100 combined with the
+      // delete-stale pass below to DELETE server-present rows: a site with >100
+      // in-range readings got only the newest 100 back, and every reading beyond
+      // that (still on the server) was wiped locally and re-fetched next sync —
+      // flapping on every cycle.
+      const url0 = `/api/chiller-readings/site/${siteCode}?limit=${PULL_SITE_LOGS_LIMIT}`;
+      let url = url0;
       if (options.fromDate) url += `&fromDate=${options.fromDate}`;
       if (options.toDate) url += `&toDate=${options.toDate}`;
 
@@ -1507,13 +1513,28 @@ export const SiteLogService: ISiteLogService = {
       }
       {
         const result = await response.json();
-        const serverReadingIds = new Set(result.data.map((r: any) => r.id));
+        const serverData = result.data || [];
+        const serverReadingIds = new Set(serverData.map((r: any) => r.id));
+
+        // Only trust "absent on server ⇒ delete locally" when the response is the
+        // COMPLETE set. If it hit the row cap, an in-range local reading could be
+        // missing simply because it didn't fit the page — deleting it would drop
+        // a valid server row. Skip the stale-cleanup pass entirely when truncated.
+        const responseTruncated = serverData.length >= PULL_SITE_LOGS_LIMIT;
+        if (responseTruncated) {
+          logger.warn(
+            "pullChillerReadings response hit the row cap — skipping stale-row cleanup to avoid deleting valid readings",
+            { module: "SITE_LOG_SERVICE", count: serverData.length, siteCode },
+          );
+        }
 
         // Find synced records to delete if they no longer exist on the server
-        const allLocal = await db
-          .select()
-          .from(chillerReadings)
-          .where(eq(chillerReadings.site_code, siteCode));
+        const allLocal = responseTruncated
+          ? []
+          : await db
+              .select()
+              .from(chillerReadings)
+              .where(eq(chillerReadings.site_code, siteCode));
 
         for (const localLog of allLocal) {
           if (localLog.id && !serverReadingIds.has(localLog.id)) {

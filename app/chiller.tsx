@@ -450,10 +450,10 @@ function ChillerEntryContent() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [targetId]);
 
-  useEffect(() => {
-    loadDailyProgress(true);
-  }, [loadDailyProgress]);
-
+  // useFocusEffect already fires on mount AND on every focus, so a separate
+  // mount useEffect calling loadDailyProgress(true) just fired a second,
+  // redundant pullChillerReadings network pull back-to-back on every open and
+  // site change. Rely on the focus effect alone.
   useFocusEffect(
     useCallback(() => {
       loadDailyProgress(true);

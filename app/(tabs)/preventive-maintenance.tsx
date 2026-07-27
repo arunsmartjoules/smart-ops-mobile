@@ -4,6 +4,7 @@ import React, {
   useMemo,
   useRef,
   useEffect,
+  useDeferredValue,
 } from "react";
 import {
   View,
@@ -410,6 +411,12 @@ export default function PreventiveMaintenance() {
 
   const [tempSearch, setTempSearch] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
+  // Deferred copy for the expensive per-row filter below. The TextInput stays
+  // bound to searchQuery (instant echo), but filteredInstances — which runs an
+  // O(n) toLowerCase + IST date-format sweep over every cached PM per keystroke
+  // — reads the deferred value, so typing no longer stutters on mid-range
+  // Android with a few hundred instances cached.
+  const deferredSearchQuery = useDeferredValue(searchQuery);
   const [tempFromDate, setTempFromDate] = useState<string | null>(
     istMonthStart(),
   );
@@ -637,8 +644,8 @@ export default function PreventiveMaintenance() {
     // 2. Apply Search or QR Filter
     if (qrAssetFilter) {
       list = list.filter((i) => i.asset_id === qrAssetFilter);
-    } else if (searchQuery) {
-      const q = searchQuery.toLowerCase();
+    } else if (deferredSearchQuery) {
+      const q = deferredSearchQuery.toLowerCase();
       list = list.filter((i) => {
         const dateObj = i.start_due_date ? new Date(i.start_due_date) : null;
         const dueDateStr = dateObj
@@ -685,7 +692,7 @@ export default function PreventiveMaintenance() {
   }, [
     allInstances,
     statusFilter,
-    searchQuery,
+    deferredSearchQuery,
     qrAssetFilter,
     currentDate,
     toDate,

@@ -242,11 +242,20 @@ export const LogEntryModule = ({
     await loadTasks(false, true);
   };
 
-  // Save Draft
+  // Save Draft (debounced). Serializing the WHOLE form to AsyncStorage on every
+  // keystroke stringified the entire logValues map per character — visible lag
+  // on multi-room sites. Debounce so the write only fires ~400ms after typing
+  // pauses; the SQLite auto-save (updateValue) already covers durable persistence.
   useEffect(() => {
     if (siteCode && Object.keys(logValues).length > 0 && !editId) {
       const draftKey = `draft_${type.toLowerCase()}_${siteCode}_${user?.id}_${scheduledDate}${shift ? `_${shift}` : ""}`;
-      AsyncStorage.setItem(draftKey, JSON.stringify({ values: logValues, signature }));
+      const t = setTimeout(() => {
+        AsyncStorage.setItem(
+          draftKey,
+          JSON.stringify({ values: logValues, signature }),
+        ).catch(() => {});
+      }, 400);
+      return () => clearTimeout(t);
     }
   }, [logValues, signature, editId, siteCode, scheduledDate, shift, type, user?.id]);
 

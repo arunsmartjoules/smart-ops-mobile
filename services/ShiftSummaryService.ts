@@ -211,20 +211,18 @@ export const ShiftSummaryService = {
       for (const r of rows as any[]) {
         // Scope to this operator's PMs by name (when assigned).
         if (!meSet.has(norm(r.assigned_to_name))) continue;
-        const status = norm(r.status);
 
+        // Match the PM screen exactly: count only PMs DUE today (by
+        // start_due_date), then bucket by status. Scoping by due date — not by
+        // completion time — stops an older in-progress/overdue PM carried over
+        // from another day from showing up as "in progress" here when the PM
+        // screen (filtered to today's due date) shows none.
+        if (!inToday(r.start_due_date, dayStart, dayEnd)) continue;
+
+        const status = norm(r.status);
         let bucket: "done" | "inProgress" | null = null;
-        if (PM_DONE.has(status)) {
-          // Completed today (or completion time unknown but marked done).
-          if (
-            r.completed_on == null ||
-            inToday(r.completed_on, dayStart, dayEnd)
-          ) {
-            bucket = "done";
-          }
-        } else if (PM_INPROGRESS.has(status)) {
-          bucket = "inProgress";
-        }
+        if (PM_DONE.has(status)) bucket = "done";
+        else if (PM_INPROGRESS.has(status)) bucket = "inProgress";
         // Pending / Overdue are not part of the shift summary.
         if (!bucket) continue;
 
