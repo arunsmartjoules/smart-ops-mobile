@@ -47,6 +47,7 @@
     "plugins": [
       "expo-router",
       "@react-native-google-signin/google-signin",
+      "./plugins/withGoogleSigninModularHeaders",
       [
         "expo-splash-screen",
         {
