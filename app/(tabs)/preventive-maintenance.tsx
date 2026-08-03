@@ -203,21 +203,12 @@ const PMCard = React.memo(
             >
               {instance.title || instance.asset_id || "PM Task"}
             </Text>
-            <View className="flex-row items-center mt-1">
-              <Text
-                className="text-slate-500 dark:text-slate-400 text-[11px] font-medium flex-shrink"
-                numberOfLines={1}
-              >
-                {instance.asset_id || "Unknown Asset"}
-              </Text>
-              <View className="w-1 h-1 rounded-full bg-slate-300 dark:bg-slate-600 mx-2" />
-              <Text
-                className="text-slate-400 dark:text-slate-500 text-[11px] uppercase flex-shrink-0"
-                numberOfLines={1}
-              >
-                {instance.frequency || "ONCE"}
-              </Text>
-            </View>
+            <Text
+              className="text-slate-500 dark:text-slate-400 text-[11px] font-medium mt-1"
+              numberOfLines={2}
+            >
+              {instance.asset_id || "Unknown Asset"}
+            </Text>
           </View>
 
           <View
@@ -242,10 +233,17 @@ const PMCard = React.memo(
           <View className="flex-row items-center flex-shrink mr-2">
             <Clock size={12} color="#94a3b8" />
             <Text
-              className="text-slate-500 dark:text-slate-400 text-[10.5px] font-medium ml-1 flex-shrink"
+              className="text-slate-500 dark:text-slate-400 text-[10.5px] font-medium ml-1 flex-shrink-0"
               numberOfLines={1}
             >
               {`Due ${safeFormat(instance.start_due_date, "d MMM yyyy")}`}
+            </Text>
+            <View className="w-1 h-1 rounded-full bg-slate-300 dark:bg-slate-600 mx-1.5 flex-shrink-0" />
+            <Text
+              className="text-slate-400 dark:text-slate-500 text-[10.5px] font-medium uppercase flex-shrink-0"
+              numberOfLines={1}
+            >
+              {instance.frequency || "ONCE"}
             </Text>
             {showCompletedDate && instance.completed_on ? (
               <Text
