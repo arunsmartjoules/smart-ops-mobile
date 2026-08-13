@@ -39,12 +39,13 @@ import { format } from "date-fns";
 import { APP_VERSION_DISPLAY } from "@/constants/version";
 
 export default function Profile() {
-  const { user, signOut, refreshProfile } = useAuth();
+  const { user, signOut, deleteAccount, refreshProfile } = useAuth();
   const { theme, setTheme } = useTheme();
 
   const [isCheckingUpdates, setIsCheckingUpdates] = useState(false);
   const [updateAvailable, setUpdateAvailable] = useState(false);
   const [isSigningOut, setIsSigningOut] = useState(false);
+  const [isDeletingAccount, setIsDeletingAccount] = useState(false);
   const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
 
   const pickAndUploadPhoto = useCallback(
@@ -194,6 +195,56 @@ export default function Profile() {
       setIsSigningOut(false);
     }
   }, [signOut, isSigningOut]);
+
+  const performAccountDeletion = useCallback(async () => {
+    if (isDeletingAccount) return;
+    setIsDeletingAccount(true);
+    try {
+      await deleteAccount();
+      router.replace("/sign-in");
+      Alert.alert(
+        "Account Deleted",
+        "Your account has been deleted and you've been signed out.",
+      );
+    } catch (err: any) {
+      Alert.alert(
+        "Couldn't Delete Account",
+        err?.message ||
+          "Something went wrong. Check your connection and try again.",
+      );
+    } finally {
+      setIsDeletingAccount(false);
+    }
+  }, [deleteAccount, isDeletingAccount]);
+
+  const handleDeleteAccount = useCallback(() => {
+    if (isDeletingAccount || isSigningOut) return;
+    // Two-step confirmation: deletion is irreversible from the app's side.
+    Alert.alert(
+      "Delete My Account?",
+      "Your JouleOps account will be deactivated and you'll be signed out on this device. You won't be able to sign in again.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Continue",
+          style: "destructive",
+          onPress: () =>
+            Alert.alert(
+              "This can't be undone",
+              "Are you sure you want to permanently delete your JouleOps account?",
+              [
+                { text: "Keep My Account", style: "cancel" },
+                {
+                  text: "Delete Account",
+                  style: "destructive",
+                  onPress: performAccountDeletion,
+                },
+              ],
+            ),
+        },
+      ],
+    );
+  }, [isDeletingAccount, isSigningOut, performAccountDeletion]);
 
   const handleCheckUpdates = useCallback(async () => {
     setIsCheckingUpdates(true);
@@ -540,6 +591,29 @@ export default function Profile() {
                   Sign Out
                 </Text>
               </>
+            )}
+          </TouchableOpacity>
+
+          {/* Account deletion — required by the App Store review guidelines */}
+          <TouchableOpacity
+            onPress={handleDeleteAccount}
+            disabled={isDeletingAccount || isSigningOut}
+            accessibilityRole="link"
+            accessibilityLabel="Delete my account"
+            className="mt-3 flex-row items-center justify-center py-1"
+            style={{ opacity: isDeletingAccount || isSigningOut ? 0.5 : 1 }}
+          >
+            {isDeletingAccount ? (
+              <>
+                <ActivityIndicator size="small" color="#64748b" />
+                <Text className="text-slate-500 dark:text-slate-400 text-xs ml-2">
+                  Deleting your account…
+                </Text>
+              </>
+            ) : (
+              <Text className="text-slate-500 dark:text-slate-400 text-xs underline">
+                Delete My Account
+              </Text>
             )}
           </TouchableOpacity>
         </View>

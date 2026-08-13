@@ -66,6 +66,8 @@ interface AuthContextType {
   ) => Promise<{ error: any }>;
   signInWithGoogleIdToken: (idToken: string) => Promise<{ error: any }>;
   signOut: () => Promise<void>;
+  /** Soft-deletes the account server-side and wipes this device. */
+  deleteAccount: () => Promise<void>;
   sendPasswordResetCode: (email: string) => Promise<{ error: any }>;
   resetPasswordWithCode: (email: string, code: string, newPassword: string) => Promise<{ error: any }>;
   refreshProfile: () => Promise<void>;
@@ -85,6 +87,7 @@ const AuthContext = createContext<AuthContextType>({
   signUp: async () => ({ error: null }),
   signInWithGoogleIdToken: async () => ({ error: null }),
   signOut: async () => {},
+  deleteAccount: async () => {},
   sendPasswordResetCode: async () => ({ error: null }),
   resetPasswordWithCode: async () => ({ error: null }),
   refreshProfile: async () => {},
@@ -500,6 +503,59 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     setIsEmailVerified(false);
   }, [token]);
 
+  /**
+   * Delete the signed-in user's account (App Store requirement).
+   *
+   * The backend performs a soft delete — the account is marked Inactive and
+   * every session is revoked, so it can no longer sign in. Locally we wipe the
+   * device the same way sign-out does, but WITHOUT the "flush the offline queue
+   * first" gate: the account is gone server-side, so queued mutations can never
+   * be pushed and blocking on them would strand the user in a deleted account.
+   */
+  const deleteAccount = useCallback(async () => {
+    const activeToken = (await getStoredAuthToken()) || token;
+
+    const res = await fetchWithTimeout(`${BACKEND_URL}/api/auth/account`, {
+      method: "DELETE",
+      headers: {
+        "Content-Type": "application/json",
+        ...(activeToken ? { Authorization: `Bearer ${activeToken}` } : {}),
+      },
+    });
+
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}) as any);
+      const msg =
+        body?.error || "Couldn't delete your account. Please try again.";
+      logger.activity(
+        "ACCOUNT_DELETE_FAILURE",
+        "AUTH",
+        `Account deletion failed for ${user?.email || "unknown"}: ${msg}`,
+      );
+      throw new Error(msg);
+    }
+
+    logger.activity(
+      "ACCOUNT_DELETED",
+      "AUTH",
+      `Account deleted for ${user?.email || "unknown"}`,
+    );
+
+    // Best-effort: stop push notifications for this device before the local wipe.
+    if (activeToken) {
+      await unregisterPushToken(activeToken).catch(() => {});
+    }
+
+    await syncEngine.cleanup().catch(() => {});
+    await clearDatabase().catch(() => {});
+    await clearStoredAuthToken();
+    await AsyncStorage.clear();
+
+    setToken(null);
+    setUser(null);
+    setIsEmailVerified(false);
+  }, [token, user?.email]);
+
   // Listen for global auth events, but do not sign users out on generic 401s.
   // Users stay logged in unless they explicitly sign out or their session is
   // revoked (e.g. an admin deactivates the account -> USER_BLOCKED).
@@ -679,6 +735,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       signUp,
       signInWithGoogleIdToken,
       signOut,
+      deleteAccount,
       sendPasswordResetCode,
       resetPasswordWithCode,
       refreshProfile,
@@ -697,6 +754,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       signUp,
       signInWithGoogleIdToken,
       signOut,
+      deleteAccount,
       sendPasswordResetCode,
       resetPasswordWithCode,
       refreshProfile,
