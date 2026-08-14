@@ -129,7 +129,7 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
  * show which screen the user is on.
  */
 function PresenceTracker() {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
   const pathname = usePathname();
 
   useEffect(() => {
@@ -145,6 +145,15 @@ function PresenceTracker() {
   useEffect(() => {
     presenceService.setRoute(pathname || null);
   }, [pathname]);
+
+  // PresenceService has always stamped events with its site code, but nothing
+  // ever called setSite — so mobile_events.site_code was null on all ~147k
+  // rows and no per-site usage breakdown was possible. The signed-in user's
+  // home site is the correct default; screens that operate on a different site
+  // can still override it with presenceService.setSite().
+  useEffect(() => {
+    presenceService.setSite(user?.site_code ?? null);
+  }, [user?.site_code]);
 
   return null;
 }
