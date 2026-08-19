@@ -10,7 +10,7 @@ import {
 } from "react-native";
 import { useTheme } from "@/contexts/ThemeContext";
 import { X, Search as SearchIcon, Calendar } from "lucide-react-native";
-import DateTimePicker from "@react-native-community/datetimepicker";
+import DateTimePicker from "@expo/ui/community/datetime-picker";
 import {
   format,
   isValid,

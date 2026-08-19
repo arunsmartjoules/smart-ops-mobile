@@ -567,6 +567,7 @@ const PMService = {
             sequence_no: item.sequence_no ?? null,
             image_mandatory: !!item.image_mandatory,
             remarks_mandatory: !!item.remarks_mandatory,
+            readings_mandatory: !!item.readings_mandatory,
           };
         }).filter(Boolean) as Record<string, any>[];
         await cacheManager.write("pm_checklist_items", itemRecords);

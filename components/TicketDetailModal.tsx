@@ -1,23 +1,27 @@
 import React from "react";
-import {
-  View,
-  ScrollView,
-  ActivityIndicator,
-  Modal,
-  TouchableOpacity,
-  Text,
-  useWindowDimensions,
-} from "react-native";
+import { Modal, ScrollView, StyleSheet, Text, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { type Ticket } from "@/services/TicketsService";
 import { type SelectOption } from "./SearchableSelect";
-import TicketDetailHeader from "./TicketDetailHeader";
-import TicketAssignee from "./TicketAssignee";
-import TicketDetailInfo from "./TicketDetailInfo";
 import TicketDetailStatusUpdate, {
+  getTicketUpdateBlocker,
   isTempMandatoryCategory,
+  statusLabel,
 } from "./TicketDetailStatusUpdate";
-import TicketLineItems from "./TicketLineItems";
-import { useTheme } from "@/contexts/ThemeContext";
+import TicketActivity from "@/components/tickets/TicketActivity";
+import {
+  Badge,
+  DetailCard,
+  DetailHeader,
+  MetaBlock,
+  SubmitBar,
+} from "@/components/tickets/TicketDetailUI";
+import {
+  getTicketPriority,
+  getTicketStatus,
+} from "@/components/tickets/TicketsUI";
+import { ds } from "@/constants/ds";
+import { formatIST } from "@/utils/istDate";
 import type { TicketIncidentDraft } from "@/constants/incidentFormOptions";
 
 interface TicketDetailModalProps {
@@ -58,6 +62,16 @@ interface TicketDetailModalProps {
   canEdit?: boolean;
 }
 
+const raisedLine = (ticket: Ticket) => {
+  const ms = Date.parse(ticket.created_at || "");
+  if (Number.isNaN(ms)) return ticket.site_name || ticket.site_code;
+  const d = new Date(ms);
+  return `Raised ${formatIST(d, { day: "numeric", month: "short" })} · ${formatIST(
+    d,
+    { hour: "2-digit", minute: "2-digit", hour12: false },
+  )}`;
+};
+
 const TicketDetailModal = React.memo(
   ({
     visible,
@@ -95,9 +109,17 @@ const TicketDetailModal = React.memo(
     setIncidentDraft,
     canEdit = true,
   }: TicketDetailModalProps) => {
+    const insets = useSafeAreaInsets();
+    // Turns the hints and the sticky bar's message on only once the operator
+    // has actually tried to submit.
+    const [attempted, setAttempted] = React.useState(false);
+
+    React.useEffect(() => {
+      if (visible) setAttempted(false);
+    }, [visible, ticket?.id]);
+
     const isDirty = React.useMemo(() => {
       if (!ticket) return false;
-      // Compare with original ticket values
       const originalRemarks = ticket.internal_remarks || "";
       const originalArea = ticket.area_asset || "";
       const originalCategory = ticket.category || "";
@@ -115,7 +137,7 @@ const TicketDetailModal = React.memo(
         updateStatus !== ticket.status ||
         updateRemarks.trim() !== originalRemarks.trim() ||
         updateArea !== originalArea ||
-        // Category now starts unselected; an empty value is "not yet chosen",
+        // An empty category is "not yet chosen" (an Open ticket carries none),
         // not a change away from the ticket's existing category.
         (updateCategory.trim() !== "" &&
           updateCategory.trim() !== originalCategory.trim()) ||
@@ -137,131 +159,147 @@ const TicketDetailModal = React.memo(
       createIncidentFromTicket,
     ]);
 
-    const { height: windowHeight } = useWindowDimensions();
-    const { isDark } = useTheme();
+    const blocker = React.useMemo(
+      () =>
+        ticket
+          ? getTicketUpdateBlocker({
+              ticket,
+              updateStatus,
+              updateRemarks,
+              updateArea,
+              updateCategory,
+              updateBreakdownType,
+              beforeTemp,
+              afterTemp,
+              createIncidentFromTicket,
+              incidentDraft,
+            })
+          : null,
+      [
+        ticket,
+        updateStatus,
+        updateRemarks,
+        updateArea,
+        updateCategory,
+        updateBreakdownType,
+        beforeTemp,
+        afterTemp,
+        createIncidentFromTicket,
+        incidentDraft,
+      ],
+    );
 
     if (!ticket || !visible) return null;
 
-    const modalHeight = Math.min(windowHeight * 0.92, 780);
+    const status = getTicketStatus(ticket.status);
+    const priority = getTicketPriority(ticket.priority);
+    const ready = isDirty && !blocker;
 
     return (
-      <Modal visible={visible} animationType="slide" transparent={true} statusBarTranslucent={true}>
-        <View
-          style={{
-            flex: 1,
-            backgroundColor: "rgba(0,0,0,0.55)",
-            justifyContent: "flex-end",
-          }}
-        >
-          <View
-            style={{
-              backgroundColor: isDark ? "#0f172a" : "#ffffff",
-              borderTopLeftRadius: 36,
-              borderTopRightRadius: 36,
-              paddingHorizontal: 22,
-              paddingTop: 14,
-              paddingBottom: 18,
-              height: modalHeight,
-              minHeight: 420,
-              shadowColor: "#000",
-              shadowOffset: { width: 0, height: -8 },
-              shadowOpacity: isDark ? 0.3 : 0.1,
-              shadowRadius: 16,
-              elevation: 12,
-            }}
+      <Modal
+        visible={visible}
+        animationType="slide"
+        presentationStyle="fullScreen"
+        onRequestClose={onClose}
+      >
+        <View style={styles.screen}>
+          <DetailHeader
+            topInset={insets.top}
+            title={ticket.ticket_no}
+            subtitle={raisedLine(ticket)}
+            onBack={onClose}
+          />
+
+          <ScrollView
+            style={{ flex: 1 }}
+            contentContainerStyle={styles.body}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
           >
-            <TicketDetailHeader ticket={ticket} onClose={onClose} />
-
-            <View style={{ flex: 1 }}>
-              <ScrollView
-                showsVerticalScrollIndicator={false}
-                style={{ flex: 1 }}
-                contentContainerStyle={{ paddingBottom: 120, flexGrow: 1 }}
-              >
-                <View>
-                  <TicketAssignee ticket={ticket} />
-
-                  <TicketDetailInfo ticket={ticket} />
-
-                  {canEdit ? (
-                    <TicketDetailStatusUpdate
-                      ticket={ticket}
-                      updateStatus={updateStatus}
-                      setUpdateStatus={setUpdateStatus}
-                      updateRemarks={updateRemarks}
-                      setUpdateRemarks={setUpdateRemarks}
-                      updateArea={updateArea}
-                      setUpdateArea={setUpdateArea}
-                      updateCategory={updateCategory}
-                      setUpdateCategory={setUpdateCategory}
-                      updateBreakdownType={updateBreakdownType}
-                      setUpdateBreakdownType={setUpdateBreakdownType}
-                      areaOptions={areaOptions}
-                      categoryOptions={categoryOptions}
-                      areasLoading={areasLoading}
-                      beforeTemp={beforeTemp}
-                      setBeforeTemp={setBeforeTemp}
-                      afterTemp={afterTemp}
-                      setAfterTemp={setAfterTemp}
-                      attachmentUri={attachmentUri}
-                      setAttachmentUri={setAttachmentUri}
-                      areaSearchQuery={areaSearchQuery}
-                      setAreaSearchQuery={setAreaSearchQuery}
-                      loadMoreAreas={loadMoreAreas}
-                      hasMoreAreas={hasMoreAreas}
-                      loadingMoreAreas={loadingMoreAreas}
-                      createIncidentFromTicket={createIncidentFromTicket}
-                      setCreateIncidentFromTicket={setCreateIncidentFromTicket}
-                      incidentDraft={incidentDraft}
-                      setIncidentDraft={setIncidentDraft}
-                    />
-                  ) : null}
-
-                  {/* Comments & Timeline */}
-                  <TicketLineItems ticketId={ticket.id || ticket.ticket_no} />
-                </View>
-              </ScrollView>
-            </View>
+            <DetailCard style={styles.summary}>
+              <Text style={styles.title}>{ticket.title}</Text>
+              <View style={styles.badgeRow}>
+                <Badge label={status.label} bg={status.bg} fg={status.fg} />
+                {priority ? (
+                  <Badge
+                    label={priority.label}
+                    bg={priority.bg}
+                    fg={priority.fg}
+                  />
+                ) : null}
+              </View>
+              <View style={styles.metaWrap}>
+                <MetaBlock
+                  label="Area"
+                  value={ticket.area_asset || ticket.location || "—"}
+                />
+                <MetaBlock label="Category" value={ticket.category || "—"} />
+                <MetaBlock
+                  label="Assigned"
+                  value={ticket.assigned_to || "Unassigned"}
+                />
+              </View>
+            </DetailCard>
 
             {canEdit ? (
-            <View
-              className="border-t border-slate-100 dark:border-slate-800 pt-3"
-            >
-              <TouchableOpacity
-                onPress={handleUpdateStatus}
-                disabled={isUpdating || !isDirty}
-                style={{
-                  backgroundColor: isDirty ? "#dc2626" : "#cbd5e1",
-                  borderRadius: 26,
-                  paddingVertical: 18,
-                  alignItems: "center",
-                  shadowColor: isDirty ? "#dc2626" : "transparent",
-                  shadowOffset: { width: 0, height: 10 },
-                  shadowOpacity: isDirty ? 0.2 : 0,
-                  shadowRadius: 18,
-                  elevation: isDirty ? 8 : 0,
-                  opacity: isDirty ? 1 : 0.8,
-                }}
-              >
-                {isUpdating ? (
-                  <ActivityIndicator color="white" size="small" />
-                ) : (
-                  <Text
-                    style={{
-                      color: isDirty ? "#ffffff" : "#64748b",
-                      fontWeight: "900",
-                      textTransform: "uppercase",
-                      letterSpacing: 1.5,
-                      fontSize: 13,
-                    }}
-                  >
-                    {updateStatus === "Open" ? "Reopen Ticket" : "Update"}
-                  </Text>
-                )}
-              </TouchableOpacity>
-            </View>
+              <TicketDetailStatusUpdate
+                ticket={ticket}
+                updateStatus={updateStatus}
+                setUpdateStatus={setUpdateStatus}
+                updateRemarks={updateRemarks}
+                setUpdateRemarks={setUpdateRemarks}
+                updateArea={updateArea}
+                setUpdateArea={setUpdateArea}
+                updateCategory={updateCategory}
+                setUpdateCategory={setUpdateCategory}
+                updateBreakdownType={updateBreakdownType}
+                setUpdateBreakdownType={setUpdateBreakdownType}
+                areaOptions={areaOptions}
+                categoryOptions={categoryOptions}
+                areasLoading={areasLoading}
+                beforeTemp={beforeTemp}
+                setBeforeTemp={setBeforeTemp}
+                afterTemp={afterTemp}
+                setAfterTemp={setAfterTemp}
+                attachmentUri={attachmentUri}
+                setAttachmentUri={setAttachmentUri}
+                areaSearchQuery={areaSearchQuery}
+                setAreaSearchQuery={setAreaSearchQuery}
+                loadMoreAreas={loadMoreAreas}
+                hasMoreAreas={hasMoreAreas}
+                loadingMoreAreas={loadingMoreAreas}
+                createIncidentFromTicket={createIncidentFromTicket}
+                setCreateIncidentFromTicket={setCreateIncidentFromTicket}
+                incidentDraft={incidentDraft}
+                setIncidentDraft={setIncidentDraft}
+                attempted={attempted}
+              />
             ) : null}
-          </View>
+
+            <TicketActivity ticket={ticket} />
+          </ScrollView>
+
+          {canEdit ? (
+            <SubmitBar
+              label={
+                isDirty
+                  ? `Update to ${statusLabel(updateStatus)}`
+                  : "No changes yet"
+              }
+              blocked={attempted && isDirty ? blocker : null}
+              ready={ready}
+              busy={isUpdating}
+              bottomInset={insets.bottom}
+              onPress={() => {
+                setAttempted(true);
+                // The calling screen re-validates and surfaces its own alert;
+                // this just avoids a pointless round-trip when we already know
+                // the form is incomplete.
+                if (!isDirty || blocker) return;
+                handleUpdateStatus();
+              }}
+            />
+          ) : null}
         </View>
       </Modal>
     );
@@ -269,5 +307,27 @@ const TicketDetailModal = React.memo(
 );
 
 TicketDetailModal.displayName = "TicketDetailModal";
+
+const styles = StyleSheet.create({
+  screen: { flex: 1, backgroundColor: ds.pageBg },
+  body: { paddingHorizontal: 20, paddingTop: 16, paddingBottom: 20 },
+  summary: { padding: 16, marginBottom: 12 },
+  badgeRow: { flexDirection: "row", gap: 7, marginBottom: 14 },
+  title: {
+    fontSize: 16,
+    lineHeight: 22,
+    fontWeight: "600",
+    letterSpacing: 0.16,
+    color: ds.carbon[100],
+    marginBottom: 10,
+  },
+  metaWrap: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    borderTopWidth: 1,
+    borderTopColor: ds.carbon[1000],
+    paddingTop: 13,
+  },
+});
 
 export default TicketDetailModal;

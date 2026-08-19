@@ -211,13 +211,17 @@ export function useTicketDetailModal(params: {
       }
     }
 
+    const effectiveArea = updateArea || selectedTicket.area_asset;
     const effectivePayloadCategory = updateCategory || selectedTicket.category;
     const payload: any = {
       status: updateStatus,
       internal_remarks: updateRemarks,
-      area_asset: updateArea || selectedTicket.area_asset,
-      category: effectivePayloadCategory,
     };
+    // Omit area/category when empty rather than sending null — the backend
+    // types them as optional strings, so a null 400s and blocked cancelling an
+    // Open ticket (which has no area yet). Mirrors the tickets screen.
+    if (effectiveArea) payload.area_asset = effectiveArea;
+    if (effectivePayloadCategory) payload.category = effectivePayloadCategory;
     if (needsAreaAndCategory) {
       payload.breakdown_type = isBreakdownTypeCategory(
         effectivePayloadCategory || "",

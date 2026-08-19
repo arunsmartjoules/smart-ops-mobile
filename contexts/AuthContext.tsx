@@ -65,6 +65,11 @@ interface AuthContextType {
     name: string,
   ) => Promise<{ error: any }>;
   signInWithGoogleIdToken: (idToken: string) => Promise<{ error: any }>;
+  signInWithApple: (payload: {
+    identityToken: string;
+    fullName?: string | null;
+    email?: string | null;
+  }) => Promise<{ error: any }>;
   signOut: () => Promise<void>;
   /** Soft-deletes the account server-side and wipes this device. */
   deleteAccount: () => Promise<void>;
@@ -86,6 +91,7 @@ const AuthContext = createContext<AuthContextType>({
   signIn: async () => ({ error: null }),
   signUp: async () => ({ error: null }),
   signInWithGoogleIdToken: async () => ({ error: null }),
+  signInWithApple: async () => ({ error: null }),
   signOut: async () => {},
   deleteAccount: async () => {},
   sendPasswordResetCode: async () => ({ error: null }),
@@ -415,6 +421,43 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     [bootstrapSession],
   );
 
+  const signInWithApple = useCallback(
+    async (payload: {
+      identityToken: string;
+      fullName?: string | null;
+      email?: string | null;
+    }) => {
+      try {
+        const response = await fetchWithTimeout(`${BACKEND_URL}/api/auth/apple`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            identityToken: payload.identityToken,
+            fullName: payload.fullName ?? undefined,
+            email: payload.email ?? undefined,
+          }),
+        });
+        const result = await response.json();
+
+        if (!response.ok || !result?.success || !result?.data?.token) {
+          return { error: result?.error || "Apple authentication failed" };
+        }
+
+        await setStoredTokens(result.data.token, result.data.refresh_token);
+        const mapped = result.data.user ? mapUser(result.data.user) : undefined;
+        await bootstrapSession(result.data.token, mapped);
+        return { error: null };
+      } catch (e: any) {
+        logger.error("Apple sign-in failed", {
+          module: "AUTH_CONTEXT",
+          error: e?.message || String(e),
+        });
+        return { error: e?.message || String(e) };
+      }
+    },
+    [bootstrapSession],
+  );
+
   const signUp = useCallback(
     async (email: string, password: string, name: string) => {
       logger.activity("SIGNUP_ATTEMPT", "AUTH", `Signup start for ${email}`, { email, name });
@@ -734,6 +777,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       signIn,
       signUp,
       signInWithGoogleIdToken,
+      signInWithApple,
       signOut,
       deleteAccount,
       sendPasswordResetCode,
@@ -753,6 +797,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       signIn,
       signUp,
       signInWithGoogleIdToken,
+      signInWithApple,
       signOut,
       deleteAccount,
       sendPasswordResetCode,

@@ -1,14 +1,24 @@
 import { Redirect } from "expo-router";
-import { View, ActivityIndicator } from "react-native";
+import { ActivityIndicator, View } from "react-native";
 import { useAuth } from "@/contexts/AuthContext";
+import { useAuthPalette } from "@/components/auth/authTheme";
 
 export default function Index() {
   const { user, isLoading } = useAuth();
+  const t = useAuthPalette();
 
   if (isLoading) {
+    // Painted in the auth canvas so there's no colour flash into /sign-in.
     return (
-      <View className="flex-1 items-center justify-center bg-gray-50 dark:bg-slate-950">
-        <ActivityIndicator size="large" color="#dc2626" />
+      <View
+        style={{
+          flex: 1,
+          alignItems: "center",
+          justifyContent: "center",
+          backgroundColor: t.bg,
+        }}
+      >
+        <ActivityIndicator size="large" color={t.ctaBg} />
       </View>
     );
   }

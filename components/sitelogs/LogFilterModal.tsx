@@ -8,7 +8,7 @@ import {
   Platform,
 } from "react-native";
 import { X, Calendar } from "lucide-react-native";
-import DateTimePicker from "@react-native-community/datetimepicker";
+import DateTimePicker from "@expo/ui/community/datetime-picker";
 import {
   format,
   startOfWeek,

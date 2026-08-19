@@ -1,0 +1,483 @@
+/**
+ * Tickets list chrome — Claude Design "JouleOps Tickets.dc.html" (list
+ * artboard: one count line, status chips in the thunder header, priority in a
+ * rail-free badge).
+ *
+ * Shares the Site Overview shape scale (cornerRadius 12 / surface Soft) so the
+ * two tabs read as one app.
+ */
+import React, { useEffect, useState } from "react";
+import {
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from "react-native";
+import Animated, {
+  Easing,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+} from "react-native-reanimated";
+import {
+  Calendar,
+  ChevronDown,
+  Filter,
+  MapPin,
+  RefreshCw,
+  Search,
+  SearchX,
+  X,
+} from "lucide-react-native";
+import { ds } from "@/constants/ds";
+import { soRadius, soShadow } from "@/components/home/SiteOverview";
+
+export { soRadius, soShadow };
+
+/** The mock's STATUS map, keyed by the backend's status values. */
+export const TICKET_STATUS: Record<string, { label: string; bg: string; fg: string }> = {
+  Open: { label: "Open", bg: ds.flame[1000], fg: ds.flame[100] },
+  Inprogress: { label: "In progress", bg: ds.sky[1000], fg: ds.sky[100] },
+  Hold: { label: "Hold", bg: ds.carbon[1000], fg: ds.carbon[400] },
+  Waiting: { label: "Waiting", bg: ds.carbon[1000], fg: ds.carbon[400] },
+  Resolved: { label: "Resolved", bg: ds.sky[900], fg: "#1F757D" },
+  Cancelled: { label: "Cancelled", bg: ds.carbon[1000], fg: ds.carbon[500] },
+};
+
+export const getTicketStatus = (status?: string) =>
+  TICKET_STATUS[status || "Open"] ?? {
+    label: status || "Open",
+    bg: ds.carbon[1000],
+    fg: ds.carbon[400],
+  };
+
+/** The mock's PRIORITY map. */
+export const TICKET_PRIORITY: Record<string, { label: string; bg: string; fg: string }> = {
+  "very high": { label: "Very high", bg: ds.flame[100], fg: ds.pageBg },
+  high: { label: "High", bg: ds.flame[1000], fg: ds.flame[100] },
+  medium: { label: "Medium", bg: ds.carbon[1000], fg: ds.carbon[400] },
+  low: { label: "Low", bg: ds.sky[1000], fg: ds.sky[100] },
+};
+
+export const getTicketPriority = (priority?: string) => {
+  const key = (priority || "").toLowerCase().trim();
+  if (!key) return null;
+  return (
+    TICKET_PRIORITY[key] ?? {
+      label: priority as string,
+      bg: ds.carbon[1000],
+      fg: ds.carbon[400],
+    }
+  );
+};
+
+/** Icon well behind a row's category glyph — tinted by the ticket's status. */
+export const getTicketTint = (status?: string) => {
+  switch (status) {
+    case "Inprogress":
+      return { tint: ds.sky[1000], icon: ds.sky[100] };
+    case "Resolved":
+      return { tint: ds.sky[900], icon: "#1F757D" };
+    case "Hold":
+    case "Waiting":
+    case "Cancelled":
+      return { tint: ds.carbon[1000], icon: ds.carbon[400] };
+    default:
+      return { tint: ds.flame[1000], icon: ds.flame[100] };
+  }
+};
+
+export interface StatusChip {
+  key: string;
+  label: string;
+  count?: number;
+}
+
+/** The mock's cubic-bezier(.4, 0, .2, 1) over 260ms. */
+const MOTION = { duration: 260, easing: Easing.bezier(0.4, 0, 0.2, 1) };
+const SLIDE_DISTANCE = 26;
+
+/**
+ * Slides the list in from the right when moving to a later tab and from the
+ * left when moving back, matching the mock's slideFromRight/slideFromLeft.
+ * Runs on the UI thread against the list container, so rows never re-render.
+ */
+export function useListSlide(seq: number, direction: number) {
+  const offset = useSharedValue(0);
+
+  useEffect(() => {
+    if (seq === 0) return;
+    offset.value = direction >= 0 ? SLIDE_DISTANCE : -SLIDE_DISTANCE;
+    offset.value = withTiming(0, MOTION);
+  }, [seq, direction, offset]);
+
+  return useAnimatedStyle(() => ({
+    transform: [{ translateX: offset.value }],
+    opacity: 1 - Math.min(Math.abs(offset.value) / SLIDE_DISTANCE, 1),
+  }));
+}
+
+/* ── Status tabs ─────────────────────────────────────────────────────────
+   Text tabs on a hairline rule with a flame underline that slides between
+   them — replaces the old pill chips.                                     */
+
+function StatusTabs({
+  chips,
+  activeChip,
+  onSelectChip,
+}: {
+  chips: StatusChip[];
+  activeChip: string;
+  onSelectChip: (key: string) => void;
+}) {
+  const [layouts, setLayouts] = useState<Record<string, { x: number; w: number }>>(
+    {},
+  );
+  const left = useSharedValue(0);
+  const width = useSharedValue(0);
+
+  useEffect(() => {
+    const target = layouts[activeChip];
+    if (!target) return;
+    if (width.value === 0) {
+      // First measurement — place the bar without sliding in from zero.
+      left.value = target.x;
+      width.value = target.w;
+      return;
+    }
+    left.value = withTiming(target.x, MOTION);
+    width.value = withTiming(target.w, MOTION);
+  }, [activeChip, layouts, left, width]);
+
+  const barStyle = useAnimatedStyle(() => ({
+    left: left.value,
+    width: width.value,
+  }));
+
+  return (
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      contentContainerStyle={styles.tabScroll}
+    >
+      <View>
+        <View style={styles.tabRow}>
+          {chips.map((c) => {
+            const on = c.key === activeChip;
+            return (
+              <TouchableOpacity
+                key={c.key}
+                onPress={() => onSelectChip(c.key)}
+                activeOpacity={0.75}
+                hitSlop={{ top: 6, bottom: 6 }}
+                onLayout={(e) => {
+                  const { x, width: w } = e.nativeEvent.layout;
+                  setLayouts((prev) =>
+                    prev[c.key]?.x === x && prev[c.key]?.w === w
+                      ? prev
+                      : { ...prev, [c.key]: { x, w } },
+                  );
+                }}
+                style={styles.tab}
+                accessibilityRole="tab"
+                accessibilityState={{ selected: on }}
+              >
+                <Text
+                  style={[
+                    styles.tabLabel,
+                    {
+                      fontWeight: on ? "600" : "400",
+                      color: on ? ds.white : ds.thunder[700],
+                    },
+                  ]}
+                >
+                  {c.label}
+                </Text>
+                {c.count != null ? (
+                  <Text
+                    style={[
+                      styles.tabCount,
+                      { color: on ? "#E9B7A8" : ds.thunder[700] },
+                    ]}
+                  >
+                    {c.count}
+                  </Text>
+                ) : null}
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+        <Animated.View style={[styles.tabBar, barStyle]} />
+      </View>
+    </ScrollView>
+  );
+}
+
+/* ── Header ──────────────────────────────────────────────────────────────
+   Thunder chrome carrying the title, site line, actions, search and the
+   status chips — the list below it starts on the page canvas.            */
+
+export function TicketsHeader({
+  topInset,
+  siteName,
+  dateLabel,
+  onPressSite,
+  onRefresh,
+  refreshDisabled,
+  onFilter,
+  filterActive,
+  search,
+  onChangeSearch,
+  chips,
+  activeChip,
+  onSelectChip,
+}: {
+  topInset: number;
+  siteName: string;
+  dateLabel: string;
+  onPressSite: () => void;
+  onRefresh: () => void;
+  refreshDisabled?: boolean;
+  onFilter: () => void;
+  filterActive?: boolean;
+  search: string;
+  onChangeSearch: (v: string) => void;
+  chips: StatusChip[];
+  activeChip: string;
+  onSelectChip: (key: string) => void;
+}) {
+  return (
+    <View style={[styles.header, { paddingTop: topInset }]}>
+      <View style={styles.titleRow}>
+        <View style={styles.titleLead}>
+          <TouchableOpacity
+            onPress={onPressSite}
+            activeOpacity={0.75}
+            style={styles.siteRow}
+            accessibilityRole="button"
+            accessibilityLabel={`Site ${siteName}. Change filters`}
+          >
+            <MapPin size={16} color={ds.sky[500]} strokeWidth={2.2} />
+            <Text style={styles.title} numberOfLines={1}>
+              {siteName}
+            </Text>
+            <ChevronDown size={18} color={ds.thunder[700]} strokeWidth={2} />
+          </TouchableOpacity>
+          <View style={styles.dateRow}>
+            <Calendar size={12} color={ds.thunder[700]} strokeWidth={2} />
+            <Text style={styles.dateLabel} numberOfLines={1}>
+              {dateLabel}
+            </Text>
+          </View>
+        </View>
+
+        <TouchableOpacity
+          onPress={onRefresh}
+          disabled={refreshDisabled}
+          activeOpacity={0.8}
+          hitSlop={6}
+          style={[styles.tile, refreshDisabled && { opacity: 0.4 }]}
+          accessibilityRole="button"
+          accessibilityLabel="Refresh"
+        >
+          <RefreshCw size={18} color={ds.white} strokeWidth={2} />
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          onPress={onFilter}
+          activeOpacity={0.8}
+          hitSlop={6}
+          style={[
+            styles.tile,
+            filterActive && { backgroundColor: ds.flame[100] },
+          ]}
+          accessibilityRole="button"
+          accessibilityLabel="Filters"
+        >
+          <Filter size={18} color={ds.white} strokeWidth={2} />
+        </TouchableOpacity>
+      </View>
+
+      <View style={styles.searchWrap}>
+        <View style={styles.search}>
+          <Search size={16} color={ds.thunder[700]} strokeWidth={2} />
+          <TextInput
+            value={search}
+            onChangeText={onChangeSearch}
+            placeholder="Search ID, area or category"
+            placeholderTextColor={ds.thunder[700]}
+            style={styles.searchInput}
+            returnKeyType="search"
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
+          {search.length > 0 ? (
+            <TouchableOpacity
+              onPress={() => onChangeSearch("")}
+              hitSlop={10}
+              accessibilityRole="button"
+              accessibilityLabel="Clear search"
+            >
+              <X size={17} color={ds.thunder[700]} strokeWidth={2} />
+            </TouchableOpacity>
+          ) : null}
+        </View>
+      </View>
+
+      <StatusTabs
+        chips={chips}
+        activeChip={activeChip}
+        onSelectChip={onSelectChip}
+      />
+    </View>
+  );
+}
+
+/* ── Count line ──────────────────────────────────────────────────────────── */
+
+export function TicketCountLine({
+  count,
+  label,
+  sortLabel,
+  onSort,
+}: {
+  count: number;
+  label: string;
+  sortLabel: string;
+  onSort: () => void;
+}) {
+  return (
+    <View style={styles.countRow}>
+      <Text style={styles.countValue}>{count}</Text>
+      <Text style={styles.countLabel}>{label}</Text>
+      <View style={{ flex: 1 }} />
+      <TouchableOpacity onPress={onSort} hitSlop={8} activeOpacity={0.7}>
+        <Text style={styles.sort}>{sortLabel}</Text>
+      </TouchableOpacity>
+    </View>
+  );
+}
+
+/* ── Empty ───────────────────────────────────────────────────────────────── */
+
+export function TicketsEmptyCard({
+  label = "No tickets match this filter",
+}: {
+  label?: string;
+}) {
+  return (
+    <View style={styles.empty}>
+      <SearchX size={26} color={ds.carbon[800]} strokeWidth={1.9} />
+      <Text style={styles.emptyText}>{label}</Text>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  header: { backgroundColor: ds.thunder[100] },
+  titleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingTop: 10,
+    paddingHorizontal: 20,
+    paddingBottom: 12,
+  },
+  titleLead: { flex: 1, minWidth: 0 },
+  siteRow: { flexDirection: "row", alignItems: "center", gap: 6 },
+  title: {
+    flexShrink: 1,
+    fontSize: 18,
+    lineHeight: 21,
+    fontWeight: "700",
+    letterSpacing: 0.36,
+    color: ds.white,
+  },
+  dateRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    marginTop: 3,
+  },
+  dateLabel: { flexShrink: 1, fontSize: 11.5, color: ds.thunder[700] },
+  tile: {
+    width: 36,
+    height: 36,
+    borderRadius: soRadius.tile,
+    backgroundColor: "rgba(255,255,255,0.1)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  searchWrap: { paddingHorizontal: 20, paddingBottom: 12 },
+  search: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 9,
+    backgroundColor: "rgba(255,255,255,0.1)",
+    borderRadius: soRadius.sm,
+    paddingVertical: 11,
+    paddingHorizontal: 12,
+  },
+  searchInput: {
+    flex: 1,
+    padding: 0,
+    fontSize: 13.5,
+    color: ds.white,
+    letterSpacing: 0.13,
+  },
+
+  tabScroll: { paddingHorizontal: 20, paddingBottom: 6 },
+  tabRow: {
+    flexDirection: "row",
+    gap: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(255,255,255,0.24)",
+  },
+  tab: {
+    minHeight: 36,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  tabLabel: { fontSize: 13, letterSpacing: 0.13 },
+  tabCount: { fontSize: 10, fontWeight: "600" },
+  tabBar: {
+    position: "absolute",
+    bottom: 0,
+    height: 2.5,
+    borderRadius: soRadius.pill,
+    backgroundColor: ds.flame[100],
+  },
+
+  countRow: {
+    flexDirection: "row",
+    alignItems: "baseline",
+    gap: 7,
+    paddingTop: 14,
+    paddingHorizontal: 20,
+    paddingBottom: 10,
+  },
+  countValue: { fontSize: 15, fontWeight: "600", color: ds.flame[100] },
+  countLabel: { fontSize: 12.5, color: ds.carbon[400] },
+  sort: {
+    fontSize: 10,
+    fontWeight: "700",
+    letterSpacing: 1,
+    textTransform: "uppercase",
+    color: ds.flame[100],
+  },
+
+  empty: {
+    backgroundColor: ds.white,
+    borderRadius: soRadius.card,
+    padding: 30,
+    alignItems: "center",
+    gap: 9,
+    marginHorizontal: 4,
+    ...soShadow,
+  },
+  emptyText: { fontSize: 12.5, color: ds.carbon[400] },
+});

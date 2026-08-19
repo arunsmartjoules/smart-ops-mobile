@@ -138,7 +138,7 @@ class VersionGateService {
   /** Open the platform app store so the user can update. */
   async openStore(): Promise<void> {
     const androidPkg =
-      Constants.expoConfig?.android?.package || "com.arundev2025.jouleops";
+      Constants.expoConfig?.android?.package || "com.smartjoules.jouleops";
     const iosId = IOS_APP_STORE_ID;
 
     const candidates =

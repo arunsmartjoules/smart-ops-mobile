@@ -1,28 +1,15 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import {
   View,
-  Text,
-  TextInput,
-  TouchableOpacity,
   RefreshControl,
   Alert,
-  useColorScheme,
   InteractionManager,
 } from "react-native";
 import { FlashList } from "@shopify/flash-list";
-import { SafeAreaView } from "react-native-safe-area-context";
-import EmptyState from "@/components/EmptyState";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAttendanceGate } from "@/contexts/AttendanceGateContext";
 import * as Haptics from "expo-haptics";
-import {
-  Ticket as TicketIcon,
-  Filter,
-  RefreshCw,
-  MapPin,
-  ChevronDown,
-  Search,
-  X,
-} from "lucide-react-native";
+
 import { useLocalSearchParams, useFocusEffect, router } from "expo-router";
 import { useAuth } from "@/contexts/AuthContext";
 import { useAutoSync } from "@/hooks/useAutoSync";
@@ -42,7 +29,7 @@ import {
   istDayEndMsFromYmd,
   istDayStartIso,
   istDayEndIso,
-  formatISTDate,
+  formatIST,
 } from "@/utils/istDate";
 import cacheManager from "@/services/CacheManager";
 import { v4 as uuidv4 } from "uuid";
@@ -58,11 +45,18 @@ import {
 import AdvancedFilterModal from "@/components/AdvancedFilterModal";
 import { WhatsAppService } from "@/services/WhatsAppService";
 import TicketItem from "@/components/TicketItem";
-import TicketStats from "@/components/TicketStats";
-import TicketFilters from "@/components/TicketFilters";
 import TicketSkeleton, {
   TicketSkeletonItem,
 } from "@/components/TicketSkeleton";
+import { ds } from "@/constants/ds";
+import Animated from "react-native-reanimated";
+import {
+  TicketCountLine,
+  TicketsEmptyCard,
+  TicketsHeader,
+  useListSlide,
+  type StatusChip,
+} from "@/components/tickets/TicketsUI";
 
 const parseCreatedAtMs = (value: unknown) => {
   if (typeof value === "number") return value;
@@ -81,15 +75,34 @@ const getLocalDayStartMs = (dateStr: string | null) =>
 const getLocalDayEndMs = (dateStr: string | null) =>
   istDayEndMsFromYmd(dateStr);
 
-const formatPreviewDate = (dateStr: string | null) => {
-  if (!dateStr) return "Any";
-  const ms = istDayStartMsFromYmd(dateStr);
-  return ms == null ? "Any" : formatISTDate(ms);
-};
-
 const toApiStartDate = (dateStr: string | null) => istDayStartIso(dateStr);
 
 const toApiEndDate = (dateStr: string | null) => istDayEndIso(dateStr);
+
+/** "1–19 Aug 2026" / "1 Jul – 19 Aug 2026" / "1 Jul 2025 – 19 Aug 2026". */
+const formatDateRange = (from: string | null, to: string | null) => {
+  const fromMs = istDayStartMsFromYmd(from);
+  const toMs = istDayStartMsFromYmd(to);
+  if (fromMs == null && toMs == null) return "All dates";
+  if (fromMs == null) return `Up to ${formatIST(toMs!, DMY)}`;
+  if (toMs == null) return `From ${formatIST(fromMs, DMY)}`;
+
+  const a = istParts(fromMs);
+  const b = istParts(toMs);
+  if (a.year === b.year && a.month === b.month) {
+    return `${formatIST(fromMs, { day: "numeric" })}–${formatIST(toMs, DMY)}`;
+  }
+  if (a.year === b.year) {
+    return `${formatIST(fromMs, { day: "numeric", month: "short" })} – ${formatIST(toMs, DMY)}`;
+  }
+  return `${formatIST(fromMs, DMY)} – ${formatIST(toMs, DMY)}`;
+};
+
+const DMY: Intl.DateTimeFormatOptions = {
+  day: "numeric",
+  month: "short",
+  year: "numeric",
+};
 
 const AREA_PAGE_SIZE = 50;
 
@@ -147,12 +160,11 @@ const normalizeRealtimeTicket = (source: any): Ticket => ({
 export default function Tickets() {
   const { canEdit } = useAttendanceGate();
   const { user } = useAuth();
-  const isDark = useColorScheme() === "dark";
   const { isConnected } = useNetworkStatus();
 
   // ── Clean sites hook ──────────────────────────────────────────────────────
   const userId = user?.user_id || user?.id;
-  const { sites, selectedSite, selectSite, loading: sitesLoading, refresh: refreshSites } = useSites(userId);
+  const { sites, selectedSite, selectSite, loading: sitesLoading } = useSites(userId);
   const selectedSiteCode = selectedSite?.site_code ?? "";
   const siteName = selectedSite?.site_name ?? selectedSite?.site_code ?? "Select Site";
 
@@ -163,6 +175,7 @@ export default function Tickets() {
     return `${year}-${String(month).padStart(2, "0")}-01`;
   }, []);
 
+  const insets = useSafeAreaInsets();
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -182,6 +195,9 @@ export default function Tickets() {
 
   // Filters
   const [statusFilter, setStatusFilter] = useState("Open");
+  const [sortMode, setSortMode] = useState<"Newest" | "Oldest" | "Priority">(
+    "Newest",
+  );
   const [priorityFilter, setPriorityFilter] = useState("All");
   const [searchQuery, setSearchQuery] = useState("");
   const [searchInput, setSearchInput] = useState("");
@@ -191,10 +207,6 @@ export default function Tickets() {
   const [toDate, setToDate] = useState<string | null>(defaultToDate);
   const [tempFromDate, setTempFromDate] = useState<string | null>(defaultFromDate);
   const [tempToDate, setTempToDate] = useState<string | null>(defaultToDate);
-  const dateRangePreview = useMemo(
-    () => `Date: ${formatPreviewDate(fromDate)} - ${formatPreviewDate(toDate)}`,
-    [fromDate, toDate],
-  );
 
   // Detail Modal
   const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null);
@@ -291,6 +303,87 @@ export default function Tickets() {
       };
     });
   }, [tickets, sites]);
+
+  const PRIORITY_RANK: Record<string, number> = {
+    "very high": 1,
+    high: 2,
+    medium: 3,
+    low: 4,
+  };
+
+  /** Sorts the rows already loaded — later pages re-sort as they arrive. */
+  const sortedTickets = useMemo(() => {
+    const rows = [...enrichedTickets];
+    if (sortMode === "Priority") {
+      rows.sort((a, b) => {
+        const pa = PRIORITY_RANK[(a.priority || "").toLowerCase()] ?? 5;
+        const pb = PRIORITY_RANK[(b.priority || "").toLowerCase()] ?? 5;
+        if (pa !== pb) return pa - pb;
+        return Date.parse(b.created_at) - Date.parse(a.created_at);
+      });
+      return rows;
+    }
+    rows.sort((a, b) => {
+      const da = Date.parse(a.created_at) || 0;
+      const db = Date.parse(b.created_at) || 0;
+      return sortMode === "Oldest" ? da - db : db - da;
+    });
+    return rows;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enrichedTickets, sortMode]);
+
+  const statusChips = useMemo<StatusChip[]>(() => {
+    const byStatus = stats?.byStatus as Record<string, number> | undefined;
+    return [
+      { key: "All", label: "All", count: stats?.total },
+      { key: "Open", label: "Open", count: byStatus?.Open },
+      { key: "Inprogress", label: "In progress", count: byStatus?.Inprogress },
+      { key: "Hold", label: "Hold", count: byStatus?.Hold },
+      { key: "Waiting", label: "Waiting", count: byStatus?.Waiting },
+      { key: "Resolved", label: "Resolved", count: byStatus?.Resolved },
+    ];
+  }, [stats]);
+
+  // The list is paginated, so prefer the server's count for the active filter
+  // and fall back to what's actually loaded.
+  const visibleCount = useMemo(() => {
+    if (statusFilter === "All") return stats?.total ?? sortedTickets.length;
+    const byStatus = stats?.byStatus as Record<string, number> | undefined;
+    return byStatus?.[statusFilter] ?? sortedTickets.length;
+  }, [stats, statusFilter, sortedTickets.length]);
+
+  const countLabel = useMemo(() => {
+    if (statusFilter === "All") return "tickets at this site";
+    const label =
+      statusChips.find((c) => c.key === statusFilter)?.label ?? statusFilter;
+    return `${label.toLowerCase()} tickets`;
+  }, [statusFilter, statusChips]);
+
+  // Direction + sequence drive the mock's slide-in when the tab changes.
+  const [slide, setSlide] = useState({ seq: 0, dir: 1 });
+  const listSlideStyle = useListSlide(slide.seq, slide.dir);
+
+  const selectStatusChip = useCallback(
+    (key: string) => {
+      if (key === statusFilter) return;
+      const order = statusChips.map((c) => c.key);
+      const dir = order.indexOf(key) >= order.indexOf(statusFilter) ? 1 : -1;
+      setSlide((prev) => ({ seq: prev.seq + 1, dir }));
+      setStatusFilter(key);
+    },
+    [statusFilter, statusChips],
+  );
+
+  const dateRangeLabel = useMemo(
+    () => formatDateRange(fromDate, toDate),
+    [fromDate, toDate],
+  );
+
+  const cycleSort = useCallback(() => {
+    setSortMode((m) =>
+      m === "Newest" ? "Oldest" : m === "Oldest" ? "Priority" : "Newest",
+    );
+  }, []);
 
   useEffect(() => {
     logger.debug("Modal Visible State", {
@@ -630,7 +723,7 @@ export default function Tickets() {
         const options: any = {
           page: p,
           limit: PAGE_SIZE,
-          status: statusFilter,
+          status: statusFilter === "All" ? undefined : statusFilter,
           priority: priorityFilter === "All" ? undefined : priorityFilter,
           search: searchQuery,
           fromDate: toApiStartDate(fromDate),
@@ -808,10 +901,13 @@ export default function Tickets() {
     setUpdateStatus(defaultStatus);
     setUpdateRemarks(getInitialUpdateRemarks(ticket, defaultStatus));
     setUpdateArea(ticket.area_asset || "");
-    // Category must be chosen by the operator on each update — don't carry
-    // over the ticket's existing category as a pre-selection.
-    setUpdateCategory("");
-    setUpdateBreakdownType("");
+    // Seed category/breakdown type from the ticket so an already-categorised
+    // ticket (anything past Open) doesn't ask the operator to re-pick what's
+    // already on the record. An Open ticket carries neither, so this is still
+    // an empty picker on the first update — matching dashboard.tsx and
+    // useTicketDetailModal.ts, which have always seeded both.
+    setUpdateCategory(ticket.category || "");
+    setUpdateBreakdownType(ticket.breakdown_type || "");
     setBeforeTemp(
       ticket.before_temp != null && !Number.isNaN(Number(ticket.before_temp))
         ? String(ticket.before_temp)
@@ -1065,10 +1161,13 @@ export default function Tickets() {
     setUpdateStatus("Cancelled");
     setUpdateRemarks("");
     setUpdateArea(ticket.area_asset || "");
-    // Category must be chosen by the operator on each update — don't carry
-    // over the ticket's existing category as a pre-selection.
-    setUpdateCategory("");
-    setUpdateBreakdownType("");
+    // Seed category/breakdown type from the ticket so an already-categorised
+    // ticket (anything past Open) doesn't ask the operator to re-pick what's
+    // already on the record. An Open ticket carries neither, so this is still
+    // an empty picker on the first update — matching dashboard.tsx and
+    // useTicketDetailModal.ts, which have always seeded both.
+    setUpdateCategory(ticket.category || "");
+    setUpdateBreakdownType(ticket.breakdown_type || "");
     setBeforeTemp(
       ticket.before_temp != null && !Number.isNaN(Number(ticket.before_temp))
         ? String(ticket.before_temp)
@@ -1134,11 +1233,17 @@ export default function Tickets() {
       Alert.alert("Required", "Please provide remarks for this status update.");
       return;
     }
-    if (needsAreaAndCategory && !updateArea.trim()) {
+    // Fall back to the ticket's own values, exactly like the sticky bar's
+    // getTicketUpdateBlocker does — otherwise the bar reads "ready" while
+    // submit alerts on a ticket that already carries an area/category.
+    if (needsAreaAndCategory && !(updateArea || selectedTicket.area_asset || "").trim()) {
       Alert.alert("Required", "Please select an area before updating the ticket.");
       return;
     }
-    if (needsAreaAndCategory && !updateCategory.trim()) {
+    if (
+      needsAreaAndCategory &&
+      !(updateCategory || selectedTicket.category || "").trim()
+    ) {
       Alert.alert("Required", "Please select a category before updating the ticket.");
       return;
     }
@@ -1207,13 +1312,20 @@ export default function Tickets() {
       }
     }
 
+    const effectiveArea = updateArea || selectedTicket.area_asset;
     const effectivePayloadCategory = updateCategory || selectedTicket.category;
     const payload: any = {
       status: updateStatus,
       internal_remarks: updateRemarks,
-      area_asset: updateArea || selectedTicket.area_asset,
-      category: effectivePayloadCategory,
     };
+    // Area/category are only sent when we actually have a value. An Open ticket
+    // carries neither until a tech picks one, and the backend types both as
+    // optional *strings* — sending null failed validation ("area_asset:
+    // expected string, received null") and blocked Cancel/Hold/Waiting on an
+    // Open ticket. Omitting the key leaves the column untouched; the
+    // Inprogress/Resolved flow validates above that both are filled.
+    if (effectiveArea) payload.area_asset = effectiveArea;
+    if (effectivePayloadCategory) payload.category = effectivePayloadCategory;
     // Only the Inprogress/Resolved flow shows the category + breakdown-type
     // pickers, so only then do we set breakdown_type — set it for a breakdown
     // category, clear it otherwise so a re-categorised ticket sheds a stale
@@ -1423,123 +1535,69 @@ export default function Tickets() {
   };
 
   return (
-    <View className="flex-1 bg-slate-50 dark:bg-slate-950">
-      <SafeAreaView className="flex-1">
-        <View className="px-5 pt-2 pb-3">
-          <View className="flex-row items-center justify-between mb-4">
-            <View className="flex-1">
-              <Text className="text-slate-400 dark:text-slate-500 text-sm font-medium mb-1">
-                Site Operations
-              </Text>
-              <TouchableOpacity onPress={() => setShowFiltersModal(true)} className="flex-row items-center">
-                <MapPin size={20} color="#dc2626" />
-                <Text className="text-slate-900 dark:text-slate-50 text-xl font-bold ml-2 mr-1 flex-shrink" numberOfLines={1}>
-                  {siteName}
-                </Text>
-                <ChevronDown size={20} color="#94a3b8" />
-              </TouchableOpacity>
-            </View>
-            <View className="flex-row items-center gap-2">
-              <TouchableOpacity
-                disabled={!isConnected || !selectedSiteCode}
-                onPress={() => {
-                  if (!isConnected || !selectedSiteCode) return;
-                  onRefresh();
-                }}
-                className="w-11 h-11 rounded-xl bg-white dark:bg-slate-900 items-center justify-center"
-                style={{ opacity: !isConnected || !selectedSiteCode ? 0.4 : 1 }}
-              >
-                <RefreshCw
-                  size={20}
-                  color={!isConnected || !selectedSiteCode ? "#94a3b8" : "#dc2626"}
-                />
-              </TouchableOpacity>
+    <View style={{ flex: 1, backgroundColor: ds.pageBg }}>
+      <TicketsHeader
+        topInset={insets.top}
+        siteName={siteName}
+        dateLabel={dateRangeLabel}
+        onPressSite={() => setShowFiltersModal(true)}
+        onRefresh={() => {
+          if (!isConnected || !selectedSiteCode) return;
+          onRefresh();
+        }}
+        refreshDisabled={!isConnected || !selectedSiteCode}
+        onFilter={() => setShowFiltersModal(true)}
+        filterActive={!!fromDate}
+        search={searchInput}
+        onChangeSearch={setSearchInput}
+        chips={statusChips}
+        activeChip={statusFilter}
+        onSelectChip={selectStatusChip}
+      />
 
-              <TouchableOpacity
-                onPress={() => setShowFiltersModal(true)}
-                className="w-11 h-11 rounded-xl bg-white dark:bg-slate-900 items-center justify-center"
-              >
-                <Filter size={20} color={fromDate ? "#dc2626" : (isDark ? "#dc2626" : "#64748b")} />
-              </TouchableOpacity>
-            </View>
-          </View>
-          <View className="mb-3 self-start px-3 py-1 rounded-full bg-red-50 dark:bg-red-950/30 border border-red-100 dark:border-red-900/40">
-            <Text className="text-[11px] font-semibold text-red-700 dark:text-red-300">
-              {dateRangePreview}
-            </Text>
-          </View>
+      <TicketCountLine
+        count={visibleCount}
+        label={countLabel}
+        sortLabel={sortMode}
+        onSort={cycleSort}
+      />
 
-          <View className="flex-row items-center bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2.5">
-            <Search size={16} color="#94a3b8" />
-            <TextInput
-              value={searchInput}
-              onChangeText={setSearchInput}
-              placeholder="Search by ID, area, category…"
-              placeholderTextColor={isDark ? "#64748b" : "#94a3b8"}
-              className="flex-1 ml-2 text-sm text-slate-900 dark:text-slate-50"
-              style={{ paddingVertical: 0 }}
-              returnKeyType="search"
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
-            {searchInput.length > 0 ? (
-              <TouchableOpacity
-                onPress={() => setSearchInput("")}
-                hitSlop={8}
-                className="ml-1"
-              >
-                <X size={16} color="#94a3b8" />
-              </TouchableOpacity>
-            ) : null}
-          </View>
-        </View>
-
-        <TicketStats
-          stats={stats}
-          loading={loading && tickets.length === 0}
-          currentStatus={statusFilter}
-          onStatusChange={setStatusFilter}
-        />
-        <TicketFilters
-          statusFilter={statusFilter}
-          setStatusFilter={setStatusFilter}
-          stats={stats}
-        />
-
-        <View className="flex-1">
-          <FlashList
-            data={enrichedTickets}
-            renderItem={renderTicketItem}
-            keyExtractor={keyExtractor}
-            // Uniform-height cards (single recycle pool, no getItemType) + a
-            // wider draw distance so fast flings don't outrun cell rendering
-            // and reveal blank space. See PM list for the same config.
-            drawDistance={600}
-            ListEmptyComponent={loading ? <TicketSkeleton /> : (
-              <EmptyState
-                icon={TicketIcon}
-                title="No tickets found"
-                action={
+      <Animated.View style={[{ flex: 1 }, listSlideStyle]}>
+        <FlashList
+          data={sortedTickets}
+          renderItem={renderTicketItem}
+          keyExtractor={keyExtractor}
+          // Uniform-height cards (single recycle pool, no getItemType) + a
+          // wider draw distance so fast flings don't outrun cell rendering
+          // and reveal blank space. See PM list for the same config.
+          drawDistance={600}
+          ListEmptyComponent={
+            loading ? (
+              <TicketSkeleton />
+            ) : (
+              <TicketsEmptyCard
+                label={
                   isConnected && !sitesLoading && sites.length === 0
-                    ? {
-                        label: "Retry Server Sync",
-                        onPress: async () => {
-                          await refreshSites();
-                          resetAndFetch();
-                        },
-                      }
-                    : undefined
+                    ? "No site is mapped to you yet"
+                    : "No tickets match this filter"
                 }
               />
-            )}
-            ListFooterComponent={isFetchingMore ? <TicketSkeletonItem /> : null}
-            onEndReached={handleLoadMore}
-            onEndReachedThreshold={0.1}
-            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#dc2626" />}
-            showsVerticalScrollIndicator={false}
-            contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: 100 }}
-          />
-        </View>
+            )
+          }
+          ListFooterComponent={isFetchingMore ? <TicketSkeletonItem /> : null}
+          onEndReached={handleLoadMore}
+          onEndReachedThreshold={0.1}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor={ds.thunder[100]}
+            />
+          }
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: 24 }}
+        />
+      </Animated.View>
 
         {showFiltersModal && (
           <AdvancedFilterModal
@@ -1606,7 +1664,6 @@ export default function Tickets() {
             canEdit={canEdit}
           />
         )}
-      </SafeAreaView>
     </View>
   );
 }

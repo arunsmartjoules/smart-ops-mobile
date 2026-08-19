@@ -8,11 +8,23 @@ import logger from "@/utils/logger";
 let sqlite: SQLiteDatabase;
 export let db: ExpoSQLiteDatabase<typeof schema>;
 
-function ensureSiteLogsMainRemarksColumn() {
-  try {
-    sqlite.execSync("ALTER TABLE site_logs ADD COLUMN main_remarks TEXT");
-  } catch {
-    // Column already exists or table is unavailable during boot.
+/**
+ * Boot-time guard for the site_logs columns the log-entry screens read before
+ * the async migration pass has run. `shift_label` matters most: task lists are
+ * filtered by it, so an app that boots without the column shows a technician
+ * an empty shift.
+ */
+function ensureSiteLogsColumns() {
+  for (const sql of [
+    "ALTER TABLE site_logs ADD COLUMN main_remarks TEXT",
+    "ALTER TABLE site_logs ADD COLUMN meta_date TEXT",
+    "ALTER TABLE site_logs ADD COLUMN shift_label TEXT",
+  ]) {
+    try {
+      sqlite.execSync(sql);
+    } catch {
+      // Column already exists or table is unavailable during boot.
+    }
   }
 }
 
@@ -119,6 +131,8 @@ function init() {
           chemical_dosing TEXT,
           remarks TEXT,
           main_remarks TEXT,
+          meta_date TEXT,
+          shift_label TEXT,
           entry_time REAL,
           end_time REAL,
           signature TEXT,
@@ -224,7 +238,8 @@ function init() {
           field_type TEXT,
           sequence_no INTEGER,
           image_mandatory INTEGER,
-          remarks_mandatory INTEGER
+          remarks_mandatory INTEGER,
+          readings_mandatory INTEGER
         );
         CREATE TABLE IF NOT EXISTS pm_responses (
           id TEXT PRIMARY KEY,
@@ -315,6 +330,8 @@ function init() {
     const columnMigrations = [
       "ALTER TABLE site_logs ADD COLUMN scheduled_date TEXT",
       "ALTER TABLE site_logs ADD COLUMN main_remarks TEXT",
+      "ALTER TABLE site_logs ADD COLUMN meta_date TEXT",
+      "ALTER TABLE site_logs ADD COLUMN shift_label TEXT",
       "ALTER TABLE tickets ADD COLUMN before_temp REAL",
       "ALTER TABLE tickets ADD COLUMN after_temp REAL",
       "ALTER TABLE tickets ADD COLUMN breakdown_type TEXT",
@@ -325,6 +342,7 @@ function init() {
       "ALTER TABLE incidents ADD COLUMN rca_attachments TEXT",
       "ALTER TABLE areas ADD COLUMN asset_id TEXT",
       "ALTER TABLE areas ADD COLUMN equipment_type TEXT",
+      "ALTER TABLE pm_checklist_items ADD COLUMN readings_mandatory INTEGER",
     ];
 
     for (const migration of columnMigrations) {
@@ -334,7 +352,7 @@ function init() {
         // Column already exists — safe to ignore
       }
     }
-    ensureSiteLogsMainRemarksColumn();
+    ensureSiteLogsColumns();
     // One-shot reset for the IST date-parser fix.
     //
     // Prior builds stored server-side DATE values by round-tripping a
@@ -392,7 +410,7 @@ export function ensureDatabaseConnection(): boolean {
     }
     // Lightweight check to see if the native handle is still alive
     sqlite.execSync("SELECT 1");
-    ensureSiteLogsMainRemarksColumn();
+    ensureSiteLogsColumns();
     return true;
   } catch (error: any) {
     logger.warn("Database connection check failed, attempting recovery", {
@@ -411,7 +429,7 @@ export function ensureDatabaseConnection(): boolean {
 
 export function ensureSiteLogsSchema() {
   ensureDatabaseConnection();
-  ensureSiteLogsMainRemarksColumn();
+  ensureSiteLogsColumns();
 }
 
 // Re-export schema tables for convenient imports

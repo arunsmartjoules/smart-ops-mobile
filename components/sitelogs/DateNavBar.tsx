@@ -2,7 +2,7 @@ import React, { useMemo } from "react";
 import { View, Text, TouchableOpacity, Platform } from "react-native";
 import { ChevronLeft, ChevronRight, Calendar } from "lucide-react-native";
 import { format, isToday, subDays, addDays } from "date-fns";
-import DateTimePicker from "@react-native-community/datetimepicker";
+import DateTimePicker from "@expo/ui/community/datetime-picker";
 
 interface DateNavBarProps {
   date: Date;

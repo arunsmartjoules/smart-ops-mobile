@@ -10,17 +10,20 @@ import {
   Modal,
   ListRenderItem,
   Image,
-  useColorScheme,
 } from "react-native";
 import { FlashList } from "@shopify/flash-list";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { StatusBar } from "expo-status-bar";
 import { router, useLocalSearchParams } from "expo-router";
 import {
   ArrowLeft,
   Camera,
+  Check,
   CheckCircle2,
+  AlertCircle,
+  Info,
   RefreshCw,
-  ImagePlus,
+  WifiOff,
   X,
 } from "lucide-react-native";
 import * as ImagePicker from "expo-image-picker";
@@ -30,9 +33,12 @@ import { pmChecklistItems } from "@/database";
 import { useNetworkStatus } from "@/hooks/useNetworkStatus";
 import { useAttendanceGate } from "@/contexts/AttendanceGateContext";
 import SignaturePad from "@/components/SignaturePad";
+import SmartJoulesWordmark from "@/components/SmartJoulesWordmark";
 import logger from "@/utils/logger";
 import Skeleton from "@/components/Skeleton";
 import { StorageService } from "@/services/StorageService";
+import { cacheManager } from "@/services/CacheManager";
+import { ds, dsRadius, dsCardShadow } from "@/constants/ds";
 import NetInfo from "@react-native-community/netinfo";
 
 // Drizzle row type inferred from the schema
@@ -48,7 +54,14 @@ interface ResponseMap {
   };
 }
 
-const MULTIPLE_CHOICE_OPTIONS = ["Done", "Not Done"];
+// The checklist box cycles through these three states on tap, matching the
+// design: unanswered → Done → Not Done → unanswered.
+const CYCLE_NEXT: Record<string, string | null> = {
+  "": "Done",
+  Done: "Not Done",
+  "Not Done": null,
+};
+
 const isMeasureTask = (taskName?: string | null) =>
   !!taskName && taskName.toLowerCase().includes("measure");
 
@@ -63,17 +76,32 @@ const ENFORCE_READINGS_MANDATORY: boolean = false;
 /** Checklist row image: menu, direct camera/library, or null to remove */
 type ChecklistImageAction = "MENU" | "CAMERA" | "LIBRARY" | null;
 
+/**
+ * Editable fields on a checklist response. `"value"` is the merged
+ * reading+response used by Number/Text tasks: one box writes both columns, so
+ * the row counts as answered (backend completion requires `response_value`)
+ * while Fieldproxy still gets its `readings` value.
+ */
+type ResponseField = "response_value" | "remarks" | "readings" | "value";
+
 const INSTANCE_IMAGE_PICKER_OPTIONS = {
   mediaTypes: ["images"] as ImagePicker.MediaType[],
   allowsEditing: true,
   quality: 0.7,
 };
 
+/** "IMG_1234.jpg · queued" style caption under a task photo. */
+const photoCaption = (url: string) => {
+  const name = (url.split("?")[0] || "").split("/").pop() || "photo.jpg";
+  const trimmed = name.length > 26 ? `${name.slice(0, 23)}…` : name;
+  const isLocal = !/^https?:/i.test(url);
+  return isLocal ? `${trimmed} · queued` : trimmed;
+};
+
 // ─── Task Row – Memoized ────────────────────────────────────────────────────
 const TaskRow = React.memo(
   ({
     item,
-    index,
     response,
     onResponseChange,
     onImageChange,
@@ -85,14 +113,12 @@ const TaskRow = React.memo(
     missingRemarks,
     missingResponse,
     missingReadings,
-    style,
   }: {
     item: PMChecklistItemRow;
-    index: number;
     response?: ResponseMap[string];
     onResponseChange: (
       itemId: string,
-      field: "response_value" | "remarks" | "readings",
+      field: ResponseField,
       value: string | null,
     ) => void;
     onImageChange: (itemId: string, action: ChecklistImageAction) => void;
@@ -104,340 +130,207 @@ const TaskRow = React.memo(
     missingRemarks?: boolean;
     missingResponse?: boolean;
     missingReadings?: boolean;
-    style?: any;
   }) => {
-    const isDark = useColorScheme() === "dark";
-    const isDone = response?.response_value === "Done";
-    const readingsRequired =
-      ENFORCE_READINGS_MANDATORY && isMeasureTask(item.task_name);
-    const isReadingsMissing = Boolean(
-      missingReadings ??
-      (readingsRequired &&
-        !!response?.response_value &&
-        (!response?.readings || !response.readings.trim())),
-    );
+    const value = response?.response_value || null;
     const fieldType = item.field_type || "Multiple Choice";
+    const isChoice = fieldType === "Multiple Choice";
+    // Free-text/number tasks have no Done/Not-Done vocabulary — the box just
+    // reflects "answered" for them.
+    const isDone = isChoice ? value === "Done" : !!value;
+    const isNotDone = isChoice && value === "Not Done";
+    // Number/Text tasks have ONE value box, and it is the reading: it writes
+    // both `readings` and `response_value` (the backend rejects completion
+    // while any row has no response_value; Fieldproxy reads `readings`).
+    // Previously they rendered a second, separate response input above it, so
+    // operators saw two boxes for the same measurement and filled them
+    // inconsistently. Multiple-Choice rows keep an optional reading box,
+    // required only when the checklist marks the task readings_mandatory.
+    const readingsRequired = isChoice
+      ? Boolean(item.readings_mandatory)
+      : true;
+    // Legacy rows stored the measurement in response_value only — fall back to
+    // it so an already-answered task still shows its value in the merged box.
+    const readingsValue = isChoice
+      ? response?.readings || ""
+      : response?.readings || response?.response_value || "";
+    // Completed instances are preview-only — don't paint them red after the fact.
+    const isReadingsMissing =
+      readingsRequired && !readingsValue.trim() && !isCompleted;
+    const hasPhoto = !!response?.image_url;
     const rowHasError = Boolean(
       showRequiredErrors &&
         (missingResponse ||
           isReadingsMissing ||
+          missingReadings ||
           missingRemarks ||
           missingEvidenceImage),
     );
 
+    // Box visuals per state — thunder fill when Done, flame outline when Not
+    // Done, hairline carbon outline when still unanswered.
+    const boxStyle = isDone
+      ? { backgroundColor: ds.thunder[100], borderColor: ds.thunder[100] }
+      : isNotDone
+        ? { backgroundColor: ds.flame[1000], borderColor: ds.flame[100] }
+        : { backgroundColor: ds.white, borderColor: ds.carbon[800] };
+
+    const cycleResponse = () => {
+      if (isCompleted) return;
+      if (isChoice) {
+        onResponseChange(item.id, "response_value", CYCLE_NEXT[value ?? ""] ?? null);
+      }
+    };
+
     return (
-      <View
-        style={[styles.taskCard, style, rowHasError && styles.taskCardError]}
-      >
-        <View style={styles.taskHeader}>
-          <View
+      <View style={[styles.taskCard, rowHasError && styles.taskCardError]}>
+        <View style={styles.taskRow}>
+          <TouchableOpacity
+            onPress={cycleResponse}
+            disabled={isCompleted || !isChoice}
+            activeOpacity={0.7}
+            accessibilityRole="checkbox"
+            accessibilityLabel={`${item.task_name} — ${value || "not answered"}`}
             style={[
-              styles.seqBadge,
-              {
-                backgroundColor: isDone
-                  ? isDark
-                    ? "#064e3b"
-                    : "#dcfce7"
-                  : isDark
-                    ? "#334155"
-                    : "#f1f5f9",
-              },
+              styles.taskBox,
+              boxStyle,
+              showRequiredErrors &&
+                missingResponse && { borderColor: ds.flame[100] },
             ]}
           >
+            {isNotDone ? (
+              <X size={17} color={ds.flame[100]} strokeWidth={2.4} />
+            ) : (
+              <Check
+                size={17}
+                color={isDone ? ds.white : "transparent"}
+                strokeWidth={2.6}
+              />
+            )}
+          </TouchableOpacity>
+
+          <View style={styles.taskBody}>
             <Text
               style={[
-                styles.seqText,
-                {
-                  color: isDone
-                    ? isDark
-                      ? "#4ade80"
-                      : "#16a34a"
-                    : isDark
-                      ? "#94a3b8"
-                      : "#94a3b8",
-                },
+                styles.taskName,
+                { color: isDone ? ds.carbon[500] : ds.carbon[100] },
               ]}
             >
-              {index + 1}
+              {item.task_name}
             </Text>
-          </View>
-          <Text
-            style={[styles.taskName, { color: isDark ? "#f8fafc" : "#0f172a" }]}
-          >
-            {item.task_name}
-          </Text>
-        </View>
 
-        {/* Response */}
-        {fieldType === "Multiple Choice" ? (
-          <View style={styles.choiceRow}>
-            {MULTIPLE_CHOICE_OPTIONS.map((opt) => {
-              const selected = response?.response_value === opt;
-              const selColor = opt === "Done" ? "#22c55e" : "#ef4444";
-              return (
+            <View style={styles.inlineRow}>
+              {/* Readings — the single value box for Number/Text tasks. A
+                  required-but-empty field is outlined in red on sight, not
+                  only after a blocked completion. */}
+              <View
+                style={[
+                  styles.field,
+                  isChoice || fieldType === "Number"
+                    ? styles.readingsField
+                    : styles.readingsFieldWide,
+                  isReadingsMissing && { borderColor: ds.flame[100] },
+                ]}
+              >
+                <TextInput
+                  value={readingsValue}
+                  onChangeText={(val) =>
+                    onResponseChange(item.id, isChoice ? "readings" : "value", val)
+                  }
+                  editable={!isCompleted}
+                  placeholder={readingsRequired ? "Required" : "Readings"}
+                  placeholderTextColor={ds.carbon[700]}
+                  keyboardType={
+                    isChoice || fieldType === "Number"
+                      ? "decimal-pad"
+                      : "default"
+                  }
+                  style={styles.fieldInput}
+                />
+              </View>
+
+              <View
+                style={[
+                  styles.field,
+                  styles.remarksField,
+                  showRequiredErrors &&
+                    missingRemarks && { borderColor: ds.flame[100] },
+                ]}
+              >
+                <TextInput
+                  value={response?.remarks || ""}
+                  onChangeText={(val) =>
+                    onResponseChange(item.id, "remarks", val || null)
+                  }
+                  editable={!isCompleted}
+                  placeholder={
+                    item.remarks_mandatory ? "Reason required" : "Remarks…"
+                  }
+                  placeholderTextColor={ds.carbon[700]}
+                  style={[styles.fieldInput, styles.remarksInput]}
+                />
+              </View>
+
+              {isUploading ? (
+                <View style={[styles.camBtn, styles.camBtnIdle]}>
+                  <ActivityIndicator size="small" color={ds.thunder[100]} />
+                </View>
+              ) : (
                 <TouchableOpacity
-                  key={opt}
                   onPress={() => {
-                    if (isCompleted) return;
-                    onResponseChange(item.id, "response_value", opt);
+                    // Completed PMs are preview-only — never re-open the
+                    // add/replace menu once the instance is signed off.
+                    if (isCompleted) {
+                      if (hasPhoto) onPreview(response!.image_url!);
+                      return;
+                    }
+                    onImageChange(item.id, "MENU");
                   }}
-                  disabled={isCompleted}
-                  style={[
-                    styles.choiceBtn,
-                    showRequiredErrors &&
-                      missingResponse &&
-                      !selected &&
-                      (isDark
-                        ? styles.requiredFieldBorderDark
-                        : styles.requiredFieldBorder),
-                    {
-                      backgroundColor: selected
-                        ? selColor
-                        : isDark
-                          ? "#1e293b"
-                          : "#f8fafc",
-                      borderColor: selected
-                        ? "transparent"
-                        : isDark
-                          ? "#334155"
-                          : "#e2e8f0",
-                      opacity: isCompleted && !selected ? 0.5 : 1,
-                    },
-                  ]}
+                  disabled={isCompleted && !hasPhoto}
                   activeOpacity={0.7}
+                  accessibilityLabel="Task photo"
+                  style={[
+                    styles.camBtn,
+                    hasPhoto ? styles.camBtnActive : styles.camBtnIdle,
+                    showRequiredErrors &&
+                      missingEvidenceImage && { borderColor: ds.flame[100] },
+                  ]}
                 >
-                  <Text
-                    style={[
-                      styles.choiceText,
-                      {
-                        color: selected
-                          ? "#fff"
-                          : isDark
-                            ? "#94a3b8"
-                            : "#64748b",
-                      },
-                    ]}
-                  >
-                    {opt}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
-        ) : (
-          <TextInput
-            value={response?.response_value || ""}
-            onChangeText={(val) =>
-              onResponseChange(item.id, "response_value", val)
-            }
-            editable={!isCompleted}
-            placeholder={`Enter ${fieldType.toLowerCase()}...`}
-            placeholderTextColor={isDark ? "#64748b" : "#94a3b8"}
-            keyboardType={fieldType === "Number" ? "decimal-pad" : "default"}
-            style={[
-              styles.textInput,
-              showRequiredErrors &&
-                missingResponse &&
-                (isDark
-                  ? styles.requiredFieldBorderDark
-                  : styles.requiredFieldBorder),
-              isReadingsMissing &&
-                (isDark
-                  ? styles.requiredReadingsInputDark
-                  : styles.requiredReadingsInput),
-              isDark && {
-                backgroundColor: "#0f172a",
-                borderColor: "#334155",
-                color: "#f8fafc",
-              },
-              isCompleted && { opacity: 0.7 },
-            ]}
-          />
-        )}
-
-        {/* Readings Input */}
-        <View style={{ marginTop: 12 }}>
-          <Text
-            style={[
-              styles.inputLabel,
-              { color: isDark ? "#94a3b8" : "#64748b" },
-            ]}
-          >
-            {readingsRequired ? "Readings *" : "Readings"}
-          </Text>
-          <TextInput
-            value={response?.readings || ""}
-            onChangeText={(val) => onResponseChange(item.id, "readings", val)}
-            editable={!isCompleted}
-            placeholder={
-              readingsRequired
-                ? "Enter readings (required for this task)..."
-                : "Enter readings if applicable..."
-            }
-            placeholderTextColor={isDark ? "#64748b" : "#94a3b8"}
-            keyboardType="decimal-pad"
-            style={[
-              styles.textInput,
-              showRequiredErrors &&
-                isReadingsMissing &&
-                (isDark
-                  ? styles.requiredReadingsInputDark
-                  : styles.requiredReadingsInput),
-              isDark && {
-                backgroundColor: "#0f172a",
-                borderColor: "#334155",
-                color: "#f8fafc",
-              },
-            ]}
-          />
-        </View>
-
-        {/* Remarks & Image Row — two explicit actions (camera + gallery) */}
-        <View style={styles.actionRow}>
-          {isUploading ? (
-            <View
-              style={[
-                styles.imageBtn,
-                styles.imagePickRow,
-                isDark && {
-                  backgroundColor: "#1e293b",
-                  borderColor: "#334155",
-                },
-              ]}
-            >
-              <ActivityIndicator size="small" color="#3b82f6" />
-              <Text
-                style={[styles.imageBtnText, isDark && { color: "#94a3b8" }]}
-              >
-                Uploading...
-              </Text>
-            </View>
-          ) : (
-            <View style={styles.imagePickRow}>
-              <TouchableOpacity
-                onPress={() => onImageChange(item.id, "CAMERA")}
-                disabled={isCompleted}
-                style={[
-                  styles.imageBtn,
-                  styles.imageBtnHalf,
-                  showRequiredErrors &&
-                    missingEvidenceImage &&
-                    (isDark
-                      ? styles.requiredFieldBorderDark
-                      : styles.requiredFieldBorder),
-                  isDark && {
-                    backgroundColor: "#1e293b",
-                    borderColor: "#334155",
-                  },
-                  isCompleted && { opacity: 0.5 },
-                ]}
-              >
-                <Camera size={14} color={isDark ? "#94a3b8" : "#64748b"} />
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={() => onImageChange(item.id, "LIBRARY")}
-                disabled={isCompleted}
-                style={[
-                  styles.imageBtn,
-                  styles.imageBtnHalf,
-                  showRequiredErrors &&
-                    missingEvidenceImage &&
-                    (isDark
-                      ? styles.requiredFieldBorderDark
-                      : styles.requiredFieldBorder),
-                  isDark && {
-                    backgroundColor: "#1e293b",
-                    borderColor: "#334155",
-                  },
-                  isCompleted && { opacity: 0.5 },
-                ]}
-              >
-                <ImagePlus size={14} color={isDark ? "#94a3b8" : "#64748b"} />
-              </TouchableOpacity>
-            </View>
-          )}
-
-          {(item.remarks_mandatory || response?.response_value) && (
-            <View style={{ flex: 1 }}>
-              <TextInput
-                value={response?.remarks || ""}
-                onChangeText={(val) =>
-                  onResponseChange(item.id, "remarks", val || null)
-                }
-                editable={!isCompleted}
-                placeholder="Add remarks..."
-                placeholderTextColor={isDark ? "#64748b" : "#94a3b8"}
-                style={[
-                  styles.remarksInput,
-                  showRequiredErrors &&
-                    missingRemarks &&
-                    (isDark
-                      ? styles.requiredFieldBorderDark
-                      : styles.requiredFieldBorder),
-                  isDark && {
-                    backgroundColor: "#0f172a",
-                    borderColor: "#334155",
-                    color: "#f8fafc",
-                  },
-                ]}
-                multiline
-              />
-            </View>
-          )}
-        </View>
-
-        {/* Image Preview */}
-        {response?.image_url && (
-          <View style={styles.imagePreviewRow}>
-            <TouchableOpacity
-              style={[
-                styles.previewContainer,
-                isDark && { borderColor: "#334155" },
-              ]}
-              onPress={() => {
-                if (isCompleted) {
-                  onPreview(response.image_url!);
-                } else {
-                  Alert.alert("Task Photo", "What would you like to do?", [
-                    {
-                      text: "Show Preview",
-                      onPress: () => onPreview(response.image_url!),
-                    },
-                    {
-                      text: "Replace photo",
-                      onPress: () =>
-                        Alert.alert("Replace photo", "Choose a source", [
-                          {
-                            text: "Take photo",
-                            onPress: () => onImageChange(item.id, "CAMERA"),
-                          },
-                          {
-                            text: "Choose from gallery",
-                            onPress: () => onImageChange(item.id, "LIBRARY"),
-                          },
-                          { text: "Cancel", style: "cancel" },
-                        ]),
-                    },
-                    { text: "Cancel", style: "cancel" },
-                  ]);
-                }
-              }}
-            >
-              <Image
-                source={{ uri: response.image_url }}
-                style={styles.thumbnail}
-              />
-              {!isCompleted && (
-                <TouchableOpacity
-                  onPress={() => onImageChange(item.id, null)}
-                  style={styles.removeImgBtn}
-                >
-                  <X size={12} color="#fff" />
+                  <Camera
+                    size={15}
+                    color={hasPhoto ? ds.sky[100] : ds.carbon[400]}
+                  />
                 </TouchableOpacity>
               )}
-            </TouchableOpacity>
+            </View>
+
+            {hasPhoto && (
+              <View style={styles.photoRow}>
+                <TouchableOpacity
+                  onPress={() => onPreview(response!.image_url!)}
+                  style={styles.photoThumbWrap}
+                  activeOpacity={0.8}
+                >
+                  <Image
+                    source={{ uri: response!.image_url! }}
+                    style={styles.photoThumb}
+                  />
+                </TouchableOpacity>
+                <Text style={styles.photoCaption} numberOfLines={1}>
+                  {photoCaption(response!.image_url!)}
+                </Text>
+                {!isCompleted && (
+                  <TouchableOpacity
+                    onPress={() => onImageChange(item.id, null)}
+                    hitSlop={10}
+                    accessibilityLabel="Remove photo"
+                  >
+                    <X size={13} color={ds.carbon[600]} />
+                  </TouchableOpacity>
+                )}
+              </View>
+            )}
           </View>
-        )}
+        </View>
       </View>
     );
   },
@@ -448,47 +341,40 @@ const TaskRow = React.memo(
     prev.response?.remarks === next.response?.remarks &&
     prev.response?.image_url === next.response?.image_url &&
     prev.isUploading === next.isUploading &&
-    prev.isCompleted === next.isCompleted,
+    prev.isCompleted === next.isCompleted &&
+    prev.showRequiredErrors === next.showRequiredErrors &&
+    prev.missingResponse === next.missingResponse &&
+    prev.missingReadings === next.missingReadings &&
+    prev.missingRemarks === next.missingRemarks &&
+    prev.missingEvidenceImage === next.missingEvidenceImage,
 );
 
 TaskRow.displayName = "TaskRow";
 
 // ─── Checklist Skeleton ─────────────────────────────────────────────────────
-const ChecklistSkeleton = ({
-  cardBg,
-  borderColor,
-  isDark,
-}: {
-  cardBg: string;
-  borderColor: string;
-  isDark: boolean;
-}) => {
+const ChecklistSkeleton = () => {
   return (
     <View style={styles.listContent}>
-      {[1, 2, 3, 4, 5].map((i) => (
-        <View
-          key={i}
-          style={[
-            styles.taskCard,
-            { backgroundColor: cardBg, borderColor: borderColor },
-          ]}
-        >
-          <View style={styles.taskHeader}>
-            <Skeleton
-              width={24}
-              height={24}
-              borderRadius={12}
-              style={{ marginRight: 10 }}
-            />
-            <Skeleton width="70%" height={16} />
-          </View>
-          <View style={styles.choiceRow}>
-            <Skeleton width="48%" height={40} borderRadius={12} />
-            <Skeleton width="48%" height={40} borderRadius={12} />
-          </View>
-          <View style={styles.actionRow}>
-            <Skeleton width={100} height={36} borderRadius={10} />
-            <Skeleton width="50%" height={36} borderRadius={12} />
+      {[1, 2, 3, 4, 5, 6, 7, 8].map((i) => (
+        <View key={i} style={styles.taskCard}>
+          <View style={styles.taskRow}>
+            <Skeleton width={26} height={26} borderRadius={dsRadius.box} />
+            <View style={[styles.taskBody, { marginLeft: 11 }]}>
+              <Skeleton width="80%" height={13} />
+              <View style={[styles.inlineRow, { marginTop: 10 }]}>
+                <Skeleton
+                  width={112}
+                  height={30}
+                  borderRadius={dsRadius.sm}
+                />
+                <Skeleton
+                  width="45%"
+                  height={30}
+                  borderRadius={dsRadius.sm}
+                />
+                <Skeleton width={32} height={30} borderRadius={dsRadius.sm} />
+              </View>
+            </View>
           </View>
         </View>
       ))}
@@ -501,6 +387,7 @@ export default function PMExecutionScreen() {
   const { instanceId } = useLocalSearchParams<{ instanceId: string }>();
   const { isConnected } = useNetworkStatus();
   const { canEdit } = useAttendanceGate();
+  const insets = useSafeAreaInsets();
 
   const [instance, setInstance] = useState<any>(null);
   const [checklistItems, setChecklistItems] = useState<PMChecklistItemRow[]>(
@@ -516,14 +403,7 @@ export default function PMExecutionScreen() {
   );
   const [previewImageUrl, setPreviewImageUrl] = useState<string | null>(null);
   const [completionAttempted, setCompletionAttempted] = useState(false);
-  const isDark = useColorScheme() === "dark";
-
-  const bgColor = isDark ? "#020617" : "#f8fafc";
-  const textColor = isDark ? "#f8fafc" : "#0f172a";
-  const subTextColor = isDark ? "#94a3b8" : "#64748b";
-  const borderColor = isDark ? "#1e293b" : "#f1f5f9";
-  const headerTextCol = isDark ? "#f8fafc" : "#0f172a";
-  const cardBg = isDark ? "#0f172a" : "#fff";
+  const [queuedCount, setQueuedCount] = useState(0);
 
   // ── Load instance then checklist ──────────────────────────────────────────
   const loadData = useCallback(
@@ -869,7 +749,30 @@ export default function PMExecutionScreen() {
       };
 
       if (action === "MENU") {
-        Alert.alert("Add image", "Choose an option", [
+        const existing = responses[itemId]?.image_url;
+        if (existing) {
+          Alert.alert("Task photo", "What would you like to do?", [
+            { text: "Show preview", onPress: () => setPreviewImageUrl(existing) },
+            {
+              text: "Replace photo",
+              onPress: () =>
+                Alert.alert("Replace photo", "Choose a source", [
+                  {
+                    text: "Take photo",
+                    onPress: () => void pickFromSource("camera"),
+                  },
+                  {
+                    text: "Choose from gallery",
+                    onPress: () => void pickFromSource("library"),
+                  },
+                  { text: "Cancel", style: "cancel" },
+                ]),
+            },
+            { text: "Cancel", style: "cancel" },
+          ]);
+          return;
+        }
+        Alert.alert("Add photo", "Choose an option", [
           {
             text: "Take photo",
             onPress: () => void pickFromSource("camera"),
@@ -907,7 +810,7 @@ export default function PMExecutionScreen() {
         });
       }
     },
-    [handleSave, isConnected, canEdit],
+    [handleSave, isConnected, canEdit, responses],
   );
 
   useEffect(() => {
@@ -915,6 +818,28 @@ export default function PMExecutionScreen() {
       loadData(false);
     }
   }, [instanceId, isConnected, loadData]);
+
+  // Offline strip count — how many mutations are still waiting in the queue.
+  useEffect(() => {
+    if (isConnected !== false) {
+      setQueuedCount(0);
+      return;
+    }
+    let cancelled = false;
+    const read = () =>
+      cacheManager
+        .getQueueCount()
+        .then((n) => {
+          if (!cancelled) setQueuedCount(n);
+        })
+        .catch(() => {});
+    read();
+    const timer = setInterval(read, 5000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [isConnected, responses]);
 
   // ── Progress derived value ────────────────────────────────────────────────
   // Count only responses tied to a current checklist item. Responses left
@@ -926,6 +851,18 @@ export default function PMExecutionScreen() {
   const total = checklistItems.length;
   // Visual percentage for the progress bar fill
   const progressPercent = total > 0 ? (answered / total) * 100 : 0;
+
+  // Signature-sheet summary chips
+  const doneCount = checklistItems.filter(
+    (it) => responses[it.id]?.response_value === "Done",
+  ).length;
+  const notDoneCount = checklistItems.filter(
+    (it) => responses[it.id]?.response_value === "Not Done",
+  ).length;
+  const photoCount =
+    checklistItems.filter((it) => !!responses[it.id]?.image_url).length +
+    (instance?.before_image ? 1 : 0) +
+    (instance?.after_image ? 1 : 0);
 
   const applyInstanceImageFromUri = useCallback(
     async (type: "before_image" | "after_image", pickedUri: string) => {
@@ -1010,47 +947,73 @@ export default function PMExecutionScreen() {
 
   const promptAddInstanceImage = useCallback(
     (type: "before_image" | "after_image") => {
-      Alert.alert("Add evidence", "Choose an option", [
-        {
-          text: "Take photo",
-          onPress: () => void pickInstanceImage(type, "camera"),
-        },
-        {
-          text: "Choose from gallery",
-          onPress: () => void pickInstanceImage(type, "library"),
-        },
-        { text: "Cancel", style: "cancel" },
-      ]);
+      Alert.alert(
+        type === "before_image" ? "Before photo" : "After photo",
+        "Choose an option",
+        [
+          {
+            text: "Take photo",
+            onPress: () => void pickInstanceImage(type, "camera"),
+          },
+          {
+            text: "Choose from gallery",
+            onPress: () => void pickInstanceImage(type, "library"),
+          },
+          { text: "Cancel", style: "cancel" },
+        ],
+      );
     },
     [pickInstanceImage],
   );
 
   const promptReplaceInstanceImage = useCallback(
     (type: "before_image" | "after_image", currentUri: string) => {
-      Alert.alert("Evidence photo", "What would you like to do?", [
-        {
-          text: "Show preview",
-          onPress: () => setPreviewImageUrl(currentUri),
-        },
-        {
-          text: "Replace photo",
-          onPress: () =>
-            Alert.alert("Replace photo", "Choose a source", [
-              {
-                text: "Take photo",
-                onPress: () => void pickInstanceImage(type, "camera"),
-              },
-              {
-                text: "Choose from gallery",
-                onPress: () => void pickInstanceImage(type, "library"),
-              },
-              { text: "Cancel", style: "cancel" },
-            ]),
-        },
-        { text: "Cancel", style: "cancel" },
-      ]);
+      Alert.alert(
+        type === "before_image" ? "Before photo" : "After photo",
+        "What would you like to do?",
+        [
+          {
+            text: "Show preview",
+            onPress: () => setPreviewImageUrl(currentUri),
+          },
+          {
+            text: "Replace photo",
+            onPress: () =>
+              Alert.alert("Replace photo", "Choose a source", [
+                {
+                  text: "Take photo",
+                  onPress: () => void pickInstanceImage(type, "camera"),
+                },
+                {
+                  text: "Choose from gallery",
+                  onPress: () => void pickInstanceImage(type, "library"),
+                },
+                { text: "Cancel", style: "cancel" },
+              ]),
+          },
+          { text: "Cancel", style: "cancel" },
+        ],
+      );
     },
     [pickInstanceImage],
+  );
+
+  const onEvidencePress = useCallback(
+    (type: "before_image" | "after_image") => {
+      const current = instance?.[type];
+      // Evidence stays editable while the PM is In-progress — tap to preview,
+      // retake, or replace it. Once Completed it is preview-only.
+      if (current) {
+        if (instance?.status === "Completed" || !canEdit) {
+          setPreviewImageUrl(current);
+        } else {
+          promptReplaceInstanceImage(type, current);
+        }
+      } else if (canEdit && instance?.status !== "Completed") {
+        promptAddInstanceImage(type);
+      }
+    },
+    [instance, canEdit, promptAddInstanceImage, promptReplaceInstanceImage],
   );
 
   // ── Response handler ──────────────────────────────────────────────────────
@@ -1070,20 +1033,21 @@ export default function PMExecutionScreen() {
   const previousInstanceRef = useRef<any>(null);
 
   const handleResponseChange = useCallback(
-    (
-      itemId: string,
-      field: "response_value" | "remarks" | "readings",
-      value: string | null,
-    ) => {
+    (itemId: string, field: ResponseField, value: string | null) => {
       // Belt-and-suspenders: refuse all writes while the gate forbids editing
       // (locked / read-only). UI also disables the inputs.
       if (!canEdit) return;
       setResponses((prev) => {
+        // Number/Text tasks type into a single box that feeds both columns.
+        const patch =
+          field === "value"
+            ? { readings: value, response_value: value }
+            : { [field]: value };
         const next = {
           ...prev,
           [itemId]: {
             ...prev[itemId],
-            [field]: value,
+            ...patch,
           },
         };
 
@@ -1091,7 +1055,7 @@ export default function PMExecutionScreen() {
         if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
 
         if (field === "response_value") {
-          // Immediate save for button toggles
+          // Immediate save for the checkbox cycle
           handleSave(true, undefined, next);
         } else {
           // Debounced save for text input
@@ -1184,6 +1148,21 @@ export default function PMExecutionScreen() {
         missingImagesByTask.size > 0,
     };
   }, [checklistItems, responses]);
+
+  // Single-line reason shown above the CTA once completion has been attempted.
+  const blockedMessage = useMemo(() => {
+    if (!completionAttempted || !missingMandatoryValidation.hasAny) return "";
+    const v = missingMandatoryValidation;
+    const plural = (n: number, word: string) =>
+      `${n} ${word}${n > 1 ? "s" : ""}`;
+    if (v.missingResponses.length)
+      return `${plural(v.missingResponses.length, "task")} still unanswered`;
+    if (v.missingReadings.length)
+      return `${plural(v.missingReadings.length, "mandatory reading")} missing`;
+    if (v.missingRemarks.length)
+      return `${plural(v.missingRemarks.length, "task")} need a remark`;
+    return `${plural(v.missingImages.length, "task")} need a photo`;
+  }, [completionAttempted, missingMandatoryValidation]);
 
   // Scroll the list to the first task that's missing a required field and give
   // the operator a light error nudge. Returns true if such a task was found.
@@ -1321,12 +1300,11 @@ export default function PMExecutionScreen() {
     [handleSave, missingMandatoryValidation.hasAny, showCompletionBlockedPopup],
   );
 
-  // ── FlatList setup ────────────────────────────────────────────────────────
+  // ── List setup ────────────────────────────────────────────────────────────
   const renderItem: ListRenderItem<PMChecklistItemRow> = useCallback(
-    ({ item, index }) => (
+    ({ item }) => (
       <TaskRow
         item={item}
-        index={index}
         response={responses[item.id]}
         onResponseChange={handleResponseChange}
         onImageChange={handleImageChange}
@@ -1338,7 +1316,6 @@ export default function PMExecutionScreen() {
         missingRemarks={missingMandatoryValidation.byItemId[item.id]?.missingRemarks}
         missingResponse={missingMandatoryValidation.byItemId[item.id]?.missingResponse}
         missingReadings={missingMandatoryValidation.byItemId[item.id]?.missingReadings}
-        style={{ backgroundColor: cardBg, borderColor: borderColor }}
       />
     ),
     [
@@ -1348,8 +1325,6 @@ export default function PMExecutionScreen() {
       uploadingItems,
       instance?.status,
       canEdit,
-      cardBg,
-      borderColor,
       completionAttempted,
       missingMandatoryValidation.byItemId,
     ],
@@ -1357,17 +1332,23 @@ export default function PMExecutionScreen() {
 
   const keyExtractor = useCallback((item: PMChecklistItemRow) => item.id, []);
 
+  const ListFooter = (
+    <View style={styles.hintRow}>
+      <Info size={14} color={ds.carbon[600]} />
+      <Text style={styles.hintText}>
+        Tap the box to cycle Done → Not Done → clear. Fields marked Required
+        must be filled before completion.
+      </Text>
+    </View>
+  );
+
   const ListEmpty = (
-    <View style={[styles.flex, { backgroundColor: bgColor }]}>
+    <View style={styles.flex}>
       {fetchingChecklist ? (
-        <ChecklistSkeleton
-          cardBg={cardBg}
-          borderColor={borderColor}
-          isDark={isDark}
-        />
+        <ChecklistSkeleton />
       ) : (
         <View style={styles.emptyChecklist}>
-          <Text style={[styles.emptyText, isDark && { color: "#64748b" }]}>
+          <Text style={styles.emptyText}>
             {!instance?.maintenance_id
               ? "No checklist linked to this PM instance."
               : checklistItems.length === 0 && !isConnected
@@ -1385,23 +1366,9 @@ export default function PMExecutionScreen() {
                     [{ text: "OK" }],
                   );
                 }}
-                style={{
-                  marginTop: 16,
-                  paddingHorizontal: 20,
-                  paddingVertical: 10,
-                  backgroundColor: isDark ? "#1e293b" : "#f1f5f9",
-                  borderRadius: 8,
-                }}
+                style={styles.learnMoreBtn}
               >
-                <Text
-                  style={{
-                    color: isDark ? "#94a3b8" : "#64748b",
-                    fontSize: 14,
-                    fontWeight: "600",
-                  }}
-                >
-                  Learn More
-                </Text>
+                <Text style={styles.learnMoreText}>Learn More</Text>
               </TouchableOpacity>
             )}
         </View>
@@ -1414,313 +1381,216 @@ export default function PMExecutionScreen() {
     total > 0 &&
     answered === total &&
     missingMeasureReadings.length === 0;
+  const ctaReady = canComplete && !missingMandatoryValidation.hasAny;
+
+  const completedAt = instance?.completed_on
+    ? new Date(Number(instance.completed_on)).toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+    : null;
+
+  const evidenceTileStyle = (has: boolean) => [
+    styles.evidenceTile,
+    has ? styles.evidenceTileActive : styles.evidenceTileIdle,
+  ];
 
   if (loading && !instance) {
     return (
-      <View
-        style={{ flex: 1, backgroundColor: isDark ? "#020617" : "#f8fafc" }}
-      >
-        <ChecklistSkeleton
-          cardBg={cardBg}
-          borderColor={borderColor}
-          isDark={isDark}
-        />
+      <View style={[styles.flex, { backgroundColor: ds.pageBg }]}>
+        <StatusBar style="light" />
+        <View style={[styles.headerBlock, { paddingTop: insets.top + 6 }]}>
+          <View style={styles.headerRow}>
+            <TouchableOpacity
+              onPress={() => router.back()}
+              style={styles.headerTile}
+              accessibilityLabel="Go back"
+            >
+              <ArrowLeft size={20} color={ds.white} />
+            </TouchableOpacity>
+            <View style={styles.headerText}>
+              <Text style={styles.headerTitle}>PM Task</Text>
+              <Text style={styles.headerSub}>Loading checklist…</Text>
+            </View>
+          </View>
+          <View style={styles.progressRow}>
+            <View style={styles.progressTrack} />
+          </View>
+        </View>
+        <ChecklistSkeleton />
       </View>
     );
   }
 
   return (
-    <View style={[styles.flex, { backgroundColor: bgColor }]}>
-      <SafeAreaView
-        style={[styles.flex, { backgroundColor: bgColor }]}
-        edges={["top"]}
-      >
-        {/* Header */}
-        <View
-          style={[
-            styles.header,
-            {
-              backgroundColor: isDark ? "#0f172a" : "#fff",
-              borderBottomColor: borderColor,
-            },
-          ]}
-        >
+    <View style={[styles.flex, { backgroundColor: ds.pageBg }]}>
+      <StatusBar style="light" />
+
+      {/* ── Thunder header ── */}
+      <View style={[styles.headerBlock, { paddingTop: insets.top + 6 }]}>
+        <View style={styles.headerRow}>
           <TouchableOpacity
             onPress={() => router.back()}
-            style={[
-              styles.backBtn,
-              { backgroundColor: isDark ? "#1e293b" : "#f1f5f9" },
-            ]}
+            style={styles.headerTile}
+            accessibilityLabel="Go back"
           >
-            <ArrowLeft size={18} color={isDark ? "#94a3b8" : "#64748b"} />
+            <ArrowLeft size={20} color={ds.white} />
           </TouchableOpacity>
           <View style={styles.headerText}>
-            <Text
-              style={[styles.headerTitle, { color: headerTextCol }]}
-              numberOfLines={1}
-            >
+            <Text style={styles.headerTitle} numberOfLines={1}>
               {instance?.asset_id || instance?.title || "PM Task"}
             </Text>
-            <Text style={[styles.headerSub, { color: subTextColor }]}>
-              {instance?.title} · {instance?.asset_type}
+            <Text style={styles.headerSub} numberOfLines={1}>
+              {[instance?.title, instance?.asset_type]
+                .filter(Boolean)
+                .join(" · ")}
             </Text>
           </View>
           {isConnected && (
             <TouchableOpacity
               onPress={() => loadData(true)}
-              style={[
-                styles.refreshBtn,
-                {
-                  backgroundColor: isDark ? "#1e293b" : "#f8fafc",
-                  borderColor: borderColor,
-                },
-              ]}
+              style={styles.headerTile}
               disabled={fetchingChecklist}
+              accessibilityLabel="Refresh checklist"
             >
               {fetchingChecklist ? (
-                <ActivityIndicator size="small" color="#3b82f6" />
+                <ActivityIndicator size="small" color={ds.white} />
               ) : (
-                <RefreshCw size={14} color="#94a3b8" />
+                <RefreshCw size={18} color={ds.white} />
               )}
             </TouchableOpacity>
           )}
         </View>
 
-        {/* Stats Row: Progress + Evidence */}
-        <View
-          style={[
-            styles.statsRow,
-            {
-              backgroundColor: isDark ? "#0f172a" : "#fff",
-              borderBottomColor: borderColor,
-            },
-          ]}
-        >
-          {/* Progress Col */}
-          <View style={styles.progressCol}>
+        <View style={styles.progressRow}>
+          <View style={styles.progressTrack}>
             <View
-              style={[
-                styles.progressTrack,
-                { backgroundColor: isDark ? "#1e293b" : "#e2e8f0" },
-              ]}
-            >
-              <View
-                style={[
-                  styles.progressFill,
-                  { width: `${progressPercent}%` as any },
-                ]}
-              />
-            </View>
-            <Text style={[styles.progressSub, { color: subTextColor }]}>
-              {answered}/{total} Done
-            </Text>
+              style={[styles.progressFill, { width: `${progressPercent}%` }]}
+            />
           </View>
-
-          {/* Evidence Col */}
-          <View style={styles.evidenceCol}>
+          <Text style={styles.progressCount}>
+            {answered}
+            <Text style={styles.progressTotal}>/{total}</Text>
+          </Text>
+          <View style={styles.evidenceGroup}>
             <TouchableOpacity
-              onPress={() => {
-                // Before-image is first captured in the Start modal, but
-                // stays editable while the PM is In-progress — tap to
-                // preview, retake, or replace it. Once Completed it is
-                // preview-only.
-                if (instance?.before_image) {
-                  if (instance.status === "Completed") {
-                    setPreviewImageUrl(instance.before_image);
-                  } else {
-                    promptReplaceInstanceImage(
-                      "before_image",
-                      instance.before_image,
-                    );
-                  }
-                } else {
-                  promptAddInstanceImage("before_image");
-                }
-              }}
-              style={[
-                styles.compactEvidenceBtn,
-                {
-                  backgroundColor: isDark ? "#1e293b" : "#f8fafc",
-                  borderColor: isDark ? "#334155" : "#e2e8f0",
-                },
-                instance?.before_image
-                  ? isDark
-                    ? { borderColor: "#3b82f6", backgroundColor: "#172554" }
-                    : styles.compactEvidenceBtnActive
-                  : {},
-              ]}
+              onPress={() => onEvidencePress("before_image")}
+              style={evidenceTileStyle(!!instance?.before_image)}
+              accessibilityLabel="Before photo"
             >
-              {instance?.before_image ? (
-                <Image
-                  source={{ uri: instance.before_image }}
-                  style={styles.compactEvidencePreview}
-                />
-              ) : (
-                <Camera size={16} color={isDark ? "#64748b" : "#94a3b8"} />
-              )}
-              <Text
-                style={[
-                  styles.compactEvidenceText,
-                  { color: isDark ? "#475569" : "#94a3b8" },
-                  instance?.before_image ? { color: "#3b82f6" } : {},
-                ]}
-              >
-                Before
-              </Text>
+              <Camera
+                size={14}
+                color={instance?.before_image ? ds.sky[800] : ds.thunder[600]}
+              />
             </TouchableOpacity>
-
             <TouchableOpacity
-              onPress={() => {
-                if (instance?.after_image) {
-                  if (instance.status === "Completed") {
-                    setPreviewImageUrl(instance.after_image);
-                  } else {
-                    promptReplaceInstanceImage(
-                      "after_image",
-                      instance.after_image,
-                    );
-                  }
-                } else {
-                  promptAddInstanceImage("after_image");
-                }
-              }}
-              style={[
-                styles.compactEvidenceBtn,
-                {
-                  backgroundColor: isDark ? "#1e293b" : "#f8fafc",
-                  borderColor: isDark ? "#334155" : "#e2e8f0",
-                },
-                instance?.after_image
-                  ? isDark
-                    ? { borderColor: "#3b82f6", backgroundColor: "#172554" }
-                    : styles.compactEvidenceBtnActive
-                  : {},
-              ]}
+              onPress={() => onEvidencePress("after_image")}
+              style={evidenceTileStyle(!!instance?.after_image)}
+              accessibilityLabel="After photo"
             >
-              {instance?.after_image ? (
-                <Image
-                  source={{ uri: instance.after_image }}
-                  style={styles.compactEvidencePreview}
-                />
-              ) : (
-                <CheckCircle2
-                  size={16}
-                  color={isDark ? "#64748b" : "#94a3b8"}
-                />
-              )}
-              <Text
-                style={[
-                  styles.compactEvidenceText,
-                  { color: isDark ? "#475569" : "#94a3b8" },
-                  instance?.after_image ? { color: "#3b82f6" } : {},
-                ]}
-              >
-                After
-              </Text>
+              <Camera
+                size={14}
+                color={instance?.after_image ? ds.sky[800] : ds.thunder[600]}
+              />
             </TouchableOpacity>
           </View>
         </View>
+      </View>
 
-        {/* Checklist via FlatList */}
-        {(loading || fetchingChecklist) && checklistItems.length === 0 ? (
-          <ChecklistSkeleton
-            cardBg={cardBg}
-            borderColor={borderColor}
-            isDark={isDark}
-          />
-        ) : (
-          <FlashList
-            ref={listRef}
-            data={checklistItems}
-            // @ts-ignore
-            renderItem={renderItem}
-            keyExtractor={keyExtractor}
-            ListEmptyComponent={ListEmpty}
-            // @ts-ignore
-            estimatedItemSize={280}
-            contentContainerStyle={[
-              styles.listContent,
-              { backgroundColor: bgColor },
-            ]}
-            showsVerticalScrollIndicator={false}
-            keyboardShouldPersistTaps="handled"
-          />
-        )}
+      {/* ── Offline strip ── */}
+      {isConnected === false && (
+        <View style={styles.offlineStrip}>
+          <WifiOff size={13} color={ds.flame[100]} />
+          <Text style={styles.offlineText} numberOfLines={1}>
+            {queuedCount > 0
+              ? `Offline — ${queuedCount} response${queuedCount > 1 ? "s" : ""} queued, will sync automatically`
+              : "Offline — changes are saved locally and will sync automatically"}
+          </Text>
+        </View>
+      )}
 
-        {/* Footer Actions */}
-        {!isCompleted && canEdit && (
-          <View
-            style={[
-              styles.footer,
-              {
-                backgroundColor: isDark ? "#0f172a" : "#fff",
-                borderTopColor: borderColor,
-              },
-            ]}
-          >
-            <View style={styles.footerBtns}>
-              <TouchableOpacity
-                onPress={() => {
-                  setCompletionAttempted(true);
-                  if (!canComplete || missingMandatoryValidation.hasAny) {
-                    // Guide the operator straight to the first unfinished card
-                    // (scrolls + red-bordered highlight) instead of a bare
-                    // count popup; fall back to the popup only if there's no
-                    // specific task to point at.
-                    if (!scrollToFirstIncomplete()) {
-                      showCompletionBlockedPopup();
-                    }
-                    return;
-                  }
-                  setShowCompletionModal(true);
-                }}
-                style={[
-                  styles.footerBtn,
-                  {
-                    backgroundColor: canComplete
-                      ? "#22c55e"
-                      : isDark
-                        ? "#1e293b"
-                        : "#e2e8f0",
-                  },
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.footerBtnText,
-                    { color: canComplete && !missingMandatoryValidation.hasAny ? "#fff" : "#94a3b8" },
-                  ]}
-                >
-                  Complete
-                </Text>
-              </TouchableOpacity>
+      {/* ── Task list ── */}
+      {(loading || fetchingChecklist) && checklistItems.length === 0 ? (
+        <ChecklistSkeleton />
+      ) : (
+        <FlashList
+          ref={listRef}
+          data={checklistItems}
+          // @ts-ignore
+          renderItem={renderItem}
+          keyExtractor={keyExtractor}
+          ListEmptyComponent={ListEmpty}
+          ListFooterComponent={checklistItems.length > 0 ? ListFooter : null}
+          // @ts-ignore
+          estimatedItemSize={104}
+          contentContainerStyle={styles.listContent}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+        />
+      )}
+
+      {/* ── Footer ── */}
+      {!isCompleted && canEdit && (
+        <View
+          style={[
+            styles.footer,
+            { paddingBottom: Math.max(insets.bottom, 12) + 14 },
+          ]}
+        >
+          {!!blockedMessage && (
+            <View style={styles.blockedRow}>
+              <AlertCircle size={14} color={ds.flame[100]} />
+              <Text style={styles.blockedText}>{blockedMessage}</Text>
             </View>
-          </View>
-        )}
-
-        {isCompleted && (
-          <View
+          )}
+          <TouchableOpacity
+            onPress={() => {
+              setCompletionAttempted(true);
+              if (!ctaReady) {
+                // Guide the operator straight to the first unfinished card
+                // (scrolls + flame-bordered highlight) instead of a bare count
+                // popup; fall back to the popup only if there's no specific
+                // task to point at.
+                if (!scrollToFirstIncomplete()) {
+                  showCompletionBlockedPopup();
+                }
+                return;
+              }
+              setShowCompletionModal(true);
+            }}
+            activeOpacity={0.85}
             style={[
-              styles.completedBanner,
-              {
-                backgroundColor: isDark ? "#064e3b" : "#f0fdf4",
-                borderTopColor: isDark ? "#065f46" : "#bbf7d0",
-              },
+              styles.cta,
+              { backgroundColor: ctaReady ? ds.thunder[100] : ds.carbon[900] },
             ]}
           >
             <Text
               style={[
-                styles.completedText,
-                { color: isDark ? "#4ade80" : "#15803d" },
+                styles.ctaText,
+                { color: ctaReady ? ds.white : ds.carbon[700] },
               ]}
             >
-              ✓ PM Completed
+              Complete &amp; Sign
             </Text>
-          </View>
-        )}
-      </SafeAreaView>
+          </TouchableOpacity>
+        </View>
+      )}
 
-      {/* Completion Modal with Signature Pad */}
+      {isCompleted && (
+        <View
+          style={[
+            styles.completedBanner,
+            { paddingBottom: Math.max(insets.bottom, 12) + 16 },
+          ]}
+        >
+          <CheckCircle2 size={18} color={ds.sky[100]} />
+          <Text style={styles.completedText}>
+            PM Completed{completedAt ? ` · ${completedAt}` : ""}
+          </Text>
+        </View>
+      )}
+
+      {/* ── Signature sheet ── */}
       <Modal
         visible={showCompletionModal}
         transparent
@@ -1728,58 +1598,63 @@ export default function PMExecutionScreen() {
         onRequestClose={() => setShowCompletionModal(false)}
       >
         <View style={styles.modalBg}>
-          <View style={[styles.modalSheet, { backgroundColor: cardBg }]}>
+          <View style={styles.modalSheet}>
             <View style={styles.modalHeader}>
-              <View>
-                <Text style={[styles.modalTitle, { color: textColor }]}>
-                  Complete PM Task
-                </Text>
-                <Text style={[styles.modalSub, { color: subTextColor }]}>
+              <View style={styles.modalHeaderText}>
+                <Text style={styles.modalTitle}>Complete PM Task</Text>
+                <Text style={styles.modalSub}>
                   Please provide the client signature below.
                 </Text>
               </View>
-              <TouchableOpacity
-                onPress={() => setShowCompletionModal(false)}
-                style={[
-                  styles.closeBtn,
-                  { backgroundColor: isDark ? "#1e293b" : "#f1f5f9" },
-                ]}
-              >
-                <X size={20} color={isDark ? "#94a3b8" : "#94a3b8"} />
-              </TouchableOpacity>
+              <View style={styles.modalHeaderRight}>
+                <SmartJoulesWordmark width={118} />
+                <TouchableOpacity
+                  onPress={() => setShowCompletionModal(false)}
+                  style={styles.closeBtn}
+                  accessibilityLabel="Close"
+                >
+                  <X size={20} color={ds.carbon[500]} />
+                </TouchableOpacity>
+              </View>
             </View>
 
-            <View
-              style={[styles.signatureContainer, { borderColor: borderColor }]}
-            >
+            <View style={styles.chipRow}>
+              <View style={styles.chip}>
+                <Text style={styles.chipNum}>{doneCount}</Text>
+                <Text style={styles.chipLabel}>tasks done</Text>
+              </View>
+              <View style={styles.chip}>
+                <Text style={styles.chipNum}>{notDoneCount}</Text>
+                <Text style={styles.chipLabel}>not done</Text>
+              </View>
+              <View style={styles.chip}>
+                <Text style={styles.chipNum}>{photoCount}</Text>
+                <Text style={styles.chipLabel}>photos</Text>
+              </View>
+            </View>
+
+            <View style={styles.signatureContainer}>
               <SignaturePad
                 standalone
                 onOK={handleComplete}
                 description="Sign here to confirm PM completion"
                 okText="Confirm & Complete"
+                accentColor={ds.thunder[100]}
+                clearVariant="outlined"
               />
             </View>
 
             {saving && (
-              <View
-                style={[
-                  styles.savingOverlay,
-                  isDark && { backgroundColor: "rgba(2,6,23,0.8)" },
-                ]}
-              >
-                <ActivityIndicator size="large" color="#3b82f6" />
-                <Text
-                  style={[styles.savingText, isDark && { color: "#f8fafc" }]}
-                >
-                  Processing completion...
-                </Text>
+              <View style={styles.savingOverlay}>
+                <ActivityIndicator size="large" color={ds.thunder[100]} />
+                <Text style={styles.savingText}>Processing completion...</Text>
               </View>
             )}
           </View>
         </View>
       </Modal>
 
-      {/* Image Preview Modal */}
+      {/* ── Image preview ── */}
       <Modal
         visible={!!previewImageUrl}
         transparent
@@ -1803,7 +1678,7 @@ export default function PMExecutionScreen() {
               onPress={() => setPreviewImageUrl(null)}
               style={styles.closePreviewBtn}
             >
-              <X size={24} color="#fff" />
+              <X size={24} color={ds.white} />
             </TouchableOpacity>
           </View>
         </TouchableOpacity>
@@ -1815,395 +1690,394 @@ export default function PMExecutionScreen() {
 // ─── Styles ─────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
   flex: { flex: 1 },
-  loadingScreen: {
-    flex: 1,
-    backgroundColor: "#f8fafc",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  loadingText: { color: "#94a3b8", fontSize: 13, marginTop: 12 },
   listContent: {
-    paddingHorizontal: 20,
-    paddingBottom: 40,
-    paddingTop: 10,
-    flexGrow: 1,
+    paddingHorizontal: 14,
+    paddingTop: 12,
+    paddingBottom: 20,
   },
 
-  // Header
-  header: {
+  // ── Header (thunder chrome) ──
+  headerBlock: {
+    backgroundColor: ds.thunder[100],
+  },
+  headerRow: {
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 20,
-    paddingTop: 8,
+    gap: 12,
+    paddingHorizontal: 18,
     paddingBottom: 12,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: "#f1f5f9",
-    backgroundColor: "#fff",
   },
-  backBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: "#f1f5f9",
+  headerTile: {
+    width: 34,
+    height: 34,
+    borderRadius: dsRadius.tile,
+    backgroundColor: "rgba(255,255,255,0.10)",
     alignItems: "center",
     justifyContent: "center",
-    marginRight: 12,
   },
-  headerText: { flex: 1 },
-  headerTitle: { fontSize: 16, fontWeight: "700", color: "#0f172a" },
-  headerSub: { fontSize: 12, color: "#94a3b8" },
-  refreshBtn: {
-    padding: 6,
-    borderRadius: 8,
-    backgroundColor: "#f8fafc",
-    borderWidth: 1,
-    borderColor: "#f1f5f9",
+  headerText: { flex: 1, minWidth: 0 },
+  headerTitle: {
+    fontSize: 16,
+    lineHeight: 19,
+    fontWeight: "700",
+    letterSpacing: 0.16,
+    color: ds.white,
   },
-
-  // Stats Row
-  statsRow: {
+  headerSub: {
+    fontSize: 11.5,
+    lineHeight: 15,
+    color: ds.thunder[700],
+    marginTop: 1,
+  },
+  progressRow: {
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    backgroundColor: "#fff",
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: "#f1f5f9",
-    gap: 16,
+    gap: 10,
+    paddingHorizontal: 18,
+    paddingBottom: 14,
   },
-  progressCol: { flex: 1 },
-  evidenceCol: { flexDirection: "row", gap: 8 },
   progressTrack: {
-    height: 6,
-    backgroundColor: "#e2e8f0",
-    borderRadius: 99,
+    flex: 1,
+    height: 5,
+    borderRadius: dsRadius.pill,
+    backgroundColor: "rgba(255,255,255,0.15)",
     overflow: "hidden",
   },
   progressFill: {
     height: "100%",
-    borderRadius: 99,
-    backgroundColor: "#3b82f6",
+    borderRadius: dsRadius.pill,
+    backgroundColor: ds.flame[100],
   },
-  progressSub: {
-    fontSize: 10,
-    color: "#94a3b8",
-    marginTop: 4,
+  progressCount: {
+    fontSize: 12,
     fontWeight: "600",
+    color: ds.white,
   },
-  compactEvidenceBtn: {
-    width: 60,
-    height: 44,
-    borderRadius: 10,
-    backgroundColor: "#f8fafc",
+  progressTotal: {
+    fontWeight: "400",
+    color: ds.thunder[700],
+  },
+  evidenceGroup: { flexDirection: "row", gap: 5 },
+  evidenceTile: {
+    width: 34,
+    height: 26,
+    borderRadius: dsRadius.sm,
     borderWidth: 1,
-    borderColor: "#e2e8f0",
     alignItems: "center",
     justifyContent: "center",
-    position: "relative",
-    overflow: "hidden",
   },
-  compactEvidenceBtnActive: {
-    borderColor: "#3b82f6",
-    backgroundColor: "#eff6ff",
+  evidenceTileIdle: {
+    backgroundColor: "rgba(255,255,255,0.07)",
+    borderColor: "rgba(255,255,255,0.18)",
   },
-  compactEvidencePreview: {
-    ...StyleSheet.absoluteFillObject,
-    opacity: 0.5,
-  },
-  compactEvidenceText: {
-    fontSize: 9,
-    fontWeight: "800",
-    color: "#94a3b8",
-    textTransform: "uppercase",
-  },
-  mandatoryDot: {
-    position: "absolute",
-    top: 2,
-    right: 4,
-    color: "#ef4444",
-    fontSize: 14,
+  evidenceTileActive: {
+    backgroundColor: "rgba(40,147,157,0.35)",
+    borderColor: ds.sky[300],
   },
 
-  // Task Card
+  // ── Offline strip ──
+  offlineStrip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 7,
+    backgroundColor: ds.flame[900],
+    paddingHorizontal: 18,
+    paddingVertical: 5,
+  },
+  offlineText: {
+    flex: 1,
+    fontSize: 10.5,
+    fontWeight: "500",
+    color: ds.flame[100],
+  },
+
+  // ── Task card ──
   taskCard: {
-    backgroundColor: "transparent", // Handled inline for dark mode
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 12,
+    backgroundColor: ds.white,
+    borderRadius: dsRadius.base,
+    marginBottom: 6,
+    paddingVertical: 9,
+    paddingHorizontal: 12,
     borderWidth: 1,
-    borderColor: "#f1f5f9",
-    elevation: 1,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.03,
-    shadowRadius: 4,
+    borderColor: "transparent",
+    ...dsCardShadow,
   },
   taskCardError: {
-    borderColor: "#ef4444",
-    borderWidth: 2,
-    shadowColor: "#ef4444",
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.22,
-    shadowRadius: 10,
-    elevation: 4,
+    borderColor: ds.flame[100],
   },
-  taskHeader: {
+  taskRow: {
     flexDirection: "row",
     alignItems: "flex-start",
-    marginBottom: 12,
   },
-  seqBadge: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
+  taskBox: {
+    width: 26,
+    height: 26,
+    borderRadius: dsRadius.box,
+    borderWidth: 1.5,
     alignItems: "center",
     justifyContent: "center",
-    marginRight: 10,
     marginTop: 1,
+    marginRight: 11,
   },
-  seqText: { fontSize: 11, fontWeight: "700" },
+  taskBody: { flex: 1, minWidth: 0 },
   taskName: {
-    flex: 1,
-    fontSize: 14,
-    fontWeight: "600",
-    color: "inherit", // Handled via Text color in TaskRow
-    lineHeight: 20,
-  },
-
-  choiceRow: { flexDirection: "row", gap: 8 },
-  choiceBtn: {
-    flex: 1,
-    paddingVertical: 10,
-    borderRadius: 12,
-    alignItems: "center",
-    borderWidth: 1,
-  },
-  choiceText: { fontSize: 12, fontWeight: "600" },
-
-  textInput: {
-    backgroundColor: "#f8fafc",
-    borderWidth: 1,
-    borderColor: "#e2e8f0",
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
     fontSize: 13,
-    color: "#0f172a",
+    lineHeight: 17,
+    letterSpacing: 0.13,
+    marginBottom: 7,
   },
-  requiredReadingsInput: {
-    borderColor: "#ef4444",
-    borderWidth: 1.5,
-    backgroundColor: "#fef2f2",
-  },
-  requiredReadingsInputDark: {
-    borderColor: "#f87171",
-    borderWidth: 1.5,
-    backgroundColor: "#450a0a",
-  },
-  requiredFieldBorder: {
-    borderColor: "#ef4444",
-    borderWidth: 1.5,
-    backgroundColor: "#fef2f2",
-  },
-  requiredFieldBorderDark: {
-    borderColor: "#f87171",
-    borderWidth: 1.5,
-    backgroundColor: "#450a0a",
-  },
-  inputLabel: {
-    fontSize: 11,
-    fontWeight: "700",
-    color: "#64748b",
-    marginBottom: 6,
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
-  },
-  actionRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    marginTop: 12,
-  },
-  imagePickRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    flex: 1,
-    minWidth: 0,
-  },
-  imageBtn: {
+
+  inlineRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
-    backgroundColor: "#f1f5f9",
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: "#e2e8f0",
   },
-  imageBtnHalf: {
-    flex: 1,
-    justifyContent: "center",
-    minWidth: 0,
-  },
-  imageBtnText: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: "#475569",
-  },
-  remarksInput: {
-    backgroundColor: "#f8fafc",
-    borderWidth: 1,
-    borderColor: "#e2e8f0",
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    fontSize: 13,
-    color: "#0f172a",
-    minHeight: 40,
-  },
-  imagePreviewRow: {
-    marginTop: 12,
+  field: {
     flexDirection: "row",
-  },
-  previewContainer: {
-    position: "relative",
-    borderRadius: 12,
-    overflow: "hidden",
+    alignItems: "center",
+    height: 30,
+    backgroundColor: ds.pageBg,
+    borderRadius: dsRadius.sm,
     borderWidth: 1,
-    borderColor: "#e2e8f0",
+    borderColor: ds.carbon[900],
+    paddingHorizontal: 8,
   },
-  thumbnail: {
-    width: 80,
-    height: 80,
-    borderRadius: 8,
+  readingsField: { width: 112, flexShrink: 0 },
+  // Text tasks share the row evenly with remarks — 112px is too tight to type
+  // a sentence into.
+  readingsFieldWide: { flex: 1, minWidth: 0 },
+  remarksField: { flex: 1, minWidth: 0 },
+  fieldInput: {
+    flex: 1,
+    minWidth: 0,
+    padding: 0,
+    fontSize: 13,
+    color: ds.carbon[100],
   },
-  removeImgBtn: {
-    position: "absolute",
-    top: 4,
-    right: 4,
-    backgroundColor: "rgba(0,0,0,0.5)",
-    width: 20,
-    height: 20,
-    borderRadius: 10,
+  remarksInput: { fontSize: 12 },
+  camBtn: {
+    width: 32,
+    height: 30,
+    borderRadius: dsRadius.sm,
+    borderWidth: 1,
     alignItems: "center",
     justifyContent: "center",
   },
+  camBtnIdle: {
+    backgroundColor: ds.carbon[1000],
+    borderColor: ds.carbon[900],
+  },
+  camBtnActive: {
+    backgroundColor: ds.sky[900],
+    borderColor: ds.sky[100],
+  },
 
-  // Empty / Loading States
+  photoRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 7,
+    marginTop: 7,
+  },
+  photoThumbWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: dsRadius.sm,
+    borderWidth: 1,
+    borderColor: ds.carbon[900],
+    backgroundColor: ds.carbon[900],
+    overflow: "hidden",
+  },
+  photoThumb: { width: "100%", height: "100%" },
+  photoCaption: {
+    flex: 1,
+    fontSize: 10.5,
+    color: ds.carbon[500],
+  },
+
+  hintRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 7,
+    paddingHorizontal: 4,
+    paddingTop: 8,
+  },
+  hintText: {
+    flex: 1,
+    fontSize: 11,
+    lineHeight: 15.4,
+    color: ds.carbon[600],
+  },
+
+  // ── Empty state ──
   emptyChecklist: {
     alignItems: "center",
     paddingTop: 60,
     paddingBottom: 40,
   },
   emptyText: {
-    color: "#94a3b8",
+    color: ds.carbon[600],
     fontSize: 14,
-    marginTop: 12,
+    lineHeight: 20,
     textAlign: "center",
   },
-  emptySubText: {
-    color: "#cbd5e1",
-    fontSize: 12,
-    marginTop: 6,
-    textAlign: "center",
+  learnMoreBtn: {
+    marginTop: 16,
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    backgroundColor: ds.carbon[1000],
+    borderRadius: dsRadius.base,
+  },
+  learnMoreText: {
+    color: ds.carbon[400],
+    fontSize: 14,
+    fontWeight: "600",
   },
 
-  // Footer
+  // ── Footer ──
   footer: {
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    paddingBottom: 24,
-    backgroundColor: "#fff",
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: "#f1f5f9",
+    backgroundColor: ds.white,
+    borderTopWidth: 1,
+    borderTopColor: ds.carbon[900],
+    paddingHorizontal: 18,
+    paddingTop: 12,
   },
-  footerBtns: { flexDirection: "row", gap: 12 },
-  footerBtn: {
+  blockedRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginBottom: 8,
+  },
+  blockedText: {
     flex: 1,
+    fontSize: 11,
+    fontWeight: "500",
+    color: ds.flame[100],
+  },
+  cta: {
+    borderRadius: dsRadius.base,
     paddingVertical: 14,
-    borderRadius: 14,
     alignItems: "center",
     justifyContent: "center",
   },
-  footerBtnText: { fontWeight: "700", fontSize: 14, color: "#fff" },
+  ctaText: {
+    fontSize: 16,
+    fontWeight: "700",
+    letterSpacing: 0.16,
+  },
 
   completedBanner: {
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    backgroundColor: "#f0fdf4",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    backgroundColor: ds.sky[900],
     borderTopWidth: 1,
-    borderTopColor: "#bbf7d0",
+    borderTopColor: ds.sky[500],
+    paddingHorizontal: 18,
+    paddingTop: 16,
   },
   completedText: {
-    color: "#15803d",
-    fontWeight: "700",
-    textAlign: "center",
     fontSize: 15,
+    fontWeight: "700",
+    letterSpacing: 0.15,
+    color: ds.sky[100],
   },
 
-  // Modal
+  // ── Signature sheet ──
   modalBg: {
     flex: 1,
-    backgroundColor: "rgba(0,0,0,0.5)",
+    backgroundColor: "rgba(25,19,18,0.5)",
     justifyContent: "flex-end",
   },
   modalSheet: {
-    backgroundColor: "#fff",
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
-    height: "90%",
-    paddingBottom: 20,
+    backgroundColor: ds.white,
+    borderTopLeftRadius: dsRadius.sheet,
+    borderTopRightRadius: dsRadius.sheet,
+    height: "86%",
   },
   modalHeader: {
     flexDirection: "row",
-    justifyContent: "space-between",
     alignItems: "flex-start",
-    paddingHorizontal: 24,
-    paddingTop: 24,
-    paddingBottom: 16,
+    justifyContent: "space-between",
+    paddingHorizontal: 22,
+    paddingTop: 22,
+    paddingBottom: 14,
+    gap: 12,
   },
+  modalHeaderText: { flex: 1, minWidth: 0 },
+  modalHeaderRight: { alignItems: "flex-end", gap: 12 },
   modalTitle: {
     fontSize: 18,
+    lineHeight: 22,
     fontWeight: "700",
-    color: "#0f172a",
+    letterSpacing: 0.45,
+    color: ds.carbon[100],
     marginBottom: 4,
   },
-  modalSub: { fontSize: 13, color: "#94a3b8" },
+  modalSub: {
+    fontSize: 13,
+    lineHeight: 18,
+    color: ds.carbon[500],
+  },
   closeBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: "#f1f5f9",
+    width: 34,
+    height: 34,
+    borderRadius: dsRadius.tile,
+    backgroundColor: ds.carbon[1000],
     alignItems: "center",
     justifyContent: "center",
+  },
+  chipRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    marginHorizontal: 18,
+  },
+  chip: {
+    flexDirection: "row",
+    alignItems: "baseline",
+    gap: 5,
+    backgroundColor: ds.pageBg,
+    borderRadius: dsRadius.sm,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+  },
+  chipNum: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: ds.flame[100],
+  },
+  chipLabel: {
+    fontSize: 11,
+    color: ds.carbon[500],
   },
   signatureContainer: {
     flex: 1,
-    marginHorizontal: 20,
-    marginBottom: 20,
-    borderRadius: 16,
+    marginHorizontal: 18,
+    marginTop: 14,
+    marginBottom: 14,
+    borderRadius: dsRadius.sm,
     overflow: "hidden",
     borderWidth: 1,
-    borderColor: "#e2e8f0",
+    borderColor: ds.carbon[900],
   },
   savingOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(255,255,255,0.8)",
+    ...StyleSheet.absoluteFill,
+    backgroundColor: "rgba(255,255,255,0.9)",
     alignItems: "center",
     justifyContent: "center",
     zIndex: 10,
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
+    borderTopLeftRadius: dsRadius.sheet,
+    borderTopRightRadius: dsRadius.sheet,
   },
   savingText: {
     marginTop: 12,
     fontSize: 14,
     fontWeight: "600",
-    color: "#0f172a",
+    color: ds.carbon[100],
   },
-  // Full screen preview
+
+  // ── Full screen preview ──
   fullScreenPreviewBg: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.95)",

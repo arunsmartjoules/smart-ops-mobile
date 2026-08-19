@@ -1,10 +1,40 @@
 import React, { useMemo, useState } from "react";
-import { View, Text, TouchableOpacity, TextInput, Image, Alert, ScrollView } from "react-native";
+import {
+  Alert,
+  Image,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from "react-native";
 import * as ImagePicker from "expo-image-picker";
-import { Camera, Image as ImageIcon, X } from "lucide-react-native";
+import {
+  Camera,
+  Check,
+  Clock,
+  FolderOpen,
+  ImagePlus,
+  Pause,
+  TriangleAlert,
+  Wrench,
+  X,
+} from "lucide-react-native";
+import type { LucideIcon } from "lucide-react-native";
 import { type SelectOption } from "./SearchableSelect";
 import FullscreenPicker from "./FullscreenPicker";
 import { type Ticket } from "@/services/TicketsService";
+import { ds } from "@/constants/ds";
+import {
+  AttachButton,
+  CardHead,
+  DetailCard,
+  Field,
+  StatusChip,
+  StatusHint,
+  ToggleRow,
+  soRadius,
+} from "@/components/tickets/TicketDetailUI";
 import {
   DEFAULT_TICKET_INCIDENT_DRAFT,
   FAULT_TYPE_OPTIONS,
@@ -40,47 +70,146 @@ const BREAKDOWN_TYPE_OPTIONS: SelectOption[] = [
  *  column only; no row is ever created in the assets table. */
 const OTHER_AREA_VALUE = "__other__";
 
-const STATUS_THEME: Record<
-  string,
-  { bg: string; activeBg: string; text: string; activeText: string }
-> = {
-  Open: {
-    bg: "#fef2f2",
-    activeBg: "#dc2626",
-    text: "#dc2626",
-    activeText: "#ffffff",
-  },
-  Inprogress: {
-    bg: "#eff6ff",
-    activeBg: "#2563eb",
-    text: "#2563eb",
-    activeText: "#ffffff",
-  },
-  Hold: {
-    bg: "#fffbeb",
-    activeBg: "#d97706",
-    text: "#d97706",
-    activeText: "#ffffff",
-  },
-  Waiting: {
-    bg: "#f5f3ff",
-    activeBg: "#7c3aed",
-    text: "#7c3aed",
-    activeText: "#ffffff",
-  },
-  Resolved: {
-    bg: "#f0fdf4",
-    activeBg: "#16a34a",
-    text: "#16a34a",
-    activeText: "#ffffff",
-  },
-  Cancelled: {
-    bg: "#f1f5f9",
-    activeBg: "#475569",
-    text: "#475569",
-    activeText: "#ffffff",
-  },
+export const REMARKS_REQUIRED_STATUSES = [
+  "Hold",
+  "Cancelled",
+  "Waiting",
+  "Resolved",
+];
+
+/** Display label for a status value ("Inprogress" is stored, not shown). */
+export const statusLabel = (s: string) =>
+  s === "Inprogress" ? "In progress" : s === "Open" ? "Reopen" : s;
+
+const STATUS_HINT_ICON: Record<string, LucideIcon> = {
+  Open: FolderOpen,
+  Inprogress: Wrench,
+  Hold: Pause,
+  Waiting: Clock,
+  Resolved: Check,
+  Cancelled: X,
 };
+
+/**
+ * The mock hard-codes one hint per status; ours derives from the same rules
+ * `getTicketUpdateBlocker` enforces, so it can't promise a temperature field
+ * on a category that doesn't capture one.
+ */
+function statusHintFor(status: string, tempMandatory: boolean): string {
+  switch (status) {
+    case "Inprogress":
+      return tempMandatory
+        ? "Needs area, category and before temperature"
+        : "Needs area and category";
+    case "Resolved":
+      return tempMandatory
+        ? "Needs remarks and after temperature"
+        : "Needs remarks to close";
+    case "Hold":
+      return "Blocked — add a reason in remarks";
+    case "Waiting":
+      return "Waiting on a spare or vendor";
+    case "Cancelled":
+      return "Closed without work — add a reason";
+    case "Open":
+      return "Reopens the ticket";
+    default:
+      return "";
+  }
+}
+
+export interface TicketUpdateBlockerInput {
+  ticket: Ticket;
+  updateStatus: string;
+  updateRemarks: string;
+  updateArea: string;
+  updateCategory: string;
+  updateBreakdownType: string;
+  beforeTemp: string;
+  afterTemp: string;
+  createIncidentFromTicket?: boolean;
+  incidentDraft?: TicketIncidentDraft;
+}
+
+/**
+ * The one reason the update can't be submitted yet, or null when it can.
+ *
+ * Mirrors the validation the calling screens run before `updateTicket`; it
+ * drives the sticky bar's message so the operator sees the blocker before
+ * tapping rather than as an alert afterwards.
+ */
+export function getTicketUpdateBlocker({
+  ticket,
+  updateStatus,
+  updateRemarks,
+  updateArea,
+  updateCategory,
+  updateBreakdownType,
+  beforeTemp,
+  afterTemp,
+  createIncidentFromTicket,
+  incidentDraft,
+}: TicketUpdateBlockerInput): string | null {
+  const needsRemarks = REMARKS_REQUIRED_STATUSES.includes(updateStatus);
+  const needsAreaAndCategory =
+    updateStatus === "Inprogress" || updateStatus === "Resolved";
+
+  if (needsRemarks && !updateRemarks.trim()) {
+    return "Remarks are required for this status";
+  }
+  if (needsAreaAndCategory && !(updateArea || ticket.area_asset || "").trim()) {
+    return "Select an area before updating";
+  }
+  if (
+    needsAreaAndCategory &&
+    !(updateCategory || ticket.category || "").trim()
+  ) {
+    return "Select a category before updating";
+  }
+
+  const effectiveCategory = (
+    updateCategory.trim() ||
+    ticket.category ||
+    ""
+  ).trim();
+
+  if (
+    needsAreaAndCategory &&
+    isBreakdownTypeCategory(effectiveCategory) &&
+    !updateBreakdownType.trim()
+  ) {
+    return "Choose Electrical or Mechanical";
+  }
+
+  if (needsAreaAndCategory && isTempMandatoryCategory(effectiveCategory)) {
+    // Which temps are captured tracks the *current* ticket status, matching
+    // the fields actually rendered below.
+    const bt = beforeTemp.trim();
+    const at = afterTemp.trim();
+    if (ticket.status === "Open" && !bt) {
+      return "Before temperature is required";
+    }
+    if (ticket.status === "Inprogress" && (!bt || !at)) {
+      return "Before and after temperature are required";
+    }
+    if (bt && Number.isNaN(parseFloat(bt))) {
+      return "Before temperature must be a number";
+    }
+    if (ticket.status === "Inprogress" && at && Number.isNaN(parseFloat(at))) {
+      return "After temperature must be a number";
+    }
+  }
+
+  if (createIncidentFromTicket && incidentDraft) {
+    if (!incidentDraft.fault_type) return "Select a fault type for the incident";
+    if (!incidentDraft.severity) return "Select a severity for the incident";
+    if (!incidentDraft.operating_condition) {
+      return "Select an operating condition for the incident";
+    }
+  }
+
+  return null;
+}
 
 interface TicketDetailStatusUpdateProps {
   ticket: Ticket;
@@ -112,6 +241,8 @@ interface TicketDetailStatusUpdateProps {
   setCreateIncidentFromTicket?: (v: boolean) => void;
   incidentDraft?: TicketIncidentDraft;
   setIncidentDraft?: React.Dispatch<React.SetStateAction<TicketIncidentDraft>>;
+  /** Set once the operator has tried to submit — turns hints flame. */
+  attempted?: boolean;
 }
 
 const TicketDetailStatusUpdate = ({
@@ -144,6 +275,7 @@ const TicketDetailStatusUpdate = ({
   setCreateIncidentFromTicket,
   incidentDraft = DEFAULT_TICKET_INCIDENT_DRAFT,
   setIncidentDraft,
+  attempted = false,
 }: TicketDetailStatusUpdateProps) => {
   const incidentFaultTypeOptions = useMemo(
     () => FAULT_TYPE_OPTIONS.map((value) => ({ value, label: value })),
@@ -202,9 +334,7 @@ const TicketDetailStatusUpdate = ({
     return true;
   });
 
-  const needsRemarks = ["Hold", "Cancelled", "Waiting", "Resolved"].includes(
-    updateStatus,
-  );
+  const needsRemarks = REMARKS_REQUIRED_STATUSES.includes(updateStatus);
   const showAreaAndCategory =
     updateStatus === "Inprogress" || updateStatus === "Resolved";
   // Incident/breakdown can be raised off a ticket while it's still Open or
@@ -217,8 +347,7 @@ const TicketDetailStatusUpdate = ({
     ""
   ).trim();
   const mandatoryTempsForCategory =
-    showAreaAndCategory &&
-    isTempMandatoryCategory(effectiveCategory);
+    showAreaAndCategory && isTempMandatoryCategory(effectiveCategory);
   const beforeTempMissing = mandatoryTempsForCategory && !beforeTemp.trim();
   const afterTempMissing = mandatoryTempsForCategory && !afterTemp.trim();
 
@@ -230,6 +359,8 @@ const TicketDetailStatusUpdate = ({
     ticket.status === "Open" || ticket.status === "Inprogress";
   const showAfterTemp = ticket.status === "Inprogress";
   const showTempSection = showBeforeTemp || showAfterTemp;
+
+  const remarksMissing = needsRemarks && !updateRemarks.trim();
 
   const pickImage = async () => {
     try {
@@ -251,7 +382,10 @@ const TicketDetailStatusUpdate = ({
     try {
       const { status } = await ImagePicker.requestCameraPermissionsAsync();
       if (status !== "granted") {
-        Alert.alert("Permission Required", "Camera permission is required to take photos.");
+        Alert.alert(
+          "Permission Required",
+          "Camera permission is required to take photos.",
+        );
         return;
       }
 
@@ -295,7 +429,10 @@ const TicketDetailStatusUpdate = ({
     try {
       const { status } = await ImagePicker.requestCameraPermissionsAsync();
       if (status !== "granted") {
-        Alert.alert("Permission Required", "Camera permission is required to take photos.");
+        Alert.alert(
+          "Permission Required",
+          "Camera permission is required to take photos.",
+        );
         return;
       }
       const result = await ImagePicker.launchCameraAsync({
@@ -306,7 +443,10 @@ const TicketDetailStatusUpdate = ({
       if (!result.canceled && result.assets?.[0]?.uri) {
         setIncidentDraft((prev) => ({
           ...prev,
-          incidentAttachments: [...prev.incidentAttachments, result.assets[0].uri],
+          incidentAttachments: [
+            ...prev.incidentAttachments,
+            result.assets[0].uri,
+          ],
         }));
       }
     } catch {
@@ -322,112 +462,55 @@ const TicketDetailStatusUpdate = ({
     }));
   };
 
-  return (
-    <View style={{ marginBottom: 20 }}>
-      {/* Section Label */}
-      <View
-        style={{
-          flexDirection: "row",
-          alignItems: "center",
-          marginBottom: 14,
-          gap: 8,
-        }}
-      >
-        <Text
-          className="text-slate-800 dark:text-slate-100"
-          style={{
-            fontWeight: "800",
-            fontSize: 13,
-            textTransform: "uppercase",
-            letterSpacing: 1,
-          }}
-        >
-          Change Status
-        </Text>
-        <View
-          className="bg-slate-200 dark:bg-slate-700"
-          style={{ flex: 1, height: 1 }}
-        />
-        <Text style={{ color: "#94a3b8", fontSize: 11, fontWeight: "600" }} className="dark:text-slate-500">
-          Currently · {ticket.status}
-        </Text>
-      </View>
+  const tempHint = mandatoryTempsForCategory
+    ? showAfterTemp
+      ? "Before + after required"
+      : "Before required"
+    : "Optional";
 
-      {/* Status Chips */}
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={{
-          gap: 8,
-          paddingRight: 4,
-        }}
-        style={{
-          marginBottom: needsRemarks || showAreaAndCategory ? 16 : 0,
-        }}
-      >
-        {filteredStatuses.map((s) => {
-          const isActive = updateStatus === s;
-          const theme = STATUS_THEME[s] || STATUS_THEME.Open;
-          return (
-            <TouchableOpacity
+  // Selected status leads the row so it stays visible without scrolling.
+  const orderedStatuses = filteredStatuses.includes(updateStatus)
+    ? [updateStatus, ...filteredStatuses.filter((s) => s !== updateStatus)]
+    : filteredStatuses;
+
+  const HintIcon = STATUS_HINT_ICON[updateStatus] ?? FolderOpen;
+
+  return (
+    <View>
+      <View style={styles.statusRow}>
+        <Text style={styles.statusLabel}>Status</Text>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.statusChips}
+        >
+          {orderedStatuses.map((s) => (
+            <StatusChip
               key={s}
+              label={statusLabel(s)}
+              active={updateStatus === s}
               onPress={() => {
                 setUpdateStatus(s);
-                if (!["Hold", "Cancelled", "Waiting", "Resolved"].includes(s)) {
+                if (!REMARKS_REQUIRED_STATUSES.includes(s)) {
                   setAttachmentUri("");
-                }
-                if (["Hold", "Cancelled", "Waiting", "Resolved"].includes(s)) {
+                } else {
                   setUpdateRemarks("");
                 }
               }}
-              activeOpacity={0.7}
-              className={
-                isActive
-                  ? ""
-                  : "bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
-              }
-              style={{
-                flexDirection: "row",
-                alignItems: "center",
-                gap: 6,
-                paddingHorizontal: 14,
-                paddingVertical: 9,
-                borderRadius: 10,
-                backgroundColor: isActive ? theme.activeBg : undefined,
-                shadowColor: isActive ? theme.activeBg : "transparent",
-                shadowOffset: { width: 0, height: isActive ? 4 : 0 },
-                shadowOpacity: isActive ? 0.3 : 0,
-                shadowRadius: isActive ? 8 : 0,
-                elevation: isActive ? 4 : 0,
-              }}
-            >
-              <View
-                style={{
-                  width: 6,
-                  height: 6,
-                  borderRadius: 3,
-                  backgroundColor: isActive ? theme.activeText : theme.activeBg,
-                }}
-              />
-              <Text
-                style={{
-                  fontSize: 12,
-                  fontWeight: "700",
-                  color: isActive ? theme.activeText : theme.text,
-                }}
-              >
-                {s === "Open" ? "Reopen" : s}
-              </Text>
-            </TouchableOpacity>
-          );
-        })}
-      </ScrollView>
+            />
+          ))}
+        </ScrollView>
+      </View>
+      <StatusHint icon={HintIcon}>
+        {statusHintFor(updateStatus, mandatoryTempsForCategory)}
+      </StatusHint>
 
-      {/* Area & Category (for Inprogress / Resolved) */}
+      {/* Only the fields the chosen status actually requires. */}
       {showAreaAndCategory && (
-        <View style={{ marginBottom: 8 }}>
+        <DetailCard>
+          <CardHead label="Details" hint="Required" hintTone="muted" />
           <FullscreenPicker
-            label="Select Area *"
+            label="Area *"
             placeholder="Choose an area..."
             value={isOtherArea ? OTHER_AREA_VALUE : updateArea}
             options={areaOptionsWithOther}
@@ -443,32 +526,17 @@ const TicketDetailStatusUpdate = ({
             remoteSearch={Boolean(setAreaSearchQuery)}
           />
           {isOtherArea && (
-            <View style={{ marginTop: -8, marginBottom: 16 }}>
-              <Text
-                className="text-slate-700 dark:text-slate-300"
-                style={{ fontSize: 14, fontWeight: "600", marginBottom: 8 }}
-              >
-                Other asset / area *
-              </Text>
-              <TextInput
-                style={{
-                  borderWidth: 1,
-                  borderRadius: 12,
-                  padding: 12,
-                  fontWeight: "600",
-                  fontSize: 14,
-                }}
-                className="bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-50 border-slate-200 dark:border-slate-700"
-                placeholder="Enter asset / area name"
-                placeholderTextColor="#94a3b8"
-                value={updateArea}
-                onChangeText={setUpdateArea}
-                autoFocus
-              />
-            </View>
+            <Field
+              label="Other asset / area *"
+              placeholder="Enter asset / area name"
+              value={updateArea}
+              onChangeText={setUpdateArea}
+              autoFocus
+              containerStyle={{ marginBottom: 12 }}
+            />
           )}
           <FullscreenPicker
-            label="Select Category *"
+            label="Category *"
             placeholder="Choose a category..."
             value={updateCategory}
             options={categoryOptions}
@@ -487,271 +555,123 @@ const TicketDetailStatusUpdate = ({
               emptyMessage="No options"
             />
           )}
-        </View>
+        </DetailCard>
       )}
 
-      {/* Before Temp while ticket is Open; After Temp while Inprogress */}
       {showTempSection && (
-        <View style={{ flexDirection: "row", gap: 10, marginBottom: 16 }}>
-          {showBeforeTemp && (
-          <View style={{ flex: 1 }}>
-            <Text
-              className="text-slate-500 dark:text-slate-400"
-              style={{
-                fontSize: 10,
-                fontWeight: "700",
-                textTransform: "uppercase",
-                letterSpacing: 1.2,
-                marginBottom: 6,
-                marginLeft: 2,
-              }}
-            >
-              Before Temp (°C)
-              {mandatoryTempsForCategory ? (
-                <Text style={{ color: "#dc2626" }}> *</Text>
-              ) : null}
-            </Text>
-            <TextInput
-              style={{
-                borderWidth: 1,
-                borderColor: beforeTempMissing ? "#dc2626" : undefined,
-                borderRadius: 12,
-                padding: 12,
-                fontWeight: "600",
-                fontSize: 14,
-                textAlign: "center",
-              }}
-              className="bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-50 border-slate-200 dark:border-slate-700"
-              placeholder="e.g. 24.5"
-              placeholderTextColor="#94a3b8"
-              keyboardType="decimal-pad"
-              value={beforeTemp}
-              onChangeText={setBeforeTemp}
-            />
+        <DetailCard>
+          <CardHead
+            label="Temperature"
+            hint={tempHint}
+            hintTone={
+              attempted && (beforeTempMissing || afterTempMissing)
+                ? "error"
+                : "muted"
+            }
+          />
+          <View style={styles.tempRow}>
+            {showBeforeTemp && (
+              <Field
+                label="Before"
+                unit="°C"
+                large
+                placeholder="0.0"
+                keyboardType="decimal-pad"
+                value={beforeTemp}
+                onChangeText={setBeforeTemp}
+                invalid={attempted && beforeTempMissing}
+                containerStyle={styles.tempCell}
+              />
+            )}
+            {showAfterTemp && (
+              <Field
+                label="After"
+                unit="°C"
+                large
+                placeholder="0.0"
+                keyboardType="decimal-pad"
+                value={afterTemp}
+                onChangeText={setAfterTemp}
+                invalid={attempted && afterTempMissing}
+                containerStyle={styles.tempCell}
+              />
+            )}
           </View>
-          )}
-          {showAfterTemp && (
-          <View style={{ flex: 1 }}>
-            <Text
-              className="text-slate-500 dark:text-slate-400"
-              style={{
-                fontSize: 10,
-                fontWeight: "700",
-                textTransform: "uppercase",
-                letterSpacing: 1.2,
-                marginBottom: 6,
-                marginLeft: 2,
-              }}
-            >
-              After Temp (°C)
-              {mandatoryTempsForCategory ? (
-                <Text style={{ color: "#dc2626" }}> *</Text>
-              ) : null}
-            </Text>
-            <TextInput
-              style={{
-                borderWidth: 1,
-                borderColor: afterTempMissing ? "#dc2626" : undefined,
-                borderRadius: 12,
-                padding: 12,
-                fontWeight: "600",
-                fontSize: 14,
-                textAlign: "center",
-              }}
-              className="bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-50 border-slate-200 dark:border-slate-700"
-              placeholder="e.g. 22.0"
-              placeholderTextColor="#94a3b8"
-              keyboardType="decimal-pad"
-              value={afterTemp}
-              onChangeText={setAfterTemp}
-            />
-          </View>
-          )}
-        </View>
+        </DetailCard>
       )}
 
-      {/* Remarks (for Hold, Cancelled, Waiting, Resolved) */}
-      {needsRemarks && (
-        <View>
-          <View
-            style={{
-              flexDirection: "row",
-              justifyContent: "space-between",
-              alignItems: "center",
-              marginBottom: 8,
-            }}
-          >
-            <Text
-              className="text-slate-500 dark:text-slate-400"
-              style={{
-                fontSize: 10,
-                fontWeight: "700",
-                textTransform: "uppercase",
-                letterSpacing: 1.2,
-                marginLeft: 2,
-              }}
-            >
-              Remarks <Text style={{ color: "#dc2626" }}>*</Text>
-            </Text>
-            <Text
-              style={{
-                fontSize: 10,
-                fontWeight: "600",
-                color: updateRemarks.length > 200 ? "#dc2626" : "#94a3b8",
-              }}
-            >
-              {updateRemarks.length}/300
-            </Text>
-          </View>
-          <TextInput
-            style={{
-              borderWidth: 1,
-              borderRadius: 14,
-              padding: 14,
-              height: 100,
-              fontWeight: "600",
-              fontSize: 13,
-              textAlignVertical: "top",
-              lineHeight: 20,
-            }}
-            className="bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-50 border-slate-200 dark:border-slate-700"
-            placeholder={
-              updateStatus === "Resolved"
-                ? "Describe the resolution..."
-                : "Provide reason..."
-            }
-            placeholderTextColor="#94a3b8"
-            multiline
-            maxLength={300}
-            value={updateRemarks}
-            onChangeText={setUpdateRemarks}
+      <DetailCard>
+        <CardHead
+          label="Remarks"
+          hint={needsRemarks ? "Required" : "Optional"}
+          hintTone={attempted && remarksMissing ? "error" : "muted"}
+        />
+        <Field
+          placeholder="What did you find and do?"
+          value={updateRemarks}
+          onChangeText={setUpdateRemarks}
+          multiline
+          maxLength={300}
+          textAlignVertical="top"
+          minHeight={56}
+          invalid={attempted && remarksMissing}
+        />
+        <View style={styles.attachRow}>
+          <AttachButton
+            icon={Camera}
+            label={attachmentUri ? "1 photo" : "Camera"}
+            active={!!attachmentUri}
+            onPress={takePhoto}
           />
-          <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
-            <TouchableOpacity
-              onPress={takePhoto}
-              className="bg-slate-100 dark:bg-slate-800 border-slate-200 dark:border-slate-700"
-              style={{
-                width: 40,
-                height: 40,
-                borderRadius: 12,
-                justifyContent: "center",
-                alignItems: "center",
-                borderWidth: 1,
-              }}
-            >
-              <Camera size={18} color="#64748b" />
-            </TouchableOpacity>
-            <TouchableOpacity
-              onPress={pickImage}
-              className="bg-slate-100 dark:bg-slate-800 border-slate-200 dark:border-slate-700"
-              style={{
-                width: 40,
-                height: 40,
-                borderRadius: 12,
-                justifyContent: "center",
-                alignItems: "center",
-                borderWidth: 1,
-              }}
-            >
-              <ImageIcon size={18} color="#64748b" />
-            </TouchableOpacity>
-            <View
-              className="bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700"
-              style={{
-                flex: 1,
-                minHeight: 40,
-                borderRadius: 12,
-                borderWidth: 1,
-                justifyContent: "center",
-                paddingHorizontal: 12,
-              }}
-            >
-              <Text
-                className="text-slate-500 dark:text-slate-400"
-                style={{ fontSize: 12, fontWeight: "600" }}
-              >
-                {attachmentUri ? "1 image selected" : "Attach image (optional)"}
-              </Text>
-            </View>
-          </View>
-          {attachmentUri ? (
-            <View style={{ marginTop: 10 }}>
-              <View style={{ alignSelf: "flex-start" }}>
-                <Image
-                  source={{ uri: attachmentUri }}
-                  style={{ width: 120, height: 120, borderRadius: 12 }}
-                  resizeMode="cover"
-                />
-                <TouchableOpacity
-                  onPress={() => setAttachmentUri("")}
-                  style={{
-                    position: "absolute",
-                    top: 6,
-                    right: 6,
-                    width: 24,
-                    height: 24,
-                    borderRadius: 12,
-                    backgroundColor: "rgba(15,23,42,0.75)",
-                    alignItems: "center",
-                    justifyContent: "center",
-                  }}
-                >
-                  <X size={14} color="#ffffff" />
-                </TouchableOpacity>
-              </View>
-            </View>
-          ) : null}
+          <AttachButton icon={ImagePlus} label="Gallery" onPress={pickImage} />
         </View>
-      )}
+        {attachmentUri ? (
+          <View style={styles.previewWrap}>
+            <Image source={{ uri: attachmentUri }} style={styles.preview} />
+            <TouchableOpacity
+              onPress={() => setAttachmentUri("")}
+              style={styles.previewRemove}
+              accessibilityRole="button"
+              accessibilityLabel="Remove photo"
+            >
+              <X size={14} color={ds.white} strokeWidth={2.4} />
+            </TouchableOpacity>
+          </View>
+        ) : null}
+      </DetailCard>
 
       {canCreateIncidentFromTicket && setCreateIncidentFromTicket ? (
-        <TouchableOpacity
-          onPress={() => {
+        <ToggleRow
+          icon={TriangleAlert}
+          title="Raise an incident"
+          subtitle="Needs RCA follow-up"
+          value={createIncidentFromTicket}
+          onToggle={() => {
             if (createIncidentFromTicket) {
               setCreateIncidentFromTicket(false);
               return;
             }
             Alert.alert(
               "Create Incident",
-              "Do you want to incident/breakdown for this ticket?",
+              "Do you want to raise an incident/breakdown for this ticket?",
               [
                 {
                   text: "No",
                   style: "cancel",
                   onPress: () => setCreateIncidentFromTicket(false),
                 },
-                {
-                  text: "Yes",
-                  onPress: () => setCreateIncidentFromTicket(true),
-                },
+                { text: "Yes", onPress: () => setCreateIncidentFromTicket(true) },
               ],
             );
           }}
-          style={{ marginTop: 12, flexDirection: "row", alignItems: "center", gap: 10 }}
-        >
-          <View
-            style={{
-              width: 20,
-              height: 20,
-              borderRadius: 6,
-              borderWidth: 1.5,
-              borderColor: createIncidentFromTicket ? "#dc2626" : "#94a3b8",
-              backgroundColor: createIncidentFromTicket ? "#dc2626" : "transparent",
-            }}
-          />
-          <Text className="text-slate-700 dark:text-slate-200 text-sm font-semibold">
-            Create Incident from this ticket update
-          </Text>
-        </TouchableOpacity>
+        />
       ) : null}
 
       {canCreateIncidentFromTicket && createIncidentFromTicket && setIncidentDraft ? (
-        <View
-          className="mt-3 rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/80 p-3"
-          style={{ gap: 12 }}
-        >
-          <Text className="text-slate-600 dark:text-slate-400 text-xs leading-5">
-            {"Incident will use this ticket's site, selected area, and ticket title. Fill the fields below."}
+        <DetailCard>
+          <CardHead label="Incident details" hint="Required" hintTone="muted" />
+          <Text style={styles.incidentNote}>
+            {"The incident uses this ticket's site, selected area and title."}
           </Text>
 
           <FullscreenPicker
@@ -759,7 +679,9 @@ const TicketDetailStatusUpdate = ({
             placeholder="Select fault type"
             options={incidentFaultTypeOptions}
             value={incidentDraft.fault_type}
-            onChange={(value) => setIncidentDraft((prev) => ({ ...prev, fault_type: value }))}
+            onChange={(value) =>
+              setIncidentDraft((prev) => ({ ...prev, fault_type: value }))
+            }
           />
           <FullscreenPicker
             label="Severity *"
@@ -778,83 +700,131 @@ const TicketDetailStatusUpdate = ({
             placeholder="Select operating condition"
             options={incidentOperatingOptions}
             value={incidentDraft.operating_condition}
-            onChange={(value) => setIncidentDraft((prev) => ({ ...prev, operating_condition: value }))}
+            onChange={(value) =>
+              setIncidentDraft((prev) => ({
+                ...prev,
+                operating_condition: value,
+              }))
+            }
           />
 
-          <View>
-            <Text className="text-slate-700 dark:text-slate-300 font-semibold text-sm mb-2">
-              Immediate action taken
-            </Text>
-            <TextInput
-              placeholder="Describe immediate action (optional if ticket remarks cover it)"
-              placeholderTextColor="#94a3b8"
-              value={incidentDraft.immediate_action_taken}
-              onChangeText={(v) => setIncidentDraft((prev) => ({ ...prev, immediate_action_taken: v }))}
-              multiline
-              textAlignVertical="top"
-              numberOfLines={4}
-              className="border border-slate-300 dark:border-slate-600 rounded-xl px-3 py-3 text-slate-900 dark:text-slate-50 min-h-[96px]"
+          <Field
+            label="Immediate action taken"
+            placeholder="Optional if ticket remarks cover it"
+            value={incidentDraft.immediate_action_taken}
+            onChangeText={(v) =>
+              setIncidentDraft((prev) => ({
+                ...prev,
+                immediate_action_taken: v,
+              }))
+            }
+            multiline
+            textAlignVertical="top"
+            minHeight={72}
+            containerStyle={{ marginBottom: 12 }}
+          />
+
+          <Field
+            label="Incident remarks"
+            placeholder="Notes stored on the incident record"
+            value={incidentDraft.incidentRemarks}
+            onChangeText={(v) =>
+              setIncidentDraft((prev) => ({ ...prev, incidentRemarks: v }))
+            }
+            multiline
+            textAlignVertical="top"
+            minHeight={56}
+            containerStyle={{ marginBottom: 12 }}
+          />
+
+          <Text style={styles.fieldLabel}>Attachments</Text>
+          <View style={styles.attachRow}>
+            <AttachButton
+              icon={Camera}
+              label="Camera"
+              onPress={captureIncidentPhoto}
+            />
+            <AttachButton
+              icon={ImagePlus}
+              label="Gallery"
+              onPress={pickIncidentAttachmentsFromGallery}
             />
           </View>
-
-          <View>
-            <Text className="text-slate-700 dark:text-slate-300 font-semibold text-sm mb-2">
-              Incident remarks (optional)
-            </Text>
-            <TextInput
-              placeholder="Notes stored on the incident record"
-              placeholderTextColor="#94a3b8"
-              value={incidentDraft.incidentRemarks}
-              onChangeText={(v) => setIncidentDraft((prev) => ({ ...prev, incidentRemarks: v }))}
-              multiline
-              textAlignVertical="top"
-              numberOfLines={3}
-              className="border border-slate-300 dark:border-slate-600 rounded-xl px-3 py-3 text-slate-900 dark:text-slate-50 min-h-[72px]"
-            />
-          </View>
-
-          <View>
-            <Text className="text-slate-700 dark:text-slate-300 font-semibold text-sm mb-2">Attachments</Text>
-            <View className="flex-row gap-2 mb-2">
-              <TouchableOpacity
-                onPress={captureIncidentPhoto}
-                className="px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-600 flex-row items-center"
-              >
-                <Camera size={16} color="#64748b" />
-                <Text className="ml-2 text-slate-700 dark:text-slate-200 text-xs font-semibold">Camera</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={pickIncidentAttachmentsFromGallery}
-                className="px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-600 flex-row items-center"
-              >
-                <ImageIcon size={16} color="#64748b" />
-                <Text className="ml-2 text-slate-700 dark:text-slate-200 text-xs font-semibold">Gallery</Text>
-              </TouchableOpacity>
-            </View>
-            {incidentDraft.incidentAttachments.length > 0 ? (
-              <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                <View className="flex-row gap-2">
-                  {incidentDraft.incidentAttachments.map((uri) => (
-                    <View key={uri} className="relative">
-                      <Image source={{ uri }} style={{ width: 72, height: 72, borderRadius: 12 }} />
-                      <TouchableOpacity
-                        onPress={() => removeIncidentAttachment(uri)}
-                        className="absolute -top-1 -right-1 w-6 h-6 rounded-full bg-black/70 items-center justify-center"
-                      >
-                        <X size={14} color="#fff" />
-                      </TouchableOpacity>
-                    </View>
-                  ))}
-                </View>
-              </ScrollView>
-            ) : (
-              <Text className="text-slate-500 dark:text-slate-400 text-xs">No attachments selected</Text>
-            )}
-          </View>
-        </View>
+          {incidentDraft.incidentAttachments.length > 0 ? (
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              style={{ marginTop: 10 }}
+            >
+              <View style={{ flexDirection: "row", gap: 8 }}>
+                {incidentDraft.incidentAttachments.map((uri) => (
+                  <View key={uri}>
+                    <Image source={{ uri }} style={styles.incidentThumb} />
+                    <TouchableOpacity
+                      onPress={() => removeIncidentAttachment(uri)}
+                      style={styles.previewRemove}
+                      accessibilityRole="button"
+                      accessibilityLabel="Remove attachment"
+                    >
+                      <X size={13} color={ds.white} strokeWidth={2.4} />
+                    </TouchableOpacity>
+                  </View>
+                ))}
+              </View>
+            </ScrollView>
+          ) : null}
+        </DetailCard>
       ) : null}
     </View>
   );
 };
+
+const styles = StyleSheet.create({
+  statusRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 9,
+    marginBottom: 8,
+  },
+  statusLabel: {
+    fontSize: 9,
+    fontWeight: "600",
+    letterSpacing: 1.08,
+    textTransform: "uppercase",
+    color: ds.carbon[500],
+  },
+  statusChips: { gap: 6, paddingRight: 4 },
+  tempRow: { flexDirection: "row", gap: 8 },
+  tempCell: { flex: 1, minWidth: 0 },
+  attachRow: { flexDirection: "row", gap: 7, marginTop: 10 },
+  previewWrap: { alignSelf: "flex-start", marginTop: 10 },
+  preview: { width: 120, height: 120, borderRadius: soRadius.sm },
+  previewRemove: {
+    position: "absolute",
+    top: 6,
+    right: 6,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: "rgba(25,19,18,0.75)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  incidentThumb: { width: 72, height: 72, borderRadius: soRadius.sm },
+  incidentNote: {
+    fontSize: 11.5,
+    lineHeight: 17,
+    color: ds.carbon[400],
+    marginBottom: 12,
+  },
+  fieldLabel: {
+    fontSize: 9,
+    fontWeight: "600",
+    letterSpacing: 1.08,
+    textTransform: "uppercase",
+    color: ds.carbon[500],
+    marginBottom: 7,
+  },
+});
 
 export default TicketDetailStatusUpdate;

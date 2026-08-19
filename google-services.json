@@ -7,12 +7,17 @@
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:49892025677:android:0aef3b8452703e88e5c304",
+        "mobilesdk_app_id": "1:49892025677:android:d73e7440793ec038e5c304",
         "android_client_info": {
-          "package_name": "com.arundev2025.jouleops"
+          "package_name": "com.smartjoules.jouleops"
         }
       },
-      "oauth_client": [],
+      "oauth_client": [
+        {
+          "client_id": "49892025677-tpksn3kmpfbus35aolbiivlims28hgi7.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
       "api_key": [
         {
           "current_key": "AIzaSyAlRazqzK28kt2YUyqLYukeF_D8HUl1eS4"
@@ -20,7 +25,12 @@
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": []
+          "other_platform_oauth_client": [
+            {
+              "client_id": "49892025677-tpksn3kmpfbus35aolbiivlims28hgi7.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
         }
       }
     }

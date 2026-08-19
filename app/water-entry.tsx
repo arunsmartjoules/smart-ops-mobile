@@ -253,6 +253,11 @@ function WaterEntryContent() {
           attachment: formData.attachment,
           status: "Inprogress",
           assignedTo: operatorName,
+          // A scheduled row is seeded with no operator and no times; the
+          // completion write is the only place they can come from.
+          executorId:
+            user?.employee_code || user?.user_id || user?.id || "unknown",
+          entryTime: entryTime,
         });
       } else {
         const created = await SiteLogService.saveSiteLog({
@@ -317,6 +322,11 @@ function WaterEntryContent() {
           status: "Completed",
           attachment: formData.attachment,
           assignedTo: operatorName,
+          // A scheduled row is seeded with no operator and no times; the
+          // completion write is the only place they can come from.
+          executorId:
+            user?.employee_code || user?.user_id || user?.id || "unknown",
+          entryTime: entryTime,
         });
       } else {
         const created = await SiteLogService.saveSiteLog({

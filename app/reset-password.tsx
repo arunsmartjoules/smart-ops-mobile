@@ -1,32 +1,32 @@
 import React, { useState } from "react";
-import {
-  View,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  KeyboardAvoidingView,
-  ScrollView,
-  Platform,
-  ActivityIndicator,
-} from "react-native";
-import { Lock, Zap, Eye, EyeOff } from "lucide-react-native";
+import { View } from "react-native";
 import { router } from "expo-router";
+import { KeyRound } from "lucide-react-native";
 import { showAlert } from "@/utils/alert";
 import { useAuth } from "@/contexts/AuthContext";
+import {
+  AuthBubble,
+  AuthCta,
+  AuthField,
+  AuthFooter,
+  AuthScreen,
+  AuthSubtitle,
+  AuthTitle,
+  PasswordStrength,
+  useAuthTokens,
+} from "@/components/auth/AuthUI";
 
 export default function ResetPassword() {
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
-  const [showNew, setShowNew] = useState(false);
-  const [showConfirm, setShowConfirm] = useState(false);
   const [loading, setLoading] = useState(false);
 
+  const t = useAuthTokens();
   const { changePassword } = useAuth();
+
+  const canUpdate = newPassword.length >= 8 && newPassword === confirmPassword;
+
   const handleReset = async () => {
-    if (!newPassword || !confirmPassword) {
-      showAlert("Error", "Please fill in all fields");
-      return;
-    }
     if (newPassword.length < 8) {
       showAlert("Error", "Password must be at least 8 characters");
       return;
@@ -44,108 +44,73 @@ export default function ResetPassword() {
       showAlert("Error", error);
     } else {
       showAlert(
-        "✅ Password Updated",
+        "Password updated",
         "Your password has been changed. Please sign in.",
-        [{ text: "Sign In", onPress: () => router.replace("/sign-in") }],
+        [{ text: "Sign in", onPress: () => router.replace("/sign-in") }],
       );
     }
   };
 
   return (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === "ios" ? "padding" : "height"}
-      className="flex-1 bg-gray-100 dark:bg-slate-950"
+    <AuthScreen
+      onBack={() => router.back()}
+      footer={
+        <AuthFooter
+          prompt="Changed your mind?"
+          action="Go back"
+          disabled={loading}
+          onPress={() => router.back()}
+        />
+      }
     >
-      <ScrollView
-        contentContainerStyle={{ flexGrow: 1 }}
-        keyboardShouldPersistTaps="handled"
-      >
-        <View className="flex-1 items-center justify-center">
-          <View className="w-full h-full bg-white dark:bg-slate-900 rounded-2xl shadow-2xl overflow-hidden">
-            {/* Header */}
-            <View className="bg-red-700 dark:bg-red-900 p-10 items-center justify-center rounded-t-2xl h-56">
-              <Zap size={40} color="#fecaca" />
-              <Text className="text-white text-4xl font-extrabold mt-2">
-                JouleOps
-              </Text>
-              <Text className="text-red-200 mt-1 text-sm">Set New Password</Text>
-            </View>
+      <AuthBubble bg={t.bubbleLockBg}>
+        <KeyRound size={24} color={t.bubbleLockFg} strokeWidth={1.9} />
+      </AuthBubble>
 
-            <View className="p-8 mt-2">
-              <Text className="text-2xl font-bold text-gray-800 dark:text-slate-50 text-center mb-2">
-                New Password
-              </Text>
-              <Text className="text-gray-600 dark:text-slate-400 text-center mb-6">
-                Choose a strong password (min 8 characters)
-              </Text>
+      <AuthTitle style={{ marginBottom: 12 }}>New password</AuthTitle>
+      <View style={{ marginBottom: 32 }}>
+        <AuthSubtitle>
+          Choose a password with at least eight characters.
+        </AuthSubtitle>
+      </View>
 
-              {/* New Password */}
-              <View className="mb-4">
-                <View className="absolute left-3 top-1/2 -translate-y-1/2 z-10">
-                  <Lock size={20} color="#dc2626" />
-                </View>
-                <TextInput
-                  placeholder="New password"
-                  value={newPassword}
-                  onChangeText={setNewPassword}
-                  secureTextEntry={!showNew}
-                  editable={!loading}
-                  className="pl-12 pr-12 py-3 border border-gray-300 dark:border-slate-700 rounded-lg text-gray-800 dark:text-slate-50 dark:bg-slate-800"
-                />
-                <TouchableOpacity
-                  onPress={() => setShowNew((v) => !v)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 z-10"
-                >
-                  {showNew ? (
-                    <EyeOff size={20} color="#94a3b8" />
-                  ) : (
-                    <Eye size={20} color="#94a3b8" />
-                  )}
-                </TouchableOpacity>
-              </View>
+      <View style={{ marginBottom: 26 }}>
+        <AuthField
+          label="New password"
+          placeholder="Minimum 8 characters"
+          value={newPassword}
+          onChangeText={setNewPassword}
+          secure
+          autoCapitalize="none"
+          autoComplete="new-password"
+          textContentType="newPassword"
+          editable={!loading}
+          returnKeyType="next"
+        />
+        <PasswordStrength password={newPassword} />
+      </View>
 
-              {/* Confirm Password */}
-              <View className="mb-6">
-                <View className="absolute left-3 top-1/2 -translate-y-1/2 z-10">
-                  <Lock size={20} color="#dc2626" />
-                </View>
-                <TextInput
-                  placeholder="Confirm new password"
-                  value={confirmPassword}
-                  onChangeText={setConfirmPassword}
-                  secureTextEntry={!showConfirm}
-                  editable={!loading}
-                  className="pl-12 pr-12 py-3 border border-gray-300 dark:border-slate-700 rounded-lg text-gray-800 dark:text-slate-50 dark:bg-slate-800"
-                />
-                <TouchableOpacity
-                  onPress={() => setShowConfirm((v) => !v)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 z-10"
-                >
-                  {showConfirm ? (
-                    <EyeOff size={20} color="#94a3b8" />
-                  ) : (
-                    <Eye size={20} color="#94a3b8" />
-                  )}
-                </TouchableOpacity>
-              </View>
+      <AuthField
+        label="Confirm password"
+        placeholder="Re-enter your password"
+        value={confirmPassword}
+        onChangeText={setConfirmPassword}
+        secure
+        autoCapitalize="none"
+        autoComplete="new-password"
+        textContentType="newPassword"
+        editable={!loading}
+        returnKeyType="go"
+        onSubmitEditing={() => canUpdate && handleReset()}
+        containerStyle={{ marginBottom: 32 }}
+      />
 
-              <TouchableOpacity
-                onPress={handleReset}
-                disabled={loading}
-                className="bg-red-700 py-3 rounded-lg shadow-md active:scale-95"
-              >
-                {loading ? (
-                  <ActivityIndicator color="white" />
-                ) : (
-                  <Text className="text-center text-white font-semibold">
-                    Update Password
-                  </Text>
-                )}
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </ScrollView>
-    </KeyboardAvoidingView>
+      <AuthCta
+        label={loading ? "Updating…" : "Update password"}
+        busy={loading}
+        disabled={!canUpdate}
+        onPress={handleReset}
+      />
+    </AuthScreen>
   );
 }

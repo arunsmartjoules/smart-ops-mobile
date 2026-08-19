@@ -420,6 +420,8 @@ export const SiteLogService: ISiteLogService = {
               data.chemical_dosing || data.chemicalDosing || null,
             remarks: data.remarks || null,
             main_remarks: data.main_remarks || data.mainRemarks || null,
+            meta_date: data.meta_date || data.metaDate || null,
+            shift_label: data.shift_label || data.shiftLabel || null,
             signature: signature || null,
             attachment,
             status: data.status || "Completed",
@@ -456,6 +458,8 @@ export const SiteLogService: ISiteLogService = {
             chemical_dosing: sql`excluded.chemical_dosing`,
             remarks: sql`excluded.remarks`,
             main_remarks: sql`excluded.main_remarks`,
+            meta_date: sql`excluded.meta_date`,
+            shift_label: sql`excluded.shift_label`,
             signature: sql`excluded.signature`,
             attachment: sql`excluded.attachment`,
             status: sql`excluded.status`,
@@ -485,6 +489,8 @@ export const SiteLogService: ISiteLogService = {
                 chemical_dosing: record.chemical_dosing,
                 remarks: record.remarks,
                 main_remarks: record.main_remarks,
+                meta_date: record.meta_date,
+                shift_label: record.shift_label,
                 signature: record.signature,
                 attachment: record.attachment,
                 status: record.status,
@@ -633,6 +639,8 @@ export const SiteLogService: ISiteLogService = {
           chemical_dosing: r.chemical_dosing,
           remarks: r.remarks,
           main_remarks: r.main_remarks,
+          meta_date: r.meta_date,
+          shift_label: r.shift_label,
           attachment: r.attachment,
           signature: r.signature || signature || null,
         })),
@@ -694,6 +702,8 @@ export const SiteLogService: ISiteLogService = {
       chemical_dosing: data.chemicalDosing || null,
       remarks: data.remarks || null,
       main_remarks: data.mainRemarks || data.main_remarks || null,
+      meta_date: data.meta_date || data.metaDate || null,
+      shift_label: data.shift_label || data.shiftLabel || null,
       entry_time: data.entryTime || null,
       end_time: data.endTime || null,
       signature: signature || null,
@@ -740,6 +750,8 @@ export const SiteLogService: ISiteLogService = {
       chemical_dosing: data.chemicalDosing || null,
       remarks: data.remarks || null,
       main_remarks: data.mainRemarks || data.main_remarks || null,
+      meta_date: data.meta_date || data.metaDate || null,
+      shift_label: data.shift_label || data.shiftLabel || null,
       entry_time: data.entryTime || null,
       end_time: data.endTime || null,
       signature: data.signature || null,
@@ -1218,6 +1230,15 @@ export const SiteLogService: ISiteLogService = {
     try {
       const updateFields: Record<string, any> = { updated_at: Date.now() };
 
+      // Row as it stands before this save — `entry_time` is write-once (the
+      // moment the technician opened the form), so a later edit must not
+      // rewrite when the reading was actually taken.
+      const [before] = await db
+        .select()
+        .from(siteLogs)
+        .where(eq(siteLogs.id, id))
+        .limit(1);
+
       if (data.temperature !== undefined)
         updateFields.temperature = data.temperature;
       if (data.rh !== undefined) updateFields.rh = data.rh;
@@ -1231,9 +1252,19 @@ export const SiteLogService: ISiteLogService = {
         updateFields.main_remarks =
           data.mainRemarks !== undefined ? data.mainRemarks : data.main_remarks;
       }
+      if (data.meta_date !== undefined) updateFields.meta_date = data.meta_date;
+      if (data.shift_label !== undefined)
+        updateFields.shift_label = data.shift_label;
       if (data.status !== undefined) updateFields.status = data.status;
+      // Operator identity. Scheduled rows are seeded server-side with neither
+      // field set, and completing one used to send only readings + status —
+      // which left the web's "Reading By" column blank on ~98% of rows.
       if (data.assignedTo !== undefined)
         updateFields.assigned_to = data.assignedTo;
+      if (data.executorId !== undefined)
+        updateFields.executor_id = data.executorId;
+      if (data.entryTime !== undefined && !before?.entry_time)
+        updateFields.entry_time = data.entryTime;
       if (data.endTime !== undefined) updateFields.end_time = data.endTime;
       if (data.scheduledDate !== undefined)
         updateFields.scheduled_date = data.scheduledDate;
@@ -1466,6 +1497,8 @@ export const SiteLogService: ISiteLogService = {
             chemical_dosing: serverLog.chemical_dosing || null,
             remarks: serverLog.remarks || null,
             main_remarks: serverLog.main_remarks || null,
+            meta_date: serverLog.meta_date || null,
+            shift_label: serverLog.shift_label || null,
             signature: serverLog.signature || null,
             status: serverLog.status || null,
             scheduled_date: scheduledDate,
@@ -2190,10 +2223,17 @@ export const SiteLogService: ISiteLogService = {
       chemical_dosing: local.chemical_dosing,
       remarks: local.remarks,
       main_remarks: local.main_remarks,
+      meta_date: local.meta_date,
+      shift_label: local.shift_label,
       signature: local.signature,
       attachment: local.attachment,
       status: local.status || "Completed",
       assigned_to: local.assigned_to || null,
+      // Restore the captured times too — without them the server falls back to
+      // stamping "now", which for a restore is the repair time, not the
+      // reading time.
+      entry_time: local.entry_time || null,
+      end_time: local.end_time || null,
     });
 
     for (const local of localRows) {

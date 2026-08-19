@@ -2,6 +2,9 @@ import { GestureHandlerRootView } from "react-native-gesture-handler";
 // Dev-only diagnostic: import BEFORE anything else so it patches console.error
 // before any other module logs. See utils/navContextErrorTrap.ts.
 import "@/utils/navContextErrorTrap";
+// Dev-only LogBox filters for diagnosed third-party noise. Must be imported
+// before the modules that emit those logs (e.g. expo-notifications below).
+import "@/utils/devLogFilters";
 import { Stack, useRouter, useSegments, usePathname, router } from "expo-router";
 import "react-native-reanimated";
 import { enableFreeze } from "react-native-screens";

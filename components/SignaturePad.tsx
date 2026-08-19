@@ -15,7 +15,7 @@ import {
   GestureHandlerRootView,
   State,
 } from "react-native-gesture-handler";
-import ViewShot from "react-native-view-shot";
+import ViewShot, { type ViewShotRef } from "react-native-view-shot";
 
 interface SignaturePadProps {
   onOK: (signatureUri: string) => void;
@@ -24,6 +24,10 @@ interface SignaturePadProps {
   trigger?: (open: () => void) => React.ReactNode;
   standalone?: boolean;
   okText?: string;
+  /** Confirm-button fill. Defaults to the legacy blue used by the sitelog screens. */
+  accentColor?: string;
+  /** "outlined" gives the DS-styled auto-width Clear button; default stays filled + flex-1. */
+  clearVariant?: "filled" | "outlined";
 }
 
 export default function SignaturePad({
@@ -33,6 +37,8 @@ export default function SignaturePad({
   trigger,
   standalone = false,
   okText = "Save Signature",
+  accentColor = "#2563eb",
+  clearVariant = "filled",
 }: SignaturePadProps) {
   const isDark = useColorScheme() === "dark";
   const [visible, setVisible] = useState(false);
@@ -42,7 +48,7 @@ export default function SignaturePad({
   const [paths, setPaths] = useState<string[]>([]);
   const [currentPath, setCurrentPath] = useState<string>("");
 
-  const viewShotRef = useRef<ViewShot>(null);
+  const viewShotRef = useRef<ViewShotRef>(null);
 
   const handleClear = () => {
     setPaths([]);
@@ -163,17 +169,27 @@ export default function SignaturePad({
 
       {/* Footer */}
       <View className="flex-row p-5 gap-3 bg-white dark:bg-slate-900 border-t border-slate-50 dark:border-slate-800">
-        <TouchableOpacity
-          onPress={handleClear}
-          className="flex-1 py-4 bg-slate-100 dark:bg-slate-800 rounded-xl items-center"
-        >
-          <Text className="font-bold text-slate-700 dark:text-slate-300">
-            Clear
-          </Text>
-        </TouchableOpacity>
+        {clearVariant === "outlined" ? (
+          <TouchableOpacity
+            onPress={handleClear}
+            style={styles.clearOutlined}
+          >
+            <Text style={styles.clearOutlinedText}>Clear</Text>
+          </TouchableOpacity>
+        ) : (
+          <TouchableOpacity
+            onPress={handleClear}
+            className="flex-1 py-4 bg-slate-100 dark:bg-slate-800 rounded-xl items-center"
+          >
+            <Text className="font-bold text-slate-700 dark:text-slate-300">
+              Clear
+            </Text>
+          </TouchableOpacity>
+        )}
         <TouchableOpacity
           onPress={handleEnd}
-          className="flex-1 py-4 bg-blue-600 rounded-xl items-center"
+          className="flex-1 py-4 rounded-xl items-center"
+          style={{ backgroundColor: accentColor }}
         >
           <Text className="font-bold text-white">{okText}</Text>
         </TouchableOpacity>
@@ -219,5 +235,19 @@ const styles = StyleSheet.create({
   },
   flexView: {
     flex: 1,
+  },
+  clearOutlined: {
+    paddingVertical: 14,
+    paddingHorizontal: 18,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#C1BFBE",
+    backgroundColor: "#FFFFFF",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  clearOutlinedText: {
+    fontSize: 14,
+    color: "#5C5857",
   },
 });

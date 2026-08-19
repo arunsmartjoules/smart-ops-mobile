@@ -1,4 +1,4 @@
-import { eq, and, or, ne, gte, lte, like, inArray, desc, asc, count, sql, lt, gt } from "drizzle-orm";
+import { eq, and, or, ne, gte, lte, like, inArray, isNull, desc, asc, count, sql, lt, gt } from "drizzle-orm";
 import { db, areas, siteLogs, chillerReadings, logMaster } from "../database";
 import logger from "../utils/logger";
 import { addDays } from "date-fns";
@@ -38,6 +38,33 @@ export function getLogVariants(logName: string): string[] {
   return [logName];
 }
 
+/** UI shift letter → the "1/3" style marker the backend stores. */
+function shiftMarkerFor(shift?: string): string | null {
+  return shift === "A" ? "1/3" : shift === "B" ? "2/3" : shift === "C" ? "3/3" : null;
+}
+
+/**
+ * Match a row to a shift.
+ *
+ * `shift_label` is the real column and the only reliable source. Rows synced
+ * before the server split metadata out of `remarks` have neither it nor
+ * `meta_date`, so both legacy text columns are still checked — otherwise a
+ * technician on an older device would open a shift and find it empty.
+ */
+function shiftCondition(shift?: string) {
+  const marker = shiftMarkerFor(shift);
+  if (!marker) return null;
+  return or(
+    eq(siteLogs.shift_label, marker),
+    like(siteLogs.meta_date, `%(${marker})%`),
+    and(
+      isNull(siteLogs.shift_label),
+      isNull(siteLogs.meta_date),
+      like(siteLogs.remarks, `%(${marker})%`),
+    ),
+  );
+}
+
 export const SiteConfigService = {
   /**
    * Get pending (non-Completed) tasks for a site/date/log type.
@@ -51,7 +78,7 @@ export const SiteConfigService = {
    *     AND scheduled_date = :date
    *     AND status != 'Completed'
    *     AND log_name IN (:variants)
-   *     [AND remarks LIKE '%shift%']  -- Temp RH only
+   *     [AND shift matches]           -- Temp RH only
    */
   async getPendingTasks(
     siteCode: string,
@@ -71,10 +98,8 @@ export const SiteConfigService = {
       ];
 
       // Shift filter for Temp RH
-      const shiftMarker = shift === "A" ? "1/3" : shift === "B" ? "2/3" : shift === "C" ? "3/3" : null;
-      if (shiftMarker) {
-        conditions.push(like(siteLogs.remarks, `%${shiftMarker}%`));
-      }
+      const shiftWhere = shiftCondition(shift);
+      if (shiftWhere) conditions.push(shiftWhere);
 
       const rows = await db
         .select()
@@ -124,10 +149,8 @@ export const SiteConfigService = {
         sql`substr(${siteLogs.scheduled_date}, 1, 10) = ${scheduledDateStr}`,
       ];
 
-      const shiftMarker = shift === "A" ? "1/3" : shift === "B" ? "2/3" : shift === "C" ? "3/3" : null;
-      if (shiftMarker) {
-        conditions.push(like(siteLogs.remarks, `%${shiftMarker}%`));
-      }
+      const shiftWhere = shiftCondition(shift);
+      if (shiftWhere) conditions.push(shiftWhere);
 
       const rows = await db
         .select()
@@ -299,7 +322,12 @@ export const SiteConfigService = {
       const logVariants = getLogVariants(logName);
 
       const rows = await db
-        .select({ id: siteLogs.id, remarks: siteLogs.remarks })
+        .select({
+          id: siteLogs.id,
+          remarks: siteLogs.remarks,
+          meta_date: siteLogs.meta_date,
+          shift_label: siteLogs.shift_label,
+        })
         .from(siteLogs)
         .where(
           and(
@@ -311,9 +339,13 @@ export const SiteConfigService = {
         );
 
       if (!shift) return rows.length;
-      const shiftMarker = shift === "A" ? "1/3" : shift === "B" ? "2/3" : shift === "C" ? "3/3" : null;
+      const shiftMarker = shiftMarkerFor(shift);
       if (!shiftMarker) return rows.length;
-      return rows.filter((r) => r.remarks?.includes(shiftMarker)).length;
+      return rows.filter((r) =>
+        r.shift_label
+          ? r.shift_label === shiftMarker
+          : (r.meta_date ?? r.remarks)?.includes(`(${shiftMarker})`),
+      ).length;
     } catch (e: any) {
       logger.error("getPendingCountForDate failed", { module: "SITE_CONFIG_SERVICE", error: e.message });
       return 0;

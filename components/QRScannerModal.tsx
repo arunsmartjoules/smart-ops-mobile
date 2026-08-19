@@ -221,7 +221,7 @@ const styles = StyleSheet.create({
   headerTitle: { color: "#fff", fontSize: 16, fontWeight: "700" },
 
   // Overlay
-  overlay: { ...StyleSheet.absoluteFillObject },
+  overlay: { ...StyleSheet.absoluteFill },
   overlayTop: { flex: 1, backgroundColor: DIM },
   overlayRow: { flexDirection: "row", height: SCAN_SIZE },
   overlaySide: { flex: 1, backgroundColor: DIM },

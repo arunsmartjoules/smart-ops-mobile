@@ -145,7 +145,17 @@ export const LogEntryModule = ({
         if (log) {
           // Sync state with log
           setScheduledDate(log.scheduled_date);
-          const logShift = log.remarks?.includes("1/3") ? "A" : log.remarks?.includes("2/3") ? "B" : log.remarks?.includes("3/3") ? "C" : null;
+          // Prefer the real column; the metadata string is only parsed for
+          // rows synced before the server split it out of `remarks`.
+          const shiftSource =
+            log.shift_label || log.meta_date || log.remarks || "";
+          const logShift = shiftSource.includes("1/3")
+            ? "A"
+            : shiftSource.includes("2/3")
+              ? "B"
+              : shiftSource.includes("3/3")
+                ? "C"
+                : null;
           if (logShift) setShift(logShift);
           
           const task: TaskItem = {
@@ -366,8 +376,6 @@ export const LogEntryModule = ({
       // (b) empties the tasks array so handleSubmit hits its "No Data"
       // early-return and the Complete & Sign button does nothing.
       const status = "Inprogress";
-      const shiftLabel =
-        shift === "A" ? " (1/3)" : shift === "B" ? " (2/3)" : shift === "C" ? " (3/3)" : "";
 
       // In edit mode there's exactly one row; use updateSiteLog so we don't
       // overwrite the original signature and assigned_to.
@@ -377,7 +385,8 @@ export const LogEntryModule = ({
             await SiteLogService.updateSiteLog(editId, {
               chemicalDosing: val.dosing || null,
               mainRemarks: val.mainRemarks || null,
-              remarks: (task.meta?.remarks || "") + shiftLabel,
+              meta_date: task.meta?.meta_date || null,
+              shift_label: uiShiftToLabel(shift),
               attachment: val.attachment || null,
               status,
             });
@@ -390,7 +399,8 @@ export const LogEntryModule = ({
                   ? parseFloat(val.hardness)
                   : null,
               mainRemarks: val.mainRemarks || null,
-              remarks: (task.meta?.remarks || "") + shiftLabel,
+              meta_date: task.meta?.meta_date || null,
+              shift_label: uiShiftToLabel(shift),
               attachment: val.attachment || null,
               status,
             });
@@ -400,7 +410,8 @@ export const LogEntryModule = ({
                 val.temp && String(val.temp).trim() ? parseFloat(val.temp) : null,
               rh: val.rh && String(val.rh).trim() ? parseFloat(val.rh) : null,
               mainRemarks: val.mainRemarks || null,
-              remarks: (task.meta?.remarks || "") + shiftLabel,
+              meta_date: task.meta?.meta_date || null,
+              shift_label: uiShiftToLabel(shift),
               attachment: val.attachment || null,
               status,
             });
@@ -421,7 +432,8 @@ export const LogEntryModule = ({
         scheduled_date: scheduledDate,
         status,
         main_remarks: val.mainRemarks || null,
-        remarks: (task.meta?.remarks || "") + shiftLabel,
+        meta_date: task.meta?.meta_date || null,
+        shift_label: uiShiftToLabel(shift),
         ...(type === "Chemical" ? { chemical_dosing: val.dosing } : {}),
         ...(type === "Water"
           ? {
@@ -591,15 +603,14 @@ export const LogEntryModule = ({
       if (isEditMode && editId && tasks[0]) {
         const task = tasks[0];
         const val = logValues[task.id] || {};
-        const shiftLabel =
-          shift === "A" ? " (1/3)" : shift === "B" ? " (2/3)" : shift === "C" ? " (3/3)" : "";
 
         if (type === "Chemical") {
           const hasDosing = !!val.dosing;
           await SiteLogService.updateSiteLog(editId, {
             chemicalDosing: val.dosing || null,
             mainRemarks: val.mainRemarks || null,
-            remarks: (task.meta?.remarks || "") + shiftLabel,
+            meta_date: task.meta?.meta_date || null,
+            shift_label: uiShiftToLabel(shift),
             attachment: val.attachment || null,
             signature: effectiveSignature || undefined,
             status: hasDosing ? "Completed" : "Inprogress",
@@ -618,7 +629,8 @@ export const LogEntryModule = ({
             ph: hasPh ? parseFloat(val.ph) : null,
             hardness: hasHardness ? parseFloat(val.hardness) : null,
             mainRemarks: val.mainRemarks || null,
-            remarks: (task.meta?.remarks || "") + shiftLabel,
+            meta_date: task.meta?.meta_date || null,
+            shift_label: uiShiftToLabel(shift),
             attachment: val.attachment || null,
             signature: effectiveSignature || undefined,
             status,
@@ -634,7 +646,8 @@ export const LogEntryModule = ({
             temperature: hasTemp ? parseFloat(val.temp) : null,
             rh: hasRh ? parseFloat(val.rh) : null,
             mainRemarks: val.mainRemarks || null,
-            remarks: (task.meta?.remarks || "") + shiftLabel,
+            meta_date: task.meta?.meta_date || null,
+            shift_label: uiShiftToLabel(shift),
             attachment: val.attachment || null,
             signature: effectiveSignature || undefined,
             status,
@@ -692,7 +705,6 @@ export const LogEntryModule = ({
         const hasData = type === "Chemical" ? val.dosing : (type === "Water" ? (val.tds || val.ph || val.hardness) : (val.temp || val.rh));
         if (!hasData) return null;
 
-        const shiftLabel = shift === "A" ? " (1/3)" : shift === "B" ? " (2/3)" : shift === "C" ? " (3/3)" : "";
         
         return {
           id: task.id,
@@ -704,7 +716,8 @@ export const LogEntryModule = ({
           status: "Completed", 
           signature: effectiveSignature,
           main_remarks: val.mainRemarks || null,
-          remarks: (task.meta?.remarks || "") + shiftLabel,
+          meta_date: task.meta?.meta_date || null,
+          shift_label: uiShiftToLabel(shift),
           // Specific fields
           ...(type === "Chemical" ? { chemical_dosing: val.dosing } : {}),
           ...(type === "Water" ? { tds: parseFloat(val.tds), ph: parseFloat(val.ph), hardness: parseFloat(val.hardness) } : {}),
