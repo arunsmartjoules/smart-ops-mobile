@@ -38,18 +38,15 @@ export function getLogVariants(logName: string): string[] {
   return [logName];
 }
 
-/** UI shift letter → the "1/3" style marker the backend stores. */
+/** UI shift letter → the "1/3" marker the backend stores. */
 function shiftMarkerFor(shift?: string): string | null {
   return shift === "A" ? "1/3" : shift === "B" ? "2/3" : shift === "C" ? "3/3" : null;
 }
 
 /**
- * Match a row to a shift.
- *
- * `shift_label` is the real column and the only reliable source. Rows synced
- * before the server split metadata out of `remarks` have neither it nor
- * `meta_date`, so both legacy text columns are still checked — otherwise a
- * technician on an older device would open a shift and find it empty.
+ * Match a row to a shift. Rows synced before the server split metadata out of
+ * `remarks` have no `shift_label`, so the legacy text columns are checked too —
+ * otherwise an older device opens a shift and finds it empty.
  */
 function shiftCondition(shift?: string) {
   const marker = shiftMarkerFor(shift);

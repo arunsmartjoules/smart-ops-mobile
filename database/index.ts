@@ -9,10 +9,9 @@ let sqlite: SQLiteDatabase;
 export let db: ExpoSQLiteDatabase<typeof schema>;
 
 /**
- * Boot-time guard for the site_logs columns the log-entry screens read before
- * the async migration pass has run. `shift_label` matters most: task lists are
- * filtered by it, so an app that boots without the column shows a technician
- * an empty shift.
+ * Boot-time guard for columns the log-entry screens read before the async
+ * migration runs. Task lists filter on `shift_label`, so booting without it
+ * shows a technician an empty shift.
  */
 function ensureSiteLogsColumns() {
   for (const sql of [

@@ -119,9 +119,7 @@ export const siteLogs = sqliteTable("site_logs", {
   ph: real("ph"),
   hardness: real("hardness"),
   chemical_dosing: text("chemical_dosing"),
-  // `remarks` is the technician's own note. The schedule label the server
-  // used to put here ("Temp RH (1/3) - 20-08-2026") now lives in `meta_date`,
-  // and the shift has its own column instead of being regexed out of text.
+  // `remarks` is the technician's note; the schedule label lives in meta_date.
   remarks: text("remarks"),
   main_remarks: text("main_remarks"),
   meta_date: text("meta_date"),

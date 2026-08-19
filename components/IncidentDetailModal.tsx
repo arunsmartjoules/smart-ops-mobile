@@ -1,12 +1,12 @@
 import React, { useCallback } from "react";
 import {
-  ActivityIndicator,
   Alert,
   Image,
   KeyboardAvoidingView,
   Modal,
   Platform,
   ScrollView,
+  StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
@@ -16,11 +16,32 @@ import {
 } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 import * as DocumentPicker from "expo-document-picker";
-import { Camera, FileText, Image as ImageIcon, X } from "lucide-react-native";
+import {
+  Camera,
+  Clock as ClockIcon,
+  FileText,
+  Image as ImageIcon,
+  X,
+} from "lucide-react-native";
 import DateTimePicker, {
   DateTimePickerAndroid,
 } from "@react-native-community/datetimepicker";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import FullscreenPicker from "./FullscreenPicker";
+import { ds } from "@/constants/ds";
+import {
+  Badge,
+  DetailCard,
+  DetailHeader,
+  MetaBlock,
+  StatusChip,
+  StatusHint,
+  SubmitBar,
+} from "@/components/tickets/TicketDetailUI";
+import {
+  getIncidentRca,
+  getIncidentStatus,
+} from "@/components/incidents/IncidentsUI";
 import { type SelectOption } from "./SearchableSelect";
 import { formatIST } from "@/utils/istDate";
 
@@ -124,6 +145,7 @@ export default function IncidentDetailModal({
   setPendingRcaAttachments,
 }: IncidentDetailModalProps) {
   const isDark = useColorScheme() === "dark";
+  const insets = useSafeAreaInsets();
   const iconMuted = isDark ? "#cbd5e1" : "#64748b";
 
   const pickFromGallery = useCallback(async () => {
@@ -246,50 +268,77 @@ export default function IncidentDetailModal({
   const isResolved = incident.status === "Resolved";
   const restrictResolvedEdits = isResolved && !canEditRca;
 
+  const statusTone = getIncidentStatus(incident.status);
+  const rcaTone = getIncidentRca(incident.rca_status);
+  const raisedMs = incident.incident_created_time
+    ? typeof incident.incident_created_time === "number"
+      ? incident.incident_created_time
+      : Date.parse(String(incident.incident_created_time))
+    : NaN;
+  const raisedLine = Number.isNaN(raisedMs)
+    ? incident.site_code
+    : `Raised ${formatIST(raisedMs, { day: "numeric", month: "short" })} · ${formatIST(raisedMs, { hour: "2-digit", minute: "2-digit", hour12: false })}`;
+
   return (
     <Modal
       visible={visible}
-      transparent
       animationType="slide"
-      statusBarTranslucent
+      presentationStyle="fullScreen"
+      onRequestClose={onClose}
     >
-      <KeyboardAvoidingView
-        className="flex-1"
-        behavior={Platform.OS === "ios" ? "padding" : "height"}
-        keyboardVerticalOffset={Platform.OS === "ios" ? 8 : 0}
-      >
-        <View className="flex-1 justify-end bg-black/55">
-          <View className="bg-white dark:bg-slate-900 rounded-t-[36px] px-[22px] pt-[14px] pb-[18px] h-[92%] min-h-[420px]">
-            <View className="flex-row items-center justify-between mb-3">
-              <Text className="text-slate-900 dark:text-slate-50 text-lg font-black">
-                Incident Details
-              </Text>
-              <TouchableOpacity onPress={onClose} className="px-2 py-1">
-                <Text className="text-slate-500 dark:text-slate-300 font-bold text-base">
-                  Close
-                </Text>
-              </TouchableOpacity>
-            </View>
-
+      <View style={{ flex: 1, backgroundColor: ds.pageBg }}>
+        <DetailHeader
+          topInset={insets.top}
+          title={incident.incident_id || "Incident"}
+          subtitle={raisedLine}
+          onBack={onClose}
+        />
+        <KeyboardAvoidingView
+          style={{ flex: 1 }}
+          behavior={Platform.OS === "ios" ? "padding" : "height"}
+          keyboardVerticalOffset={Platform.OS === "ios" ? 8 : 0}
+        >
             <ScrollView
+              style={{ flex: 1 }}
               showsVerticalScrollIndicator={false}
               keyboardShouldPersistTaps="handled"
-              contentContainerStyle={{ paddingBottom: 20 }}
+              contentContainerStyle={{
+                paddingHorizontal: 20,
+                paddingTop: 16,
+                paddingBottom: 20,
+              }}
             >
-              <View className="bg-slate-50 dark:bg-slate-800 rounded-xl p-4 mb-3">
-                <Text className="text-slate-900 dark:text-slate-50 font-bold text-[15px]">
-                  {incident.fault_symptom}
-                </Text>
-                <Text className="text-slate-600 dark:text-slate-300 text-xs mt-1">
-                  Asset: {incident.asset_location || "-"}
-                </Text>
-                <Text className="text-slate-600 dark:text-slate-300 text-xs mt-1">
-                  Status: {incident.status === "Resolved" ? "Completed" : incident.status}
-                </Text>
-              </View>
+              <DetailCard style={{ padding: 16, marginBottom: 12 }}>
+                <Text style={detailStyles.title}>{incident.fault_symptom}</Text>
+                <View style={detailStyles.badgeRow}>
+                  <Badge
+                    label={statusTone.label}
+                    bg={statusTone.bg}
+                    fg={statusTone.fg}
+                  />
+                  {rcaTone ? (
+                    <Badge
+                      label={rcaTone.label}
+                      bg={rcaTone.bg}
+                      fg={rcaTone.fg}
+                    />
+                  ) : null}
+                </View>
+                <View style={detailStyles.metaWrap}>
+                  <MetaBlock
+                    label="Asset"
+                    value={incident.asset_location || "—"}
+                  />
+                  <MetaBlock label="Site" value={incident.site_code || "—"} />
+                  <MetaBlock
+                    label="Assigned"
+                    value={assignedTo || "Unassigned"}
+                  />
+                </View>
+              </DetailCard>
 
               <View className="mb-3">
-                <Text className="text-slate-700 dark:text-slate-300 text-xs font-bold uppercase mb-2">
+                <Text style={detailStyles.eyebrow}>
                   Incident Created Time
                 </Text>
                 <TouchableOpacity
@@ -310,59 +359,40 @@ export default function IncidentDetailModal({
               </View>
 
               {!isResolved ? (
-                <View className="mb-3">
-                  <Text className="text-slate-700 dark:text-slate-300 text-xs font-bold uppercase mb-2">
-                    Status Transition
-                  </Text>
-                  <View className="gap-2">
+                <>
+                  <View style={detailStyles.statusRow}>
+                    <Text style={detailStyles.statusLabel}>Status</Text>
                     {incident.status === "Open" ? (
-                      <TouchableOpacity
+                      <StatusChip
+                        label="In progress"
+                        active={nextStatus === "Inprogress"}
                         onPress={() =>
                           setNextStatus(
                             nextStatus === "Inprogress" ? null : "Inprogress",
                           )
                         }
-                        className="flex-row items-center px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800"
-                      >
-                        <View
-                          className={`w-4 h-4 rounded border mr-2 items-center justify-center ${nextStatus === "Inprogress" ? "bg-red-600 border-red-600" : "border-slate-400 dark:border-slate-500"}`}
-                        >
-                          {nextStatus === "Inprogress" ? (
-                            <Text className="text-white text-[10px] font-black">
-                              ✓
-                            </Text>
-                          ) : null}
-                        </View>
-                        <Text className="text-slate-700 dark:text-slate-200 text-xs font-bold">
-                          Move to Inprogress
-                        </Text>
-                      </TouchableOpacity>
+                      />
                     ) : null}
                     {incident.status === "Inprogress" ? (
-                      <TouchableOpacity
+                      <StatusChip
+                        label="Completed"
+                        active={nextStatus === "Resolved"}
                         onPress={() =>
                           setNextStatus(
                             nextStatus === "Resolved" ? null : "Resolved",
                           )
                         }
-                        className="flex-row items-center px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800"
-                      >
-                        <View
-                          className={`w-4 h-4 rounded border mr-2 items-center justify-center ${nextStatus === "Resolved" ? "bg-red-600 border-red-600" : "border-slate-400 dark:border-slate-500"}`}
-                        >
-                          {nextStatus === "Resolved" ? (
-                            <Text className="text-white text-[10px] font-black">
-                              ✓
-                            </Text>
-                          ) : null}
-                        </View>
-                        <Text className="text-slate-700 dark:text-slate-200 text-xs font-bold">
-                          Move to Completed
-                        </Text>
-                      </TouchableOpacity>
+                      />
                     ) : null}
                   </View>
-                </View>
+                  <StatusHint icon={ClockIcon}>
+                    {nextStatus === "Resolved"
+                      ? "Needs a resolved time and remarks"
+                      : nextStatus === "Inprogress"
+                        ? "Needs a responded time"
+                        : "Pick the transition to record"}
+                  </StatusHint>
+                </>
               ) : null}
 
               <FullscreenPicker
@@ -376,7 +406,7 @@ export default function IncidentDetailModal({
 
               {incident.status !== "Resolved" || nextStatus === "Inprogress" ? (
                 <View className="mb-3">
-                  <Text className="text-slate-700 dark:text-slate-300 text-xs font-bold uppercase mb-2">
+                  <Text style={detailStyles.eyebrow}>
                     Incident Responded Time
                   </Text>
                   <TouchableOpacity
@@ -396,7 +426,7 @@ export default function IncidentDetailModal({
 
               {incident.status === "Inprogress" || nextStatus === "Resolved" ? (
                 <View className="mb-3">
-                  <Text className="text-slate-700 dark:text-slate-300 text-xs font-bold uppercase mb-2">
+                  <Text style={detailStyles.eyebrow}>
                     Incident Resolved Time
                   </Text>
                   <TouchableOpacity
@@ -411,7 +441,7 @@ export default function IncidentDetailModal({
                       {formatIST(resolvedAt || new Date(), IST_PICKED_OPTS, "en-US")}
                     </Text>
                   </TouchableOpacity>
-                  <Text className="text-slate-700 dark:text-slate-300 text-xs font-bold uppercase mb-2">
+                  <Text style={detailStyles.eyebrow}>
                     Remarks *
                   </Text>
                   <TextInput
@@ -428,7 +458,7 @@ export default function IncidentDetailModal({
 
               {isResolved ? (
                 <View className="mb-3">
-                  <Text className="text-slate-700 dark:text-slate-300 text-xs font-bold uppercase mb-2">
+                  <Text style={detailStyles.eyebrow}>
                     Remarks
                   </Text>
                   <TextInput
@@ -444,7 +474,7 @@ export default function IncidentDetailModal({
               ) : null}
 
               <View className="mb-3">
-                <Text className="text-slate-700 dark:text-slate-300 text-xs font-bold uppercase mb-2">
+                <Text style={detailStyles.eyebrow}>
                   Attachments
                 </Text>
                 <Text className="text-slate-500 dark:text-slate-400 text-xs mb-2">
@@ -513,7 +543,7 @@ export default function IncidentDetailModal({
                   hidden entirely while Open / Inprogress. */}
               {isResolved ? (
               <View className="mb-2">
-                <Text className="text-slate-700 dark:text-slate-300 text-xs font-bold uppercase mb-2">
+                <Text style={detailStyles.eyebrow}>
                   RCA Status
                 </Text>
                 {canEditRca ? (
@@ -541,7 +571,7 @@ export default function IncidentDetailModal({
                       onChange={setRcaChecker}
                     />
                     <View className="mb-3">
-                      <Text className="text-slate-700 dark:text-slate-300 text-xs font-bold uppercase mb-2">
+                      <Text style={detailStyles.eyebrow}>
                         RCA Attachments
                       </Text>
                       {existingRcaAttachmentUrls.length > 0 ||
@@ -721,37 +751,69 @@ export default function IncidentDetailModal({
             ) : null}
 
             {(canEditMeta || canEditRca) && (
-              <TouchableOpacity
-                onPress={onSubmit}
-                disabled={
-                  isUpdating ||
-                  ((incident.status === "Open" ||
-                    incident.status === "Inprogress") &&
-                    !nextStatus)
-                }
-                className="bg-red-600 rounded-xl py-3 mt-1"
-                style={{
-                  opacity:
-                    isUpdating ||
-                    ((incident.status === "Open" ||
+              <SubmitBar
+                label="Update incident"
+                ready={
+                  !(
+                    (incident.status === "Open" ||
                       incident.status === "Inprogress") &&
-                      !nextStatus)
-                      ? 0.55
-                      : 1,
-                }}
-              >
-                {isUpdating ? (
-                  <ActivityIndicator color="#fff" size="small" />
-                ) : (
-                  <Text className="text-white text-center font-black">
-                    Update Incident
-                  </Text>
-                )}
-              </TouchableOpacity>
+                    !nextStatus
+                  )
+                }
+                blocked={
+                  (incident.status === "Open" ||
+                    incident.status === "Inprogress") &&
+                  !nextStatus
+                    ? "Choose the status to move this incident to"
+                    : null
+                }
+                busy={isUpdating}
+                bottomInset={insets.bottom}
+                onPress={onSubmit}
+              />
             )}
-          </View>
-        </View>
-      </KeyboardAvoidingView>
+        </KeyboardAvoidingView>
+      </View>
     </Modal>
   );
 }
+
+const detailStyles = StyleSheet.create({
+  title: {
+    fontSize: 16,
+    lineHeight: 22,
+    fontWeight: "600",
+    letterSpacing: 0.16,
+    color: ds.carbon[100],
+    marginBottom: 10,
+  },
+  badgeRow: { flexDirection: "row", gap: 7, marginBottom: 14 },
+  metaWrap: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    borderTopWidth: 1,
+    borderTopColor: ds.carbon[1000],
+    paddingTop: 13,
+  },
+  statusRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 9,
+    marginBottom: 8,
+  },
+  statusLabel: {
+    fontSize: 9,
+    fontWeight: "600",
+    letterSpacing: 1.08,
+    textTransform: "uppercase",
+    color: ds.carbon[500],
+  },
+  eyebrow: {
+    fontSize: 9,
+    fontWeight: "600",
+    letterSpacing: 1.08,
+    textTransform: "uppercase",
+    color: ds.carbon[500],
+    marginBottom: 7,
+  },
+});

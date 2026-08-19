@@ -127,8 +127,20 @@ export const IncidentsService = {
     return result;
   },
 
-  async getStats(siteCode: string) {
-    return apiFetchJson(`/api/incidents/stats?site_code=${encodeURIComponent(siteCode)}`);
+  // Counts must be scoped to the SAME window the list is fetched with —
+  // otherwise a chip reports incidents the date-filtered list can never show
+  // (e.g. an April incident counted under the default 1st-of-month range),
+  // which reads as "count shows 1 but the list is empty".
+  async getStats(
+    siteCode: string,
+    options: { search?: string; fromDate?: string | null; toDate?: string | null } = {},
+  ) {
+    const params = new URLSearchParams();
+    params.append("site_code", siteCode);
+    if (options.search) params.append("search", options.search);
+    if (options.fromDate) params.append("fromDate", options.fromDate);
+    if (options.toDate) params.append("toDate", options.toDate);
+    return apiFetchJson(`/api/incidents/stats?${params.toString()}`);
   },
 
   async createIncident(payload: any) {

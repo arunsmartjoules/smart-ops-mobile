@@ -25,11 +25,11 @@ interface TabDef {
   icon: LucideIcon;
 }
 
-/** Order and labels are the mock's — "Alerts" is the incidents route. */
+/** Order and labels are the mock's. */
 const TABS: TabDef[] = [
   { name: "dashboard", label: "Home", icon: LayoutDashboard },
   { name: "tickets", label: "Tickets", icon: Wrench },
-  { name: "incidents", label: "Alerts", icon: CircleAlert },
+  { name: "incidents", label: "Incidents", icon: CircleAlert },
   { name: "site-logs", label: "Logs", icon: Sheet },
   { name: "preventive-maintenance", label: "PM", icon: SquareCheck },
 ];

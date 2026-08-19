@@ -33,8 +33,7 @@ export const UnifiedLogItem = React.memo(
     index,
     total,
   }: UnifiedLogItemProps) => {
-    // The scheduling label ("Temp RH (1/3) - 20-08-2026") lives in `meta_date`
-    // now; `remarks` is the technician's own note and must not be shown here.
+    // The scheduling label; `remarks` is the technician's note, not this.
     const location = item.meta?.meta_date || null;
 
     const isFilled =

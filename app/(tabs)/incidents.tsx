@@ -13,13 +13,12 @@ import {
   View,
 } from "react-native";
 import { FlashList } from "@shopify/flash-list";
-import { SafeAreaView } from "react-native-safe-area-context";
-import EmptyState from "@/components/EmptyState";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Haptics from "expo-haptics";
 import PressableScale from "@/components/PressableScale";
 import { useAttendanceGate } from "@/contexts/AttendanceGateContext";
 import * as ImagePicker from "expo-image-picker";
-import { ChevronDown, Filter, MapPin, Plus, RefreshCw, Camera, Image as ImageIcon, X, Clock, AlertTriangle, UserCircle } from "lucide-react-native";
+import { Plus, Camera, Image as ImageIcon, X } from "lucide-react-native";
 import { useLocalSearchParams } from "expo-router";
 import DateTimePicker, { DateTimePickerAndroid } from "@react-native-community/datetimepicker";
 import { useAuth } from "@/contexts/AuthContext";
@@ -28,9 +27,18 @@ import { useNetworkStatus } from "@/hooks/useNetworkStatus";
 import { useAutoSync } from "@/hooks/useAutoSync";
 import AdvancedFilterModal from "@/components/AdvancedFilterModal";
 import TicketSkeleton from "@/components/TicketSkeleton";
-import IncidentStats from "@/components/IncidentStats";
 import IncidentTopFilters from "@/components/IncidentTopFilters";
 import IncidentDetailModal from "@/components/IncidentDetailModal";
+import IncidentCard from "@/components/IncidentItem";
+import Animated from "react-native-reanimated";
+import { ds } from "@/constants/ds";
+import {
+  ListCountLine,
+  ListEmptyCard,
+  ModuleListHeader,
+  useListSlide,
+  type StatusChip,
+} from "@/components/shared/ListChrome";
 import { IncidentsService } from "@/services/IncidentsService";
 import { db, incidents as incidentsTable } from "@/database";
 import { eq, and, gte, lte, desc } from "drizzle-orm";
@@ -38,12 +46,10 @@ import { StorageService } from "@/services/StorageService";
 import FullscreenPicker from "@/components/FullscreenPicker";
 import { type SelectOption } from "@/components/SearchableSelect";
 import { TicketsService } from "@/services/TicketsService";
-import { getStatusVisual, getInitials } from "@/utils/ticketVisuals";
 import {
   istTodayString,
   istParts,
   istDayStartMsFromYmd,
-  formatISTDate,
   formatIST,
 } from "@/utils/istDate";
 import {
@@ -53,7 +59,32 @@ import {
 } from "@/constants/incidentFormOptions";
 import { v4 as uuidv4 } from "uuid";
 
-type IncidentStatus = "Open" | "Inprogress" | "Resolved";
+type IncidentStatus = "All" | "Open" | "Inprogress" | "Resolved";
+
+const DMY: Intl.DateTimeFormatOptions = {
+  day: "numeric",
+  month: "short",
+  year: "numeric",
+};
+
+/** "1–19 Aug 2026" / "1 Jul – 19 Aug 2026" / "1 Jul 2025 – 19 Aug 2026". */
+const formatDateRange = (from: string | null, to: string | null) => {
+  const fromMs = istDayStartMsFromYmd(from);
+  const toMs = istDayStartMsFromYmd(to);
+  if (fromMs == null && toMs == null) return "All dates";
+  if (fromMs == null) return `Up to ${formatIST(toMs!, DMY)}`;
+  if (toMs == null) return `From ${formatIST(fromMs, DMY)}`;
+
+  const a = istParts(fromMs);
+  const b = istParts(toMs);
+  if (a.year === b.year && a.month === b.month) {
+    return `${formatIST(fromMs, { day: "numeric" })}–${formatIST(toMs, DMY)}`;
+  }
+  if (a.year === b.year) {
+    return `${formatIST(fromMs, { day: "numeric", month: "short" })} – ${formatIST(toMs, DMY)}`;
+  }
+  return `${formatIST(fromMs, DMY)} – ${formatIST(toMs, DMY)}`;
+};
 
 /** Normalize incidents.attachments from API (array) or local cache (JSON string). */
 function parseIncidentAttachments(raw: unknown): string[] {
@@ -171,7 +202,7 @@ export default function IncidentsTab() {
   const { user } = useAuth();
   const { canEdit } = useAttendanceGate();
   const { isConnected } = useNetworkStatus();
-  const { sites, selectedSite, selectSite, loading: sitesLoading, refresh: refreshSites } = useSites(
+  const { sites, selectedSite, selectSite, loading: sitesLoading } = useSites(
     user?.user_id || user?.id,
   );
   const params = useLocalSearchParams<{
@@ -208,19 +239,22 @@ export default function IncidentsTab() {
   }, []);
   const [statusFilter, setStatusFilter] = useState<IncidentStatus>(initialStatus as IncidentStatus);
   const [rcaFilter, setRcaFilter] = useState("All");
+  const [searchInput, setSearchInput] = useState("");
+  const [sortMode, setSortMode] = useState<"Newest" | "Oldest" | "Status">(
+    "Newest",
+  );
+  const [slide, setSlide] = useState({ seq: 0, dir: 1 });
+  const insets = useSafeAreaInsets();
+  const listSlideStyle = useListSlide(slide.seq, slide.dir);
   const [showFilter, setShowFilter] = useState(false);
   const [tempSearch, setTempSearch] = useState("");
   const [search, setSearch] = useState("");
   const [fromDate, setFromDate] = useState<string | null>(defaultFromDate);
   const [toDate, setToDate] = useState<string | null>(defaultToDate);
-  const dateRangePreview = useMemo(() => {
-    const formatPreviewDate = (dateStr: string | null) => {
-      if (!dateStr) return "Any";
-      const ms = istDayStartMsFromYmd(dateStr);
-      return ms == null ? "Any" : formatISTDate(ms);
-    };
-    return `Date: ${formatPreviewDate(fromDate)} - ${formatPreviewDate(toDate)}`;
-  }, [fromDate, toDate]);
+  const dateRangeLabel = useMemo(
+    () => formatDateRange(fromDate, toDate),
+    [fromDate, toDate],
+  );
   const [tempFromDate, setTempFromDate] = useState<string | null>(defaultFromDate);
   const [tempToDate, setTempToDate] = useState<string | null>(defaultToDate);
   const [creating, setCreating] = useState(false);
@@ -302,7 +336,7 @@ export default function IncidentsTab() {
     // the UI shows local rows immediately, before the network response lands.
     try {
       const whereParts: any[] = [eq(incidentsTable.site_code, selectedSiteCode)];
-      if (statusFilter) {
+      if (statusFilter && statusFilter !== "All") {
         whereParts.push(eq(incidentsTable.status, statusFilter));
       }
       if (fromDate) {
@@ -347,13 +381,13 @@ export default function IncidentsTab() {
     try {
       const [listRes, statsRes] = await Promise.all([
         IncidentsService.getIncidents(selectedSiteCode, {
-          status: statusFilter,
+          status: statusFilter === "All" ? undefined : statusFilter,
           rca_status: rcaFilter === "All" ? undefined : rcaFilter,
           search,
           fromDate,
           toDate,
         }),
-        IncidentsService.getStats(selectedSiteCode),
+        IncidentsService.getStats(selectedSiteCode, { search, fromDate, toDate }),
       ]);
 
       if (requestGen !== fetchGenRef.current) return;
@@ -912,245 +946,175 @@ export default function IncidentsTab() {
     uploadUrisToStorage,
   ]);
 
-  const renderCard = ({ item }: { item: IncidentItem }) => {
-    const status = getStatusVisual(item.status);
-    const statusLabel = item.status === "Resolved" ? "Completed" : status.label;
-    const assignee = parseAssignedTo(item.assigned_to).display;
-    const createdAt = item.incident_created_time
-      ? (() => {
-          const d = new Date(item.incident_created_time as any);
-          return Number.isNaN(d.getTime())
-            ? "-"
-            : `${formatIST(d, { day: "numeric", month: "short" })} · ${formatIST(d, { hour: "numeric", minute: "2-digit", hour12: true }, "en-US")}`;
-        })()
-      : "-";
+  // Debounce the header search into the fetch key.
+  useEffect(() => {
+    const t = setTimeout(() => setSearch(searchInput.trim()), 350);
+    return () => clearTimeout(t);
+  }, [searchInput]);
 
-    return (
-      <TouchableOpacity
+  const renderCard = useCallback(
+    ({ item }: { item: IncidentItem }) => (
+      <IncidentCard
+        item={item as any}
+        assignee={parseAssignedTo(item.assigned_to).display}
         onPress={() => openIncidentModal(item)}
-        activeOpacity={0.7}
-        className="bg-white dark:bg-slate-900 mb-2.5 rounded-2xl border border-slate-200 dark:border-slate-800"
-        style={{
-          shadowColor: "#000",
-          shadowOffset: { width: 0, height: 2 },
-          shadowOpacity: 0.03,
-          shadowRadius: 8,
-          elevation: 1,
-        }}
-      >
-        <View className="p-3">
-          {/* Top: icon · title + id/site · rca badge */}
-          <View className="flex-row items-start">
-            <View
-              className="w-9 h-9 rounded-[10px] items-center justify-center mr-2.5"
-              style={{ backgroundColor: status.tint }}
-            >
-              <AlertTriangle size={16} color={status.color} />
-            </View>
-
-            <View className="flex-1 min-w-0 mr-2">
-              <Text
-                className="text-slate-900 dark:text-slate-50 font-semibold text-[14px] leading-5"
-                numberOfLines={1}
-                ellipsizeMode="tail"
-              >
-                {item.fault_symptom}
-              </Text>
-              <View className="flex-row items-center mt-1">
-                <Text
-                  className="text-slate-500 dark:text-slate-400 text-[11px] font-medium flex-shrink-0"
-                  numberOfLines={1}
-                >
-                  {item.incident_id || "INCIDENT"}
-                </Text>
-                <View className="w-1 h-1 rounded-full bg-slate-300 dark:bg-slate-600 mx-2" />
-                <Text
-                  className="text-slate-400 dark:text-slate-500 text-[11px] flex-shrink"
-                  numberOfLines={1}
-                >
-                  {item.site_code || "-"}
-                </Text>
-              </View>
-            </View>
-
-            <View className="bg-slate-100 dark:bg-slate-800 rounded-md px-2 py-0.5 flex-shrink-0">
-              <Text className="text-[9px] font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-                {item.rca_status}
-              </Text>
-            </View>
-          </View>
-
-          {/* Foot: time · assignee — status chip */}
-          <View className="flex-row items-center justify-between mt-2.5 pt-2.5 border-t border-slate-100 dark:border-slate-800/80">
-            <View className="flex-row items-center flex-1 mr-2" style={{ gap: 10 }}>
-              <View className="flex-row items-center flex-shrink-0">
-                <Clock size={12} color="#94a3b8" />
-                <Text className="text-slate-500 dark:text-slate-400 text-[10.5px] font-medium ml-1">
-                  {createdAt}
-                </Text>
-              </View>
-              <View className="flex-row items-center flex-shrink min-w-0">
-                {assignee ? (
-                  <>
-                    <View
-                      className="w-[18px] h-[18px] rounded-full items-center justify-center mr-1.5"
-                      style={{ backgroundColor: status.tint }}
-                    >
-                      <Text
-                        className="text-[8px] font-bold"
-                        style={{ color: status.color }}
-                      >
-                        {getInitials(assignee)}
-                      </Text>
-                    </View>
-                    <Text
-                      className="text-slate-500 dark:text-slate-400 text-[10.5px] font-medium flex-shrink"
-                      numberOfLines={1}
-                    >
-                      {assignee}
-                    </Text>
-                  </>
-                ) : (
-                  <>
-                    <UserCircle size={13} color="#94a3b8" />
-                    <Text className="text-slate-400 dark:text-slate-500 text-[10.5px] font-medium ml-1">
-                      Unassigned
-                    </Text>
-                  </>
-                )}
-              </View>
-            </View>
-
-            <View
-              className="flex-row items-center rounded-md px-2 py-1 flex-shrink-0"
-              style={{ backgroundColor: status.tint }}
-            >
-              <View
-                className="w-1.5 h-1.5 rounded-full mr-1.5"
-                style={{ backgroundColor: status.color }}
-              />
-              <Text
-                className="text-[9px] font-bold uppercase tracking-wide"
-                style={{ color: status.color }}
-              >
-                {statusLabel}
-              </Text>
-            </View>
-          </View>
-        </View>
-      </TouchableOpacity>
-    );
-  };
-
-  const listEmpty = useMemo(
-    () =>
-      loading ? (
-        <TicketSkeleton />
-      ) : (
-        <EmptyState
-          icon={AlertTriangle}
-          title="No incidents found"
-          action={
-            isConnected && !sitesLoading && sites.length === 0
-              ? {
-                  label: "Retry Server Sync",
-                  onPress: async () => {
-                    await refreshSites();
-                    fetchData();
-                  },
-                }
-              : undefined
-          }
-        />
-      ),
-    [loading, isConnected, sitesLoading, sites.length, refreshSites, fetchData],
+      />
+    ),
+    [openIncidentModal],
   );
 
+  const statusChips = useMemo<StatusChip[]>(() => {
+    const total =
+      (stats.Open || 0) + (stats.Inprogress || 0) + (stats.Resolved || 0);
+    return [
+      { key: "All", label: "All", count: total || undefined },
+      { key: "Open", label: "Open", count: stats.Open },
+      { key: "Inprogress", label: "In progress", count: stats.Inprogress },
+      { key: "Resolved", label: "Completed", count: stats.Resolved },
+    ];
+  }, [stats]);
+
+  const STATUS_RANK: Record<string, number> = {
+    Open: 1,
+    Inprogress: 2,
+    Resolved: 3,
+  };
+
+  const sortedIncidents = useMemo(() => {
+    const rows = [...incidents];
+    const at = (v: IncidentItem["incident_created_time"]) =>
+      v == null ? 0 : typeof v === "number" ? v : Date.parse(String(v)) || 0;
+    if (sortMode === "Status") {
+      rows.sort((a, b) => {
+        const ra = STATUS_RANK[a.status] ?? 9;
+        const rb = STATUS_RANK[b.status] ?? 9;
+        return ra !== rb ? ra - rb : at(b.incident_created_time) - at(a.incident_created_time);
+      });
+      return rows;
+    }
+    rows.sort((a, b) =>
+      sortMode === "Oldest"
+        ? at(a.incident_created_time) - at(b.incident_created_time)
+        : at(b.incident_created_time) - at(a.incident_created_time),
+    );
+    return rows;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [incidents, sortMode]);
+
+  // The list is server-filtered and page-capped, so the stat count is the
+  // better number for the active tab — but never let it claim rows the list
+  // isn't showing: an empty list must read as 0, and the RCA chips subfilter
+  // the list without being reflected in the stats (the backend strips
+  // status/rca_status from the counters by design).
+  const visibleCount = useMemo(() => {
+    if (rcaFilter !== "All" || sortedIncidents.length === 0) {
+      return sortedIncidents.length;
+    }
+    if (statusFilter === "All") {
+      const total =
+        (stats.Open || 0) + (stats.Inprogress || 0) + (stats.Resolved || 0);
+      return total || sortedIncidents.length;
+    }
+    return stats[statusFilter] ?? sortedIncidents.length;
+  }, [stats, statusFilter, rcaFilter, sortedIncidents.length]);
+
+  const countLabel = useMemo(() => {
+    if (isSwitchingFilters) return "updating…";
+    if (statusFilter === "All") return "incidents at this site";
+    const label =
+      statusChips.find((c) => c.key === statusFilter)?.label ?? statusFilter;
+    return `${label.toLowerCase()} incidents`;
+  }, [statusFilter, statusChips, isSwitchingFilters]);
+
+  const selectStatusChip = useCallback(
+    (key: string) => {
+      if (key === statusFilter) return;
+      const order = statusChips.map((c) => c.key);
+      const dir = order.indexOf(key) >= order.indexOf(statusFilter) ? 1 : -1;
+      setSlide((prev) => ({ seq: prev.seq + 1, dir }));
+      setStatusFilter(key as IncidentStatus);
+    },
+    [statusFilter, statusChips],
+  );
+
+  const cycleSort = useCallback(() => {
+    setSortMode((m) =>
+      m === "Newest" ? "Oldest" : m === "Oldest" ? "Status" : "Newest",
+    );
+  }, []);
+
   return (
-    <View className="flex-1 bg-slate-50 dark:bg-slate-950">
-      <SafeAreaView className="flex-1">
-        <View className="px-5 pt-2 pb-3">
-          <View className="flex-row items-center justify-between mb-4">
-            <View className="flex-1">
-              <Text className="text-slate-400 dark:text-slate-500 text-sm font-medium mb-1">
-                Site Operations
-              </Text>
-              <TouchableOpacity
-                onPress={() => setShowFilter(true)}
-                className="flex-row items-center"
-              >
-                <MapPin size={20} color="#dc2626" />
-                <Text
-                  className="text-slate-900 dark:text-slate-50 text-xl font-bold ml-2 mr-1 flex-shrink"
-                  numberOfLines={1}
-                >
-                  {siteName}
-                </Text>
-                <ChevronDown size={20} color="#94a3b8" />
-              </TouchableOpacity>
-            </View>
-            <View className="flex-row items-center gap-2">
-              <TouchableOpacity
-                disabled={!isConnected || !selectedSiteCode}
-                onPress={onRefresh}
-                className="w-11 h-11 rounded-xl bg-white dark:bg-slate-900 items-center justify-center"
-                style={{ opacity: !isConnected || !selectedSiteCode ? 0.4 : 1 }}
-              >
-                <RefreshCw
-                  size={20}
-                  color={!isConnected || !selectedSiteCode ? "#94a3b8" : "#dc2626"}
-                />
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={() => setShowFilter(true)}
-                className="w-11 h-11 rounded-xl bg-white dark:bg-slate-900 items-center justify-center"
-              >
-                <Filter size={20} color={fromDate ? "#dc2626" : (isDark ? "#dc2626" : "#64748b")} />
-              </TouchableOpacity>
-            </View>
-          </View>
-          <View className="mb-2 self-start px-3 py-1 rounded-full bg-red-50 dark:bg-red-950/30 border border-red-100 dark:border-red-900/40">
-            <Text className="text-[11px] font-semibold text-red-700 dark:text-red-300">
-              {dateRangePreview}
-            </Text>
-          </View>
-        </View>
+    <View style={{ flex: 1, backgroundColor: ds.pageBg }}>
+      <ModuleListHeader
+        topInset={insets.top}
+        siteName={siteName}
+        dateLabel={dateRangeLabel}
+        onPressSite={() => setShowFilter(true)}
+        onRefresh={() => {
+          if (!isConnected || !selectedSiteCode) return;
+          onRefresh();
+        }}
+        refreshDisabled={!isConnected || !selectedSiteCode}
+        onFilter={() => setShowFilter(true)}
+        filterActive={!!fromDate}
+        search={searchInput}
+        onChangeSearch={setSearchInput}
+        searchPlaceholder="Search ID, asset or fault"
+        chips={statusChips}
+        activeChip={statusFilter}
+        onSelectChip={selectStatusChip}
+      />
 
-        <IncidentStats
-          stats={stats}
-          loading={loading}
-          currentStatus={statusFilter}
-          onStatusChange={(value) => setStatusFilter(value as IncidentStatus)}
+      <ListCountLine
+        count={visibleCount}
+        label={countLabel}
+        sortLabel={sortMode}
+        onSort={cycleSort}
+      />
+
+      {/* RCA quick-filters apply only to Completed incidents — hidden
+          entirely under All / Open / In progress. */}
+      {statusFilter === "Resolved" ? (
+        <IncidentTopFilters
+          selected={rcaFilter}
+          onChange={setRcaFilter}
+          canEdit={canEditRca}
         />
-        {/* RCA quick-filters apply only to Completed incidents — hidden
-            entirely under Open / Inprogress. */}
-        {statusFilter === "Resolved" ? (
-          <IncidentTopFilters
-            selected={rcaFilter}
-            onChange={setRcaFilter}
-            canEdit={canEditRca}
-          />
-        ) : null}
-        {isSwitchingFilters ? (
-          <View className="px-5 mb-2">
-            <Text className="text-xs text-slate-500 dark:text-slate-400">Updating incidents...</Text>
-          </View>
-        ) : null}
+      ) : null}
 
+      <Animated.View style={[{ flex: 1 }, listSlideStyle]}>
         <FlashList
-          data={incidents}
+          data={sortedIncidents}
           renderItem={renderCard}
           keyExtractor={(item) => item.id}
           // Uniform-height cards (single recycle pool) + wider draw distance so
           // fast flings don't reveal blank space. See PM list for the same config.
           drawDistance={600}
-          ListEmptyComponent={listEmpty}
+          ListEmptyComponent={
+            loading ? (
+              <TicketSkeleton />
+            ) : (
+              <ListEmptyCard
+                label={
+                  isConnected && !sitesLoading && sites.length === 0
+                    ? "No site is mapped to you yet"
+                    : "No incidents match this filter"
+                }
+              />
+            )
+          }
           refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#dc2626" />
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor={ds.thunder[100]}
+            />
           }
           showsVerticalScrollIndicator={false}
-          contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: 120 }}
+          contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: 24 }}
         />
+      </Animated.View>
+
 
         {canEdit && (
           <PressableScale
@@ -1519,7 +1483,6 @@ export default function IncidentsTab() {
           pendingRcaAttachments={detailPendingRcaAttachments}
           setPendingRcaAttachments={setDetailPendingRcaAttachments}
         />
-      </SafeAreaView>
     </View>
   );
 }

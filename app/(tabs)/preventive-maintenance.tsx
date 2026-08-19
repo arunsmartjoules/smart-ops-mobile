@@ -14,36 +14,39 @@ import {
   StyleSheet,
   ScrollView,
   RefreshControl,
-  TextInput,
   useColorScheme,
   Modal,
   Image,
   Alert,
 } from "react-native";
 import { FlashList, type ListRenderItem } from "@shopify/flash-list";
-import EmptyState from "@/components/EmptyState";
 import * as Haptics from "expo-haptics";
 import * as ImagePicker from "expo-image-picker";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAttendanceGate } from "@/contexts/AttendanceGateContext";
 import {
   ListChecks,
-  Wrench,
-  Filter,
-  RefreshCw,
   WifiOff,
-  MapPin,
-  ChevronDown,
-  Clock,
-  Search,
   ChevronLeft,
   Calendar as CalendarIcon,
+  CalendarCheck,
   QrCode,
   X,
   Camera,
   Image as ImageIcon,
 } from "lucide-react-native";
 import { router, useFocusEffect } from "expo-router";
+import Animated from "react-native-reanimated";
+import PMItem from "@/components/PMItem";
+import { getPmStatus } from "@/components/pm/PMUI";
+import { ds } from "@/constants/ds";
+import {
+  ListCountLine,
+  ListEmptyCard,
+  ModuleListHeader,
+  useListSlide,
+  type StatusChip,
+} from "@/components/shared/ListChrome";
 import { useAuth } from "@/contexts/AuthContext";
 import { useNetworkStatus } from "@/hooks/useNetworkStatus";
 import NetInfo from "@react-native-community/netinfo";
@@ -53,7 +56,7 @@ import { AttendanceService, type Site } from "@/services/AttendanceService";
 import { useSites } from "@/hooks/useSites";
 import { db, pmInstances } from "@/database";
 import { eq } from "drizzle-orm";
-import { addDays, isValid } from "date-fns";
+import { addDays } from "date-fns";
 import {
   istDateString,
   istTodayString,
@@ -61,14 +64,12 @@ import {
   istDayStartMsFromYmd,
   istDayEndMsFromYmd,
   formatIST,
-  toIstDayMs,
 } from "@/utils/istDate";
 import AdvancedFilterModal from "@/components/AdvancedFilterModal";
 import QRScannerModal, { type QRScannerRef } from "@/components/QRScannerModal";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import logger from "@/utils/logger";
 import Skeleton from "@/components/Skeleton";
-import { getPmStatusVisual, getInitials } from "@/utils/ticketVisuals";
 
 type PMInstanceRow = typeof pmInstances.$inferSelect;
 
@@ -77,30 +78,15 @@ const PAGE_SIZE = 20;
 
 // Display patterns used in this screen, mapped to IST Intl options so dates
 // always render as the India calendar day regardless of device timezone.
-const IST_PATTERN_OPTS: Record<string, Intl.DateTimeFormatOptions> = {
-  "d MMM yyyy": { day: "numeric", month: "short", year: "numeric" },
-  "d MMM": { day: "numeric", month: "short" },
-};
 
-const safeFormat = (date: any, formatStr: string) => {
-  if (date == null || date === "") return "N/A";
-  // Route everything through toIstDayMs so a "YYYY-MM-DD" string anchors to IST
-  // 00:00 (not device-local midnight). parseISO/new Date on a date-only string
-  // is timezone-sensitive and can roll the calendar day backward on devices
-  // east of IST — same root cause as the filter-side leak.
-  let ms: number | null;
-  if (typeof date === "string" && /^\d+$/.test(date)) {
-    ms = parseInt(date, 10);
-  } else {
-    ms = toIstDayMs(date);
-  }
-  if (ms == null) return "Invalid Date";
-  const d = new Date(ms);
-  if (!isValid(d)) return "Invalid Date";
-  return formatIST(d, IST_PATTERN_OPTS[formatStr] || IST_PATTERN_OPTS["d MMM yyyy"]);
-};
 
 const STATUS_OPTIONS = ["Pending", "In-progress", "Completed"];
+
+const DMY: Intl.DateTimeFormatOptions = {
+  day: "numeric",
+  month: "short",
+  year: "numeric",
+};
 
 // The PM list date-range filter can target either the due date (default)
 // or the completed date — the advanced filter exposes this as a selector.
@@ -121,242 +107,42 @@ const istMonthEnd = () => {
 };
 
 // ─── PMSkeleton ──────────────────────────────────────────────────────────────
-const PMSkeleton = () => {
-  const isDark = useColorScheme() === "dark";
-  const cardBg = isDark ? "#0f172a" : "#fff";
-  const cardBorder = isDark ? "#1e293b" : "#f1f5f9";
-  return (
-    <View style={styles.listContent}>
-      {[1, 2, 3, 4].map((i) => (
-        <View
-          key={i}
-          className="rounded-2xl p-3 mb-2 border"
-          style={{ backgroundColor: cardBg, borderColor: cardBorder }}
-        >
-          <View className="flex-row justify-between mb-2">
-            <Skeleton width={60} height={14} borderRadius={6} />
-            <Skeleton width={50} height={14} borderRadius={6} />
-          </View>
-          <View className="flex-row items-center">
-            <Skeleton
-              width={40}
-              height={40}
-              borderRadius={10}
-              style={{ marginRight: 10 }}
-            />
-            <View className="flex-1">
-              <Skeleton width="50%" height={14} style={{ marginBottom: 4 }} />
-              <Skeleton width="40%" height={12} />
-            </View>
-          </View>
-          <View className="mt-2 pt-2 border-t border-slate-50 dark:border-slate-800 flex-row justify-between">
-            <Skeleton width={80} height={12} />
-            <Skeleton width={60} height={12} />
-          </View>
+// Fills the list area (flex: 1) so a slow cold load reads as "loading" rather
+// than leaving dead space under a few placeholder cards, and mirrors PMItem's
+// four-line body so the handoff to real rows doesn't jump.
+const PMSkeleton = () => (
+  <View style={styles.skeletonArea}>
+    {[1, 2, 3, 4, 5, 6].map((i) => (
+      <View key={i} style={styles.skeletonCard}>
+        <View style={styles.skeletonRow}>
+          <Skeleton width={64} height={10} borderRadius={3} />
+          <Skeleton width={54} height={12} borderRadius={4} />
+          <Skeleton width={48} height={12} borderRadius={4} />
         </View>
-      ))}
-    </View>
-  );
-};
+        <Skeleton
+          width="72%"
+          height={14}
+          borderRadius={4}
+          style={{ marginBottom: 8 }}
+        />
+        <Skeleton
+          width="46%"
+          height={10}
+          borderRadius={3}
+          style={{ marginBottom: 7 }}
+        />
+        <View style={styles.skeletonRow}>
+          <Skeleton width={92} height={10} borderRadius={3} />
+          <View style={{ flex: 1 }} />
+          <Skeleton width={20} height={20} borderRadius={10} />
+          <Skeleton width={62} height={10} borderRadius={3} />
+        </View>
+      </View>
+    ))}
+  </View>
+);
 
 // ─── Memoized PM Card ──────────────────────────────────────────────────────────
-const PMCard = React.memo(
-  ({
-    instance,
-    onPress,
-    showCompletedDate,
-  }: {
-    instance: PMInstanceRow;
-    onPress: () => void;
-    showCompletedDate?: boolean;
-  }) => {
-    const isDark = useColorScheme() === "dark";
-    const status = getPmStatusVisual(instance.status);
-
-    return (
-      <TouchableOpacity
-        onPress={onPress}
-        activeOpacity={0.7}
-        className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-3"
-        style={{
-          shadowColor: "#000",
-          shadowOffset: { width: 0, height: 2 },
-          shadowOpacity: isDark ? 0 : 0.03,
-          shadowRadius: 8,
-          elevation: 1,
-        }}
-      >
-        {/* Top: icon · asset/title · status chip */}
-        <View className="flex-row items-start">
-          <View
-            className="w-9 h-9 rounded-[10px] items-center justify-center mr-2.5"
-            style={{ backgroundColor: status.tint }}
-          >
-            <Wrench size={16} color={status.color} />
-          </View>
-
-          <View className="flex-1 min-w-0 mr-2">
-            <Text
-              className="text-slate-900 dark:text-slate-50 font-semibold text-[14px] leading-5"
-              numberOfLines={1}
-              ellipsizeMode="tail"
-            >
-              {instance.title || instance.asset_id || "PM Task"}
-            </Text>
-            <Text
-              className="text-slate-500 dark:text-slate-400 text-[11px] font-medium mt-1"
-              numberOfLines={2}
-            >
-              {instance.asset_id || "Unknown Asset"}
-            </Text>
-          </View>
-
-          <View
-            className="flex-row items-center rounded-md px-2 py-1 flex-shrink-0"
-            style={{ backgroundColor: status.tint }}
-          >
-            <View
-              className="w-1.5 h-1.5 rounded-full mr-1.5"
-              style={{ backgroundColor: status.color }}
-            />
-            <Text
-              className="text-[9px] font-bold uppercase tracking-wide"
-              style={{ color: status.color }}
-            >
-              {status.label}
-            </Text>
-          </View>
-        </View>
-
-        {/* Foot: due date · assignee */}
-        <View className="flex-row items-center justify-between mt-2.5 pt-2.5 border-t border-slate-100 dark:border-slate-800/80">
-          <View className="flex-row items-center flex-shrink mr-2">
-            <Clock size={12} color="#94a3b8" />
-            <Text
-              className="text-slate-500 dark:text-slate-400 text-[10.5px] font-medium ml-1 flex-shrink-0"
-              numberOfLines={1}
-            >
-              {`Due ${safeFormat(instance.start_due_date, "d MMM yyyy")}`}
-            </Text>
-            <View className="w-1 h-1 rounded-full bg-slate-300 dark:bg-slate-600 mx-1.5 flex-shrink-0" />
-            <Text
-              className="text-slate-400 dark:text-slate-500 text-[10.5px] font-medium uppercase flex-shrink-0"
-              numberOfLines={1}
-            >
-              {instance.frequency || "ONCE"}
-            </Text>
-            {showCompletedDate && instance.completed_on ? (
-              <Text
-                className="text-green-600 dark:text-green-400 text-[10.5px] font-medium ml-1.5 flex-shrink"
-                numberOfLines={1}
-              >
-                {`· Done ${safeFormat(instance.completed_on, "d MMM")}`}
-              </Text>
-            ) : null}
-          </View>
-
-          {instance.assigned_to_name ? (
-            <View className="flex-row items-center flex-shrink min-w-0">
-              <View
-                className="w-[18px] h-[18px] rounded-full items-center justify-center mr-1.5"
-                style={{ backgroundColor: status.tint }}
-              >
-                <Text
-                  className="text-[8px] font-bold"
-                  style={{ color: status.color }}
-                >
-                  {getInitials(instance.assigned_to_name)}
-                </Text>
-              </View>
-              <Text
-                className="text-slate-500 dark:text-slate-400 text-[10.5px] font-medium flex-shrink"
-                numberOfLines={1}
-                ellipsizeMode="tail"
-              >
-                {instance.assigned_to_name}
-              </Text>
-            </View>
-          ) : (
-            <Text className="text-slate-300 dark:text-slate-600 text-[10.5px] italic">
-              Unassigned
-            </Text>
-          )}
-        </View>
-      </TouchableOpacity>
-    );
-  },
-  (prev, next) =>
-    prev.instance.id === next.instance.id &&
-    prev.instance.status === next.instance.status &&
-    prev.instance.progress === next.instance.progress &&
-    prev.instance.assigned_to_name === next.instance.assigned_to_name &&
-    prev.showCompletedDate === next.showCompletedDate,
-);
-
-PMCard.displayName = "PMCard";
-
-// ─── Stat Card ─────────────────────────────────────────────────────────────────
-const StatCard = React.memo(
-  ({
-    value,
-    label,
-    color,
-    isActive,
-    onPress,
-  }: {
-    value: number;
-    label: string;
-    color: string;
-    isActive: boolean;
-    onPress?: () => void;
-  }) => {
-    const cardClass =
-      "flex-1 rounded-xl py-2.5 px-1.5 items-center bg-white dark:bg-slate-900";
-    const cardStyle = {
-      borderWidth: 1,
-      borderColor: isActive ? color : `${color}33`,
-      shadowColor: "#000",
-      shadowOffset: { width: 0, height: 1 },
-      shadowOpacity: 0.04,
-      shadowRadius: 4,
-      elevation: 1,
-    };
-    const body = (
-      <>
-        <Text className="text-[17px] font-bold leading-tight" style={{ color }}>
-          {value}
-        </Text>
-        <Text
-          className="text-[9px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500 mt-0.5"
-          numberOfLines={1}
-        >
-          {label}
-        </Text>
-      </>
-    );
-
-    if (!onPress) {
-      return (
-        <View className={cardClass} style={cardStyle}>
-          {body}
-        </View>
-      );
-    }
-
-    return (
-      <TouchableOpacity
-        onPress={onPress}
-        activeOpacity={0.7}
-        className={cardClass}
-        style={cardStyle}
-      >
-        {body}
-      </TouchableOpacity>
-    );
-  },
-);
-
-StatCard.displayName = "StatCard";
 
 // ─── Main Screen ───────────────────────────────────────────────────────────────
 export default function PreventiveMaintenance() {
@@ -376,6 +162,10 @@ export default function PreventiveMaintenance() {
   const [startBeforeImage, setStartBeforeImage] = useState<string>("");
   const [starting, setStarting] = useState(false);
   const [statusFilter, setStatusFilter] = useState("Pending");
+  const [sortMode, setSortMode] = useState<"Due date" | "Status">("Due date");
+  const [slide, setSlide] = useState({ seq: 0, dir: 1 });
+  const insets = useSafeAreaInsets();
+  const listSlideStyle = useListSlide(slide.seq, slide.dir);
   const [showFiltersModal, setShowFiltersModal] = useState(false);
   const [serverStats, setServerStats] = useState<any>(null);
 
@@ -393,12 +183,7 @@ export default function PreventiveMaintenance() {
 
   // ── Clean sites hook ──────────────────────────────────────────────────────
   const userId = user?.user_id || user?.id;
-  const {
-    sites,
-    selectedSite,
-    selectSite,
-    refresh: refreshSites,
-  } = useSites(userId);
+  const { sites, selectedSite, selectSite } = useSites(userId);
   const siteCode = selectedSite?.site_code ?? "";
   const siteName =
     selectedSite?.site_name ?? selectedSite?.site_code ?? "Select Site";
@@ -908,60 +693,109 @@ export default function PreventiveMaintenance() {
     setToDate(istDateString(addDays(new Date(), 30)));
   }, []);
 
+  const statusChips = useMemo<StatusChip[]>(
+    () => [
+      { key: "All", label: "All", count: stats.total },
+      { key: "Pending", label: "Open", count: stats.pending },
+      { key: "In-progress", label: "In progress", count: stats.inProgress },
+      { key: "Completed", label: "Completed", count: stats.completed },
+    ],
+    [stats],
+  );
+
+  const visibleCount = useMemo(() => {
+    switch (statusFilter) {
+      case "Pending":
+        return stats.pending;
+      case "In-progress":
+        return stats.inProgress;
+      case "Completed":
+        return stats.completed;
+      default:
+        return stats.total;
+    }
+  }, [statusFilter, stats]);
+
+  const countLabel = useMemo(() => {
+    if (statusFilter === "All") return "PMs this period";
+    const label =
+      statusChips.find((c) => c.key === statusFilter)?.label ?? statusFilter;
+    return `${label.toLowerCase()} PMs`;
+  }, [statusFilter, statusChips]);
+
+  const selectStatusChip = useCallback(
+    (key: string) => {
+      if (key === statusFilter) return;
+      const order = statusChips.map((c) => c.key);
+      const dir = order.indexOf(key) >= order.indexOf(statusFilter) ? 1 : -1;
+      setSlide((prev) => ({ seq: prev.seq + 1, dir }));
+      setStatusFilter(key);
+    },
+    [statusFilter, statusChips],
+  );
+
+  const cycleSort = useCallback(() => {
+    setSortMode((m) => (m === "Due date" ? "Status" : "Due date"));
+  }, []);
+
+  const STATUS_RANK: Record<string, number> = {
+    overdue: 1,
+    pending: 2,
+    "in-progress": 3,
+    "in progress": 3,
+    inprogress: 3,
+    completed: 4,
+  };
+
+  const sortedInstances = useMemo(() => {
+    const rows = [...filteredInstances];
+    const due = (i: PMInstanceRow) => Number(i.start_due_date ?? 0);
+    if (sortMode === "Status") {
+      rows.sort((a, b) => {
+        const ra = STATUS_RANK[(a.status || "").toLowerCase()] ?? 9;
+        const rb = STATUS_RANK[(b.status || "").toLowerCase()] ?? 9;
+        return ra !== rb ? ra - rb : due(a) - due(b);
+      });
+      return rows;
+    }
+    rows.sort((a, b) => due(a) - due(b));
+    return rows;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filteredInstances, sortMode]);
+
   const renderItem: ListRenderItem<PMInstanceRow> = useCallback(
     ({ item }) => (
-      <View style={{ paddingBottom: 10 }}>
-        <PMCard
-          instance={item}
-          onPress={() => handlePMCardPress(item)}
-          showCompletedDate={
-            statusFilter === "Completed" || dateField === "completed_date"
-          }
-        />
-      </View>
+      <PMItem
+        instance={item}
+        onPress={() => handlePMCardPress(item)}
+        showCompletedDate={
+          statusFilter === "Completed" || dateField === "completed_date"
+        }
+      />
     ),
     [handlePMCardPress, statusFilter, dateField],
   );
 
   const keyExtractor = useCallback((item: PMInstanceRow) => item.id, []);
 
+  const getItemType = useCallback(
+    (item: PMInstanceRow) =>
+      getPmStatus(item.status).label === "In progress" ? "progress" : "plain",
+    [],
+  );
+
   const ListEmpty = useMemo(
     () => (
-      <EmptyState
-        icon={Wrench}
-        title={
+      <ListEmptyCard
+        icon={CalendarCheck}
+        label={
           allInstances.length > 0
-            ? `Hidden by Filters (${allInstances.length} Tasks)`
+            ? `No PMs match this filter (${allInstances.length} in range)`
             : "No PM tasks found"
-        }
-        subtitle={
-          allInstances.length > 0
-            ? "Try adjusting your filters"
-            : undefined
-        }
-        action={
-          isConnected && !siteCode
-            ? {
-                label: "Retry Server Sync",
-                onPress: async () => {
-                  await refreshSites();
-                  if (selectedSite?.site_code) {
-                    loadPMData(true, 0, false);
-                  }
-                },
-              }
-            : undefined
         }
       />
     ),
-    [
-      allInstances.length,
-      isConnected,
-      siteCode,
-      refreshSites,
-      selectedSite?.site_code,
-      loadPMData,
-    ],
+    [allInstances.length],
   );
 
   const renderFooter = useCallback(() => {
@@ -973,199 +807,110 @@ export default function PreventiveMaintenance() {
     );
   }, [loadingMore]);
 
-  const renderListHeader = useCallback(
-    () => (
-      <View style={styles.listHeader}>
-        <View style={styles.sectionRow}>
-          <View className="flex-row items-center gap-2">
-            <Text style={styles.sectionTitle}>Maintenance Tasks</Text>
-          </View>
-        </View>
-      </View>
-    ),
-    [],
-  );
-
-  const dateRangePreview = useMemo(() => {
-    const from = safeFormat(currentDate, "d MMM yyyy");
-    const to = safeFormat(toDate, "d MMM yyyy");
-    const label = dateField === "completed_date" ? "Completed" : "Due";
-    return `${label}: ${from} - ${to}`;
+  const dateRangeLabel = useMemo(() => {
+    const prefix = dateField === "completed_date" ? "Completed " : "";
+    const fromMs = istDayStartMsFromYmd(currentDate);
+    const toMs = istDayStartMsFromYmd(toDate);
+    if (fromMs == null || toMs == null) return `${prefix}All dates`;
+    const a = istParts(fromMs);
+    const b = istParts(toMs);
+    if (a.year === b.year && a.month === b.month) {
+      return `${prefix}${formatIST(fromMs, { day: "numeric" })}\u2013${formatIST(toMs, DMY)}`;
+    }
+    if (a.year === b.year) {
+      return `${prefix}${formatIST(fromMs, { day: "numeric", month: "short" })} \u2013 ${formatIST(toMs, DMY)}`;
+    }
+    return `${prefix}${formatIST(fromMs, DMY)} \u2013 ${formatIST(toMs, DMY)}`;
   }, [currentDate, toDate, dateField]);
 
   return (
-    <View className="flex-1 bg-slate-50 dark:bg-slate-950">
-      <SafeAreaView style={styles.flex} edges={["top"]}>
-        <View className="px-5 pt-2 pb-2 bg-slate-50 dark:bg-slate-950">
-          <View className="flex-row items-center justify-between mb-2">
-            <View className="flex-1">
-              <TouchableOpacity
-                onPress={() => setShowFiltersModal(true)}
-                className="flex-row items-center"
-              >
-                <MapPin size={20} color="#dc2626" />
-                <Text
-                  className="text-slate-900 dark:text-slate-50 text-base font-bold ml-2 mr-1 flex-shrink"
-                  numberOfLines={1}
-                >
-                  {siteName}
-                </Text>
-                <ChevronDown size={20} color="#94a3b8" />
-              </TouchableOpacity>
-            </View>
+    <View style={{ flex: 1, backgroundColor: ds.pageBg }}>
+      <ModuleListHeader
+        topInset={insets.top}
+        siteName={siteName}
+        dateLabel={dateRangeLabel}
+        onPressSite={() => setShowFiltersModal(true)}
+        onRefresh={() => {
+          if (!isConnected) return;
+          handleHeaderManualRefresh();
+        }}
+        refreshDisabled={!isConnected}
+        onFilter={() => setShowFiltersModal(true)}
+        filterActive={
+          tempFromDate !== istTodayString() || tempToDate !== istTodayString()
+        }
+        search={searchQuery}
+        onChangeSearch={setSearchQuery}
+        searchPlaceholder="Search asset, PM type or area"
+        chips={statusChips}
+        activeChip={statusFilter}
+        onSelectChip={selectStatusChip}
+      />
 
-            <View className="flex-row items-center gap-2 flex-shrink-0">
-              <TouchableOpacity
-                disabled={!isConnected}
-                onPress={handleHeaderManualRefresh}
-                className="w-11 h-11 rounded-xl bg-white dark:bg-slate-900 items-center justify-center"
-                style={{
-                  opacity: !isConnected ? 0.4 : 1,
-                  shadowColor: "#000",
-                  shadowOffset: { width: 0, height: 2 },
-                  shadowOpacity: 0.08,
-                  shadowRadius: 8,
-                  elevation: 3,
-                }}
-              >
-                <RefreshCw
-                  size={20}
-                  color={!isConnected ? "#94a3b8" : "#dc2626"}
-                />
-              </TouchableOpacity>
+      <ListCountLine
+        count={visibleCount}
+        label={countLabel}
+        sortLabel={sortMode}
+        onSort={cycleSort}
+      />
 
-              <TouchableOpacity
-                onPress={() => setShowFiltersModal(true)}
-                className="flex-shrink-0"
-              >
-                <View
-                  className="w-11 h-11 rounded-xl bg-white dark:bg-slate-900 items-center justify-center"
-                  style={{
-                    shadowColor: "#000",
-                    shadowOffset: { width: 0, height: 2 },
-                    shadowOpacity: 0.08,
-                    shadowRadius: 8,
-                    elevation: 3,
-                  }}
-                >
-                  <Filter
-                    size={20}
-                    color={
-                      tempFromDate !== istTodayString() ||
-                      tempToDate !== istTodayString()
-                        ? "#dc2626"
-                        : isDark
-                          ? "#dc2626"
-                          : "#64748b"
-                    }
-                  />
-                </View>
-              </TouchableOpacity>
-            </View>
-          </View>
-
-          <View className="mb-2 self-start px-3 py-1 rounded-full bg-red-50 dark:bg-red-950/30 border border-red-100 dark:border-red-900/40">
-            <Text className="text-[11px] font-semibold text-red-700 dark:text-red-300">
-              {dateRangePreview}
+      {/* QR scan narrows the list to a single asset. */}
+      <View style={styles.qrRow}>
+        {qrAssetFilter ? (
+          <View style={styles.qrChip}>
+            <QrCode size={12} color={ds.flame[100]} />
+            <Text style={styles.qrChipText} numberOfLines={1}>
+              {qrAssetFilter}
             </Text>
-          </View>
-
-          <View className="flex-row gap-1.5 mb-3">
-            <StatCard
-              value={stats.total}
-              label="Total"
-              color="#6366f1"
-              isActive={false}
-            />
-            <StatCard
-              value={stats.pending}
-              label="Pending"
-              color="#f97316"
-              isActive={statusFilter === "Pending"}
-              onPress={() => setStatusFilter("Pending")}
-            />
-            <StatCard
-              value={stats.inProgress}
-              label="In Progress"
-              color="#3b82f6"
-              isActive={statusFilter === "In-progress"}
-              onPress={() => setStatusFilter("In-progress")}
-            />
-            <StatCard
-              value={stats.completed}
-              label="Completed"
-              color="#22c55e"
-              isActive={statusFilter === "Completed"}
-              onPress={() => setStatusFilter("Completed")}
-            />
-          </View>
-
-          <View
-            style={styles.searchBarContainer}
-            className="bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800"
-          >
-            <Search size={18} color="#94a3b8" />
-            <TextInput
-              placeholder="Search by ID, asset or name..."
-              className="text-slate-900 dark:text-slate-50 font-medium ml-2 flex-1"
-              placeholderTextColor="#94a3b8"
-              value={searchQuery}
-              onChangeText={setSearchQuery}
-            />
-            <TouchableOpacity
-              onPress={() => qrScannerRef.current?.open()}
-              style={[
-                styles.qrBtn,
-                qrAssetFilter
-                  ? { backgroundColor: "#dc2626" }
-                  : { backgroundColor: isDark ? "#1e293b" : "#f1f5f9" },
-              ]}
-            >
-              <QrCode size={18} color={qrAssetFilter ? "#fff" : "#64748b"} />
+            <TouchableOpacity onPress={clearQRFilter} hitSlop={8}>
+              <X size={14} color={ds.flame[100]} />
             </TouchableOpacity>
           </View>
+        ) : null}
+        <TouchableOpacity
+          onPress={() => qrScannerRef.current?.open()}
+          style={styles.qrScanBtn}
+          hitSlop={6}
+          accessibilityRole="button"
+          accessibilityLabel="Scan asset QR code"
+        >
+          <QrCode size={15} color={ds.thunder[100]} />
+          <Text style={styles.qrScanLabel}>
+            {qrAssetFilter ? "Rescan" : "Scan asset"}
+          </Text>
+        </TouchableOpacity>
+      </View>
 
-          {qrAssetFilter ? (
-            <View style={styles.qrChip}>
-              <QrCode size={12} color="#dc2626" />
-              <Text style={styles.qrChipText} numberOfLines={1}>
-                {qrAssetFilter}
-              </Text>
-              <TouchableOpacity onPress={clearQRFilter} hitSlop={8}>
-                <X size={14} color="#dc2626" />
-              </TouchableOpacity>
-            </View>
-          ) : null}
-        </View>
-
-        {loading && allInstances.length === 0 ? (
-          <PMSkeleton />
-        ) : (
+      {loading && allInstances.length === 0 ? (
+        <PMSkeleton />
+      ) : (
+        <Animated.View style={[{ flex: 1 }, listSlideStyle]}>
           <FlashList
-            data={filteredInstances}
+            data={sortedInstances}
             renderItem={renderItem}
             keyExtractor={keyExtractor}
-            // No getItemType: every card renders the identical layout/height,
-            // so a single recycle pool maximizes cell reuse. Splitting into
-            // per-status pools just forced fresh cell mounts mid-fling, which
-            // showed up as blank space during fast scroll.
+            // Two card heights exist: in-progress rows carry a progress bar,
+            // everything else doesn't. Giving each its own recycle pool stops
+            // a recycled short cell being re-measured as a tall one mid-fling,
+            // which showed up as blank space on the mixed "All" tab.
+            getItemType={getItemType}
             drawDistance={600}
             ListEmptyComponent={ListEmpty}
             onEndReached={handleLoadMore}
             onEndReachedThreshold={0.5}
-            ListHeaderComponent={renderListHeader}
             ListFooterComponent={renderFooter}
             refreshControl={
               <RefreshControl
                 refreshing={refreshing || (syncing && allInstances.length > 0)}
                 onRefresh={onRefresh}
-                tintColor="#dc2626"
+                tintColor={ds.thunder[100]}
               />
             }
-            contentContainerStyle={styles.listContent}
+            contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: 24 }}
             showsVerticalScrollIndicator={false}
           />
-        )}
+        </Animated.View>
+      )}
 
         <AdvancedFilterModal
           visible={showFiltersModal}
@@ -1353,13 +1098,45 @@ export default function PreventiveMaintenance() {
             </View>
           </View>
         </Modal>
-      </SafeAreaView>
     </View>
   );
 }
 
 // ─── Styles ────────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
+  skeletonArea: { flex: 1, paddingHorizontal: 16 },
+  skeletonCard: {
+    backgroundColor: ds.white,
+    borderRadius: 12,
+    paddingVertical: 13,
+    paddingHorizontal: 14,
+    marginBottom: 7,
+  },
+  skeletonRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 7,
+    marginBottom: 8,
+  },
+  qrRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 20,
+    paddingBottom: 10,
+  },
+  qrScanBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingVertical: 7,
+    paddingHorizontal: 11,
+    borderRadius: 99,
+    borderWidth: 1,
+    borderColor: "#DCDBDA",
+    backgroundColor: "#FFFFFF",
+  },
+  qrScanLabel: { fontSize: 11, fontWeight: "600", color: "#072B31" },
   flex: { flex: 1 },
   container: { flex: 1 },
   listHeader: { paddingTop: 2, paddingHorizontal: 20, paddingBottom: 8 },

@@ -145,8 +145,7 @@ export const LogEntryModule = ({
         if (log) {
           // Sync state with log
           setScheduledDate(log.scheduled_date);
-          // Prefer the real column; the metadata string is only parsed for
-          // rows synced before the server split it out of `remarks`.
+          // Text columns are parsed only for pre-split rows.
           const shiftSource =
             log.shift_label || log.meta_date || log.remarks || "";
           const logShift = shiftSource.includes("1/3")

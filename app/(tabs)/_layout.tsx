@@ -25,7 +25,7 @@ function TabsContent({ hideTabBar = false }: { hideTabBar?: boolean }) {
       <Tabs.Screen name="index" options={{ href: null }} />
       <Tabs.Screen name="dashboard" options={{ title: "Home" }} />
       <Tabs.Screen name="tickets" options={{ title: "Tickets" }} />
-      <Tabs.Screen name="incidents" options={{ title: "Alerts" }} />
+      <Tabs.Screen name="incidents" options={{ title: "Incidents" }} />
       <Tabs.Screen name="site-logs" options={{ title: "Logs" }} />
       <Tabs.Screen
         name="preventive-maintenance"

@@ -51,12 +51,12 @@ import TicketSkeleton, {
 import { ds } from "@/constants/ds";
 import Animated from "react-native-reanimated";
 import {
-  TicketCountLine,
-  TicketsEmptyCard,
-  TicketsHeader,
+  ListCountLine,
+  ListEmptyCard,
+  ModuleListHeader,
   useListSlide,
   type StatusChip,
-} from "@/components/tickets/TicketsUI";
+} from "@/components/shared/ListChrome";
 
 const parseCreatedAtMs = (value: unknown) => {
   if (typeof value === "number") return value;
@@ -1536,7 +1536,7 @@ export default function Tickets() {
 
   return (
     <View style={{ flex: 1, backgroundColor: ds.pageBg }}>
-      <TicketsHeader
+      <ModuleListHeader
         topInset={insets.top}
         siteName={siteName}
         dateLabel={dateRangeLabel}
@@ -1555,7 +1555,7 @@ export default function Tickets() {
         onSelectChip={selectStatusChip}
       />
 
-      <TicketCountLine
+      <ListCountLine
         count={visibleCount}
         label={countLabel}
         sortLabel={sortMode}
@@ -1575,7 +1575,7 @@ export default function Tickets() {
             loading ? (
               <TicketSkeleton />
             ) : (
-              <TicketsEmptyCard
+              <ListEmptyCard
                 label={
                   isConnected && !sitesLoading && sites.length === 0
                     ? "No site is mapped to you yet"
