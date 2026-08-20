@@ -10,6 +10,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   Modal,
+  StyleSheet,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 // No expo-router hooks here on purpose — they throw "Couldn't find a
@@ -32,6 +33,12 @@ import SignaturePad from "@/components/SignaturePad";
 import { getISTDateString } from "@/services/AttendanceService";
 import { formatISTDate } from "@/utils/istDate";
 import { db } from "@/database";
+import { ds } from "@/constants/ds";
+import { soRadius, soShadow } from "@/components/home/SiteOverview";
+import {
+  UnderlineTabs,
+  TAB_TONE_LIGHT,
+} from "@/components/shared/ListChrome";
 
 interface LogEntryModuleProps {
   type: "Chemical" | "Water" | "TempRH";
@@ -812,35 +819,27 @@ export const LogEntryModule = ({
     }
   };
 
-  const accent =
-    type === "TempRH" ? "#ef4444" : type === "Water" ? "#3b82f6" : "#9333ea";
   const CategoryIcon =
     type === "TempRH" ? Thermometer : type === "Water" ? Droplets : FlaskConical;
 
   return (
-    <SafeAreaView className="flex-1 bg-slate-50 dark:bg-slate-950" edges={["top"]}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: ds.pageBg }} edges={["top"]}>
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} className="flex-1">
         {/* Header Section */}
-        <View className="px-5 pt-3 pb-3 bg-white dark:bg-slate-900 border-b border-slate-100 dark:border-slate-800">
-          <View className="flex-row items-center">
+        <View style={entryStyles.header}>
+          <View style={entryStyles.headerRow}>
             <TouchableOpacity
               onPress={onBack}
               hitSlop={{ top: 20, bottom: 20, left: 20, right: 20 }}
-              className="w-10 h-10 rounded-2xl bg-slate-50 dark:bg-slate-800 items-center justify-center"
+              style={entryStyles.headerTile}
             >
-              <ChevronLeft size={20} color="#0f172a" />
+              <ChevronLeft size={20} color={ds.white} />
             </TouchableOpacity>
-            <View className="flex-1 mx-3">
-              <Text
-                className="text-lg font-bold text-slate-900 dark:text-slate-50"
-                numberOfLines={1}
-              >
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <Text style={entryStyles.headerTitle} numberOfLines={1}>
                 {isEditMode ? `Edit ${screenTitle}` : screenTitle}
               </Text>
-              <Text
-                className="text-[11px] text-slate-500 dark:text-slate-400 font-semibold mt-0.5"
-                numberOfLines={1}
-              >
+              <Text style={entryStyles.headerSub} numberOfLines={1}>
                 {isEditMode
                   ? tasks[0]?.name || "Manual Entry"
                   : `${siteName || siteCode || ""}${
@@ -848,147 +847,110 @@ export const LogEntryModule = ({
                     }${headerDate}`}
               </Text>
             </View>
-            <View
-              className="px-3 py-1.5 rounded-2xl"
-              style={{ backgroundColor: accent + "1F" }}
-            >
-              <CategoryIcon size={16} color={accent} />
+            <View style={entryStyles.headerTile}>
+              <CategoryIcon size={17} color={ds.white} />
             </View>
           </View>
+        </View>
 
-          {!isEditMode && (
-            <View className="mt-3 gap-3">
-              {/* Assignee strip */}
-              <View className="flex-row items-center gap-3 bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-700 rounded-2xl px-3 py-2.5">
-                <View
-                  className="w-9 h-9 rounded-full items-center justify-center"
-                  style={{ backgroundColor: accent + "26" }}
-                >
-                  <Text className="text-xs font-bold" style={{ color: accent }}>
-                    {userInitials}
-                  </Text>
+        {!isEditMode && (
+          <View style={entryStyles.controls}>
+            {/* Assignee */}
+            <View style={entryStyles.card}>
+              <View style={entryStyles.assigneeRow}>
+                <View style={entryStyles.avatar}>
+                  <Text style={entryStyles.avatarText}>{userInitials}</Text>
                 </View>
-                <View className="flex-1 min-w-0">
-                  <Text className="text-[9px] text-slate-400 dark:text-slate-500 uppercase tracking-wider">
-                    Assigned to
-                  </Text>
-                  <View className="flex-row items-center gap-1.5">
-                    <Text
-                      className="text-[13px] font-bold text-slate-900 dark:text-slate-50"
-                      numberOfLines={1}
-                    >
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text style={entryStyles.eyebrow}>Assigned to</Text>
+                  <View style={entryStyles.assigneeName}>
+                    <Text style={entryStyles.assigneeText} numberOfLines={1}>
                       {user?.name || user?.user_id || "Unassigned"}
                     </Text>
-                    {type === "TempRH" && shift && (
-                      <View
-                        className="px-1.5 py-0.5 rounded"
-                        style={{ backgroundColor: accent + "26" }}
-                      >
-                        <Text
-                          className="text-[9px] font-bold"
-                          style={{ color: accent }}
-                        >
+                    {type === "TempRH" && shift ? (
+                      <View style={entryStyles.shiftBadge}>
+                        <Text style={entryStyles.shiftBadgeText}>
                           Shift {shift}
                         </Text>
                       </View>
-                    )}
+                    ) : null}
                   </View>
                 </View>
-                <View className="flex-row items-center gap-1">
-                  <Clock size={11} color="#94a3b8" />
-                  <Text className="text-[10px] text-slate-400 dark:text-slate-500">
-                    {headerDate}
+                <View style={entryStyles.whenRow}>
+                  <Clock size={11} color={ds.carbon[600]} />
+                  <Text style={entryStyles.whenText}>{headerDate}</Text>
+                </View>
+              </View>
+            </View>
+
+            {/* Date navigation + shift tabs */}
+            <View style={entryStyles.card}>
+              <DateNavBar
+                date={new Date(scheduledDate)}
+                onDateChange={(d: Date) => setScheduledDate(getISTDateString(d))}
+                showPicker={showDatePicker}
+                onShowPicker={setShowDatePicker}
+                prevCount={prevCount}
+                nextCount={nextCount}
+              />
+
+              {type === "TempRH" && (
+                <View style={entryStyles.shiftTabs}>
+                  <UnderlineTabs
+                    tone={TAB_TONE_LIGHT}
+                    gap={18}
+                    contentContainerStyle={{ paddingHorizontal: 0 }}
+                    activeChip={shift ?? "A"}
+                    onSelectChip={(k) => setShift(k)}
+                    chips={["A", "B", "C"].map((s2) => ({
+                      key: s2,
+                      label: `Shift ${s2}`,
+                      // Selected shift shows progress; the others show what's due.
+                      count:
+                        shift === s2
+                          ? undefined
+                          : (shiftPending[s2] ?? 0) || undefined,
+                    }))}
+                  />
+                  <Text style={entryStyles.shiftMeta}>
+                    {filledCount} of {tasks.length} filled
                   </Text>
                 </View>
-              </View>
+              )}
+            </View>
 
-              {/* Date navigation + shift tabs */}
-              <View className="bg-slate-50 dark:bg-slate-800/70 rounded-2xl p-3 border border-slate-100 dark:border-slate-700">
-                <DateNavBar
-                  date={new Date(scheduledDate)}
-                  onDateChange={(d: Date) => setScheduledDate(getISTDateString(d))}
-                  showPicker={showDatePicker}
-                  onShowPicker={setShowDatePicker}
-                  prevCount={prevCount}
-                  nextCount={nextCount}
-                />
-
-                {type === "TempRH" && (
-                  <View className="flex-row mt-3 gap-2">
-                    {["A", "B", "C"].map((s) => {
-                      const active = shift === s;
-                      const pend = shiftPending[s] ?? 0;
-                      return (
-                        <TouchableOpacity
-                          key={s}
-                          onPress={() => setShift(s)}
-                          className={`flex-1 items-center py-1.5 rounded-xl border ${
-                            active
-                              ? "border-transparent"
-                              : "bg-white border-slate-200 dark:bg-slate-800 dark:border-slate-700"
-                          }`}
-                          style={active ? { backgroundColor: accent } : undefined}
-                        >
-                          <Text
-                            className={`font-bold text-[12px] ${
-                              active
-                                ? "text-white"
-                                : "text-slate-500 dark:text-slate-300"
-                            }`}
-                          >
-                            Shift {s}
-                          </Text>
-                          <Text
-                            className={`text-[9px] mt-0.5 ${
-                              active ? "text-white/80" : "text-slate-400"
-                            }`}
-                          >
-                            {active
-                              ? `${filledCount} / ${tasks.length}`
-                              : pend > 0
-                                ? `${pend} due`
-                                : "Done"}
-                          </Text>
-                        </TouchableOpacity>
-                      );
-                    })}
-                  </View>
-                )}
-              </View>
-
-              {/* Line items progress */}
-              {tasks.length > 0 && (
-                <View className="bg-slate-50 dark:bg-slate-800/70 rounded-2xl px-3 py-2.5 border border-slate-100 dark:border-slate-700">
-                  <View className="flex-row items-center justify-between mb-2">
-                    <View className="flex-row items-center gap-1.5">
-                      <ListChecks size={13} color="#94a3b8" />
-                      <Text className="text-[11px] text-slate-500 dark:text-slate-400">
-                        Line items filled
-                      </Text>
-                    </View>
-                    <Text className="text-[12px] font-bold text-amber-500">
-                      {filledCount} / {tasks.length}
+            {/* Line items progress */}
+            {tasks.length > 0 && (
+              <View style={entryStyles.card}>
+                <View style={entryStyles.progressHead}>
+                  <View style={entryStyles.progressLabelRow}>
+                    <ListChecks size={13} color={ds.carbon[600]} />
+                    <Text style={entryStyles.progressLabel}>
+                      Line items filled
                     </Text>
                   </View>
-                  <View className="h-1 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden">
-                    <View
-                      style={{
+                  <Text style={entryStyles.progressCount}>
+                    {filledCount} / {tasks.length}
+                  </Text>
+                </View>
+                <View style={entryStyles.progressTrack}>
+                  <View
+                    style={[
+                      entryStyles.progressFill,
+                      {
                         width: `${
                           tasks.length
                             ? Math.round((filledCount / tasks.length) * 100)
                             : 0
                         }%`,
-                        height: "100%",
-                        backgroundColor: "#f59e0b",
-                        borderRadius: 2,
-                      }}
-                    />
-                  </View>
+                      },
+                    ]}
+                  />
                 </View>
-              )}
-            </View>
-          )}
-        </View>
+              </View>
+            )}
+          </View>
+        )}
 
         {/* Task List */}
         {loading ? (
@@ -1042,57 +1004,56 @@ export const LogEntryModule = ({
             {!isEditMode &&
               tasks.length > 0 &&
               !allScheduledTasksComplete && (
-                <View className="mx-5 mb-2 flex-row items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/40">
-                  <Info size={12} color="#f59e0b" />
-                  <Text className="text-[10.5px] text-amber-600 dark:text-amber-400">
+                <View style={entryStyles.notice}>
+                  <Info size={12} color={ds.flame[100]} />
+                  <Text style={entryStyles.noticeText}>
                     {remainingCount} line item
                     {remainingCount === 1 ? "" : "s"} still need readings to
                     complete this {type === "TempRH" && shift ? "shift" : "log"}
                   </Text>
                 </View>
               )}
-            <View className="flex-row gap-2 px-5 pt-3 pb-5 bg-white/90 dark:bg-slate-900/90 border-t border-slate-100 dark:border-slate-800">
+            <View style={entryStyles.footer}>
               <TouchableOpacity
                 onPress={handleManualSave}
-                className="w-14 rounded-2xl bg-slate-100 dark:bg-slate-800 items-center justify-center border border-slate-200 dark:border-slate-700"
+                activeOpacity={0.85}
+                style={entryStyles.saveBtn}
               >
-                <Save size={18} color="#64748b" />
+                <Save size={18} color={ds.carbon[400]} />
               </TouchableOpacity>
               <TouchableOpacity
                 onPress={() => handleSubmit()}
                 disabled={
                   isSubmitting || (!isEditMode && !allScheduledTasksComplete)
                 }
-                className={`flex-1 py-4 rounded-2xl flex-row items-center justify-center gap-2 ${
-                  isSubmitting || (!isEditMode && !allScheduledTasksComplete)
-                    ? "bg-slate-200 dark:bg-slate-800"
-                    : "bg-purple-600"
-                }`}
-                style={
-                  !(isSubmitting || (!isEditMode && !allScheduledTasksComplete))
-                    ? {
-                        shadowColor: "#a855f7",
-                        shadowOffset: { width: 0, height: 4 },
-                        shadowOpacity: 0.3,
-                        shadowRadius: 8,
-                        elevation: 4,
-                      }
-                    : undefined
-                }
+                activeOpacity={0.9}
+                style={[
+                  entryStyles.cta,
+                  {
+                    backgroundColor:
+                      isSubmitting || (!isEditMode && !allScheduledTasksComplete)
+                        ? ds.carbon[900]
+                        : ds.thunder[100],
+                  },
+                ]}
               >
                 {isSubmitting ? (
                   <ActivityIndicator color="white" />
                 ) : (
                   <>
                     {!isEditMode && !allScheduledTasksComplete && (
-                      <Lock size={13} color="#94a3b8" />
+                      <Lock size={13} color={ds.carbon[500]} />
                     )}
                     <Text
-                      className={`font-bold text-[15px] ${
-                        !isEditMode && !allScheduledTasksComplete
-                          ? "text-slate-400 dark:text-slate-500"
-                          : "text-white"
-                      }`}
+                      style={[
+                        entryStyles.ctaText,
+                        {
+                          color:
+                            !isEditMode && !allScheduledTasksComplete
+                              ? ds.carbon[500]
+                              : ds.white,
+                        },
+                      ]}
                     >
                       {isEditMode
                         ? "Update log"
@@ -1128,3 +1089,156 @@ export const LogEntryModule = ({
     </SafeAreaView>
   );
 };
+
+const entryStyles = StyleSheet.create({
+  header: { backgroundColor: ds.thunder[100] },
+  headerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingTop: 10,
+    paddingHorizontal: 20,
+    paddingBottom: 16,
+  },
+  headerTile: {
+    width: 34,
+    height: 34,
+    borderRadius: soRadius.tile,
+    backgroundColor: "rgba(255,255,255,0.1)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  headerTitle: {
+    fontSize: 17,
+    lineHeight: 21,
+    fontWeight: "700",
+    letterSpacing: 0.34,
+    color: ds.white,
+  },
+  headerSub: { fontSize: 11.5, color: ds.thunder[700], marginTop: 2 },
+
+  controls: { paddingHorizontal: 16, paddingTop: 12, gap: 10 },
+  card: {
+    backgroundColor: ds.white,
+    borderRadius: soRadius.card,
+    padding: 12,
+    ...soShadow,
+  },
+
+  assigneeRow: { flexDirection: "row", alignItems: "center", gap: 11 },
+  avatar: {
+    width: 34,
+    height: 34,
+    borderRadius: soRadius.pill,
+    backgroundColor: ds.sky[100],
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  avatarText: { fontSize: 12, fontWeight: "700", color: ds.white },
+  eyebrow: {
+    fontSize: 9,
+    fontWeight: "600",
+    letterSpacing: 1.08,
+    textTransform: "uppercase",
+    color: ds.carbon[500],
+  },
+  assigneeName: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginTop: 2,
+  },
+  assigneeText: {
+    flexShrink: 1,
+    fontSize: 13,
+    fontWeight: "600",
+    color: ds.carbon[100],
+  },
+  shiftBadge: {
+    paddingVertical: 2,
+    paddingHorizontal: 6,
+    borderRadius: 4,
+    backgroundColor: ds.flame[1000],
+  },
+  shiftBadgeText: {
+    fontSize: 8.5,
+    fontWeight: "600",
+    letterSpacing: 0.68,
+    textTransform: "uppercase",
+    color: ds.flame[100],
+  },
+  whenRow: { flexDirection: "row", alignItems: "center", gap: 4 },
+  whenText: { fontSize: 10.5, color: ds.carbon[600] },
+
+  shiftTabs: { marginTop: 10 },
+  shiftMeta: {
+    fontSize: 10.5,
+    color: ds.carbon[600],
+    marginTop: 8,
+  },
+
+  progressHead: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 8,
+  },
+  progressLabelRow: { flexDirection: "row", alignItems: "center", gap: 6 },
+  progressLabel: { fontSize: 11, color: ds.carbon[400] },
+  progressCount: { fontSize: 12, fontWeight: "700", color: ds.flame[100] },
+  progressTrack: {
+    height: 4,
+    borderRadius: soRadius.pill,
+    backgroundColor: ds.carbon[1000],
+    overflow: "hidden",
+  },
+  progressFill: {
+    height: "100%",
+    borderRadius: soRadius.pill,
+    backgroundColor: ds.sky[100],
+  },
+
+  notice: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    marginHorizontal: 16,
+    marginBottom: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: soRadius.sm,
+    backgroundColor: ds.flame[1000],
+  },
+  noticeText: { fontSize: 10.5, color: ds.flame[100] },
+
+  footer: {
+    flexDirection: "row",
+    gap: 9,
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    paddingBottom: 20,
+    backgroundColor: ds.white,
+    borderTopWidth: 1,
+    borderTopColor: ds.carbon[900],
+  },
+  saveBtn: {
+    width: 56,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: soRadius.sm,
+    borderWidth: 1,
+    borderColor: ds.carbon[900],
+    backgroundColor: ds.white,
+  },
+  cta: {
+    flex: 1,
+    minHeight: 48,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    borderRadius: soRadius.sm,
+  },
+  ctaText: { fontSize: 15, fontWeight: "600", letterSpacing: 0.15 },
+});

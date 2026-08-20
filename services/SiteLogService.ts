@@ -155,8 +155,14 @@ interface ISiteLogService {
   pullSiteLogs(
     siteCode: string,
     options?: {
-      fromDate?: number;
-      toDate?: number;
+      /**
+       * Forwarded to the API as `scheduled_date_from` / `_to`, which the
+       * backend sanitizes as YYYY-MM-DD — pass calendar-date strings. Epoch
+       * ms is accepted for the existing callers but the server discards it,
+       * leaving the pull unfiltered.
+       */
+      fromDate?: number | string;
+      toDate?: number | string;
       logName?: string;
       status?: string;
       siteCodes?: string[];

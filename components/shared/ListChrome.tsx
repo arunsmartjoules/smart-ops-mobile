@@ -72,14 +72,60 @@ export function useListSlide(seq: number, direction: number) {
    Text tabs on a hairline rule with a flame underline that slides between
    them — replaces the old pill chips.                                     */
 
-function StatusTabs({
+export interface UnderlineTabTone {
+  /** Label colour when selected. */
+  active: string;
+  /** Label colour when not selected. */
+  inactive: string;
+  /** Count colour when selected. */
+  countActive: string;
+  /** Count colour when not selected. */
+  countInactive: string;
+  /** The hairline the tabs sit on. */
+  rule: string;
+  /** The sliding bar. */
+  indicator: string;
+}
+
+/** Thunder header: white on dark. */
+export const TAB_TONE_DARK: UnderlineTabTone = {
+  active: ds.white,
+  inactive: ds.thunder[700],
+  countActive: "#E9B7A8",
+  countInactive: ds.thunder[700],
+  rule: "rgba(255,255,255,0.24)",
+  indicator: ds.flame[100],
+};
+
+/** White surfaces (cards, sheets): carbon on light. */
+export const TAB_TONE_LIGHT: UnderlineTabTone = {
+  active: ds.carbon[100],
+  inactive: ds.carbon[500],
+  countActive: ds.flame[100],
+  countInactive: ds.carbon[600],
+  rule: ds.carbon[900],
+  indicator: ds.flame[100],
+};
+
+/**
+ * Text tabs on a hairline with an indicator that slides between them. Shared by
+ * the module list headers and the log-entry shift picker, so the motion and
+ * geometry stay identical on dark and light surfaces.
+ */
+export function UnderlineTabs({
   chips,
   activeChip,
   onSelectChip,
+  tone = TAB_TONE_DARK,
+  gap = 20,
+  contentContainerStyle,
 }: {
   chips: StatusChip[];
   activeChip: string;
   onSelectChip: (key: string) => void;
+  tone?: UnderlineTabTone;
+  gap?: number;
+  contentContainerStyle?: object;
 }) {
   const [layouts, setLayouts] = useState<Record<string, { x: number; w: number }>>(
     {},
@@ -109,10 +155,12 @@ function StatusTabs({
     <ScrollView
       horizontal
       showsHorizontalScrollIndicator={false}
-      contentContainerStyle={styles.tabScroll}
+      contentContainerStyle={[styles.tabScroll, contentContainerStyle]}
     >
       <View>
-        <View style={styles.tabRow}>
+        <View
+          style={[styles.tabRow, { gap, borderBottomColor: tone.rule }]}
+        >
           {chips.map((c) => {
             const on = c.key === activeChip;
             return (
@@ -138,7 +186,7 @@ function StatusTabs({
                     styles.tabLabel,
                     {
                       fontWeight: on ? "600" : "400",
-                      color: on ? ds.white : ds.thunder[700],
+                      color: on ? tone.active : tone.inactive,
                     },
                   ]}
                 >
@@ -148,7 +196,7 @@ function StatusTabs({
                   <Text
                     style={[
                       styles.tabCount,
-                      { color: on ? "#E9B7A8" : ds.thunder[700] },
+                      { color: on ? tone.countActive : tone.countInactive },
                     ]}
                   >
                     {c.count}
@@ -158,11 +206,15 @@ function StatusTabs({
             );
           })}
         </View>
-        <Animated.View style={[styles.tabBar, barStyle]} />
+        <Animated.View
+          style={[styles.tabBar, { backgroundColor: tone.indicator }, barStyle]}
+        />
       </View>
     </ScrollView>
   );
 }
+
+const StatusTabs = UnderlineTabs;
 
 /* ── Header ──────────────────────────────────────────────────────────────
    Thunder chrome carrying the title, site line, actions, search and the
@@ -192,8 +244,9 @@ export function ModuleListHeader({
   refreshDisabled?: boolean;
   onFilter: () => void;
   filterActive?: boolean;
-  search: string;
-  onChangeSearch: (v: string) => void;
+  /** Omit both to render the header without a search field. */
+  search?: string;
+  onChangeSearch?: (v: string) => void;
   searchPlaceholder?: string;
   chips: StatusChip[];
   activeChip: string;
@@ -251,11 +304,12 @@ export function ModuleListHeader({
         </TouchableOpacity>
       </View>
 
+      {onChangeSearch ? (
       <View style={styles.searchWrap}>
         <View style={styles.search}>
           <Search size={16} color={ds.thunder[700]} strokeWidth={2} />
           <TextInput
-            value={search}
+            value={search ?? ""}
             onChangeText={onChangeSearch}
             placeholder={searchPlaceholder}
             placeholderTextColor={ds.thunder[700]}
@@ -264,9 +318,9 @@ export function ModuleListHeader({
             autoCapitalize="none"
             autoCorrect={false}
           />
-          {search.length > 0 ? (
+          {(search ?? "").length > 0 ? (
             <TouchableOpacity
-              onPress={() => onChangeSearch("")}
+              onPress={() => onChangeSearch?.("")}
               hitSlop={10}
               accessibilityRole="button"
               accessibilityLabel="Clear search"
@@ -276,6 +330,7 @@ export function ModuleListHeader({
           ) : null}
         </View>
       </View>
+      ) : null}
 
       <StatusTabs
         chips={chips}
@@ -383,12 +438,7 @@ const styles = StyleSheet.create({
   },
 
   tabScroll: { paddingHorizontal: 20, paddingBottom: 6 },
-  tabRow: {
-    flexDirection: "row",
-    gap: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: "rgba(255,255,255,0.24)",
-  },
+  tabRow: { flexDirection: "row", borderBottomWidth: 1 },
   tab: {
     minHeight: 36,
     flexDirection: "row",
@@ -402,7 +452,6 @@ const styles = StyleSheet.create({
     bottom: 0,
     height: 2.5,
     borderRadius: soRadius.pill,
-    backgroundColor: ds.flame[100],
   },
 
   countRow: {

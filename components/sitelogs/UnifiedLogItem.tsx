@@ -1,6 +1,13 @@
 import React from "react";
-import { View, Text, TextInput, TouchableOpacity } from "react-native";
 import {
+  View,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  StyleSheet,
+} from "react-native";
+import {
+  Check,
   Droplets,
   Activity,
   Beaker,
@@ -10,6 +17,8 @@ import {
 } from "lucide-react-native";
 import { TaskItem } from "@/services/SiteConfigService";
 import { LogImagePicker } from "./LogImagePicker";
+import { ds } from "@/constants/ds";
+import { soRadius, soShadow } from "@/components/home/SiteOverview";
 
 interface UnifiedLogItemProps {
   item: TaskItem;
@@ -50,11 +59,10 @@ export const UnifiedLogItem = React.memo(
 
     return (
       <View
-        className={`bg-white dark:bg-slate-900 rounded-2xl p-3 mb-2.5 border ${
-          isFilled
-            ? "border-emerald-200 dark:border-emerald-900/40"
-            : "border-red-100 dark:border-red-900/30"
-        }`}
+        style={[
+          itemStyles.card,
+          !isFilled && { borderColor: ds.flame[900] },
+        ]}
       >
         {/* Header: area + location + index */}
         <View className="flex-row items-start justify-between gap-2 mb-2.5">
@@ -98,57 +106,59 @@ export const UnifiedLogItem = React.memo(
           )}
         </View>
 
-        {/* Chemical: Yes / No */}
+        {/* Chemical: dosing done — a checkbox, toggling Yes / No */}
         {type === "Chemical" && (
-          <View className="flex-row items-center gap-2 mb-2.5">
-            <TouchableOpacity
-              onPress={() => onUpdateValue(item.id, "dosing", "Yes")}
-              className={`flex-1 rounded-xl border px-3 py-3 items-center justify-center ${
-                value.dosing === "Yes"
-                  ? "bg-emerald-50 border-emerald-500 dark:bg-emerald-900/20"
-                  : "bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700"
-              }`}
+          <TouchableOpacity
+            onPress={() =>
+              onUpdateValue(
+                item.id,
+                "dosing",
+                value.dosing === "Yes" ? "No" : "Yes",
+              )
+            }
+            activeOpacity={0.85}
+            accessibilityRole="checkbox"
+            accessibilityState={{ checked: value.dosing === "Yes" }}
+            accessibilityLabel="Dosing done"
+            style={[
+              itemStyles.field,
+              itemStyles.checkRow,
+              !hasText(value.dosing) && { borderColor: ds.flame[900] },
+            ]}
+          >
+            <View
+              style={[
+                itemStyles.checkbox,
+                value.dosing === "Yes" && {
+                  backgroundColor: ds.thunder[100],
+                  borderColor: ds.thunder[100],
+                },
+              ]}
             >
-              <Text
-                className={`text-sm font-bold ${
-                  value.dosing === "Yes"
-                    ? "text-emerald-700 dark:text-emerald-400"
-                    : "text-slate-500 dark:text-slate-300"
-                }`}
-              >
-                Yes
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              onPress={() => onUpdateValue(item.id, "dosing", "No")}
-              className={`flex-1 rounded-xl border px-3 py-3 items-center justify-center ${
-                value.dosing === "No"
-                  ? "bg-amber-50 border-amber-500 dark:bg-amber-900/20"
-                  : "bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700"
-              }`}
+              {value.dosing === "Yes" ? (
+                <Check size={13} color={ds.white} strokeWidth={3} />
+              ) : null}
+            </View>
+            <Text style={itemStyles.checkLabel}>Dosing done</Text>
+            <Text
+              style={[
+                itemStyles.checkState,
+                !hasText(value.dosing) && { color: ds.flame[100] },
+              ]}
             >
-              <Text
-                className={`text-sm font-bold ${
-                  value.dosing === "No"
-                    ? "text-amber-700 dark:text-amber-400"
-                    : "text-slate-500 dark:text-slate-300"
-                }`}
-              >
-                No
-              </Text>
-            </TouchableOpacity>
-          </View>
+              {value.dosing || "Not set"}
+            </Text>
+          </TouchableOpacity>
         )}
 
         {/* TempRH: Temp + RH */}
         {type === "TempRH" && (
           <View className="flex-row gap-2 mb-2.5">
             <View
-              className={`flex-1 flex-row items-center gap-2 bg-slate-50 dark:bg-slate-800 rounded-xl px-3 py-2 border ${
-                hasText(value.temp)
-                  ? "border-slate-100 dark:border-slate-700"
-                  : "border-red-100 dark:border-red-900/40"
-              }`}
+              style={[
+                itemStyles.field,
+                !hasText(value.temp) && { borderColor: ds.flame[900] },
+              ]}
             >
               <Thermometer size={14} color="#ef4444" />
               <View className="flex-1">
@@ -166,11 +176,10 @@ export const UnifiedLogItem = React.memo(
               </View>
             </View>
             <View
-              className={`flex-1 flex-row items-center gap-2 bg-slate-50 dark:bg-slate-800 rounded-xl px-3 py-2 border ${
-                hasText(value.rh)
-                  ? "border-slate-100 dark:border-slate-700"
-                  : "border-red-100 dark:border-red-900/40"
-              }`}
+              style={[
+                itemStyles.field,
+                !hasText(value.rh) && { borderColor: ds.flame[900] },
+              ]}
             >
               <CloudRain size={14} color="#3b82f6" />
               <View className="flex-1">
@@ -205,11 +214,11 @@ export const UnifiedLogItem = React.memo(
             ].map(({ key, label, Icon, color }) => (
               <View
                 key={key}
-                className={`flex-1 flex-row items-center gap-1.5 bg-slate-50 dark:bg-slate-800 rounded-xl px-2.5 py-2 border ${
-                  hasText(value[key])
-                    ? "border-slate-100 dark:border-slate-700"
-                    : "border-red-100 dark:border-red-900/40"
-                }`}
+                style={[
+                  itemStyles.field,
+                  { gap: 6, paddingHorizontal: 10 },
+                  !hasText(value[key]) && { borderColor: ds.flame[900] },
+                ]}
               >
                 <Icon size={13} color={color} />
                 <View className="flex-1">
@@ -232,7 +241,7 @@ export const UnifiedLogItem = React.memo(
 
         {/* Remark + attachments */}
         <View className="flex-row items-center gap-2">
-          <View className="flex-1 bg-slate-50 dark:bg-slate-800 rounded-xl px-3 border border-slate-100 dark:border-slate-700">
+          <View style={[itemStyles.field, { paddingVertical: 0 }]}>
             <TextInput
               placeholder="Add a remark…"
               value={value.mainRemarks}
@@ -267,3 +276,50 @@ export const UnifiedLogItem = React.memo(
 );
 
 UnifiedLogItem.displayName = "UnifiedLogItem";
+
+const itemStyles = StyleSheet.create({
+  card: {
+    backgroundColor: ds.white,
+    borderRadius: soRadius.card,
+    padding: 12,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: ds.carbon[900],
+    ...soShadow,
+  },
+  checkRow: { flex: undefined, gap: 10, paddingVertical: 12 },
+  checkbox: {
+    width: 20,
+    height: 20,
+    borderRadius: 6,
+    borderWidth: 1.5,
+    borderColor: ds.carbon[800],
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  checkLabel: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: "600",
+    color: ds.carbon[100],
+  },
+  checkState: {
+    fontSize: 10.5,
+    fontWeight: "600",
+    letterSpacing: 0.68,
+    textTransform: "uppercase",
+    color: ds.carbon[500],
+  },
+  field: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: ds.pageBg,
+    borderRadius: soRadius.sm,
+    borderWidth: 1,
+    borderColor: ds.carbon[900],
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+});
