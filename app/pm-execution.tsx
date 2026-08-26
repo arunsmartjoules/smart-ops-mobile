@@ -13,7 +13,6 @@ import {
 } from "react-native";
 import { FlashList } from "@shopify/flash-list";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { StatusBar } from "expo-status-bar";
 import { router, useLocalSearchParams } from "expo-router";
 import {
   ArrowLeft,
@@ -1398,7 +1397,6 @@ export default function PMExecutionScreen() {
   if (loading && !instance) {
     return (
       <View style={[styles.flex, { backgroundColor: ds.pageBg }]}>
-        <StatusBar style="light" />
         <View style={[styles.headerBlock, { paddingTop: insets.top + 6 }]}>
           <View style={styles.headerRow}>
             <TouchableOpacity
@@ -1424,8 +1422,6 @@ export default function PMExecutionScreen() {
 
   return (
     <View style={[styles.flex, { backgroundColor: ds.pageBg }]}>
-      <StatusBar style="light" />
-
       {/* ── Thunder header ── */}
       <View style={[styles.headerBlock, { paddingTop: insets.top + 6 }]}>
         <View style={styles.headerRow}>

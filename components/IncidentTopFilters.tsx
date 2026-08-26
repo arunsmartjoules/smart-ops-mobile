@@ -1,5 +1,15 @@
+/**
+ * RCA quick-filters for the incidents list — Claude Design "JouleOps
+ * Incidents.dc.html". The artboard's chip: a 34px lozenge that fills thunder
+ * when selected and sits white-on-canvas with a carbon hairline when not.
+ *
+ * Shown only under the Completed tab, where an incident's RCA state is the
+ * thing worth slicing by.
+ */
 import React from "react";
-import { View, Text, ScrollView, TouchableOpacity } from "react-native";
+import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { ds } from "@/constants/ds";
+import { soRadius } from "@/components/home/SiteOverview";
 
 interface IncidentTopFiltersProps {
   selected: string;
@@ -9,13 +19,17 @@ interface IncidentTopFiltersProps {
 
 const FILTERS = ["Open", "RCA Under Review", "RCA Submitted"];
 
-const IncidentTopFilters = ({ selected, onChange, canEdit }: IncidentTopFiltersProps) => {
+const IncidentTopFilters = ({
+  selected,
+  onChange,
+  canEdit,
+}: IncidentTopFiltersProps) => {
   return (
-    <View className="px-5 mb-4">
+    <View style={styles.wrap}>
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
-        contentContainerStyle={{ gap: 8, paddingRight: 20 }}
+        contentContainerStyle={styles.scroll}
       >
         {FILTERS.map((item) => {
           const active = selected === item;
@@ -23,26 +37,24 @@ const IncidentTopFilters = ({ selected, onChange, canEdit }: IncidentTopFiltersP
             <TouchableOpacity
               key={item}
               disabled={!canEdit}
-              activeOpacity={0.7}
+              activeOpacity={0.75}
               onPress={() => onChange(item)}
-              className={`px-3.5 py-2 rounded-xl ${
-                active
-                  ? "bg-red-600"
-                  : "bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800"
-              }`}
-              style={{
-                opacity: canEdit ? 1 : 0.65,
-                shadowColor: "#000",
-                shadowOffset: { width: 0, height: 1 },
-                shadowOpacity: 0.03,
-                shadowRadius: 4,
-                elevation: 1,
-              }}
+              style={[
+                styles.chip,
+                {
+                  backgroundColor: active ? ds.thunder[100] : ds.white,
+                  borderColor: active ? ds.thunder[100] : ds.carbon[900],
+                  opacity: canEdit ? 1 : 0.65,
+                },
+              ]}
+              accessibilityRole="button"
+              accessibilityState={{ selected: active }}
             >
               <Text
-                className={`text-xs font-semibold ${
-                  active ? "text-white" : "text-slate-500 dark:text-slate-400"
-                }`}
+                style={[
+                  styles.chipLabel,
+                  { color: active ? ds.white : ds.carbon[100] },
+                ]}
               >
                 {item}
               </Text>
@@ -53,5 +65,18 @@ const IncidentTopFilters = ({ selected, onChange, canEdit }: IncidentTopFiltersP
     </View>
   );
 };
+
+const styles = StyleSheet.create({
+  wrap: { paddingBottom: 12 },
+  scroll: { gap: 6, paddingHorizontal: 20 },
+  chip: {
+    minHeight: 34,
+    justifyContent: "center",
+    paddingHorizontal: 13,
+    borderRadius: soRadius.pill,
+    borderWidth: 1,
+  },
+  chipLabel: { fontSize: 11.5, fontWeight: "600", letterSpacing: 0.23 },
+});
 
 export default IncidentTopFilters;

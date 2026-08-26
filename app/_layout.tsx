@@ -18,6 +18,7 @@ import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { AttendanceGateProvider } from "@/contexts/AttendanceGateContext";
 import { ThemeProvider } from "@/contexts/ThemeContext";
 import { SafeAreaProvider } from "react-native-safe-area-context";
+import { StatusBar } from "expo-status-bar";
 import { useEffect } from "react";
 import { View, Image, AppState } from "react-native";
 import { registerBackgroundSyncAsync } from "@/services/SyncEngine";
@@ -127,6 +128,37 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
 }
 
 /**
+ * Routes whose first screenful is the thunder header — these need light
+ * status-bar icons; everything else sits on the light page canvas and needs
+ * dark ones. `usePathname` drops the `(tabs)` group, so tab routes are bare.
+ */
+const LIGHT_STATUS_BAR_ROUTES = new Set([
+  "/dashboard",
+  "/tickets",
+  "/incidents",
+  "/site-logs",
+  "/preventive-maintenance",
+  "/profile",
+  "/attendance",
+  "/pm-execution",
+]);
+
+/**
+ * One source of truth for the status-bar tint. Screens must not set their own:
+ * `expo-status-bar` applies imperatively and never restores on unmount, so a
+ * per-screen tint leaks into whatever you navigate to next. Driving it off the
+ * live pathname re-applies on every route change instead.
+ */
+function RouteStatusBar() {
+  const pathname = usePathname();
+  return (
+    <StatusBar
+      style={LIGHT_STATUS_BAR_ROUTES.has(pathname) ? "light" : "dark"}
+    />
+  );
+}
+
+/**
  * Drives PresenceService from app context: starts when authenticated, stops
  * on sign-out, and forwards every route change so the admin dashboard can
  * show which screen the user is on.
@@ -228,6 +260,7 @@ export default function RootLayout() {
                 <UpdateRequiredScreen />
                 <PendingNotificationNavigation />
                 <PresenceTracker />
+                <RouteStatusBar />
                 <Stack screenOptions={{ headerShown: false }}>
                   <Stack.Screen name="index" />
                   <Stack.Screen name="sign-in" />

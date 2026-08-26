@@ -400,6 +400,11 @@ export default function SiteLogs() {
         chips={tabs}
         activeChip={activeKey}
         onSelectChip={selectTab}
+        // Same list layout as tickets and incidents: the site name is the
+        // title (no pin) and the status tabs sit on the canvas below a
+        // rounded thunder header.
+        showSiteIcon={false}
+        tabPlacement="canvas"
       />
 
       <Animated.View style={[{ flex: 1 }, listSlideStyle]}>

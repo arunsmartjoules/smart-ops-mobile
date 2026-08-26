@@ -20,6 +20,20 @@ export function applyNotificationNavigation(
     | undefined;
   logger.info("Notification tapped", { data });
 
+  return navigateFromNotificationData(router, data, options);
+}
+
+/**
+ * The routing itself, split out from the push-response wrapper so the
+ * in-app notification feed can reuse it. Feed rows carry the same `data`
+ * payload the push did (persisted in `notification_logs.data`), so a tap in
+ * the list lands on the same screen as a tap on the notification.
+ */
+export function navigateFromNotificationData(
+  router: RouterNav,
+  data: Record<string, unknown> | undefined | null,
+  options: { replace?: boolean } = {},
+): boolean {
   const nav = options.replace ? router.replace : router.push;
 
   if (data?.ticket_no) {

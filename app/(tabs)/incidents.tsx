@@ -6,6 +6,7 @@ import {
   Platform,
   RefreshControl,
   ScrollView,
+  StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
@@ -1063,6 +1064,10 @@ export default function IncidentsTab() {
         chips={statusChips}
         activeChip={statusFilter}
         onSelectChip={selectStatusChip}
+        // Same list layout as tickets: the site name is the title (no pin) and
+        // the status tabs sit on the canvas below a rounded thunder header.
+        showSiteIcon={false}
+        tabPlacement="canvas"
       />
 
       <ListCountLine
@@ -1123,9 +1128,12 @@ export default function IncidentsTab() {
               resetCreateForm();
               setCreating(true);
             }}
-            className="absolute right-6 bottom-8 w-14 h-14 rounded-full bg-red-600 items-center justify-center"
+            style={styles.fab}
+            accessibilityRole="button"
+            accessibilityLabel="Raise an incident"
           >
-            <Plus color="#fff" size={24} />
+            <Plus color={ds.white} size={22} strokeWidth={2.2} />
+            <Text style={styles.fabLabel}>Raise</Text>
           </PressableScale>
         )}
 
@@ -1486,3 +1494,35 @@ export default function IncidentsTab() {
     </View>
   );
 }
+
+/**
+ * The artboard's "Raise" pill — a flame lozenge floating over the list, sized
+ * so the label rides beside the glyph rather than a bare round button.
+ */
+const styles = StyleSheet.create({
+  fab: {
+    position: "absolute",
+    right: 22,
+    bottom: 22,
+    minWidth: 52,
+    height: 52,
+    borderRadius: 99,
+    backgroundColor: ds.flame[100],
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 7,
+    paddingHorizontal: 18,
+    shadowColor: ds.flame[100],
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.5,
+    shadowRadius: 8,
+    elevation: 8,
+  },
+  fabLabel: {
+    fontSize: 13,
+    fontWeight: "600",
+    letterSpacing: 0.13,
+    color: ds.white,
+  },
+});

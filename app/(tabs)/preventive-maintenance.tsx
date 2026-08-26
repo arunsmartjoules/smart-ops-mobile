@@ -845,6 +845,11 @@ export default function PreventiveMaintenance() {
         chips={statusChips}
         activeChip={statusFilter}
         onSelectChip={selectStatusChip}
+        // Same list layout as tickets and incidents: the site name is the
+        // title (no pin) and the status tabs sit on the canvas below a
+        // rounded thunder header.
+        showSiteIcon={false}
+        tabPlacement="canvas"
       />
 
       <ListCountLine

@@ -8,6 +8,7 @@ import {
 } from "react-native";
 import {
   Check,
+  Minus,
   Droplets,
   Activity,
   Beaker,
@@ -106,51 +107,6 @@ export const UnifiedLogItem = React.memo(
           )}
         </View>
 
-        {/* Chemical: dosing done — a checkbox, toggling Yes / No */}
-        {type === "Chemical" && (
-          <TouchableOpacity
-            onPress={() =>
-              onUpdateValue(
-                item.id,
-                "dosing",
-                value.dosing === "Yes" ? "No" : "Yes",
-              )
-            }
-            activeOpacity={0.85}
-            accessibilityRole="checkbox"
-            accessibilityState={{ checked: value.dosing === "Yes" }}
-            accessibilityLabel="Dosing done"
-            style={[
-              itemStyles.field,
-              itemStyles.checkRow,
-              !hasText(value.dosing) && { borderColor: ds.flame[900] },
-            ]}
-          >
-            <View
-              style={[
-                itemStyles.checkbox,
-                value.dosing === "Yes" && {
-                  backgroundColor: ds.thunder[100],
-                  borderColor: ds.thunder[100],
-                },
-              ]}
-            >
-              {value.dosing === "Yes" ? (
-                <Check size={13} color={ds.white} strokeWidth={3} />
-              ) : null}
-            </View>
-            <Text style={itemStyles.checkLabel}>Dosing done</Text>
-            <Text
-              style={[
-                itemStyles.checkState,
-                !hasText(value.dosing) && { color: ds.flame[100] },
-              ]}
-            >
-              {value.dosing || "Not set"}
-            </Text>
-          </TouchableOpacity>
-        )}
-
         {/* TempRH: Temp + RH */}
         {type === "TempRH" && (
           <View className="flex-row gap-2 mb-2.5">
@@ -239,14 +195,49 @@ export const UnifiedLogItem = React.memo(
           </View>
         )}
 
-        {/* Remark + attachments */}
+        {/* Dosing (Chemical only) + remark + attachments — one row */}
         <View className="flex-row items-center gap-2">
-          <View style={[itemStyles.field, { paddingVertical: 0 }]}>
+          {type === "Chemical" && (
+            <TouchableOpacity
+              onPress={() =>
+                onUpdateValue(
+                  item.id,
+                  "dosing",
+                  value.dosing === "Yes" ? "No" : "Yes",
+                )
+              }
+              activeOpacity={0.85}
+              accessibilityRole="checkbox"
+              accessibilityState={{ checked: value.dosing === "Yes" }}
+              accessibilityLabel="Dosing done"
+              hitSlop={{ top: 8, bottom: 8, left: 10, right: 6 }}
+              style={[
+                itemStyles.checkbox,
+                value.dosing === "Yes" && {
+                  backgroundColor: ds.thunder[100],
+                  borderColor: ds.thunder[100],
+                },
+                !hasText(value.dosing) && { borderColor: ds.flame[900] },
+              ]}
+            >
+              {value.dosing === "Yes" ? (
+                <Check size={16} color={ds.white} strokeWidth={3} />
+              ) : value.dosing === "No" ? (
+                <Minus size={16} color={ds.carbon[500]} strokeWidth={3} />
+              ) : null}
+            </TouchableOpacity>
+          )}
+          <View
+            style={[
+              itemStyles.field,
+              { paddingVertical: 0, height: ROW_FIELD_HEIGHT },
+            ]}
+          >
             <TextInput
               placeholder="Add a remark…"
               value={value.mainRemarks}
               onChangeText={(t) => onUpdateValue(item.id, "mainRemarks", t)}
-              className="py-2 text-xs font-medium text-slate-600 dark:text-slate-300"
+              className="flex-1 p-0 text-xs font-medium text-slate-600 dark:text-slate-300"
               placeholderTextColor="#94a3b8"
             />
           </View>
@@ -277,6 +268,9 @@ export const UnifiedLogItem = React.memo(
 
 UnifiedLogItem.displayName = "UnifiedLogItem";
 
+/** Shared height for the dosing checkbox and the remark input beside it. */
+const ROW_FIELD_HEIGHT = 36;
+
 const itemStyles = StyleSheet.create({
   card: {
     backgroundColor: ds.white,
@@ -287,28 +281,17 @@ const itemStyles = StyleSheet.create({
     borderColor: ds.carbon[900],
     ...soShadow,
   },
-  checkRow: { flex: undefined, gap: 10, paddingVertical: 12 },
+  // Square, and the same height + radius as the remark input beside it so the
+  // two line up; the extra tap area comes from hitSlop, not from the box.
   checkbox: {
-    width: 20,
-    height: 20,
-    borderRadius: 6,
+    width: ROW_FIELD_HEIGHT,
+    height: ROW_FIELD_HEIGHT,
+    borderRadius: soRadius.sm,
     borderWidth: 1.5,
     borderColor: ds.carbon[800],
+    backgroundColor: ds.white,
     alignItems: "center",
     justifyContent: "center",
-  },
-  checkLabel: {
-    flex: 1,
-    fontSize: 13,
-    fontWeight: "600",
-    color: ds.carbon[100],
-  },
-  checkState: {
-    fontSize: 10.5,
-    fontWeight: "600",
-    letterSpacing: 0.68,
-    textTransform: "uppercase",
-    color: ds.carbon[500],
   },
   field: {
     flex: 1,

@@ -12,12 +12,13 @@
 import React from "react";
 import {
   ActivityIndicator,
+  Image,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from "react-native";
-import { ChevronDown, Clock, MapPin } from "lucide-react-native";
+import { ChevronDown, ChevronRight, Clock, MapPin } from "lucide-react-native";
 import type { LucideIcon } from "lucide-react-native";
 import { ds } from "@/constants/ds";
 import { soShadow } from "@/components/home/SiteOverview";
@@ -57,6 +58,7 @@ export function HomeHero({
   onPressEyebrow,
   greeting,
   avatarInitial,
+  avatarUri,
   avatarLabel,
   onAvatar,
   bellIcon: BellIcon,
@@ -80,6 +82,8 @@ export function HomeHero({
   onPressEyebrow?: () => void;
   greeting: string;
   avatarInitial: string;
+  /** The user's profile photo; the monogram stands in when unset. */
+  avatarUri?: string | null;
   avatarLabel: string;
   onAvatar: () => void;
   bellIcon: LucideIcon;
@@ -147,7 +151,11 @@ export function HomeHero({
           accessibilityRole="button"
           accessibilityLabel={avatarLabel}
         >
-          <Text style={styles.heroAvatarText}>{avatarInitial}</Text>
+          {avatarUri ? (
+            <Image source={{ uri: avatarUri }} style={styles.heroAvatarImage} />
+          ) : (
+            <Text style={styles.heroAvatarText}>{avatarInitial}</Text>
+          )}
         </TouchableOpacity>
       </View>
 
@@ -216,18 +224,39 @@ export function HoursWeekCard({
   title = "Hours this week",
   total,
   days,
+  onPress,
 }: {
   title?: string;
   total: string;
   days: DayBar[];
+  /** Opens the attendance screen; the card is inert when omitted. */
+  onPress?: () => void;
 }) {
   const peak = Math.max(...days.map((d) => d.minutes), 1);
 
+  // A plain card when there is nowhere to go, so the affordance never lies.
+  const Container: React.ComponentType<any> = onPress ? TouchableOpacity : View;
+
   return (
-    <View style={[styles.card, { marginBottom: 14 }]}>
+    <Container
+      style={[styles.card, { marginBottom: 14 }]}
+      {...(onPress
+        ? {
+            onPress,
+            activeOpacity: 0.85,
+            accessibilityRole: "button" as const,
+            accessibilityLabel: `${title}, ${total}. Open attendance`,
+          }
+        : null)}
+    >
       <View style={styles.cardHead}>
         <Text style={styles.cardTitle}>{title}</Text>
-        <Text style={styles.cardTotal}>{total}</Text>
+        <View style={styles.cardHeadEnd}>
+          <Text style={styles.cardTotal}>{total}</Text>
+          {onPress ? (
+            <ChevronRight size={15} color={ds.carbon[700]} strokeWidth={2.2} />
+          ) : null}
+        </View>
       </View>
 
       <View style={styles.chart}>
@@ -266,7 +295,7 @@ export function HoursWeekCard({
           );
         })}
       </View>
-    </View>
+    </Container>
   );
 }
 
@@ -561,6 +590,11 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   heroAvatarText: { fontSize: 16, fontWeight: "700", color: ds.white },
+  heroAvatarImage: {
+    width: 42,
+    height: 42,
+    borderRadius: homeRadius.pill,
+  },
 
   statsRow: { flexDirection: "row", gap: 12, paddingHorizontal: 22 },
   stat: { flex: 1, minWidth: 0 },
@@ -615,6 +649,7 @@ const styles = StyleSheet.create({
     letterSpacing: 0.14,
     color: ds.carbon[100],
   },
+  cardHeadEnd: { flexDirection: "row", alignItems: "center", gap: 4 },
   cardTotal: { fontSize: 13, fontWeight: "700", color: ds.sky[100] },
   eyebrow: {
     fontSize: 9,

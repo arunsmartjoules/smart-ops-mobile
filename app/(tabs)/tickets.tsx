@@ -1553,6 +1553,10 @@ export default function Tickets() {
         chips={statusChips}
         activeChip={statusFilter}
         onSelectChip={selectStatusChip}
+        // The artboard's list layout: the site name is the title (no pin) and
+        // the status tabs sit on the canvas below a rounded thunder header.
+        showSiteIcon={false}
+        tabPlacement="canvas"
       />
 
       <ListCountLine

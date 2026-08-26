@@ -5,7 +5,7 @@ import { Platform } from "react-native";
 import Constants from "expo-constants";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import logger from "@/utils/logger";
-import { fetchWithTimeout } from "@/utils/apiHelper";
+import { apiFetch, fetchWithTimeout } from "@/utils/apiHelper";
 import cacheManager from "./CacheManager";
 
 import { API_URL } from "../constants/api";
@@ -581,6 +581,140 @@ export const updateNotificationPreferences = async (
   }
 };
 
+/**
+ * ── Notification feed ─────────────────────────────────────────────────────
+ * The in-app Notifications screen. Backed by `notification_logs` — the same
+ * rows the push dispatcher writes — so the list is a record of what was
+ * actually delivered to this user, not a separate store.
+ */
+
+export interface FeedNotification {
+  id: string;
+  title: string;
+  body: string;
+  /** e.g. "check_in_reminder", "ticket_created", "incident_resolved". */
+  type: string | null;
+  trigger_key: string | null;
+  complaint_id: string | null;
+  /** The push payload, used to deep-link a tapped row. */
+  data: Record<string, unknown> | null;
+  read: boolean;
+  /**
+   * Seconds since it was sent, computed server-side. `sent_at` is stored
+   * without a timezone, so an absolute timestamp cannot be trusted across
+   * server/device offsets — the age can.
+   */
+  age_seconds: number;
+}
+
+export interface FeedResult {
+  success: boolean;
+  data: FeedNotification[];
+  unreadCount: number;
+  hasMore: boolean;
+  error?: string;
+}
+
+/** Fetch one page of the signed-in user's notifications, newest first. */
+export const fetchNotificationFeed = async (
+  options: { limit?: number; offset?: number } = {},
+): Promise<FeedResult> => {
+  const { limit = 50, offset = 0 } = options;
+  try {
+    const response = await apiFetch(
+      `${API_URL}/notifications/feed?limit=${limit}&offset=${offset}`,
+      { method: "GET" },
+    );
+    const body = await response.json();
+
+    if (!response.ok || !body?.success) {
+      return {
+        success: false,
+        data: [],
+        unreadCount: 0,
+        hasMore: false,
+        error: body?.error || `Request failed (${response.status})`,
+      };
+    }
+
+    return {
+      success: true,
+      data: Array.isArray(body.data) ? body.data : [],
+      unreadCount: Number(body.unread_count) || 0,
+      hasMore: !!body.has_more,
+    };
+  } catch (error: any) {
+    logger.error("Error fetching notification feed", {
+      module: "NOTIFICATION_SERVICE",
+      error: error.message,
+    });
+    return {
+      success: false,
+      data: [],
+      unreadCount: 0,
+      hasMore: false,
+      error: error.message,
+    };
+  }
+};
+
+/**
+ * Mark notifications read. Pass ids to mark specific rows; omit to mark the
+ * user's whole feed read.
+ */
+export const markNotificationsRead = async (
+  ids?: string[],
+): Promise<{ success: boolean; unreadCount?: number; error?: string }> => {
+  try {
+    const response = await apiFetch(`${API_URL}/notifications/feed/read`, {
+      method: "POST",
+      body: JSON.stringify(ids && ids.length > 0 ? { ids } : {}),
+    });
+    const body = await response.json();
+
+    if (!response.ok || !body?.success) {
+      return {
+        success: false,
+        error: body?.error || `Request failed (${response.status})`,
+      };
+    }
+    return { success: true, unreadCount: Number(body.unread_count) || 0 };
+  } catch (error: any) {
+    logger.error("Error marking notifications read", {
+      module: "NOTIFICATION_SERVICE",
+      error: error.message,
+    });
+    return { success: false, error: error.message };
+  }
+};
+
+/** Dismiss (soft-delete) one notification from the user's feed. */
+export const dismissNotification = async (
+  id: string,
+): Promise<{ success: boolean; unreadCount?: number; error?: string }> => {
+  try {
+    const response = await apiFetch(
+      `${API_URL}/notifications/feed/${encodeURIComponent(id)}`,
+      { method: "DELETE" },
+    );
+    const body = await response.json();
+
+    if (!response.ok || !body?.success) {
+      return {
+        success: false,
+        error: body?.error || `Request failed (${response.status})`,
+      };
+    }
+    return { success: true, unreadCount: Number(body.unread_count) || 0 };
+  } catch (error: any) {
+    logger.error("Error dismissing notification", {
+      module: "NOTIFICATION_SERVICE",
+      error: error.message,
+    });
+    return { success: false, error: error.message };
+  }
+};
+
 export default {
   getNotificationPermissionStatus,
   requestNotificationPermissions,
@@ -590,4 +724,7 @@ export default {
   setupNotificationHandlers,
   getNotificationPreferences,
   updateNotificationPreferences,
+  fetchNotificationFeed,
+  markNotificationsRead,
+  dismissNotification,
 };

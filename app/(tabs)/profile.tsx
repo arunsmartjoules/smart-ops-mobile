@@ -1,46 +1,201 @@
+/**
+ * Profile — Claude Design "JouleOps Profile.dc.html".
+ *
+ * Thunder header (identity + status) over a light body of grouped cards:
+ * a read-only detail block, an "Account" group, an "App" group, then the
+ * sign-out button and the account-deletion link.
+ *
+ * Geometry and colour are the artboard's, verbatim; brand values resolve
+ * through the shared `@/constants/ds` token set. The literals in `MOCK` are
+ * one-off tints the artboard uses that have no design-system token.
+ */
+import { useCallback, useEffect, useState } from "react";
 import {
-  View,
-  Text,
-  TouchableOpacity,
-  Alert,
   ActivityIndicator,
+  Alert,
   Image,
   ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
-import { LinearGradient } from "expo-linear-gradient";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as ImagePicker from "expo-image-picker";
+import { router } from "expo-router";
+import { format } from "date-fns";
+import {
+  ArrowUpCircle,
+  Bell,
+  Building2,
+  Calendar,
+  Camera,
+  ChevronLeft,
+  ChevronRight,
+  CloudUpload,
+  Info,
+  LogOut,
+  Mail,
+  MessageSquareWarning,
+  Monitor,
+  Moon,
+  Pencil,
+  Shield,
+  Sun,
+} from "lucide-react-native";
+import type { LucideIcon } from "lucide-react-native";
+
 import { useAuth } from "@/contexts/AuthContext";
 import { useTheme } from "@/contexts/ThemeContext";
+import { useSyncStatus } from "@/hooks/useSyncStatus";
 import UpdateService from "@/services/UpdateService";
 import { StorageService } from "@/services/StorageService";
 import { apiFetch } from "@/utils/apiHelper";
 import { API_BASE_URL } from "@/constants/api";
-import {
-  Mail,
-  User as UserIcon,
-  Calendar,
-  LogOut,
-  ChevronRight,
-  Settings,
-  Bell,
-  Shield,
-  Moon,
-  Sun,
-  Monitor,
-  ArrowUpCircle,
-  Info,
-  MessageSquareWarning,
-  Camera,
-} from "lucide-react-native";
-import { router } from "expo-router";
-import { useState, useCallback, useEffect } from "react";
-import { format } from "date-fns";
 import { APP_VERSION_DISPLAY } from "@/constants/version";
+import { ds } from "@/constants/ds";
+
+/** Corner scale read off the artboard. */
+const radius = {
+  header: 26,
+  card: 18,
+  button: 14,
+  tile: 99,
+  badge: 5,
+} as const;
+
+/** Mock-only tints (no design-system token exists for these). */
+const MOCK = {
+  /** Hairline between rows inside a card. */
+  divider: "#F0EFEF",
+  /** Sign-out button outline — a flame wash lighter than flame-800. */
+  signOutBorder: "#F6DAD3",
+  /** "On-site" presence dot and its label, on the sky-tinted pill. */
+  presenceDot: "#6FD3A8",
+  presenceText: "#A9E3CC",
+  presenceFill: "rgba(40,147,157,0.28)",
+  /** Translucent header affordance + its bullet separator. */
+  headerTile: "rgba(255,255,255,0.10)",
+  headerBullet: "rgba(142,198,202,0.6)",
+  /** Underline under the delete-account link. */
+  linkUnderline: "#D6D4D3",
+} as const;
+
+function formatRelativeTime(isoTimestamp: string | null): string {
+  if (!isoTimestamp) return "Never synced";
+  const diffMins = Math.floor(
+    (Date.now() - new Date(isoTimestamp).getTime()) / 60000,
+  );
+  if (diffMins < 1) return "Last synced just now";
+  if (diffMins < 60)
+    return `Last synced ${diffMins} min${diffMins === 1 ? "" : "s"} ago`;
+  const diffHours = Math.floor(diffMins / 60);
+  if (diffHours < 24)
+    return `Last synced ${diffHours} hour${diffHours === 1 ? "" : "s"} ago`;
+  const diffDays = Math.floor(diffHours / 24);
+  return `Last synced ${diffDays} day${diffDays === 1 ? "" : "s"} ago`;
+}
+
+/** Two-letter monogram, matching the artboard's "PG". */
+function initialsFor(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "?";
+  if (parts.length === 1) return parts[0]!.slice(0, 2).toUpperCase();
+  return (parts[0]![0]! + parts[parts.length - 1]![0]!).toUpperCase();
+}
+
+/* ── Card primitives ──────────────────────────────────────────────────── */
+
+/** One row of the read-only detail block: icon, label, right-aligned value. */
+function DetailRow({
+  icon: Icon,
+  label,
+  value,
+  last,
+}: {
+  icon: LucideIcon;
+  label: string;
+  value: string;
+  last?: boolean;
+}) {
+  return (
+    <View style={[styles.detailRow, last && styles.rowLast]}>
+      <View style={styles.detailIcon}>
+        <Icon size={16} color={ds.carbon[600]} strokeWidth={1.8} />
+      </View>
+      <Text style={styles.detailLabel}>{label}</Text>
+      <Text style={styles.detailValue} numberOfLines={1}>
+        {value}
+      </Text>
+    </View>
+  );
+}
+
+/** One tappable row of the Account / App groups. */
+function MenuRow({
+  icon: Icon,
+  label,
+  subtitle,
+  value,
+  badge,
+  badgeTone = "muted",
+  busy,
+  onPress,
+  last,
+}: {
+  icon: LucideIcon;
+  label: string;
+  subtitle?: string;
+  value?: string;
+  badge?: string;
+  badgeTone?: "muted" | "solid";
+  busy?: boolean;
+  onPress?: () => void;
+  last?: boolean;
+}) {
+  const solid = badgeTone === "solid";
+  return (
+    <TouchableOpacity
+      onPress={onPress}
+      disabled={!onPress || busy}
+      activeOpacity={0.7}
+      style={[styles.menuRow, last && styles.rowLast]}
+      accessibilityRole={onPress ? "button" : "text"}
+      accessibilityLabel={value ? `${label}, ${value}` : label}
+    >
+      <Icon size={19} color={ds.carbon[400]} strokeWidth={1.8} />
+
+      <View style={styles.menuLabelWrap}>
+        <Text style={styles.menuLabel}>{label}</Text>
+        {subtitle ? <Text style={styles.menuSubtitle}>{subtitle}</Text> : null}
+      </View>
+
+      {badge ? (
+        <View style={[styles.badge, solid && styles.badgeSolid]}>
+          <Text style={[styles.badgeText, solid && styles.badgeTextSolid]}>
+            {badge}
+          </Text>
+        </View>
+      ) : null}
+
+      {value ? <Text style={styles.menuValue}>{value}</Text> : null}
+
+      {busy ? (
+        <ActivityIndicator size="small" color={ds.carbon[600]} />
+      ) : onPress ? (
+        <ChevronRight size={18} color={ds.carbon[800]} strokeWidth={2} />
+      ) : null}
+    </TouchableOpacity>
+  );
+}
+
+/* ── Screen ───────────────────────────────────────────────────────────── */
 
 export default function Profile() {
   const { user, signOut, deleteAccount, refreshProfile } = useAuth();
   const { theme, setTheme } = useTheme();
+  const { lastSyncedAt, pendingQueueCount } = useSyncStatus();
+  const insets = useSafeAreaInsets();
 
   const [isCheckingUpdates, setIsCheckingUpdates] = useState(false);
   const [updateAvailable, setUpdateAvailable] = useState(false);
@@ -179,6 +334,11 @@ export default function Profile() {
     refreshProfile();
   }, [refreshProfile]);
 
+  const handleBack = useCallback(() => {
+    if (router.canGoBack()) router.back();
+    else router.replace("/(tabs)/dashboard");
+  }, []);
+
   const handleLogout = useCallback(async () => {
     if (isSigningOut) return;
     setIsSigningOut(true);
@@ -312,312 +472,429 @@ export default function Profile() {
     else setTheme("light");
   }, [theme, setTheme]);
 
-  const menuItems = [
-    { icon: Bell, label: "Notifications", color: "#3b82f6" },
-    { icon: Shield, label: "Change Password", color: "#22c55e" },
-    { icon: Settings, label: "Offline & Sync", color: "#64748b" },
-    { icon: MessageSquareWarning, label: "Report an Issue", color: "#f97316" },
-    {
-      icon: theme === "light" ? Sun : theme === "dark" ? Moon : Monitor,
-      label: "Appearance",
-      color: "#8b5cf6",
-      value: theme.charAt(0).toUpperCase() + theme.slice(1),
-    },
-    {
-      icon: Info,
-      label: "App Version",
-      color: "#8b5cf6",
-      value: APP_VERSION_DISPLAY,
-    },
-    {
-      icon: ArrowUpCircle,
-      label: "Check for Updates",
-      color: "#3b82f6",
-      loading: isCheckingUpdates,
-      hasBadge: updateAvailable,
-    },
-  ];
+  const fullName = user?.full_name || user?.name || "Team Member";
+  const joinedRaw = user?.created_at || user?.date_of_joining;
+  const joined = joinedRaw
+    ? format(new Date(joinedRaw as string), "MMM yyyy")
+    : "—";
+  const presence = user?.work_location_type;
+  const ThemeIcon = theme === "light" ? Sun : theme === "dark" ? Moon : Monitor;
 
   return (
-    <View className="flex-1 bg-slate-50 dark:bg-slate-950">
-      <SafeAreaView className="flex-1">
-        {/* Header */}
-        <View className="px-5 pt-2 pb-3 flex-row items-center">
-          <Text className="text-slate-900 dark:text-slate-50 text-3xl font-black">
-            Profile
-          </Text>
-        </View>
-
-        {/* Profile Card */}
-        <View className="px-5 mb-4">
-          <View
-            className="bg-white dark:bg-slate-900 rounded-2xl p-5"
-            style={{
-              shadowColor: "#000",
-              shadowOffset: { width: 0, height: 2 },
-              shadowOpacity: 0.06,
-              shadowRadius: 12,
-              elevation: 3,
-            }}
-          >
-            <View className="flex-row items-center">
-              <TouchableOpacity
-                onPress={handlePhotoPress}
-                disabled={isUploadingPhoto}
-                activeOpacity={0.85}
-                accessibilityLabel="Change profile picture"
-                style={{ width: 64, height: 64 }}
-              >
-                {user?.profile_photo_url ? (
-                  <Image
-                    source={{ uri: user.profile_photo_url }}
-                    style={{
-                      width: 64,
-                      height: 64,
-                      borderRadius: 32,
-                    }}
-                  />
-                ) : (
-                  <LinearGradient
-                    colors={["#dc2626", "#b91c1c"]}
-                    style={{
-                      width: 64,
-                      height: 64,
-                      borderRadius: 32,
-                      alignItems: "center",
-                      justifyContent: "center",
-                    }}
-                  >
-                    <UserIcon size={28} color="white" />
-                  </LinearGradient>
-                )}
-                <View
-                  style={{
-                    position: "absolute",
-                    right: -2,
-                    bottom: -2,
-                    width: 22,
-                    height: 22,
-                    borderRadius: 11,
-                    backgroundColor: "#dc2626",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    borderWidth: 2,
-                    borderColor: "white",
-                  }}
-                >
-                  {isUploadingPhoto ? (
-                    <ActivityIndicator size="small" color="white" />
-                  ) : (
-                    <Camera size={12} color="white" />
-                  )}
-                </View>
-              </TouchableOpacity>
-              <View className="ml-4 flex-1">
-                <Text className="text-slate-900 dark:text-slate-50 text-lg font-bold">
-                  {user?.full_name || user?.name || "Team Member"}
-                </Text>
-                <Text className="text-slate-400 dark:text-slate-500 text-sm">
-                  {user?.designation || "Staff"}
-                </Text>
-                {user?.work_location_type && (
-                  <View className="bg-red-50 self-start px-2 py-0.5 rounded mt-1">
-                    <Text className="text-red-600 text-xs font-bold">
-                      {user.work_location_type}
-                    </Text>
-                  </View>
-                )}
-              </View>
-            </View>
-
-            <View className="mt-4 pt-4 border-t border-slate-100 gap-3">
-              <View className="flex-row items-center">
-                <View className="w-8 h-8 rounded-lg bg-red-50 items-center justify-center mr-2">
-                  <Mail size={14} color="#dc2626" />
-                </View>
-                <View className="flex-1">
-                  <Text className="text-slate-400 dark:text-slate-500 text-xs">
-                    Email
-                  </Text>
-                  <Text
-                    className="text-slate-900 dark:text-slate-50 text-xs font-medium"
-                    numberOfLines={1}
-                  >
-                    {user?.email}
-                  </Text>
-                </View>
-              </View>
-
-              <View className="flex-row items-center">
-                <View className="w-8 h-8 rounded-lg bg-blue-50 items-center justify-center mr-2">
-                  <Settings size={14} color="#3b82f6" />
-                </View>
-                <View className="flex-1">
-                  <Text className="text-slate-400 dark:text-slate-500 text-xs">
-                    Department
-                  </Text>
-                  <Text className="text-slate-900 dark:text-slate-50 text-xs font-medium">
-                    {user?.department || "Operations"}
-                  </Text>
-                </View>
-
-                <View className="flex-1 flex-row items-center">
-                  <View className="w-8 h-8 rounded-lg bg-orange-50 items-center justify-center mr-2">
-                    <Calendar size={14} color="#f59e0b" />
-                  </View>
-                  <View className="flex-1">
-                    <Text className="text-slate-400 dark:text-slate-500 text-xs">
-                      Joined
-                    </Text>
-                    <Text className="text-slate-900 dark:text-slate-50 text-xs font-medium">
-                      {user?.created_at || user?.date_of_joining
-                        ? format(
-                            new Date(
-                              (user.created_at ||
-                                user.date_of_joining) as string,
-                            ),
-                            "MMM yyyy",
-                          )
-                        : "N/A"}
-                    </Text>
-                  </View>
-                </View>
-              </View>
-            </View>
-          </View>
-        </View>
-
-        {/* Menu Items */}
-        <ScrollView
-          className="flex-1"
-          contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 16 }}
-          showsVerticalScrollIndicator={false}
-        >
-          <View
-            className="bg-white dark:bg-slate-900 rounded-2xl overflow-hidden"
-            style={{
-              shadowColor: "#000",
-              shadowOffset: { width: 0, height: 2 },
-              shadowOpacity: 0.05,
-              shadowRadius: 10,
-              elevation: 2,
-            }}
-          >
-            {menuItems.map((item, index) => (
-              <TouchableOpacity
-                key={index}
-                onPress={() => {
-                  if (item.label === "Notifications") {
-                    router.push("/notification-settings");
-                  } else if (item.label === "Change Password") {
-                    router.push("/privacy-security");
-                  } else if (item.label === "Offline & Sync") {
-                    router.push("/app-settings");
-                  } else if (item.label === "Report an Issue") {
-                    router.push("/report-issue");
-                  } else if (item.label === "Check for Updates") {
-                    handleCheckUpdates();
-                  } else if (item.label === "Appearance") {
-                    handleCycleTheme();
-                  }
-                }}
-                disabled={item.label === "App Version" || item.loading}
-                className={`flex-row items-center p-3.5 ${
-                  index < menuItems.length - 1
-                    ? "border-b border-slate-100 dark:border-slate-800"
-                    : ""
-                }`}
-              >
-                <View
-                  className="w-9 h-9 rounded-xl items-center justify-center mr-3"
-                  style={{ backgroundColor: item.color + "15" }}
-                >
-                  {item.loading ? (
-                    <ActivityIndicator size="small" color={item.color} />
-                  ) : (
-                    <item.icon size={18} color={item.color} />
-                  )}
-                </View>
-                <Text className="flex-1 text-slate-700 dark:text-slate-300 font-medium text-sm">
-                  {item.label}
-                </Text>
-
-                {item.value ? (
-                  <Text className="text-slate-400 dark:text-slate-500 text-xs font-bold mr-1">
-                    {item.value}
-                  </Text>
-                ) : item.label === "Check for Updates" ? (
-                  item.hasBadge && (
-                    <View className="bg-red-500 px-2 py-0.5 rounded-full mr-1">
-                      <Text className="text-white text-[10px] font-bold">
-                        NEW
-                      </Text>
-                    </View>
-                  )
-                ) : (
-                  <ChevronRight size={18} color="#94a3b8" />
-                )}
-              </TouchableOpacity>
-            ))}
-          </View>
-        </ScrollView>
-
-        {/* Sign Out */}
-        <View className="px-5 mb-4">
+    <View style={styles.screen}>
+      {/* ── Thunder header ── */}
+      <View style={[styles.header, { paddingTop: insets.top }]}>
+        <View style={styles.headerBar}>
           <TouchableOpacity
-            onPress={handleLogout}
-            disabled={isSigningOut}
-            className="bg-red-50 rounded-2xl p-3.5 flex-row items-center justify-center"
-            style={{
-              shadowColor: "#ef4444",
-              shadowOffset: { width: 0, height: 2 },
-              shadowOpacity: 0.1,
-              shadowRadius: 8,
-              elevation: 2,
-              opacity: isSigningOut ? 0.7 : 1,
-            }}
+            onPress={handleBack}
+            activeOpacity={0.7}
+            hitSlop={6}
+            style={styles.headerBack}
+            accessibilityRole="button"
+            accessibilityLabel="Go back"
           >
-            {isSigningOut ? (
-              <>
-                <ActivityIndicator size="small" color="#dc2626" />
-                <Text className="text-red-600 font-semibold ml-2 text-sm">
-                  Syncing your changes…
-                </Text>
-              </>
+            <ChevronLeft size={24} color={ds.white} strokeWidth={2} />
+          </TouchableOpacity>
+          <Text style={styles.headerTitle}>Profile</Text>
+          <View style={{ flex: 1 }} />
+          <TouchableOpacity
+            onPress={handlePhotoPress}
+            disabled={isUploadingPhoto}
+            activeOpacity={0.8}
+            hitSlop={6}
+            style={styles.headerTile}
+            accessibilityRole="button"
+            accessibilityLabel="Edit profile picture"
+          >
+            <Pencil size={16} color={ds.white} strokeWidth={2} />
+          </TouchableOpacity>
+        </View>
+
+        <View style={styles.identityRow}>
+          <TouchableOpacity
+            onPress={handlePhotoPress}
+            disabled={isUploadingPhoto}
+            activeOpacity={0.85}
+            style={styles.avatarWrap}
+            accessibilityRole="button"
+            accessibilityLabel="Change profile picture"
+          >
+            {user?.profile_photo_url ? (
+              <Image
+                source={{ uri: user.profile_photo_url }}
+                style={styles.avatar}
+              />
             ) : (
-              <>
-                <LogOut size={18} color="#dc2626" />
-                <Text className="text-red-600 font-semibold ml-2 text-sm">
-                  Sign Out
-                </Text>
-              </>
+              <View style={[styles.avatar, styles.avatarFallback]}>
+                <Text style={styles.avatarText}>{initialsFor(fullName)}</Text>
+              </View>
             )}
+            <View style={styles.avatarBadge}>
+              {isUploadingPhoto ? (
+                <ActivityIndicator size="small" color={ds.white} />
+              ) : (
+                <Camera size={11} color={ds.white} strokeWidth={2.2} />
+              )}
+            </View>
           </TouchableOpacity>
 
-          {/* Account deletion — required by the App Store review guidelines */}
+          <View style={styles.identityText}>
+            <Text style={styles.identityName} numberOfLines={1}>
+              {fullName}
+            </Text>
+            <View style={styles.identityMeta}>
+              <Text style={styles.identityRole} numberOfLines={1}>
+                {user?.designation || "Team Member"}
+              </Text>
+              {presence ? (
+                <>
+                  <View style={styles.identityBullet} />
+                  <View style={styles.presencePill}>
+                    <View style={styles.presenceDot} />
+                    <Text style={styles.presenceLabel}>{presence}</Text>
+                  </View>
+                </>
+              ) : null}
+            </View>
+          </View>
+        </View>
+      </View>
+
+      {/* ── Body ── */}
+      <ScrollView
+        style={styles.body}
+        contentContainerStyle={styles.bodyContent}
+        showsVerticalScrollIndicator={false}
+      >
+        <View style={[styles.card, styles.detailCard]}>
+          <DetailRow icon={Mail} label="Email" value={user?.email || "—"} />
+          <DetailRow
+            icon={Building2}
+            label="Department"
+            value={user?.department || "Operations"}
+          />
+          <DetailRow icon={Calendar} label="Joined" value={joined} last />
+        </View>
+
+        <Text style={styles.groupLabel}>Account</Text>
+        <View style={styles.card}>
+          <MenuRow
+            icon={Bell}
+            label="Notifications"
+            onPress={() => router.push("/notification-settings")}
+          />
+          <MenuRow
+            icon={Shield}
+            label="Change Password"
+            onPress={() => router.push("/privacy-security")}
+          />
+          <MenuRow
+            icon={CloudUpload}
+            label="Offline & Sync"
+            subtitle={
+              pendingQueueCount > 0
+                ? formatRelativeTime(lastSyncedAt)
+                : "All synced"
+            }
+            badge={
+              pendingQueueCount > 0 ? `${pendingQueueCount} pending` : undefined
+            }
+            onPress={() => router.push("/app-settings")}
+            last
+          />
+        </View>
+
+        <Text style={styles.groupLabel}>App</Text>
+        <View style={styles.card}>
+          <MenuRow
+            icon={ThemeIcon}
+            label="Appearance"
+            value={theme.charAt(0).toUpperCase() + theme.slice(1)}
+            onPress={handleCycleTheme}
+          />
+          <MenuRow
+            icon={MessageSquareWarning}
+            label="Report an Issue"
+            onPress={() => router.push("/report-issue")}
+          />
+          <MenuRow
+            icon={ArrowUpCircle}
+            label="Check for Updates"
+            badge={updateAvailable ? "New" : undefined}
+            badgeTone="solid"
+            busy={isCheckingUpdates}
+            onPress={handleCheckUpdates}
+          />
+          <MenuRow
+            icon={Info}
+            label="App Version"
+            value={APP_VERSION_DISPLAY}
+            last
+          />
+        </View>
+
+        <TouchableOpacity
+          onPress={handleLogout}
+          disabled={isSigningOut}
+          activeOpacity={0.8}
+          style={[styles.signOut, isSigningOut && styles.dimmed]}
+          accessibilityRole="button"
+          accessibilityLabel="Sign out"
+        >
+          {isSigningOut ? (
+            <>
+              <ActivityIndicator size="small" color={ds.flame[100]} />
+              <Text style={styles.signOutLabel}>Syncing your changes…</Text>
+            </>
+          ) : (
+            <>
+              <LogOut size={18} color={ds.flame[100]} strokeWidth={2} />
+              <Text style={styles.signOutLabel}>Sign Out</Text>
+            </>
+          )}
+        </TouchableOpacity>
+
+        {/* Account deletion — required by the App Store review guidelines. */}
+        <View style={styles.deleteWrap}>
           <TouchableOpacity
             onPress={handleDeleteAccount}
             disabled={isDeletingAccount || isSigningOut}
+            activeOpacity={0.7}
+            hitSlop={8}
+            style={[
+              styles.deleteLink,
+              (isDeletingAccount || isSigningOut) && styles.dimmed,
+            ]}
             accessibilityRole="link"
             accessibilityLabel="Delete my account"
-            className="mt-3 flex-row items-center justify-center py-1"
-            style={{ opacity: isDeletingAccount || isSigningOut ? 0.5 : 1 }}
           >
             {isDeletingAccount ? (
-              <>
-                <ActivityIndicator size="small" color="#64748b" />
-                <Text className="text-slate-500 dark:text-slate-400 text-xs ml-2">
-                  Deleting your account…
-                </Text>
-              </>
-            ) : (
-              <Text className="text-slate-500 dark:text-slate-400 text-xs underline">
-                Delete My Account
-              </Text>
-            )}
+              <ActivityIndicator size="small" color={ds.carbon[600]} />
+            ) : null}
+            <Text style={styles.deleteLabel}>
+              {isDeletingAccount ? "Deleting your account…" : "Delete my account"}
+            </Text>
           </TouchableOpacity>
         </View>
-      </SafeAreaView>
+      </ScrollView>
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  screen: { flex: 1, backgroundColor: ds.pageBg },
+
+  /* ── Header ── */
+  header: {
+    backgroundColor: ds.thunder[100],
+    paddingBottom: 22,
+    borderBottomLeftRadius: radius.header,
+    borderBottomRightRadius: radius.header,
+  },
+  headerBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 18,
+    paddingTop: 10,
+    marginBottom: 18,
+  },
+  headerBack: {
+    width: 34,
+    height: 34,
+    borderRadius: radius.tile,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  headerTitle: { fontSize: 17, fontWeight: "700", color: ds.white },
+  headerTile: {
+    width: 34,
+    height: 34,
+    borderRadius: radius.tile,
+    backgroundColor: MOCK.headerTile,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  identityRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 14,
+    paddingHorizontal: 22,
+  },
+  avatarWrap: { width: 62, height: 62 },
+  avatar: { width: 62, height: 62, borderRadius: radius.tile },
+  avatarFallback: {
+    backgroundColor: ds.sky[100],
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  avatarText: { fontSize: 23, fontWeight: "700", color: ds.white },
+  avatarBadge: {
+    position: "absolute",
+    right: -3,
+    bottom: -3,
+    width: 23,
+    height: 23,
+    borderRadius: radius.tile,
+    backgroundColor: ds.flame[100],
+    borderWidth: 2.5,
+    borderColor: ds.thunder[100],
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  identityText: { flex: 1, minWidth: 0 },
+  identityName: {
+    fontSize: 19,
+    lineHeight: 22,
+    fontWeight: "700",
+    color: ds.white,
+    marginBottom: 5,
+  },
+  identityMeta: { flexDirection: "row", alignItems: "center", gap: 7 },
+  identityRole: { fontSize: 12, fontWeight: "500", color: ds.sky[500] },
+  identityBullet: {
+    width: 3,
+    height: 3,
+    borderRadius: radius.tile,
+    backgroundColor: MOCK.headerBullet,
+  },
+  presencePill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: radius.badge,
+    backgroundColor: MOCK.presenceFill,
+  },
+  presenceDot: {
+    width: 5,
+    height: 5,
+    borderRadius: radius.tile,
+    backgroundColor: MOCK.presenceDot,
+  },
+  presenceLabel: {
+    fontSize: 9,
+    fontWeight: "600",
+    letterSpacing: 1.08,
+    textTransform: "uppercase",
+    color: MOCK.presenceText,
+  },
+
+  /* ── Body ── */
+  body: { flex: 1 },
+  bodyContent: { paddingHorizontal: 18, paddingTop: 16, paddingBottom: 28 },
+
+  card: {
+    backgroundColor: ds.white,
+    borderRadius: radius.card,
+    paddingHorizontal: 16,
+    marginBottom: 18,
+    shadowColor: ds.carbon[100],
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.08,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  detailCard: { paddingVertical: 4 },
+
+  groupLabel: {
+    fontSize: 9,
+    fontWeight: "600",
+    letterSpacing: 1.08,
+    textTransform: "uppercase",
+    color: ds.carbon[700],
+    marginHorizontal: 4,
+    marginBottom: 9,
+  },
+
+  rowLast: { borderBottomWidth: 0 },
+
+  detailRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 11,
+    paddingVertical: 13,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: MOCK.divider,
+  },
+  detailIcon: { width: 18, alignItems: "flex-start" },
+  detailLabel: {
+    width: 84,
+    fontSize: 9,
+    fontWeight: "600",
+    letterSpacing: 1.08,
+    textTransform: "uppercase",
+    color: ds.carbon[700],
+  },
+  detailValue: {
+    flex: 1,
+    fontSize: 12.5,
+    fontWeight: "500",
+    color: ds.carbon[100],
+    textAlign: "right",
+  },
+
+  menuRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingVertical: 15,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: MOCK.divider,
+  },
+  menuLabelWrap: { flex: 1, minWidth: 0 },
+  menuLabel: { fontSize: 13.5, fontWeight: "500", color: ds.carbon[100] },
+  menuSubtitle: {
+    fontSize: 10.5,
+    fontWeight: "400",
+    color: ds.carbon[600],
+    marginTop: 3,
+  },
+  menuValue: { fontSize: 10, fontWeight: "600", color: ds.carbon[500] },
+
+  badge: {
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: radius.badge,
+    backgroundColor: ds.flame[1000],
+  },
+  badgeSolid: { backgroundColor: ds.flame[100] },
+  badgeText: {
+    fontSize: 9,
+    fontWeight: "600",
+    letterSpacing: 0.36,
+    textTransform: "uppercase",
+    color: ds.flame[100],
+  },
+  badgeTextSolid: { color: ds.white, letterSpacing: 0.54 },
+
+  /* ── Footer actions ── */
+  signOut: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    padding: 14,
+    borderRadius: radius.button,
+    borderWidth: 1.5,
+    borderColor: MOCK.signOutBorder,
+    backgroundColor: ds.white,
+    marginBottom: 12,
+  },
+  signOutLabel: { fontSize: 13.5, fontWeight: "700", color: ds.flame[100] },
+
+  deleteWrap: { alignItems: "center", paddingTop: 2 },
+  deleteLink: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingBottom: 1,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: MOCK.linkUnderline,
+  },
+  deleteLabel: { fontSize: 11, fontWeight: "500", color: ds.carbon[600] },
+
+  dimmed: { opacity: 0.55 },
+});

@@ -1310,6 +1310,7 @@ export default function Dashboard() {
         }
         greeting={`${timeGreeting(currentTime)}, ${firstName}`}
         avatarInitial={avatarInitial}
+        avatarUri={user?.profile_photo_url}
         avatarLabel={isLocked ? "Sign out" : "Profile"}
         onAvatar={() =>
           isLocked ? confirmSignOut() : router.push("/(tabs)/profile")
@@ -1350,7 +1351,11 @@ export default function Dashboard() {
           />
         }
       >
-        <HoursWeekCard total={formatHm(week.totalMinutes)} days={week.days} />
+        <HoursWeekCard
+          total={formatHm(week.totalMinutes)}
+          days={week.days}
+          onPress={navigateToAttendance}
+        />
 
         <TicketStatusCard
           caption={statusCounts ? `${countsTotal} in 30 days` : "Loading"}

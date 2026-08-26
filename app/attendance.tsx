@@ -8,22 +8,21 @@ import {
   ActivityIndicator,
   Alert,
   Modal,
+  StyleSheet,
   TextInput,
   Platform,
   AppState,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
-import EmptyState from "@/components/EmptyState";
-import { LinearGradient } from "expo-linear-gradient";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Haptics from "expo-haptics";
 import PressableScale from "@/components/PressableScale";
 import NetInfo from "@react-native-community/netinfo";
 import {
   AlertTriangle,
   ArrowLeft,
-  Calendar,
+  CalendarCheck,
+  ChevronLeft,
   ChevronRight,
-  Clock,
   LogIn,
   LogOut,
   Map as LucideMap,
@@ -45,180 +44,160 @@ import appLogger from "@/utils/logger";
 import { format } from "date-fns";
 import { useNetworkStatus } from "@/hooks/useNetworkStatus";
 import Skeleton from "@/components/Skeleton";
+import { ds } from "@/constants/ds";
+import { soRadius, soShadow } from "@/components/home/SiteOverview";
 
 /** Reuse cached foreground location reads for this long (ms). */
 const LOCATION_FRESHNESS_MS = 5 * 60 * 1000;
 
+/**
+ * How long an open session may run before it reads as a missed checkout, and
+ * the app's own early-checkout threshold (the reason modal fires below it).
+ */
+const MISSED_CHECKOUT_HOURS = 17;
+const EARLY_CHECKOUT_MINUTES = 7 * 60;
+/** A runaway open session is capped here rather than accruing forever. */
+const MAX_SESSION_HOURS = 20;
+
+export type DayKind = "full" | "short" | "missed" | "leave" | "active";
+
+/** Minutes worked for a log; null when there is no check-in to measure from. */
+function durationMinutes(log: AttendanceLog, now: Date): number | null {
+  if (!log.check_in_time) return null;
+  const start = new Date(log.check_in_time);
+  if (Number.isNaN(start.getTime())) return null;
+
+  let end: Date;
+  if (log.check_out_time) {
+    end = new Date(log.check_out_time);
+    if (Number.isNaN(end.getTime())) return null;
+  } else {
+    const hours = (now.getTime() - start.getTime()) / 3_600_000;
+    end =
+      hours <= MAX_SESSION_HOURS
+        ? now
+        : new Date(start.getTime() + MAX_SESSION_HOURS * 3_600_000);
+  }
+
+  const mins = Math.floor((end.getTime() - start.getTime()) / 60_000);
+  return Number.isNaN(mins) || mins < 0 ? 0 : mins;
+}
+
+const formatHm = (mins: number) =>
+  `${Math.floor(mins / 60)}h ${String(mins % 60).padStart(2, "0")}m`;
+
+function dayKind(log: AttendanceLog, now: Date): DayKind {
+  if (log.status === "Leave") return "leave";
+  if (!log.check_in_time) return "missed";
+  if (!log.check_out_time) {
+    const start = new Date(log.check_in_time);
+    const hours = (now.getTime() - start.getTime()) / 3_600_000;
+    return hours > MISSED_CHECKOUT_HOURS ? "missed" : "active";
+  }
+  const mins = durationMinutes(log, now) ?? 0;
+  return mins < EARLY_CHECKOUT_MINUTES ? "short" : "full";
+}
+
+/** The artboard tones a row by whether the day needs attention. */
+const isClean = (kind: DayKind) => kind === "full" || kind === "active";
+
+const safeTime = (value: string | undefined, pattern: string) => {
+  if (!value) return "—";
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? "—" : format(d, pattern);
+};
+
 // --- Memoized Components ---
 
-const HistoryItem = React.memo(function HistoryItem({
+/**
+ * One hairline history row — Claude Design "JouleOps Attendance.dc.html":
+ * the day on the left, what happened in the middle, duration on the right.
+ */
+const HistoryRow = React.memo(function HistoryRow({
   log,
-  currentTime,
-  getDuration,
+  kind,
+  now,
+  last,
 }: {
   log: AttendanceLog;
-  currentTime: Date;
-  getDuration: (log: AttendanceLog) => string;
+  kind: DayKind;
+  now: Date;
+  last: boolean;
 }) {
-    const hasMissedCheckout = useMemo(() => {
-      if (log.check_out_time || log.status === "Leave" || !log.check_in_time)
-        return false;
-      const checkIn = new Date(log.check_in_time);
-      const diffHours =
-        (currentTime.getTime() - checkIn.getTime()) / (1000 * 60 * 60);
-      return diffHours > 17;
-    }, [log.check_out_time, log.status, log.check_in_time, currentTime]);
+  const clean = isClean(kind);
+  const mins = durationMinutes(log, now);
 
-    return (
-      <View
-        className="bg-white dark:bg-slate-900 rounded-2xl p-4"
-        style={{
-          shadowColor: "#000",
-          shadowOffset: { width: 0, height: 2 },
-          shadowOpacity: 0.05,
-          shadowRadius: 8,
-          elevation: 2,
-        }}
+  const line =
+    kind === "leave"
+      ? "Leave"
+      : kind === "missed"
+        ? "Missed checkout · auto-closed"
+        : kind === "active"
+          ? `${safeTime(log.check_in_time, "HH:mm")} → in progress`
+          : `${safeTime(log.check_in_time, "HH:mm")} → ${safeTime(log.check_out_time, "HH:mm")}${
+              kind === "short" ? " · early checkout" : ""
+            }`;
+
+  const parsed = log.date ? new Date(log.date) : null;
+  const valid = parsed && !Number.isNaN(parsed.getTime());
+
+  return (
+    <View style={[styles.historyRow, last && styles.historyRowLast]}>
+      <Text
+        style={[
+          styles.historyDay,
+          { color: clean ? ds.carbon[100] : ds.flame[100] },
+        ]}
       >
-        {/* Top Row: Date + Duration / Missed Checkout */}
-        <View className="flex-row items-center justify-between mb-3">
-          <View className="flex-row items-center">
-            <View className="w-8 h-8 rounded-lg bg-red-50 items-center justify-center mr-2">
-              <Calendar size={16} color="#dc2626" />
-            </View>
-            <Text className="text-slate-900 dark:text-slate-50 font-semibold">
-              {format(new Date(log.date), "EEE, d MMM")}
-            </Text>
-          </View>
-          {log.status === "Leave" ? (
-            <View className="bg-red-50 px-2.5 py-1 rounded-lg">
-              <Text className="text-red-500 text-xs font-bold">LEAVE</Text>
-            </View>
-          ) : hasMissedCheckout ? (
-            <View className="bg-amber-50 px-2.5 py-1 rounded-lg">
-              <Text className="text-amber-600 text-xs font-bold">
-                Missed Checkout
-              </Text>
-            </View>
-          ) : (
-            <View className="bg-slate-100 px-2.5 py-1 rounded-lg">
-              <Text className="text-slate-600 text-xs font-medium">
-                {getDuration(log)}
-              </Text>
-            </View>
-          )}
-        </View>
+        {valid ? format(parsed as Date, "d EEE") : "—"}
+      </Text>
 
-        {/* Check-in / Check-out in a single row */}
-        {log.check_in_time && (
-          <View className="flex-row items-center bg-slate-50 dark:bg-slate-800 rounded-xl px-3 py-2.5">
-            {/* Check In */}
-            <View className="flex-1 flex-row items-center">
-              <View
-                className={`w-7 h-7 rounded-md ${log.check_in_time ? "bg-green-100 dark:bg-green-900" : "bg-slate-200 dark:bg-slate-700"} items-center justify-center mr-2`}
-              >
-                <LogIn
-                  size={14}
-                  color={log.check_in_time ? "#22c55e" : "#94a3b8"}
-                />
-              </View>
-              <View>
-                <Text className="text-slate-500 dark:text-slate-400 text-[10px] font-medium uppercase">
-                  In
-                </Text>
-                <Text className="text-slate-800 dark:text-slate-200 text-sm font-semibold">
-                  {format(new Date(log.check_in_time), "h:mm a")}
-                </Text>
-              </View>
-            </View>
-
-            {/* Separator */}
-            <View className="mx-2">
-              <ChevronRight size={14} color="#cbd5e1" />
-            </View>
-
-            {/* Check Out */}
-            <View className="flex-1 flex-row items-center">
-              <View
-                className={`w-7 h-7 rounded-md items-center justify-center mr-2 ${log.check_out_time ? "bg-orange-100 dark:bg-orange-900" : "bg-slate-200 dark:bg-slate-700"}`}
-              >
-                <LogOut
-                  size={14}
-                  color={log.check_out_time ? "#f97316" : "#94a3b8"}
-                />
-              </View>
-              <View>
-                <Text className="text-slate-500 dark:text-slate-400 text-[10px] font-medium uppercase">
-                  Out
-                </Text>
-                <Text
-                  className={`text-sm font-semibold ${log.check_out_time ? "text-slate-800 dark:text-slate-200" : "text-slate-400 dark:text-slate-500"}`}
-                >
-                  {log.check_out_time
-                    ? format(new Date(log.check_out_time), "h:mm a")
-                    : "--:--"}
-                </Text>
-              </View>
-            </View>
-          </View>
-        )}
+      <View style={styles.historyBody}>
+        <Text
+          style={[
+            styles.historyLine,
+            { color: clean ? ds.carbon[400] : ds.flame[100] },
+          ]}
+          numberOfLines={1}
+        >
+          {line}
+        </Text>
+        <Text style={styles.historySite} numberOfLines={1}>
+          {log.site_name || log.site_code || "—"}
+        </Text>
       </View>
-    );
+
+      <Text
+        style={[
+          styles.historyDur,
+          { color: clean ? ds.carbon[100] : ds.carbon[500] },
+        ]}
+      >
+        {kind === "leave" || mins == null ? "—" : formatHm(mins)}
+      </Text>
+    </View>
+  );
 });
 
 const AttendanceHistorySkeleton = React.memo(function AttendanceHistorySkeleton() {
   return (
-    <View className="gap-3">
-      {[1, 2, 3, 4, 5].map((i) => (
+    <View style={styles.historyCard}>
+      {[1, 2, 3, 4, 5, 6].map((i) => (
         <View
           key={i}
-          className="bg-white dark:bg-slate-900 rounded-2xl p-4"
-          style={{
-            shadowColor: "#000",
-            shadowOffset: { width: 0, height: 2 },
-            shadowOpacity: 0.05,
-            shadowRadius: 8,
-            elevation: 2,
-          }}
+          style={[styles.historyRow, i === 6 && styles.historyRowLast]}
         >
-          <View className="flex-row items-center justify-between mb-4">
-            <View className="flex-row items-center">
-              <Skeleton
-                width={32}
-                height={32}
-                borderRadius={8}
-                style={{ marginRight: 8 }}
-              />
-              <Skeleton width={100} height={16} borderRadius={4} />
-            </View>
-            <Skeleton width={60} height={16} borderRadius={8} />
+          <Skeleton width={44} height={14} borderRadius={4} />
+          <View style={styles.historyBody}>
+            <Skeleton width={140} height={12} borderRadius={4} />
+            <Skeleton
+              width={90}
+              height={10}
+              borderRadius={4}
+              style={{ marginTop: 4 }}
+            />
           </View>
-          <View className="gap-2">
-            <View className="flex-row items-center bg-slate-50 dark:bg-slate-800 rounded-xl p-3">
-              <Skeleton
-                width={32}
-                height={32}
-                borderRadius={8}
-                style={{ marginRight: 12 }}
-              />
-              <View className="flex-1 gap-1">
-                <Skeleton width={80} height={14} borderRadius={4} />
-                <Skeleton width={50} height={10} borderRadius={2} />
-              </View>
-            </View>
-            <View className="flex-row items-center bg-slate-50 dark:bg-slate-800 rounded-xl p-3">
-              <Skeleton
-                width={32}
-                height={32}
-                borderRadius={8}
-                style={{ marginRight: 12 }}
-              />
-              <View className="flex-1 gap-1">
-                <Skeleton width={80} height={14} borderRadius={4} />
-                <Skeleton width={50} height={10} borderRadius={2} />
-              </View>
-            </View>
-          </View>
+          <Skeleton width={46} height={14} borderRadius={4} />
         </View>
       ))}
     </View>
@@ -235,30 +214,32 @@ const SiteItem = React.memo(function SiteItem({
   const handleSelect = useCallback(() => {
     onSelect(site.site_code);
   }, [site.site_code, onSelect]);
+  const distance = site.distanceMeters ?? site.distance;
 
   return (
     <TouchableOpacity
       onPress={handleSelect}
-      className="bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 p-4 rounded-xl mb-3 flex-row items-center"
+      activeOpacity={0.85}
+      style={styles.siteRow}
     >
-      <View className="w-10 h-10 rounded-full bg-red-100 items-center justify-center mr-3">
-        <LucideMap size={20} color="#dc2626" />
+      <View style={styles.siteIcon}>
+        <LucideMap size={18} color={ds.sky[100]} strokeWidth={2} />
       </View>
-      <View className="flex-1">
-        <Text className="font-bold text-slate-900 dark:text-slate-100">
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <Text style={styles.siteName} numberOfLines={1}>
           {site.name}
         </Text>
-        <Text className="text-slate-500 dark:text-slate-400 text-xs">
-          {site.address}
-        </Text>
-      </View>
-      {(site.distanceMeters !== undefined || site.distance !== undefined) && (
-        <View className="bg-green-100 px-2 py-1 rounded">
-          <Text className="text-green-700 text-xs font-bold">
-            {site.distanceMeters ?? site.distance}m
+        {site.address ? (
+          <Text style={styles.siteAddress} numberOfLines={1}>
+            {site.address}
           </Text>
+        ) : null}
+      </View>
+      {distance !== undefined ? (
+        <View style={styles.siteDistance}>
+          <Text style={styles.siteDistanceText}>{distance}m</Text>
         </View>
-      )}
+      ) : null}
     </TouchableOpacity>
   );
 });
@@ -284,7 +265,10 @@ function formatLocationFailureMessage(
   return parts.join("");
 }
 
+const HISTORY_FILTERS = ["All", "Short", "Missed"] as const;
+
 export default function AttendancePage() {
+  const insets = useSafeAreaInsets();
   const { isConnected } = useNetworkStatus();
   const { user, refreshProfile } = useAuth();
   const {
@@ -318,6 +302,10 @@ export default function AttendancePage() {
   const [validatingLocation, setValidatingLocation] = useState(false);
   const [earlyCheckoutHours, setEarlyCheckoutHours] = useState("");
   const [currentTime, setCurrentTime] = useState(new Date());
+  /** 0 = newest month present in the fetched history; higher steps back. */
+  const [monthOffset, setMonthOffset] = useState(0);
+  const [historyFilter, setHistoryFilter] =
+    useState<(typeof HISTORY_FILTERS)[number]>("All");
   const locationRef = React.useRef<Location.LocationObject | null>(null);
   const pendingPunchCoordsRef = React.useRef<{
     latitude: number;
@@ -944,451 +932,713 @@ export default function AttendancePage() {
     }
   }, [userId, ensureLocationForPunch, performCheckIn]);
 
-  // Helper to calculate duration
-  const getDuration = useCallback(
-    (log: AttendanceLog) => {
-      if (!log.check_in_time) return "--";
 
-      const start = new Date(log.check_in_time);
-      if (isNaN(start.getTime())) return "--";
+  // ── Derived view state (Claude Design "JouleOps Attendance.dc.html") ──────
 
-      let end: Date;
+  const punchedIn = !!todayAttendance && !todayAttendance.check_out_time;
+  const dayComplete = !!todayAttendance?.check_out_time;
 
-      if (log.check_out_time) {
-        end = new Date(log.check_out_time);
-      } else {
-        const diffMs = currentTime.getTime() - start.getTime();
-        const diffHours = diffMs / (1000 * 60 * 60);
+  const todayMinutes = todayAttendance
+    ? (durationMinutes(todayAttendance, currentTime) ?? 0)
+    : 0;
+  const heroHours = String(Math.floor(todayMinutes / 60));
+  const heroMins = String(todayMinutes % 60).padStart(2, "0");
 
-        if (diffHours <= 20) {
-          end = currentTime;
-        } else {
-          // Cap at 20 hours exactly for sessions that exceeded the limit
-          end = new Date(start.getTime() + 20 * 60 * 60 * 1000);
-        }
-      }
+  const pillLabel = punchedIn
+    ? "On shift"
+    : dayComplete
+      ? "Day complete"
+      : "Not checked in";
 
-      const minutes = Math.floor((end.getTime() - start.getTime()) / 60000);
-      if (isNaN(minutes) || minutes < 0) return "0h 0m";
+  const todaySite =
+    todayAttendance?.site_name || todayAttendance?.site_code || null;
 
-      const hours = Math.floor(minutes / 60);
-      const mins = minutes % 60;
-      return `${hours}h ${mins}m`;
-    },
-    [currentTime],
+  const geoNote = locationError
+    ? locationError
+    : punchedIn
+      ? `Checked in${todaySite ? ` at ${todaySite}` : ""}`
+      : "You must be on site to check in";
+
+  /** History grouped into months, newest first — the month stepper walks these. */
+  const months = useMemo(() => {
+    const map = new Map<string, AttendanceLog[]>();
+    for (const log of attendanceHistory) {
+      const key = String(log.date || "").slice(0, 7);
+      if (key.length !== 7) continue;
+      const bucket = map.get(key);
+      if (bucket) bucket.push(log);
+      else map.set(key, [log]);
+    }
+    return Array.from(map.entries()).sort((a, b) => b[0].localeCompare(a[0]));
+  }, [attendanceHistory]);
+
+  // Clamp when the fetched window changes under us (e.g. a refresh).
+  const monthIndex = Math.min(monthOffset, Math.max(0, months.length - 1));
+  const activeMonth = months[monthIndex];
+  const monthLogs = useMemo(() => activeMonth?.[1] ?? [], [activeMonth]);
+
+  const monthLabel = useMemo(() => {
+    if (!activeMonth) return format(new Date(), "MMM yyyy");
+    const [y, m] = activeMonth[0].split("-").map(Number);
+    return format(new Date(y as number, (m as number) - 1, 1), "MMM yyyy");
+  }, [activeMonth]);
+
+  const monthSummary = useMemo(() => {
+    const worked = monthLogs.filter(
+      (l) => l.status !== "Leave" && l.check_in_time,
+    );
+    if (worked.length === 0) return "No days logged";
+    const total = worked.reduce(
+      (sum, l) => sum + (durationMinutes(l, currentTime) ?? 0),
+      0,
+    );
+    return `${worked.length} days · avg ${formatHm(Math.round(total / worked.length))}`;
+  }, [monthLogs, currentTime]);
+
+  /** Kind is computed once per log, then drives both filtering and row tone. */
+  const monthRows = useMemo(
+    () =>
+      monthLogs
+        .slice()
+        .sort((a, b) => String(b.date).localeCompare(String(a.date)))
+        .map((log) => ({ log, kind: dayKind(log, currentTime) })),
+    [monthLogs, currentTime],
   );
 
+  const visibleRows = useMemo(() => {
+    if (historyFilter === "Short") {
+      return monthRows.filter((r) => r.kind === "short");
+    }
+    if (historyFilter === "Missed") {
+      return monthRows.filter((r) => r.kind === "missed");
+    }
+    return monthRows;
+  }, [monthRows, historyFilter]);
+
+  const hasOlder = monthIndex < months.length - 1;
+  const hasNewer = monthIndex > 0;
+
   return (
-    <View className="flex-1 bg-slate-50 dark:bg-slate-950">
-      <SafeAreaView className="flex-1">
-        {/* Offline Banner */}
-        {!isConnected && (
-          <View className="bg-amber-500 py-1.5 px-4 flex-row items-center justify-center">
-            <WifiOff size={14} color="white" />
-            <Text className="text-white text-xs font-bold ml-2">
-              Offline — Punches will sync when connection returns
-            </Text>
-          </View>
-        )}
-
-        {locationError && (
-          <View className="mx-5 mt-2 mb-1 px-3 py-2 bg-amber-50 dark:bg-amber-950/40 rounded-xl border border-amber-200 dark:border-amber-800">
-            <Text className="text-amber-900 dark:text-amber-200 text-xs">
-              {locationError}
-            </Text>
-          </View>
-        )}
-
-        {/* Header */}
-        <View className="px-5 pt-2 pb-3 flex-row items-center">
+    <View style={styles.screen}>
+      {/* ── Thunder header ── */}
+      <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
+        <View style={styles.headerRow}>
           <TouchableOpacity
             onPress={() => router.back()}
-            className="w-10 h-10 rounded-full bg-white items-center justify-center mr-3"
-            style={{ shadowOpacity: 0.1, shadowRadius: 5, elevation: 2 }}
+            activeOpacity={0.8}
+            hitSlop={8}
+            style={styles.headerTile}
+            accessibilityRole="button"
+            accessibilityLabel="Go back"
           >
-            <ArrowLeft size={18} color="#64748b" />
+            <ArrowLeft size={20} color={ds.white} strokeWidth={2} />
           </TouchableOpacity>
-          <View>
-            <Text className="text-slate-900 dark:text-slate-50 text-xl font-bold">
-              Attendance
-            </Text>
-            <Text className="text-slate-400 dark:text-slate-500 text-xs">
-              {format(new Date(), "MMMM yyyy")}
+          <Text style={styles.headerTitle}>Attendance</Text>
+          <Text style={styles.headerDate}>{format(new Date(), "EEE d MMM")}</Text>
+        </View>
+
+        <View style={styles.hero}>
+          <View
+            style={[
+              styles.heroPill,
+              {
+                backgroundColor: punchedIn
+                  ? MOCK.pillOnBg
+                  : MOCK.pillOffBg,
+              },
+            ]}
+          >
+            <View
+              style={[
+                styles.heroPillDot,
+                { backgroundColor: punchedIn ? MOCK.pillOnDot : ds.sky[500] },
+              ]}
+            />
+            <Text
+              style={[
+                styles.heroPillLabel,
+                { color: punchedIn ? MOCK.pillOnFg : MOCK.pillOffFg },
+              ]}
+            >
+              {pillLabel}
             </Text>
           </View>
+
+          <Text style={styles.heroDuration}>
+            {heroHours}
+            <Text style={styles.heroUnit}>h</Text> {heroMins}
+            <Text style={styles.heroUnit}>m</Text>
+          </Text>
+
+          <View style={styles.heroTimes}>
+            <View>
+              <Text style={styles.heroEyebrow}>In</Text>
+              <Text
+                style={[
+                  styles.heroTime,
+                  { color: todayAttendance ? ds.white : MOCK.heroMuted },
+                ]}
+              >
+                {safeTime(todayAttendance?.check_in_time, "hh:mm a")}
+              </Text>
+            </View>
+            <View style={styles.heroDivider} />
+            <View>
+              <Text style={styles.heroEyebrow}>Out</Text>
+              <Text
+                style={[
+                  styles.heroTime,
+                  { color: dayComplete ? ds.white : MOCK.heroMuted },
+                ]}
+              >
+                {safeTime(todayAttendance?.check_out_time, "hh:mm a")}
+              </Text>
+            </View>
+          </View>
         </View>
+      </View>
 
-        {/* Today's Status Card - Redesigned as Smart Card */}
-        <View
-          className="mx-5 mb-6"
-          style={{
-            shadowColor: "#000",
-            shadowOffset: { width: 0, height: 10 },
-            shadowOpacity: 0.15,
-            shadowRadius: 20,
-            elevation: 10,
-          }}
+      {/* ── Punch ── */}
+      <View style={styles.punchWrap}>
+        <PressableScale
+          onPress={punchedIn ? handleCheckOutPress : handleCheckInPress}
+          disabled={validatingLocation}
+          style={[
+            styles.punch,
+            {
+              backgroundColor: punchedIn ? ds.thunder[100] : ds.flame[100],
+              opacity: validatingLocation ? 0.7 : 1,
+            },
+          ]}
+          accessibilityRole="button"
+          accessibilityLabel={punchedIn ? "End day" : "Start day"}
         >
-          <LinearGradient
-            colors={
-              todayAttendance?.check_out_time
-                ? ["#059669", "#064e3b"] // Emerald/Dark Green
-                : todayAttendance
-                  ? ["#dc2626", "#7f1d1d"] // Red/Dark Red
-                  : ["#2563eb", "#1e3a8a"] // Blue/Dark Blue
-            }
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={{ borderRadius: 24, padding: 24, minHeight: 220 }}
-          >
-            {/* Design Elements */}
-            <View
-              style={{
-                position: "absolute",
-                top: -20,
-                right: -20,
-                width: 100,
-                height: 100,
-                borderRadius: 50,
-                backgroundColor: "rgba(255,255,255,0.1)",
-              }}
-            />
-            <View
-              style={{
-                position: "absolute",
-                bottom: 20,
-                left: -30,
-                width: 120,
-                height: 120,
-                borderRadius: 60,
-                backgroundColor: "rgba(255,255,255,0.05)",
-              }}
-            />
-
-            {/* Top Row: Brand/Type and Date */}
-            <View className="flex-row justify-between items-start mb-6">
-              <View>
-                <Text className="text-white/60 text-[10px] font-black tracking-[2px] uppercase">
-                  SmartOps Identity
-                </Text>
-                <View className="flex-row items-center mt-1">
-                  <View className="w-2 h-2 rounded-full bg-white mr-2" />
-                  <Text className="text-white text-lg font-bold">
-                    Attendance Card
-                  </Text>
-                </View>
-              </View>
-              <View className="items-end">
-                <Text className="text-white/70 text-[10px] font-bold uppercase">
-                  {format(new Date(), "EEEE")}
-                </Text>
-                <Text className="text-white text-sm font-black">
-                  {format(new Date(), "dd MMM yyyy")}
-                </Text>
-              </View>
-            </View>
-
-            {/* Profile Section */}
-            <View className="flex-row items-center mb-6">
-              <View className="w-14 h-14 rounded-2xl bg-white/20 items-center justify-center border border-white/30 mr-4">
-                <Text className="text-white text-2xl font-black">
-                  {user?.name?.charAt(0) || user?.email?.charAt(0) || "U"}
-                </Text>
-              </View>
-              <View className="flex-1">
-                <Text
-                  className="text-white text-xl font-black"
-                  numberOfLines={1}
-                >
-                  {user?.name || "User"}
-                </Text>
-                <Text
-                  className="text-white/70 text-xs font-medium"
-                  numberOfLines={1}
-                >
-                  {user?.email || ""}
-                </Text>
-                <Text
-                  className="text-white/80 text-[11px] font-semibold mt-1"
-                  numberOfLines={1}
-                >
-                  {todayAttendance?.site_name
-                    ? `Site: ${todayAttendance.site_name}`
-                    : todayAttendance?.site_code
-                      ? `Site: ${todayAttendance.site_code}`
-                      : "Site: WFH / Off-site"}
-                </Text>
-              </View>
-              {todayAttendance && (
-                <View className="bg-white/20 px-3 py-1.5 rounded-xl border border-white/20">
-                  <Text className="text-white text-[11px] font-black">
-                    {getDuration(todayAttendance)}
-                  </Text>
-                </View>
-              )}
-            </View>
-
-            {/* Stats Row */}
-            <View className="flex-row gap-3">
-              <View className="flex-1 bg-black/20 rounded-2xl p-3 border border-white/10">
-                <View className="flex-row items-center mb-1">
-                  <LogIn size={11} color="#4ade80" />
-                  <Text className="text-white/60 text-[9px] font-bold uppercase ml-1.5">
-                    Check In
-                  </Text>
-                </View>
-                <Text className="text-white text-sm font-black">
-                  {todayAttendance?.check_in_time
-                    ? format(new Date(todayAttendance.check_in_time), "HH:mm")
-                    : "--:--"}
-                </Text>
-              </View>
-
-              <View className="flex-1 bg-black/20 rounded-2xl p-3 border border-white/10">
-                <View className="flex-row items-center mb-1">
-                  <LogOut size={11} color="#fb923c" />
-                  <Text className="text-white/60 text-[9px] font-bold uppercase ml-1.5">
-                    Check Out
-                  </Text>
-                </View>
-                <Text className="text-white text-sm font-black">
-                  {todayAttendance?.check_out_time
-                    ? format(new Date(todayAttendance.check_out_time), "HH:mm")
-                    : "--:--"}
-                </Text>
-              </View>
-
-              <View className="flex-1 bg-black/20 rounded-2xl p-3 border border-white/10">
-                <View className="flex-row items-center mb-1">
-                  <Clock size={11} color="#60a5fa" />
-                  <Text className="text-white/60 text-[9px] font-bold uppercase ml-1.5">
-                    Status
-                  </Text>
-                </View>
-                <Text
-                  className="text-white text-[10px] font-black uppercase"
-                  numberOfLines={1}
-                >
-                  {todayAttendance?.check_out_time
-                    ? "Complete"
-                    : todayAttendance
-                      ? "Active"
-                      : "Pending"}
-                </Text>
-              </View>
-            </View>
-
-            {/* Action Area */}
-            <View className="mt-6">
-              {!todayAttendance ? (
-                <PressableScale
-                  onPress={handleCheckInPress}
-                  disabled={validatingLocation}
-                  style={{
-                    backgroundColor: "white",
-                    borderRadius: 16,
-                    height: 50,
-                    flexDirection: "row",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    shadowColor: "#000",
-                    shadowOffset: { width: 0, height: 4 },
-                    shadowOpacity: 0.1,
-                    shadowRadius: 8,
-                  }}
-                >
-                  {validatingLocation ? (
-                    <ActivityIndicator color="#2563eb" size="small" />
-                  ) : (
-                    <>
-                      <MapPin size={18} color="#2563eb" strokeWidth={2.5} />
-                      <Text className="text-blue-700 font-black ml-2 tracking-tight">
-                        START DAY
-                      </Text>
-                    </>
-                  )}
-                </PressableScale>
-              ) : !todayAttendance.check_out_time ? (
-                <PressableScale
-                  onPress={handleCheckOutPress}
-                  style={{
-                    backgroundColor: "rgba(255,255,255,0.15)",
-                    borderRadius: 16,
-                    height: 50,
-                    flexDirection: "row",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    borderWidth: 1.5,
-                    borderColor: "rgba(255,255,255,0.4)",
-                  }}
-                >
-                  <LogOut size={18} color="white" strokeWidth={2.5} />
-                  <Text className="text-white font-black ml-2 tracking-tight">
-                    END DAY
-                  </Text>
-                </PressableScale>
-              ) : (
-                <TouchableOpacity
-                  onPress={handleCheckInPress}
-                  disabled={validatingLocation}
-                  activeOpacity={0.8}
-                  style={{
-                    backgroundColor: "rgba(255,255,255,0.2)",
-                    borderRadius: 16,
-                    height: 50,
-                    flexDirection: "row",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    borderWidth: 1,
-                    borderColor: "rgba(255,255,255,0.3)",
-                  }}
-                >
-                  {validatingLocation ? (
-                    <ActivityIndicator color="white" size="small" />
-                  ) : (
-                    <>
-                      <MapPin size={18} color="white" strokeWidth={2.5} />
-                      <Text className="text-white font-black ml-2 tracking-tight">
-                        START DAY
-                      </Text>
-                    </>
-                  )}
-                </TouchableOpacity>
-              )}
-            </View>
-          </LinearGradient>
-        </View>
-
-        {/* History Header - Fixed */}
-        <Text className="text-slate-900 dark:text-slate-50 text-base font-bold mb-3 px-5">
-          History
-        </Text>
-
-        {/* History List - Only this scrolls */}
-        <ScrollView
-          className="flex-1 px-5"
-          contentContainerStyle={{ paddingBottom: 40 }}
-          showsVerticalScrollIndicator={false}
-          refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-          }
-        >
-          {loading ? (
-            <AttendanceHistorySkeleton />
-          ) : attendanceHistory.length === 0 ? (
-            <EmptyState title="No attendance history found" />
+          {validatingLocation ? (
+            <ActivityIndicator size="small" color={ds.white} />
           ) : (
-            <View className="gap-3">
-              {attendanceHistory.map((log) => (
-                <HistoryItem
-                  key={log.id}
-                  log={log}
-                  currentTime={currentTime}
-                  getDuration={getDuration}
-                />
-              ))}
-            </View>
+            <>
+              {punchedIn ? (
+                <LogOut size={19} color={ds.white} strokeWidth={2.2} />
+              ) : (
+                <LogIn size={19} color={ds.white} strokeWidth={2.2} />
+              )}
+              <Text style={styles.punchLabel}>
+                {punchedIn ? "End day" : "Start day"}
+              </Text>
+            </>
           )}
-        </ScrollView>
+        </PressableScale>
 
-        {/* Early Checkout Reason Modal */}
-        {isCheckoutModalVisible && (
-          <Modal
-            visible={isCheckoutModalVisible}
-            transparent={true}
-            animationType="fade"
-            onRequestClose={() => setIsCheckoutModalVisible(false)}
+        <View style={styles.geoRow}>
+          {locationError ? (
+            <AlertTriangle size={14} color={ds.flame[100]} strokeWidth={2} />
+          ) : (
+            <MapPin size={14} color={ds.sky[100]} strokeWidth={2} />
+          )}
+          <Text
+            style={[
+              styles.geoNote,
+              locationError ? { color: ds.flame[100] } : null,
+            ]}
+            numberOfLines={2}
           >
-            <View className="flex-1 bg-black/50 justify-center px-5">
-              <View className="bg-white dark:bg-slate-900 rounded-2xl p-5">
-                <View className="flex-row items-center mb-4">
-                  <AlertTriangle
-                    size={24}
-                    color="#f59e0b"
-                    style={{ marginRight: 12 }}
-                  />
-                  <View className="flex-1">
-                    <Text className="text-lg font-bold text-slate-900 dark:text-slate-50">
-                      Early Checkout
-                    </Text>
-                    <Text className="text-slate-500 dark:text-slate-400 text-sm mt-1">
-                      You worked {earlyCheckoutHours} hours (less than 7h).
-                      Please provide a reason.
-                    </Text>
-                  </View>
-                </View>
+            {geoNote}
+          </Text>
+        </View>
 
-                <TextInput
-                  className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-3 h-24 text-slate-900 dark:text-slate-100 mb-4"
-                  placeholder="Enter reason here..."
-                  placeholderTextColor="#94a3b8"
-                  multiline
-                  textAlignVertical="top"
-                  value={checkoutReason}
-                  onChangeText={setCheckoutReason}
-                />
+        {!isConnected ? (
+          <View style={styles.offlineRow}>
+            <WifiOff size={13} color={ds.carbon[500]} strokeWidth={2} />
+            <Text style={styles.offlineText}>
+              Offline — punches sync when the connection returns
+            </Text>
+          </View>
+        ) : null}
+      </View>
 
-                <View className="flex-row gap-3">
-                  <TouchableOpacity
-                    onPress={() => setIsCheckoutModalVisible(false)}
-                    className="flex-1 py-3 items-center"
-                  >
-                    <Text className="text-slate-500 dark:text-slate-400 font-bold">
-                      Cancel
-                    </Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    onPress={submitEarlyCheckout}
-                    className="flex-1 bg-red-600 rounded-xl py-3 items-center"
-                  >
-                    <Text className="text-white font-bold">Submit</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            </View>
-          </Modal>
-        )}
+      {/* ── History ── */}
+      <ScrollView
+        style={{ flex: 1 }}
+        contentContainerStyle={styles.body}
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor={ds.thunder[100]}
+          />
+        }
+      >
+        <View style={styles.monthRow}>
+          <Text style={styles.monthLabel}>{monthLabel}</Text>
+          <View style={styles.monthNav}>
+            <TouchableOpacity
+              onPress={() => setMonthOffset((i) => i + 1)}
+              disabled={!hasOlder}
+              activeOpacity={0.7}
+              hitSlop={6}
+              style={[styles.monthBtn, styles.monthBtnFilled]}
+              accessibilityRole="button"
+              accessibilityLabel="Previous month"
+            >
+              <ChevronLeft
+                size={16}
+                color={hasOlder ? ds.carbon[400] : MOCK.navDisabled}
+                strokeWidth={2.2}
+              />
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => setMonthOffset((i) => Math.max(0, i - 1))}
+              disabled={!hasNewer}
+              activeOpacity={0.7}
+              hitSlop={6}
+              style={styles.monthBtn}
+              accessibilityRole="button"
+              accessibilityLabel="Next month"
+            >
+              <ChevronRight
+                size={16}
+                color={hasNewer ? ds.carbon[400] : MOCK.navDisabled}
+                strokeWidth={2.2}
+              />
+            </TouchableOpacity>
+          </View>
+          <View style={{ flex: 1 }} />
+          <Text style={styles.monthSummary}>{monthSummary}</Text>
+        </View>
 
-        {/* Site Selection Modal */}
-        {isSiteModalVisible && (
-          <Modal
-            visible={isSiteModalVisible}
-            transparent={true}
-            animationType="slide"
-            onRequestClose={() => setIsSiteModalVisible(false)}
-          >
-            <View className="flex-1 bg-black/50 justify-end">
-              <View className="bg-white dark:bg-slate-900 rounded-t-3xl p-5 max-h-[80%]">
-                <View className="flex-row items-center justify-between mb-5">
-                  <Text className="text-xl font-bold text-slate-900 dark:text-slate-50">
-                    Select Site
-                  </Text>
-                  <TouchableOpacity
-                    onPress={() => setIsSiteModalVisible(false)}
-                  >
-                    <X size={24} color="#94a3b8" />
-                  </TouchableOpacity>
-                </View>
-
-                <Text className="text-slate-500 dark:text-slate-400 mb-4">
-                  Multiple sites are within range. Please select where you are
-                  checking in.
+        <View style={styles.filterRow}>
+          {HISTORY_FILTERS.map((f) => {
+            const on = historyFilter === f;
+            return (
+              <TouchableOpacity
+                key={f}
+                onPress={() => setHistoryFilter(f)}
+                activeOpacity={0.75}
+                style={[
+                  styles.filterChip,
+                  {
+                    backgroundColor: on ? ds.thunder[100] : ds.white,
+                    borderColor: on ? ds.thunder[100] : ds.carbon[900],
+                  },
+                ]}
+                accessibilityRole="button"
+                accessibilityState={{ selected: on }}
+              >
+                <Text
+                  style={[
+                    styles.filterLabel,
+                    { color: on ? ds.white : ds.carbon[400] },
+                  ]}
+                >
+                  {f}
                 </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
 
-                <ScrollView className="mb-4">
-                  {availableSites.map((site) => (
-                    <SiteItem
-                      key={site.site_code}
-                      site={site}
-                      onSelect={(code) => performCheckIn(code)}
-                    />
-                  ))}
-                </ScrollView>
+        {loading ? (
+          <AttendanceHistorySkeleton />
+        ) : (
+          <View style={styles.historyCard}>
+            {visibleRows.length === 0 ? (
+              <View style={styles.historyEmpty}>
+                <CalendarCheck
+                  size={24}
+                  color={ds.carbon[800]}
+                  strokeWidth={1.9}
+                />
+                <Text style={styles.historyEmptyText}>
+                  {months.length === 0
+                    ? "No attendance history yet"
+                    : historyFilter === "All"
+                      ? "No days logged this month"
+                      : `No ${historyFilter.toLowerCase()} days this month`}
+                </Text>
+              </View>
+            ) : (
+              visibleRows.map((row, i) => (
+                <HistoryRow
+                  key={row.log.id}
+                  log={row.log}
+                  kind={row.kind}
+                  now={currentTime}
+                  last={i === visibleRows.length - 1}
+                />
+              ))
+            )}
+          </View>
+        )}
+      </ScrollView>
+
+      {/* ── Early-checkout reason ── */}
+      {isCheckoutModalVisible && (
+        <Modal
+          visible={isCheckoutModalVisible}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setIsCheckoutModalVisible(false)}
+        >
+          <View style={styles.modalScrim}>
+            <View style={styles.modalCard}>
+              <View style={styles.modalHead}>
+                <AlertTriangle
+                  size={22}
+                  color={ds.flame[100]}
+                  strokeWidth={2.1}
+                />
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text style={styles.modalTitle}>Early checkout</Text>
+                  <Text style={styles.modalSub}>
+                    You worked {earlyCheckoutHours} hours (less than 7h). Please
+                    give a reason.
+                  </Text>
+                </View>
+              </View>
+
+              <TextInput
+                style={styles.modalInput}
+                placeholder="Enter reason here…"
+                placeholderTextColor={ds.carbon[700]}
+                multiline
+                textAlignVertical="top"
+                value={checkoutReason}
+                onChangeText={setCheckoutReason}
+              />
+
+              <View style={styles.modalActions}>
+                <TouchableOpacity
+                  onPress={() => setIsCheckoutModalVisible(false)}
+                  activeOpacity={0.8}
+                  style={[styles.modalBtn, styles.modalBtnGhost]}
+                >
+                  <Text style={styles.modalBtnGhostText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={submitEarlyCheckout}
+                  activeOpacity={0.85}
+                  style={[styles.modalBtn, styles.modalBtnPrimary]}
+                >
+                  <Text style={styles.modalBtnPrimaryText}>Submit</Text>
+                </TouchableOpacity>
               </View>
             </View>
-          </Modal>
-        )}
-      </SafeAreaView>
+          </View>
+        </Modal>
+      )}
+
+      {/* ── Site picker ── */}
+      {isSiteModalVisible && (
+        <Modal
+          visible={isSiteModalVisible}
+          transparent
+          animationType="slide"
+          onRequestClose={() => setIsSiteModalVisible(false)}
+        >
+          <View style={styles.sheetScrim}>
+            <View style={[styles.sheet, { paddingBottom: insets.bottom + 16 }]}>
+              <View style={styles.sheetHead}>
+                <Text style={styles.sheetTitle}>Select site</Text>
+                <TouchableOpacity
+                  onPress={() => setIsSiteModalVisible(false)}
+                  hitSlop={10}
+                  accessibilityRole="button"
+                  accessibilityLabel="Close"
+                >
+                  <X size={22} color={ds.carbon[500]} strokeWidth={2} />
+                </TouchableOpacity>
+              </View>
+              <Text style={styles.sheetSub}>
+                More than one site is in range — pick where you are checking in.
+              </Text>
+              <ScrollView style={{ marginTop: 4 }}>
+                {availableSites.map((site) => (
+                  <SiteItem
+                    key={site.site_code}
+                    site={site}
+                    onSelect={(code) => performCheckIn(code)}
+                  />
+                ))}
+              </ScrollView>
+            </View>
+          </View>
+        </Modal>
+      )}
     </View>
   );
 }
+
+/** Mock-only tints from the artboard with no design-system token. */
+const MOCK = {
+  /** On-shift pill: sky wash, mint dot, mint label. */
+  pillOnBg: "rgba(40,147,157,0.28)",
+  pillOnFg: "#A9E3CC",
+  pillOnDot: "#6FD3A8",
+  /** Off-shift pill: a plain white wash on thunder. */
+  pillOffBg: "rgba(255,255,255,0.12)",
+  pillOffFg: "#C7D4D6",
+  /** A time that hasn't happened yet. */
+  heroMuted: "rgba(255,255,255,0.45)",
+  heroDivider: "rgba(255,255,255,0.16)",
+  /** Month stepper at the end of its range. */
+  navDisabled: "#D6D4D3",
+  /** Hairline between history rows. */
+  divider: "#F0EFEF",
+} as const;
+
+const styles = StyleSheet.create({
+  screen: { flex: 1, backgroundColor: ds.pageBg },
+
+  /* ── Thunder header ── */
+  header: {
+    backgroundColor: ds.thunder[100],
+    borderBottomLeftRadius: 26,
+    borderBottomRightRadius: 26,
+  },
+  headerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingHorizontal: 20,
+  },
+  headerTile: {
+    width: 34,
+    height: 34,
+    borderRadius: soRadius.pill,
+    backgroundColor: "rgba(255,255,255,0.1)",
+    alignItems: "center",
+    justifyContent: "center",
+    marginLeft: -4,
+  },
+  headerTitle: { flex: 1, fontSize: 16, fontWeight: "700", color: ds.white },
+  headerDate: {
+    fontSize: 9,
+    fontWeight: "600",
+    letterSpacing: 1.08,
+    textTransform: "uppercase",
+    color: ds.sky[500],
+  },
+
+  hero: { paddingHorizontal: 22, paddingTop: 22, paddingBottom: 4 },
+  heroPill: {
+    alignSelf: "center",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 7,
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: soRadius.pill,
+    marginBottom: 14,
+  },
+  heroPillDot: { width: 6, height: 6, borderRadius: soRadius.pill },
+  heroPillLabel: {
+    fontSize: 9,
+    fontWeight: "600",
+    letterSpacing: 1.08,
+    textTransform: "uppercase",
+  },
+  heroDuration: {
+    textAlign: "center",
+    fontSize: 62,
+    lineHeight: 66,
+    fontWeight: "300",
+    letterSpacing: -1.24,
+    color: ds.white,
+  },
+  heroUnit: { fontSize: 26, fontWeight: "600" },
+  heroTimes: {
+    flexDirection: "row",
+    justifyContent: "center",
+    gap: 26,
+    marginTop: 16,
+  },
+  heroDivider: { width: 1, backgroundColor: MOCK.heroDivider },
+  heroEyebrow: {
+    fontSize: 9,
+    fontWeight: "600",
+    letterSpacing: 1.08,
+    textTransform: "uppercase",
+    color: ds.sky[500],
+    marginBottom: 4,
+  },
+  heroTime: { fontSize: 15, fontWeight: "600" },
+
+  /* ── Punch ── */
+  punchWrap: { paddingHorizontal: 20, paddingTop: 16 },
+  punch: {
+    borderRadius: 14,
+    padding: 16,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 9,
+  },
+  punchLabel: { fontSize: 16, fontWeight: "700", color: ds.white },
+  geoRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    marginTop: 10,
+  },
+  geoNote: { flexShrink: 1, fontSize: 11, color: ds.carbon[500] },
+  offlineRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    marginTop: 8,
+  },
+  offlineText: { flexShrink: 1, fontSize: 11, color: ds.carbon[500] },
+
+  /* ── History ── */
+  body: { paddingHorizontal: 20, paddingTop: 18, paddingBottom: 28 },
+  monthRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 10,
+  },
+  monthLabel: { fontSize: 13, fontWeight: "700", color: ds.carbon[100] },
+  monthNav: { flexDirection: "row", gap: 2 },
+  monthBtn: {
+    width: 26,
+    height: 26,
+    borderRadius: soRadius.pill,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  monthBtnFilled: { backgroundColor: ds.carbon[1000] },
+  monthSummary: { fontSize: 11.5, color: ds.carbon[600] },
+
+  filterRow: { flexDirection: "row", gap: 6, marginBottom: 12 },
+  filterChip: {
+    minHeight: 34,
+    justifyContent: "center",
+    paddingHorizontal: 13,
+    borderRadius: soRadius.pill,
+    borderWidth: 1,
+  },
+  filterLabel: { fontSize: 11, fontWeight: "600", letterSpacing: 0.22 },
+
+  historyCard: {
+    backgroundColor: ds.white,
+    borderRadius: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 2,
+    ...soShadow,
+  },
+  historyRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingVertical: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: MOCK.divider,
+  },
+  historyRowLast: { borderBottomWidth: 0 },
+  historyDay: { width: 44, fontSize: 12, fontWeight: "600" },
+  historyBody: { flex: 1, minWidth: 0 },
+  historyLine: { fontSize: 12 },
+  historySite: { fontSize: 10.5, color: ds.carbon[600], marginTop: 2 },
+  historyDur: { fontSize: 12.5, fontWeight: "600" },
+  historyEmpty: { paddingVertical: 24, alignItems: "center", gap: 8 },
+  historyEmptyText: { fontSize: 12.5, color: ds.carbon[500] },
+
+  /* ── Early-checkout modal ── */
+  modalScrim: {
+    flex: 1,
+    backgroundColor: "rgba(25,19,18,0.5)",
+    justifyContent: "center",
+    paddingHorizontal: 20,
+  },
+  modalCard: {
+    backgroundColor: ds.white,
+    borderRadius: 18,
+    padding: 18,
+  },
+  modalHead: { flexDirection: "row", gap: 12, marginBottom: 14 },
+  modalTitle: { fontSize: 16, fontWeight: "700", color: ds.carbon[100] },
+  modalSub: {
+    fontSize: 12.5,
+    lineHeight: 18,
+    color: ds.carbon[400],
+    marginTop: 3,
+  },
+  modalInput: {
+    backgroundColor: ds.pageBg,
+    borderWidth: 1,
+    borderColor: ds.carbon[900],
+    borderRadius: soRadius.sm,
+    padding: 12,
+    minHeight: 92,
+    fontSize: 13,
+    color: ds.carbon[100],
+    marginBottom: 14,
+  },
+  modalActions: { flexDirection: "row", gap: 10 },
+  modalBtn: {
+    flex: 1,
+    borderRadius: soRadius.sm,
+    paddingVertical: 13,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  modalBtnGhost: { borderWidth: 1, borderColor: ds.carbon[900] },
+  modalBtnGhostText: { fontSize: 13.5, fontWeight: "600", color: ds.carbon[400] },
+  modalBtnPrimary: { backgroundColor: ds.thunder[100] },
+  modalBtnPrimaryText: { fontSize: 13.5, fontWeight: "700", color: ds.white },
+
+  /* ── Site picker sheet ── */
+  sheetScrim: {
+    flex: 1,
+    backgroundColor: "rgba(25,19,18,0.5)",
+    justifyContent: "flex-end",
+  },
+  sheet: {
+    backgroundColor: ds.white,
+    borderTopLeftRadius: 22,
+    borderTopRightRadius: 22,
+    paddingHorizontal: 20,
+    paddingTop: 18,
+    maxHeight: "80%",
+  },
+  sheetHead: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 6,
+  },
+  sheetTitle: { fontSize: 17, fontWeight: "700", color: ds.carbon[100] },
+  sheetSub: { fontSize: 12.5, lineHeight: 18, color: ds.carbon[400] },
+
+  siteRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    backgroundColor: ds.pageBg,
+    borderWidth: 1,
+    borderColor: ds.carbon[900],
+    borderRadius: soRadius.card,
+    padding: 13,
+    marginTop: 8,
+  },
+  siteIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: soRadius.pill,
+    backgroundColor: ds.sky[1000],
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  siteName: { fontSize: 13.5, fontWeight: "600", color: ds.carbon[100] },
+  siteAddress: { fontSize: 11, color: ds.carbon[500], marginTop: 2 },
+  siteDistance: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 5,
+    backgroundColor: ds.sky[1000],
+  },
+  siteDistanceText: { fontSize: 10, fontWeight: "700", color: ds.sky[100] },
+});
