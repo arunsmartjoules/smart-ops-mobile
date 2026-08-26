@@ -21,8 +21,18 @@ import {
 import NetInfo from "@react-native-community/netinfo";
 import * as Location from "expo-location";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { LogIn, LogOut, Wrench, WifiOff } from "lucide-react-native";
-import type { LucideIcon } from "lucide-react-native";
+import {
+  Bell,
+  CalendarCheck,
+  Droplets,
+  FileText,
+  LogIn,
+  LogOut,
+  Thermometer,
+  Wrench,
+  WifiOff,
+  Zap,
+} from "lucide-react-native";
 import { router, useFocusEffect } from "expo-router";
 import { useAuth } from "@/contexts/AuthContext";
 import { useAttendanceGate } from "@/contexts/AttendanceGateContext";
@@ -32,7 +42,7 @@ import AttendanceService, {
   getISTDateString,
   type Site,
 } from "@/services/AttendanceService";
-import { format } from "date-fns";
+import { addDays, format } from "date-fns";
 import { useNetworkStatus } from "@/hooks/useNetworkStatus";
 import Skeleton from "@/components/Skeleton";
 import TicketsService, { type Ticket } from "@/services/TicketsService";
@@ -49,17 +59,17 @@ import { eq } from "drizzle-orm";
 import { WhatsAppService } from "@/services/WhatsAppService";
 import { ReportPickerModal } from "@/components/ReportPickerModal";
 import { ds } from "@/constants/ds";
+import { soRadius, soShadow } from "@/components/home/SiteOverview";
 import {
-  IdentityCard,
-  OverviewEmpty,
-  OverviewHeader,
-  OverviewRow,
-  SectionHeading,
-  soRadius,
-  soShadow,
-  type BadgeTone,
-  type TintKey,
-} from "@/components/home/SiteOverview";
+  type DayBar,
+  HomeEmpty,
+  HomeHero,
+  HomeSectionHeading,
+  HomeTicketCard,
+  HoursWeekCard,
+  TicketStatusCard,
+} from "@/components/home/HomeUI";
+import { istDayEndIso, istDayStartIso } from "@/utils/istDate";
 
 function formatLocationFailureMessage(
   message: string,
@@ -93,6 +103,45 @@ interface PendingItem {
   timestamp: string;
   priority?: string;
   priorityOrder?: number;
+  /** The complaint category (picks the row icon) — distinct from `category`. */
+  ticketCategory?: string;
+  location?: string;
+  assignedTo?: string;
+}
+
+/** How many tickets the Home feed shows before deferring to "See all". */
+const HOME_TICKET_LIMIT = 6;
+
+const PRIORITY_ORDER: Record<string, number> = {
+  "Very High": 1,
+  High: 2,
+  Medium: 3,
+  Low: 4,
+};
+
+/** Ticket rows → the Home feed's shape, highest priority / newest first. */
+function toPendingItems(list: Ticket[]): PendingItem[] {
+  return list
+    .slice(0, 50)
+    .map((t) => ({
+      id: t.id,
+      title: t.title,
+      subtitle: t.ticket_no,
+      category: "Ticket" as const,
+      status: t.status,
+      priority: t.priority,
+      route: "/(tabs)/tickets",
+      timestamp: t.created_at,
+      ticketCategory: t.category,
+      location: t.area_asset || t.location,
+      assignedTo: t.assigned_to,
+    }))
+    .sort((a, b) => {
+      const pa = PRIORITY_ORDER[a.priority || ""] || 5;
+      const pb = PRIORITY_ORDER[b.priority || ""] || 5;
+      if (pa !== pb) return pa - pb;
+      return new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime();
+    });
 }
 
 const getDefaultUpdateStatus = (ticket: Ticket) => {
@@ -105,51 +154,142 @@ const getInitialUpdateRemarks = (ticket: Ticket, status: string) => {
   return status === ticket.status ? ticket.internal_remarks || "" : "";
 };
 
-/** Row shape for the open-tickets list. */
-interface OverviewItem {
-  id: string;
-  title: string;
-  sub: string;
-  badge?: BadgeTone;
-  icon: LucideIcon;
-  tint: TintKey;
-  onPress?: () => void;
+/** Hero greeting — the mock's "Good afternoon, Pakshep". */
+function timeGreeting(now: Date) {
+  const h = now.getHours();
+  if (h < 12) return "Good morning";
+  if (h < 17) return "Good afternoon";
+  return "Good evening";
 }
 
-/** "technician" / "regional_manager" → "Technician" / "Regional Manager". */
-function prettyRole(role?: string) {
-  if (!role) return "";
-  return role
-    .split(/[_\s]+/)
-    .filter(Boolean)
-    .map((w) => w[0].toUpperCase() + w.slice(1).toLowerCase())
-    .join(" ");
+/** "Inprogress" → "In progress" for the status chip. */
+function prettyStatus(status?: string) {
+  if (!status) return undefined;
+  return status.toLowerCase() === "inprogress" ? "In progress" : status;
+}
+
+/** "Pankaj Gupta" → "PG"; undefined when there is no assignee yet. */
+function initials(name?: string) {
+  const parts = (name || "").trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return undefined;
+  return (parts[0][0] + (parts[1]?.[0] ?? "")).toUpperCase();
+}
+
+/** Row icon, guessed from the complaint category then the title. */
+function ticketIcon(category?: string, title?: string) {
+  const s = `${category || ""} ${title || ""}`.toLowerCase();
+  if (/temp|cool|humid|comfort|\brh\b|\bac\b|a\/c/.test(s)) return Thermometer;
+  if (/water|leak|drain|plumb|condensate/.test(s)) return Droplets;
+  if (/chiller|electric|power|motor|pump|compressor|panel|vfd|breaker/.test(s))
+    return Zap;
+  return Wrench;
+}
+
+/** "39h 20m" — the mock's duration format. */
+function formatHm(minutes: number) {
+  const safe = Math.max(0, Math.round(minutes));
+  return `${Math.floor(safe / 60)}h ${String(safe % 60).padStart(2, "0")}m`;
+}
+
+/** Age of a ticket, coarsened the way the mock shows it. */
+function elapsedSince(iso: string | undefined, now: Date) {
+  if (!iso) return undefined;
+  const t = new Date(iso).getTime();
+  if (Number.isNaN(t)) return undefined;
+  const mins = Math.max(0, Math.floor((now.getTime() - t) / 60000));
+  if (mins < 60) return `${mins}m`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ${String(mins % 60).padStart(2, "0")}m`;
+  return `${Math.floor(hours / 24)}d ${hours % 24}h`;
+}
+
+/** Minutes worked in one attendance log; an open shift runs to `now`. */
+function logMinutes(log: AttendanceLog, now: Date) {
+  if (!log.check_in_time) return 0;
+  const start = new Date(log.check_in_time);
+  if (Number.isNaN(start.getTime())) return 0;
+  const parsedEnd = log.check_out_time ? new Date(log.check_out_time) : now;
+  const end = Number.isNaN(parsedEnd.getTime()) ? now : parsedEnd;
+  const mins = Math.floor((end.getTime() - start.getTime()) / 60000);
+  // A shift left open overnight would otherwise run away with the chart.
+  return Math.max(0, Math.min(mins, 24 * 60));
+}
+
+const DAY_LABELS = ["M", "T", "W", "T", "F", "S", "S"];
+
+/**
+ * Bucket attendance into the Mon–Sun IST week that `now` falls in.
+ * Keys are IST calendar dates, so a late-evening shift lands on the right bar.
+ */
+function buildWeek(logs: AttendanceLog[], now: Date) {
+  const todayIso = getISTDateString(now);
+  const [y, m, d] = todayIso.split("-").map(Number);
+  // Noon keeps the arithmetic clear of DST/midnight edges.
+  const todayLocal = new Date(y ?? 1970, (m ?? 1) - 1, d ?? 1, 12, 0, 0);
+  const dow = todayLocal.getDay(); // 0 = Sunday
+  const monday = addDays(todayLocal, dow === 0 ? -6 : 1 - dow);
+
+  const byDate = new Map<string, number>();
+  for (const log of logs) {
+    const key =
+      log.date ||
+      (log.check_in_time ? getISTDateString(new Date(log.check_in_time)) : "");
+    if (!key) continue;
+    byDate.set(key, (byDate.get(key) || 0) + logMinutes(log, now));
+  }
+
+  let totalMinutes = 0;
+  const days: DayBar[] = DAY_LABELS.map((label, i) => {
+    const iso = format(addDays(monday, i), "yyyy-MM-dd");
+    const minutes = byDate.get(iso) || 0;
+    totalMinutes += minutes;
+    return { label, minutes, isToday: iso === todayIso };
+  });
+
+  return { days, totalMinutes };
+}
+
+/** Collapse the backend's per-status map onto the mock's three segments. */
+function readStatusCounts(byStatus: Record<string, number>) {
+  const sum = (...keys: string[]) =>
+    keys.reduce((acc, k) => acc + (byStatus[k] || 0), 0);
+  return {
+    open: sum("Open"),
+    inProgress: sum("Inprogress", "In Progress", "In progress"),
+    resolved: sum("Resolved", "Closed"),
+  };
 }
 
 // --- Memoized Skeleton Component ---
 const DashboardSkeleton = React.memo(() => (
   <View style={{ flex: 1, backgroundColor: ds.pageBg }}>
-    <View style={{ height: 128, backgroundColor: ds.thunder[100] }} />
-    <View style={{ paddingHorizontal: 20, paddingTop: 16 }}>
+    <View
+      style={{
+        height: 252,
+        backgroundColor: ds.thunder[100],
+        borderBottomLeftRadius: 26,
+        borderBottomRightRadius: 26,
+      }}
+    />
+    <View style={{ paddingHorizontal: 18, paddingTop: 16 }}>
       <Skeleton
         width="100%"
-        height={168}
-        borderRadius={soRadius.card}
-        style={{ marginBottom: 12 }}
+        height={148}
+        borderRadius={18}
+        style={{ marginBottom: 14 }}
       />
-      <View style={{ flexDirection: "row", gap: 8, marginBottom: 20 }}>
-        {[1, 2, 3].map((i) => (
-          <View key={i} style={{ flex: 1 }}>
-            <Skeleton width="100%" height={70} borderRadius={soRadius.card} />
-          </View>
-        ))}
-      </View>
-      {[1, 2, 3, 4].map((i) => (
+      <Skeleton
+        width="100%"
+        height={116}
+        borderRadius={18}
+        style={{ marginBottom: 28 }}
+      />
+      {[1, 2, 3].map((i) => (
         <Skeleton
           key={i}
           width="100%"
-          height={62}
-          borderRadius={soRadius.card}
+          height={92}
+          borderRadius={14}
           style={{ marginBottom: 7 }}
         />
       ))}
@@ -183,6 +323,14 @@ export default function Dashboard() {
   const [currentTime, setCurrentTime] = useState(new Date());
   const [sites, setSites] = useState<Site[]>([]);
   const [currentSiteLabel, setCurrentSiteLabel] = useState<string>("");
+  const [week, setWeek] = useState<{ days: DayBar[]; totalMinutes: number }>(
+    () => buildWeek([], new Date()),
+  );
+  const [statusCounts, setStatusCounts] = useState<{
+    open: number;
+    inProgress: number;
+    resolved: number;
+  } | null>(null);
   const insets = useSafeAreaInsets();
 
   /** Site the page is reporting on — the header switcher's pick, else the first. */
@@ -277,6 +425,49 @@ export default function Dashboard() {
     };
   }, [todayAttendance]);
 
+  /**
+   * The two summary cards. Both degrade offline: attendance history falls back
+   * to the SQLite mirror inside the service, and the stats endpoint falls back
+   * to counting the locally cached tickets here.
+   */
+  const loadInsights = useCallback(async (userId: string, siteCode: string) => {
+    const now = new Date();
+
+    AttendanceService.getAttendanceHistory(userId, 1, 60)
+      .then((res) => setWeek(buildWeek(res?.data || [], now)))
+      .catch((error) =>
+        logger.warn("Dashboard weekly hours failed", { error }),
+      );
+
+    // Ticket mix over the trailing 30 days — all-time would drown Open in a
+    // wall of Resolved and flatten the meter.
+    const fromDate = istDayStartIso(getISTDateString(addDays(now, -29)));
+    const toDate = istDayEndIso(getISTDateString(now));
+    try {
+      const res = await TicketsService.getStats(siteCode, {
+        fromDate,
+        toDate,
+      });
+      if (res?.success && res.data?.byStatus) {
+        setStatusCounts(readStatusCounts(res.data.byStatus));
+        return;
+      }
+    } catch (error) {
+      logger.warn("Dashboard ticket stats failed", { error });
+    }
+
+    const local = await TicketsService.getTickets(siteCode, {
+      limit: 200,
+    }).catch(() => null);
+    if (local?.success && Array.isArray(local.data)) {
+      const byStatus: Record<string, number> = {};
+      for (const t of local.data as Ticket[]) {
+        if (t.status) byStatus[t.status] = (byStatus[t.status] || 0) + 1;
+      }
+      setStatusCounts(readStatusCounts(byStatus));
+    }
+  }, []);
+
   const fetchData = React.useCallback(async () => {
     // Safety exit if no user — keep loading state as-is, auth will trigger re-fetch
     if (!user?.user_id && !user?.id) {
@@ -284,6 +475,9 @@ export default function Dashboard() {
     }
 
     const userId = user.user_id || user.id;
+    // Keep the hero date and the ticket "age" labels honest across the 60s
+    // auto-sync — the live-timer effect above only ticks while on shift.
+    setCurrentTime(new Date());
     const hasRenderedData = !!todayAttendance || pendingTickets.length > 0;
     // Honour the header's site switcher; fall back to the first allowed site.
     const resolveSiteCode = (list: Site[]) =>
@@ -344,38 +538,10 @@ export default function Dashboard() {
         }).catch(() => ({ success: false, data: [] }));
 
         if (cachedTicketResult?.success && cachedTicketResult.data) {
-          const allTickets: PendingItem[] = [];
-          cachedTicketResult.data.slice(0, 50).forEach((t: Ticket) => {
-            allTickets.push({
-              id: t.id,
-              title: t.title,
-              subtitle: t.ticket_no,
-              category: "Ticket",
-              status: t.status,
-              priority: t.priority,
-              route: "/(tabs)/tickets",
-              timestamp: t.created_at,
-            });
-          });
-
-          const priorityOrder: Record<string, number> = {
-            "Very High": 1,
-            High: 2,
-            Medium: 3,
-            Low: 4,
-          };
-
-          allTickets.sort((a, b) => {
-            const pa = priorityOrder[a.priority || ""] || 5;
-            const pb = priorityOrder[b.priority || ""] || 5;
-            if (pa !== pb) return pa - pb;
-            return (
-              new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
-            );
-          });
-
-          setPendingTickets(allTickets);
+          setPendingTickets(toPendingItems(cachedTicketResult.data));
         }
+
+        void loadInsights(userId, siteCode);
 
         // Show cached data immediately
         setLoadingPending(false);
@@ -424,38 +590,13 @@ export default function Dashboard() {
           return { success: false, data: [] };
         });
 
-        const allTickets: PendingItem[] = [];
-        if (ticketResult?.success && ticketResult.data) {
-          ticketResult.data.slice(0, 50).forEach((t: Ticket) => {
-            allTickets.push({
-              id: t.id,
-              title: t.title,
-              subtitle: t.ticket_no,
-              category: "Ticket",
-              status: t.status,
-              priority: t.priority,
-              route: "/(tabs)/tickets",
-              timestamp: t.created_at,
-            });
-          });
+        setPendingTickets(
+          ticketResult?.success && ticketResult.data
+            ? toPendingItems(ticketResult.data)
+            : [],
+        );
 
-          const priorityOrder: Record<string, number> = {
-            "Very High": 1,
-            High: 2,
-            Medium: 3,
-            Low: 4,
-          };
-
-          allTickets.sort((a, b) => {
-            const pa = priorityOrder[a.priority || ""] || 5;
-            const pb = priorityOrder[b.priority || ""] || 5;
-            if (pa !== pb) return pa - pb;
-            return (
-              new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
-            );
-          });
-        }
-        setPendingTickets(allTickets);
+        void loadInsights(userId, fetchSiteCode);
 
       }
     } catch (error) {
@@ -464,7 +605,13 @@ export default function Dashboard() {
       setLoadingAttendance(false);
       setLoadingPending(false);
     }
-  }, [user, todayAttendance, pendingTickets.length, selectedSiteCode]); // Keep refresh behavior while avoiding cold-start skeleton on every fetch
+  }, [
+    user,
+    todayAttendance,
+    pendingTickets.length,
+    selectedSiteCode,
+    loadInsights,
+  ]); // Keep refresh behavior while avoiding cold-start skeleton on every fetch
 
   const loadAreasAndCategories = useCallback(async () => {
     if (sites.length === 0) return;
@@ -1078,58 +1225,64 @@ export default function Dashboard() {
   const punchedIn = !!todayAttendance && !todayAttendance.check_out_time;
   const shiftComplete = !!todayAttendance?.check_out_time;
 
-  const ticketItems = useMemo<OverviewItem[]>(
+  const ticketCards = useMemo(
     () =>
-      pendingTickets.map((t) => {
-        const p = (t.priority || "").toLowerCase();
-        const badge: BadgeTone = p.includes("very high")
-          ? "Very high"
-          : p.includes("high")
-            ? "High"
-            : "Medium";
-        const tint: TintKey = badge === "Medium" ? "sky" : "flame";
+      pendingTickets.slice(0, HOME_TICKET_LIMIT).map((t) => {
+        const open = (t.status || "").toLowerCase() === "open";
         return {
           id: t.id,
+          icon: ticketIcon(t.ticketCategory, t.title),
+          iconTint: open ? ds.flame[1000] : ds.sky[1000],
+          iconColor: open ? ds.flame[100] : ds.sky[100],
+          ticketNo: t.subtitle,
+          status: prettyStatus(t.status),
+          priority: t.priority,
           title: t.title,
-          sub: t.subtitle,
-          badge,
-          icon: Wrench,
-          tint,
+          location: t.location,
+          elapsed: elapsedSince(t.timestamp, currentTime),
+          // The mock reddens only its most urgent row. Priority is the honest
+          // stand-in — the ticket record carries no SLA clock to breach.
+          elapsedUrgent: (t.priority || "").toLowerCase().includes("very high"),
+          assignee: initials(t.assignedTo),
           onPress: () => handleTicketPress(t),
         };
       }),
-    [pendingTickets, handleTicketPress],
+    [pendingTickets, handleTicketPress, currentTime],
   );
-
-  const pill = punchedIn
-    ? {
-        label: `On shift · ${getStatusSubtext}`,
-        bg: ds.sky[1000],
-        fg: ds.sky[100],
-        dot: ds.sky[100],
-      }
-    : shiftComplete
-      ? {
-          label: `Shift done · ${getStatusSubtext}`,
-          bg: ds.carbon[1000],
-          fg: ds.carbon[500],
-          dot: ds.carbon[700],
-        }
-      : {
-          label: "Not checked in",
-          bg: ds.carbon[1000],
-          fg: ds.carbon[500],
-          dot: ds.carbon[700],
-        };
 
   const displayName = user?.full_name || user?.name || "JouleOps user";
   const avatarInitial = (displayName.trim()[0] || "J").toUpperCase();
-  const identitySubline = [
-    activeSite?.name || currentSiteLabel,
-    user?.designation || prettyRole(user?.role),
-  ]
-    .filter(Boolean)
-    .join(" · ");
+  const firstName = displayName.trim().split(/\s+/)[0] || "there";
+  const siteLabel = activeSite?.name || currentSiteLabel || "JouleOps";
+  const canSwitchSite = !isLocked && sites.length > 1;
+
+  /** Punch CTA — flame invites, translucent-white confirms, muted closes out. */
+  const cta = punchedIn
+    ? {
+        label: "End Day",
+        icon: LogOut,
+        bg: "rgba(255,255,255,0.14)",
+        fg: ds.white,
+        onPress: handleQuickCheckOut,
+      }
+    : shiftComplete
+      ? {
+          label: "Shift complete",
+          icon: CalendarCheck,
+          bg: "rgba(255,255,255,0.10)",
+          fg: ds.sky[500],
+          onPress: navigateToAttendance,
+        }
+      : {
+          label: "Start Day",
+          icon: LogIn,
+          bg: ds.flame[100],
+          fg: ds.white,
+          onPress: handleQuickCheckIn,
+        };
+
+  const counts = statusCounts ?? { open: 0, inProgress: 0, resolved: 0 };
+  const countsTotal = counts.open + counts.inProgress + counts.resolved;
 
   const confirmSignOut = () =>
     Alert.alert("Sign out", "Are you sure you want to sign out?", [
@@ -1149,21 +1302,34 @@ export default function Dashboard() {
 
   return (
     <View style={styles.screen}>
-      <OverviewHeader
+      <HomeHero
         topInset={insets.top}
-        dateLabel={format(new Date(), "EEEE, dd MMM")}
-        siteName={activeSite?.name || currentSiteLabel || "JouleOps"}
-        canSwitchSite={!isLocked && sites.length > 1}
-        onSwitchSite={() => setSitePickerOpen(true)}
-        bellLabel={isLocked ? "Reports" : "Notifications"}
-        onBell={() =>
-          isLocked ? setReportPickerOpen(true) : router.push("/notifications")
+        eyebrow={`${siteLabel} \u00b7 ${format(currentTime, "EEE dd MMM")}`}
+        onPressEyebrow={
+          canSwitchSite ? () => setSitePickerOpen(true) : undefined
         }
+        greeting={`${timeGreeting(currentTime)}, ${firstName}`}
         avatarInitial={avatarInitial}
         avatarLabel={isLocked ? "Sign out" : "Profile"}
         onAvatar={() =>
           isLocked ? confirmSignOut() : router.push("/(tabs)/profile")
         }
+        bellIcon={isLocked ? FileText : Bell}
+        bellLabel={isLocked ? "Reports" : "Notifications"}
+        onBell={() =>
+          isLocked ? setReportPickerOpen(true) : router.push("/notifications")
+        }
+        shiftValue={todayAttendance ? getStatusSubtext : "0h 00m"}
+        shiftLabel={punchedIn ? "On shift today" : "Hours today"}
+        ticketValue={String(pendingTickets.length)}
+        ticketUnit="open"
+        ticketLabel="Open at this site"
+        ctaLabel={cta.label}
+        ctaIcon={cta.icon}
+        ctaBg={cta.bg}
+        ctaFg={cta.fg}
+        ctaBusy={validatingLocation}
+        onPressCta={cta.onPress}
       />
 
       {!isConnected && (
@@ -1184,29 +1350,18 @@ export default function Dashboard() {
           />
         }
       >
-        <IdentityCard
-          avatarInitial={avatarInitial}
-          name={displayName}
-          subline={identitySubline}
-          email={user?.email || ""}
-          pillLabel={pill.label}
-          pillBg={pill.bg}
-          pillFg={pill.fg}
-          pillDot={pill.dot}
-          // The card itself is static in the mock; the pill keeps the
-          // attendance detail screen reachable from Home.
-          onPressPill={navigateToAttendance}
-          ctaLabel={punchedIn ? "End day" : "Start day"}
-          ctaIcon={punchedIn ? LogOut : LogIn}
-          ctaBg={punchedIn ? ds.thunder[100] : ds.flame[100]}
-          ctaBusy={validatingLocation}
-          onPressCta={punchedIn ? handleQuickCheckOut : handleQuickCheckIn}
+        <HoursWeekCard total={formatHm(week.totalMinutes)} days={week.days} />
+
+        <TicketStatusCard
+          caption={statusCounts ? `${countsTotal} in 30 days` : "Loading"}
+          open={counts.open}
+          inProgress={counts.inProgress}
+          resolved={counts.resolved}
         />
 
-        <SectionHeading
+        <HomeSectionHeading
           title="Open tickets"
-          count={loadingPending ? undefined : ticketItems.length}
-          actionLabel={isLocked ? undefined : "View all"}
+          actionLabel={isLocked ? undefined : "See all"}
           onAction={isLocked ? undefined : () => router.push("/(tabs)/tickets")}
         />
 
@@ -1216,26 +1371,32 @@ export default function Dashboard() {
               <Skeleton
                 key={i}
                 width="100%"
-                height={62}
-                borderRadius={soRadius.card}
+                height={92}
+                borderRadius={14}
                 style={{ marginBottom: 7 }}
               />
             ))}
           </View>
-        ) : ticketItems.length > 0 ? (
-          ticketItems.map((item) => (
-            <OverviewRow
+        ) : ticketCards.length > 0 ? (
+          ticketCards.map((item) => (
+            <HomeTicketCard
               key={item.id}
               icon={item.icon}
-              tint={item.tint}
+              iconTint={item.iconTint}
+              iconColor={item.iconColor}
+              ticketNo={item.ticketNo}
+              status={item.status}
+              priority={item.priority}
               title={item.title}
-              sub={item.sub}
-              badge={item.badge}
+              location={item.location}
+              elapsed={item.elapsed}
+              elapsedUrgent={item.elapsedUrgent}
+              assignee={item.assignee}
               onPress={item.onPress}
             />
           ))
         ) : (
-          <OverviewEmpty label="No open tickets" />
+          <HomeEmpty label="No open tickets" />
         )}
       </ScrollView>
 
@@ -1342,7 +1503,7 @@ const styles = StyleSheet.create({
     letterSpacing: 0.3,
     color: ds.white,
   },
-  body: { paddingHorizontal: 20, paddingTop: 16, paddingBottom: 24 },
+  body: { paddingHorizontal: 18, paddingTop: 16, paddingBottom: 28 },
 
   sheetBackdrop: {
     flex: 1,

@@ -1,8 +1,8 @@
 /**
- * Bottom bar from the Claude Design "JouleOps Site Overview" artboard: five
- * labelled tabs on a white surface, the active one sitting in a soft thunder
- * pill. Profile is deliberately absent — it moved to the header avatar on the
- * Site Overview screen.
+ * Bottom bar from the Claude Design "JouleOps Home Redesign" artboard: five
+ * labelled tabs on a white surface, the active one carried by the flame accent
+ * alone — no pill. Profile is deliberately absent; it lives in the Home hero's
+ * avatar.
  */
 import React from "react";
 import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
@@ -17,7 +17,6 @@ import {
 } from "lucide-react-native";
 import type { LucideIcon } from "lucide-react-native";
 import { ds } from "@/constants/ds";
-import { soRadius } from "@/components/home/SiteOverview";
 
 interface TabDef {
   name: string;
@@ -48,7 +47,7 @@ export function JouleTabBar({ state, navigation }: BottomTabBarProps) {
 
         const route = state.routes[index];
         const focused = state.index === index;
-        const color = focused ? ds.thunder[100] : ds.carbon[500];
+        const color = focused ? ds.flame[100] : ds.carbon[700];
         const Icon = tab.icon;
 
         const onPress = () => {
@@ -73,12 +72,15 @@ export function JouleTabBar({ state, navigation }: BottomTabBarProps) {
             accessibilityRole="button"
             accessibilityState={{ selected: focused }}
             accessibilityLabel={tab.label}
-            style={[
-              styles.tab,
-              focused && { backgroundColor: "rgba(7,43,49,0.08)" },
-            ]}
+            style={styles.tab}
           >
-            <Icon size={21} color={color} strokeWidth={focused ? 2.3 : 2} />
+            <Icon
+              size={21}
+              color={color}
+              strokeWidth={focused ? 2.4 : 2}
+              fill={focused ? color : "transparent"}
+              fillOpacity={focused ? 0.16 : 0}
+            />
             <Text
               allowFontScaling={false}
               numberOfLines={1}
@@ -101,8 +103,8 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 2,
     backgroundColor: ds.white,
-    paddingTop: 8,
-    paddingHorizontal: 10,
+    paddingTop: 9,
+    paddingHorizontal: 8,
     shadowColor: ds.carbon[100],
     shadowOffset: { width: 0, height: -2 },
     shadowOpacity: 0.07,
@@ -113,14 +115,13 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: "column",
     alignItems: "center",
-    gap: 4,
-    paddingTop: 6,
+    gap: 3,
+    paddingTop: 5,
     paddingBottom: 2,
-    borderRadius: soRadius.sm,
   },
   label: {
     fontSize: 9,
-    letterSpacing: 0.45,
+    letterSpacing: 0.54,
     textTransform: "uppercase",
   },
 });
