@@ -1,5 +1,5 @@
 import React from "react";
-import { Modal, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Modal, ScrollView, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { type Ticket } from "@/services/TicketsService";
 import { type SelectOption } from "./SearchableSelect";
@@ -20,7 +20,7 @@ import {
   getTicketPriority,
   getTicketStatus,
 } from "@/components/tickets/TicketsUI";
-import { ds } from "@/constants/ds";
+import { makeThemedStyles, useDs } from "@/hooks/useDs";
 import { formatIST } from "@/utils/istDate";
 import type { TicketIncidentDraft } from "@/constants/incidentFormOptions";
 
@@ -109,6 +109,8 @@ const TicketDetailModal = React.memo(
     setIncidentDraft,
     canEdit = true,
   }: TicketDetailModalProps) => {
+    const styles = useStyles();
+    const ds = useDs();
     const insets = useSafeAreaInsets();
     // Turns the hints and the sticky bar's message on only once the operator
     // has actually tried to submit.
@@ -191,8 +193,8 @@ const TicketDetailModal = React.memo(
 
     if (!ticket || !visible) return null;
 
-    const status = getTicketStatus(ticket.status);
-    const priority = getTicketPriority(ticket.priority);
+    const status = getTicketStatus(ticket.status, ds);
+    const priority = getTicketPriority(ticket.priority, ds);
     const ready = isDirty && !blocker;
 
     return (
@@ -308,7 +310,7 @@ const TicketDetailModal = React.memo(
 
 TicketDetailModal.displayName = "TicketDetailModal";
 
-const styles = StyleSheet.create({
+const useStyles = makeThemedStyles((ds) => ({
   screen: { flex: 1, backgroundColor: ds.pageBg },
   body: { paddingHorizontal: 20, paddingTop: 16, paddingBottom: 20 },
   summary: { padding: 16, marginBottom: 12 },
@@ -328,6 +330,6 @@ const styles = StyleSheet.create({
     borderTopColor: ds.carbon[1000],
     paddingTop: 13,
   },
-});
+}));
 
 export default TicketDetailModal;

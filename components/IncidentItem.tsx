@@ -2,7 +2,7 @@ import React, { useCallback } from "react";
 import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { Clock, MapPin, TriangleAlert } from "lucide-react-native";
 import { getInitials } from "@/utils/ticketVisuals";
-import { ds } from "@/constants/ds";
+import { makeThemedStyles, useDs } from "@/hooks/useDs";
 import { soRadius, soShadow } from "@/components/home/SiteOverview";
 import {
   getIncidentRca,
@@ -48,9 +48,11 @@ const IncidentItem = React.memo(
   ({ item, assignee, onPress }: IncidentItemProps) => {
     const handlePress = useCallback(() => onPress(item), [item, onPress]);
 
-    const status = getIncidentStatus(item.status);
-    const rca = getIncidentRca(item.rca_status);
-    const tone = getIncidentTint(item.status);
+    const styles = useStyles();
+    const ds = useDs();
+    const status = getIncidentStatus(item.status, ds);
+    const rca = getIncidentRca(item.rca_status, ds);
+    const tone = getIncidentTint(item.status, ds);
     const area = item.asset_location || item.site_code || "—";
     // An incident that isn't closed and has no RCA filed yet reads as urgent.
     const overdue = item.status !== "Resolved" && item.rca_status === "Open";
@@ -126,7 +128,7 @@ const IncidentItem = React.memo(
 
 IncidentItem.displayName = "IncidentItem";
 
-const styles = StyleSheet.create({
+const useStyles = makeThemedStyles((ds) => ({
   card: {
     backgroundColor: ds.white,
     borderRadius: soRadius.card,
@@ -134,6 +136,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     marginBottom: 7,
     marginHorizontal: 4,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: ds.cardBorder,
     ...soShadow,
   },
   row: { flexDirection: "row", alignItems: "flex-start", gap: 11 },
@@ -194,6 +198,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   assigneeText: { fontSize: 9, fontWeight: "600", color: ds.carbon[400] },
-});
+}));
 
 export default IncidentItem;

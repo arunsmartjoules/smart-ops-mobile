@@ -6,7 +6,6 @@ import {
   ScrollView,
   RefreshControl,
   ActivityIndicator,
-  StyleSheet,
 } from "react-native";
 import BottomSheet, {
   BottomSheetScrollView,
@@ -30,7 +29,7 @@ import { startOfDay, endOfDay, addDays } from "date-fns";
 import loggerUtil from "@/utils/logger";
 import Skeleton from "@/components/Skeleton";
 import * as Haptics from "expo-haptics";
-import { ds } from "@/constants/ds";
+import { makeThemedStyles, useDs } from "@/hooks/useDs";
 import {
   ModuleListHeader,
   useListSlide,
@@ -87,6 +86,8 @@ const isCompleted = (row: any) => {
 };
 
 export default function SiteLogs() {
+  const ds = useDs();
+  const sheetStyles = useSheetStyles();
   const { user } = useAuth();
   const { canEdit } = useAttendanceGate();
   const { isConnected } = useNetworkStatus();
@@ -534,18 +535,18 @@ export default function SiteLogs() {
                 >
                   <MapPin
                     size={15}
-                    color={on ? ds.white : ds.carbon[500]}
+                    color={on ? ds.onChrome : ds.carbon[500]}
                     strokeWidth={2}
                   />
                   <Text
                     style={[
                       sheetStyles.rowLabel,
-                      { color: on ? ds.white : ds.carbon[100] },
+                      { color: on ? ds.onChrome : ds.carbon[100] },
                     ]}
                   >
                     {s2.site_name || s2.site_code}
                   </Text>
-                  {on ? <Check size={16} color={ds.white} /> : null}
+                  {on ? <Check size={16} color={ds.onChrome} /> : null}
                 </TouchableOpacity>
               );
             })}
@@ -619,7 +620,7 @@ export default function SiteLogs() {
 
 /* Sheet content styling only — the sheet's own chrome (grabber, corner radius,
    scrim, swipe-to-dismiss) is native and not ours to draw. */
-const sheetStyles = StyleSheet.create({
+const useSheetStyles = makeThemedStyles((ds) => ({
   title: {
     fontSize: 15,
     fontWeight: "700",
@@ -678,4 +679,4 @@ const sheetStyles = StyleSheet.create({
     textTransform: "uppercase",
     color: ds.flame[100],
   },
-});
+}));

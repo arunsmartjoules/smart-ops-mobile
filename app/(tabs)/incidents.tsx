@@ -6,7 +6,6 @@ import {
   Platform,
   RefreshControl,
   ScrollView,
-  StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
@@ -32,7 +31,7 @@ import IncidentTopFilters from "@/components/IncidentTopFilters";
 import IncidentDetailModal from "@/components/IncidentDetailModal";
 import IncidentCard from "@/components/IncidentItem";
 import Animated from "react-native-reanimated";
-import { ds } from "@/constants/ds";
+import { makeThemedStyles, useDs } from "@/hooks/useDs";
 import {
   ListCountLine,
   ListEmptyCard,
@@ -199,6 +198,8 @@ interface IncidentCreateForm {
 }
 
 export default function IncidentsTab() {
+  const styles = useStyles();
+  const ds = useDs();
   const isDark = useColorScheme() === "dark";
   const { user } = useAuth();
   const { canEdit } = useAttendanceGate();
@@ -1132,7 +1133,7 @@ export default function IncidentsTab() {
             accessibilityRole="button"
             accessibilityLabel="Raise an incident"
           >
-            <Plus color={ds.white} size={22} strokeWidth={2.2} />
+            <Plus color={ds.onAccent} size={22} strokeWidth={2.2} />
             <Text style={styles.fabLabel}>Raise</Text>
           </PressableScale>
         )}
@@ -1229,7 +1230,7 @@ export default function IncidentsTab() {
                     value={form.fault_symptom}
                     onChangeText={(v) => setForm((prev) => ({ ...prev, fault_symptom: v }))}
                     className="border border-slate-300 dark:border-slate-700 rounded-xl px-3 py-3 text-slate-900 dark:text-slate-50"
-                    placeholderTextColor="#94a3b8"
+                    placeholderTextColor={ds.carbon[600]}
                   />
                 </View>
                 <FullscreenPicker
@@ -1343,7 +1344,7 @@ export default function IncidentsTab() {
                     textAlignVertical="top"
                     numberOfLines={4}
                     className="border border-slate-300 dark:border-slate-700 rounded-xl px-3 py-3 text-slate-900 dark:text-slate-50 min-h-[110px]"
-                    placeholderTextColor="#94a3b8"
+                    placeholderTextColor={ds.carbon[600]}
                   />
                 </View>
 
@@ -1499,7 +1500,7 @@ export default function IncidentsTab() {
  * The artboard's "Raise" pill — a flame lozenge floating over the list, sized
  * so the label rides beside the glyph rather than a bare round button.
  */
-const styles = StyleSheet.create({
+const useStyles = makeThemedStyles((ds) => ({
   fab: {
     position: "absolute",
     right: 22,
@@ -1523,6 +1524,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "600",
     letterSpacing: 0.13,
-    color: ds.white,
+    color: ds.onAccent,
   },
-});
+}));

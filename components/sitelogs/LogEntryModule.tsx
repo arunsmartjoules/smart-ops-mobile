@@ -10,7 +10,6 @@ import {
   KeyboardAvoidingView,
   Platform,
   Modal,
-  StyleSheet,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 // No expo-router hooks here on purpose — they throw "Couldn't find a
@@ -33,11 +32,11 @@ import SignaturePad from "@/components/SignaturePad";
 import { getISTDateString } from "@/services/AttendanceService";
 import { formatISTDate } from "@/utils/istDate";
 import { db } from "@/database";
-import { ds } from "@/constants/ds";
+import { makeThemedStyles, useDs } from "@/hooks/useDs";
 import { soRadius, soShadow } from "@/components/home/SiteOverview";
 import {
   UnderlineTabs,
-  TAB_TONE_LIGHT,
+  tabToneLight,
 } from "@/components/shared/ListChrome";
 
 interface LogEntryModuleProps {
@@ -57,6 +56,8 @@ export const LogEntryModule = ({
   initialShift,
   onBack,
 }: LogEntryModuleProps) => {
+  const entryStyles = useEntryStyles();
+  const ds = useDs();
   const { user } = useAuth();
   const isEditMode = !!editId;
   
@@ -833,7 +834,7 @@ export const LogEntryModule = ({
               hitSlop={{ top: 20, bottom: 20, left: 20, right: 20 }}
               style={entryStyles.headerTile}
             >
-              <ChevronLeft size={20} color={ds.white} />
+              <ChevronLeft size={20} color={ds.onChrome} />
             </TouchableOpacity>
             <View style={{ flex: 1, minWidth: 0 }}>
               <Text style={entryStyles.headerTitle} numberOfLines={1}>
@@ -848,7 +849,7 @@ export const LogEntryModule = ({
               </Text>
             </View>
             <View style={entryStyles.headerTile}>
-              <CategoryIcon size={17} color={ds.white} />
+              <CategoryIcon size={17} color={ds.onChrome} />
             </View>
           </View>
         </View>
@@ -897,7 +898,7 @@ export const LogEntryModule = ({
               {type === "TempRH" && (
                 <View style={entryStyles.shiftTabs}>
                   <UnderlineTabs
-                    tone={TAB_TONE_LIGHT}
+                    tone={tabToneLight(ds)}
                     gap={18}
                     contentContainerStyle={{ paddingHorizontal: 0 }}
                     activeChip={shift ?? "A"}
@@ -955,7 +956,7 @@ export const LogEntryModule = ({
         {/* Task List */}
         {loading ? (
           <View className="flex-1 items-center justify-center">
-            <ActivityIndicator size="large" color="#b91c1c" />
+            <ActivityIndicator size="large" color={ds.flame[100]} />
             <Text className="mt-4 text-slate-400 font-medium italic">Getting your to-do list...</Text>
           </View>
         ) : (
@@ -977,14 +978,14 @@ export const LogEntryModule = ({
               <RefreshControl
                 refreshing={refreshing}
                 onRefresh={handleRefresh}
-                colors={["#b91c1c"]}
+                colors={[ds.flame[100]]}
               />
             }
             ListEmptyComponent={
               !loading && (
                 <View className="py-20 items-center justify-center">
                   <View className="w-20 h-20 bg-slate-100 dark:bg-slate-800 rounded-full items-center justify-center mb-4">
-                    <CheckCircle2 size={36} color="#cbd5e1" />
+                    <CheckCircle2 size={36} color={ds.carbon[800]} />
                   </View>
                   <Text className="text-slate-900 dark:text-slate-50 font-bold text-lg">
                     {editId ? "Log Not Found" : "All Caught Up!"}
@@ -1033,12 +1034,12 @@ export const LogEntryModule = ({
                     backgroundColor:
                       isSubmitting || (!isEditMode && !allScheduledTasksComplete)
                         ? ds.carbon[900]
-                        : ds.thunder[100],
+                        : ds.controlOn,
                   },
                 ]}
               >
                 {isSubmitting ? (
-                  <ActivityIndicator color="white" />
+                  <ActivityIndicator color={ds.onControl} />
                 ) : (
                   <>
                     {!isEditMode && !allScheduledTasksComplete && (
@@ -1051,7 +1052,7 @@ export const LogEntryModule = ({
                           color:
                             !isEditMode && !allScheduledTasksComplete
                               ? ds.carbon[500]
-                              : ds.white,
+                              : ds.onControl,
                         },
                       ]}
                     >
@@ -1090,7 +1091,7 @@ export const LogEntryModule = ({
   );
 };
 
-const entryStyles = StyleSheet.create({
+const useEntryStyles = makeThemedStyles((ds) => ({
   header: { backgroundColor: ds.thunder[100] },
   headerRow: {
     flexDirection: "row",
@@ -1113,7 +1114,7 @@ const entryStyles = StyleSheet.create({
     lineHeight: 21,
     fontWeight: "700",
     letterSpacing: 0.34,
-    color: ds.white,
+    color: ds.onChrome,
   },
   headerSub: { fontSize: 11.5, color: ds.thunder[700], marginTop: 2 },
 
@@ -1134,7 +1135,7 @@ const entryStyles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  avatarText: { fontSize: 12, fontWeight: "700", color: ds.white },
+  avatarText: { fontSize: 12, fontWeight: "700", color: ds.onChrome },
   eyebrow: {
     fontSize: 9,
     fontWeight: "600",
@@ -1241,4 +1242,4 @@ const entryStyles = StyleSheet.create({
     borderRadius: soRadius.sm,
   },
   ctaText: { fontSize: 15, fontWeight: "600", letterSpacing: 0.15 },
-});
+}));

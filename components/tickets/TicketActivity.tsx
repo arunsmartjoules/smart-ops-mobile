@@ -9,7 +9,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, Text, View } from "react-native";
 import TicketsService, { type Ticket } from "@/services/TicketsService";
 import { formatIST } from "@/utils/istDate";
-import { ds } from "@/constants/ds";
+import { useDs } from "@/hooks/useDs";
 import { ActivityRow, SectionTitle } from "./TicketDetailUI";
 
 interface LineItem {
@@ -42,6 +42,7 @@ const when = (ms: number) => {
 };
 
 export function TicketActivity({ ticket }: { ticket: Ticket }) {
+  const ds = useDs();
   const [items, setItems] = useState<LineItem[]>([]);
   const [loading, setLoading] = useState(true);
   const ticketId = ticket.id || ticket.ticket_no;
@@ -117,7 +118,7 @@ export function TicketActivity({ ticket }: { ticket: Ticket }) {
     });
 
     return out.sort((a, b) => b.at - a.at);
-  }, [ticket, items]);
+  }, [ticket, items, ds]);
 
   return (
     <View style={{ marginTop: 16 }}>

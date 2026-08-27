@@ -1,7 +1,7 @@
 import React from "react";
-import { StyleSheet, Text, View } from "react-native";
+import { Text, View } from "react-native";
 import { Zap } from "lucide-react-native";
-import { ds } from "@/constants/ds";
+import { makeThemedStyles, useDs } from "@/hooks/useDs";
 import { authRadius, useAuthPalette } from "./authTheme";
 
 /**
@@ -10,19 +10,21 @@ import { authRadius, useAuthPalette } from "./authTheme";
  * the dark and light artboards; only the wordmark flips.
  */
 export function BrandMark() {
+  const styles = useStyles();
+  const ds = useDs();
   const t = useAuthPalette();
 
   return (
     <View style={styles.row}>
       <View style={styles.mark}>
-        <Zap size={18} color={ds.white} fill={ds.white} strokeWidth={1.5} />
+        <Zap size={18} color={ds.onAccent} fill={ds.onAccent} strokeWidth={1.5} />
       </View>
       <Text style={[styles.word, { color: t.text }]}>JouleOps</Text>
     </View>
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = makeThemedStyles((ds) => ({
   row: {
     flexDirection: "row",
     alignItems: "center",
@@ -38,4 +40,4 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   word: { fontSize: 17, fontWeight: "600", letterSpacing: 0.51 },
-});
+}));

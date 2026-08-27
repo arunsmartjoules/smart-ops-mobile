@@ -54,6 +54,24 @@ interface AuthUser {
   profile_photo_url?: string | null;
 }
 
+/** Exactly what `POST /api/signup-requests` accepts — mirrors the web form. */
+export interface SignupRequestPayload {
+  name: string;
+  employee_code: string;
+  email: string;
+  designation: string;
+  phone: string;
+  /** Calendar date, YYYY-MM-DD. */
+  date_of_joining: string;
+  approving_authority: string;
+  password: string;
+}
+
+export interface ApprovingAuthority {
+  name: string;
+  designation: string | null;
+}
+
 interface AuthContextType {
   user: AuthUser | null;
   token: string | null;
@@ -78,7 +96,17 @@ interface AuthContextType {
   refreshProfile: () => Promise<void>;
   changePassword: (password: string) => Promise<{ error: any }>;
   sendVerificationCode: (email: string) => Promise<{ error: any }>;
-  verifySignupCode: (email: string) => Promise<{ error: any }>;
+  verifySignupCode: (email: string, code: string) => Promise<{ error: any }>;
+  /**
+   * Files a signup request for admin approval. This does NOT create an
+   * account — an admin/super-admin approving the request is what creates the
+   * user, so the applicant cannot sign in until then.
+   */
+  submitSignupRequest: (
+    payload: SignupRequestPayload,
+  ) => Promise<{ error: any }>;
+  /** Public directory of admins/managers who can approve a request. */
+  fetchApprovingAuthorities: () => Promise<ApprovingAuthority[]>;
   resendVerificationEmail: () => Promise<{ error: any }>;
   isEmailVerified: boolean;
   refreshUser: () => Promise<void>;
@@ -100,6 +128,8 @@ const AuthContext = createContext<AuthContextType>({
   changePassword: async () => ({ error: null }),
   sendVerificationCode: async () => ({ error: null }),
   verifySignupCode: async () => ({ error: null }),
+  submitSignupRequest: async () => ({ error: null }),
+  fetchApprovingAuthorities: async () => [],
   resendVerificationEmail: async () => ({ error: null }),
   isEmailVerified: false,
   refreshUser: async () => {},
@@ -531,6 +561,31 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       });
     }
 
+    // Dead-lettered mutations (retries exhausted — the server permanently
+    // rejected them) can never sync, so the flush gate above doesn't catch them
+    // and the wipe below would erase them silently. Record what's being
+    // discarded first so the loss is auditable rather than invisible.
+    try {
+      const failed = await cacheManager.getDeadLetterItems();
+      if (failed.length > 0) {
+        const byType = failed.reduce<Record<string, number>>((acc, it) => {
+          acc[it.entity_type] = (acc[it.entity_type] ?? 0) + 1;
+          return acc;
+        }, {});
+        logger.activity(
+          "LOGOUT_DISCARDED_FAILED_MUTATIONS",
+          "SYNC",
+          `Logout discarded ${failed.length} mutation(s) that could not be synced`,
+          { count: failed.length, byType, user_id: user?.user_id, email: user?.email },
+        );
+      }
+    } catch (dlErr: any) {
+      logger.warn("Logout: failed to inspect dead-letter queue", {
+        module: "AUTH_CONTEXT",
+        error: dlErr?.message,
+      });
+    }
+
     // Cleanup local data. If the wipe fails, do NOT clear the auth state —
     // keeping the user logged in is safer than dropping them at a login screen
     // with another user's data still sitting in SQLite.
@@ -544,7 +599,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     setToken(null);
     setUser(null);
     setIsEmailVerified(false);
-  }, [token]);
+  }, [token, user]);
 
   /**
    * Delete the signed-in user's account (App Store requirement).
@@ -735,12 +790,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     }
   }, []);
 
-  const verifySignupCode = useCallback(async (email: string) => {
+  const verifySignupCode = useCallback(async (email: string, code: string) => {
     try {
       const res = await fetchWithTimeout(`${BACKEND_URL}/api/auth/verify-code`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email }),
+        body: JSON.stringify({ email, code }),
       });
       const result = await res.json();
       if (!res.ok) {
@@ -753,6 +808,73 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     } catch (e: any) {
       logger.activity("EMAIL_VERIFICATION_FAILURE", "AUTH", `Network error during email verification for ${email}`, { email, error: e.message });
       return { error: e.message || "Network error" };
+    }
+  }, []);
+
+  /**
+   * Files a pending `signup_requests` row and emails every active admin /
+   * super-admin to review it. No `users` row is created here — approval is
+   * what creates the account, which is what keeps the app closed until then.
+   */
+  const submitSignupRequest = useCallback(
+    async (payload: SignupRequestPayload) => {
+      try {
+        const res = await fetchWithTimeout(
+          `${BACKEND_URL}/api/signup-requests`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          },
+        );
+        const result = await res.json().catch(() => ({}));
+        if (!res.ok || !result?.success) {
+          const msg = result?.error || "Could not submit your request";
+          logger.activity(
+            "SIGNUP_REQUEST_FAILURE",
+            "AUTH",
+            `Signup request failed for ${payload.email}: ${msg}`,
+            { email: payload.email, error: msg },
+          );
+          return { error: msg };
+        }
+        logger.activity(
+          "SIGNUP_REQUEST_SUBMITTED",
+          "AUTH",
+          `Signup request submitted for ${payload.email}`,
+          { email: payload.email },
+        );
+        return { error: null };
+      } catch (e: any) {
+        const msg = e?.message || "Network error";
+        logger.warn("Signup request failed", {
+          module: "AUTH_CONTEXT",
+          error: msg,
+        });
+        return { error: msg };
+      }
+    },
+    [],
+  );
+
+  const fetchApprovingAuthorities = useCallback(async (): Promise<
+    ApprovingAuthority[]
+  > => {
+    try {
+      const res = await fetchWithTimeout(
+        `${BACKEND_URL}/api/signup-requests/approving-authorities`,
+        { method: "GET" },
+      );
+      const result = await res.json().catch(() => ({}));
+      if (!res.ok || !result?.success) return [];
+      const rows = (result.data ?? result.authorities ?? []) as unknown;
+      return Array.isArray(rows) ? (rows as ApprovingAuthority[]) : [];
+    } catch (e: any) {
+      logger.warn("Could not load approving authorities", {
+        module: "AUTH_CONTEXT",
+        error: e?.message,
+      });
+      return [];
     }
   }, []);
 
@@ -786,6 +908,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       changePassword,
       sendVerificationCode,
       verifySignupCode,
+      submitSignupRequest,
+      fetchApprovingAuthorities,
       resendVerificationEmail,
       isEmailVerified,
       refreshUser,
@@ -806,6 +930,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       changePassword,
       sendVerificationCode,
       verifySignupCode,
+      submitSignupRequest,
+      fetchApprovingAuthorities,
       resendVerificationEmail,
       isEmailVerified,
       refreshUser,

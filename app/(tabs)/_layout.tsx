@@ -7,9 +7,10 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { JouleTabBar } from "@/components/JouleTabBar";
 import { SiteAccessGate } from "@/components/SiteAccessGate";
 import { useAttendanceGate } from "@/contexts/AttendanceGateContext";
-import { ds } from "@/constants/ds";
+import { useDs } from "@/hooks/useDs";
 
 function TabsContent({ hideTabBar = false }: { hideTabBar?: boolean }) {
+  const ds = useDs();
   return (
     <Tabs
       initialRouteName="dashboard"

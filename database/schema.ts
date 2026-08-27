@@ -205,6 +205,12 @@ export const pmInstances = sqliteTable("pm_instances", {
   before_image: text("before_image"),
   after_image: text("after_image"),
   completed_on: real("completed_on"),
+  // Commissioning airflow for this PM's asset, in CFM — the figure measured at
+  // handover. It is NOT a pm_instances column server-side: the API resolves it
+  // from `assets.commissioning_cfm`, matching `assets.asset_name` against
+  // `pm_instances.asset_id` (which holds the asset path, not the AST-###### id).
+  // Null wherever the asset has no commissioning figure on record.
+  design_cfm: real("design_cfm"),
   created_at: real("created_at").notNull(),
   updated_at: real("updated_at").notNull(),
 });
@@ -270,7 +276,14 @@ export const offlineQueue = sqliteTable("offline_queue", {
   operation:   text("operation").notNull(),
   payload:     text("payload").notNull(),
   created_at:  real("created_at").notNull(),
+  // Failed delivery attempts that count toward giving up (dead-lettering):
+  //   retry_count           — 4xx (the server reached us and rejected the payload)
+  //   transient_retry_count — 5xx (the server reached us but errored). Bounded far
+  //     higher, so a genuine outage retries for a long time but a payload the
+  //     server chokes on 500-after-500 is eventually dead-lettered instead of
+  //     retrying forever. Pure network errors (offline) increment NEITHER.
   retry_count: integer("retry_count").notNull().default(0),
+  transient_retry_count: integer("transient_retry_count").notNull().default(0),
   last_error:  text("last_error"),
   status:      text("status").notNull().default("pending"),
 });

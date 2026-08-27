@@ -202,6 +202,7 @@ function init() {
           before_image TEXT,
           after_image TEXT,
           completed_on REAL,
+          design_cfm REAL,
           created_at REAL NOT NULL,
           updated_at REAL NOT NULL
         );
@@ -271,6 +272,7 @@ function init() {
           payload      TEXT NOT NULL,
           created_at   REAL NOT NULL,
           retry_count  INTEGER NOT NULL DEFAULT 0,
+          transient_retry_count INTEGER NOT NULL DEFAULT 0,
           last_error   TEXT,
           status       TEXT NOT NULL DEFAULT 'pending'
         );
@@ -338,10 +340,12 @@ function init() {
       "ALTER TABLE tickets ADD COLUMN closed_at REAL",
       "ALTER TABLE pm_instances ADD COLUMN completed_on REAL",
       "ALTER TABLE pm_instances ADD COLUMN instance_id TEXT",
+      "ALTER TABLE pm_instances ADD COLUMN design_cfm REAL",
       "ALTER TABLE incidents ADD COLUMN rca_attachments TEXT",
       "ALTER TABLE areas ADD COLUMN asset_id TEXT",
       "ALTER TABLE areas ADD COLUMN equipment_type TEXT",
       "ALTER TABLE pm_checklist_items ADD COLUMN readings_mandatory INTEGER",
+      "ALTER TABLE offline_queue ADD COLUMN transient_retry_count INTEGER NOT NULL DEFAULT 0",
     ];
 
     for (const migration of columnMigrations) {

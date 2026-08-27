@@ -11,7 +11,6 @@ import {
   Text,
   TouchableOpacity,
   ActivityIndicator,
-  StyleSheet,
   ScrollView,
   RefreshControl,
   useColorScheme,
@@ -39,7 +38,7 @@ import { router, useFocusEffect } from "expo-router";
 import Animated from "react-native-reanimated";
 import PMItem from "@/components/PMItem";
 import { getPmStatus } from "@/components/pm/PMUI";
-import { ds } from "@/constants/ds";
+import { makeThemedStyles, useDs } from "@/hooks/useDs";
 import {
   ListCountLine,
   ListEmptyCard,
@@ -110,7 +109,9 @@ const istMonthEnd = () => {
 // Fills the list area (flex: 1) so a slow cold load reads as "loading" rather
 // than leaving dead space under a few placeholder cards, and mirrors PMItem's
 // four-line body so the handoff to real rows doesn't jump.
-const PMSkeleton = () => (
+const PMSkeleton = () => {
+  const styles = useStyles();
+  return (
   <View style={styles.skeletonArea}>
     {[1, 2, 3, 4, 5, 6].map((i) => (
       <View key={i} style={styles.skeletonCard}>
@@ -140,12 +141,15 @@ const PMSkeleton = () => (
       </View>
     ))}
   </View>
-);
+  );
+};
 
 // ─── Memoized PM Card ──────────────────────────────────────────────────────────
 
 // ─── Main Screen ───────────────────────────────────────────────────────────────
 export default function PreventiveMaintenance() {
+  const styles = useStyles();
+  const ds = useDs();
   const { user } = useAuth();
   const { canEdit } = useAttendanceGate();
   const { isConnected } = useNetworkStatus();
@@ -780,8 +784,10 @@ export default function PreventiveMaintenance() {
 
   const getItemType = useCallback(
     (item: PMInstanceRow) =>
-      getPmStatus(item.status).label === "In progress" ? "progress" : "plain",
-    [],
+      getPmStatus(item.status, ds).label === "In progress"
+        ? "progress"
+        : "plain",
+    [ds],
   );
 
   const ListEmpty = useMemo(
@@ -805,7 +811,7 @@ export default function PreventiveMaintenance() {
         <ActivityIndicator size="small" color="#dc2626" />
       </View>
     );
-  }, [loadingMore]);
+  }, [loadingMore, styles.footerLoader]);
 
   const dateRangeLabel = useMemo(() => {
     const prefix = dateField === "completed_date" ? "Completed " : "";
@@ -1108,7 +1114,7 @@ export default function PreventiveMaintenance() {
 }
 
 // ─── Styles ────────────────────────────────────────────────────────────────────
-const styles = StyleSheet.create({
+const useStyles = makeThemedStyles((ds) => ({
   skeletonArea: { flex: 1, paddingHorizontal: 16 },
   skeletonCard: {
     backgroundColor: ds.white,
@@ -1138,10 +1144,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 11,
     borderRadius: 99,
     borderWidth: 1,
-    borderColor: "#DCDBDA",
-    backgroundColor: "#FFFFFF",
+    borderColor: ds.carbon[900],
+    backgroundColor: ds.white,
   },
-  qrScanLabel: { fontSize: 11, fontWeight: "600", color: "#072B31" },
+  qrScanLabel: { fontSize: 11, fontWeight: "600", color: ds.thunder[100] },
   flex: { flex: 1 },
   container: { flex: 1 },
   listHeader: { paddingTop: 2, paddingHorizontal: 20, paddingBottom: 8 },
@@ -1165,14 +1171,14 @@ const styles = StyleSheet.create({
   headerSub: {
     fontSize: 12,
     fontWeight: "600",
-    color: "#94a3b8",
+    color: ds.carbon[600],
     marginBottom: 4,
   },
   siteRow: { flexDirection: "row", alignItems: "center" },
   siteName: {
     fontSize: 20,
     fontWeight: "800",
-    color: "#0f172a",
+    color: ds.carbon[100],
     marginLeft: 8,
     marginRight: 4,
     marginHorizontal: 4,
@@ -1181,7 +1187,7 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 20,
     fontWeight: "800",
-    color: "#0f172a",
+    color: ds.carbon[100],
   },
   searchBarContainer: {
     flexDirection: "row",
@@ -1199,12 +1205,12 @@ const styles = StyleSheet.create({
   actionIconBtn: {
     width: 46,
     height: 46,
-    backgroundColor: "#fff",
+    backgroundColor: ds.white,
     borderRadius: 12,
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
-    borderColor: "#f1f5f9",
+    borderColor: ds.carbon[1000],
   },
   qrBtn: {
     width: 34,
@@ -1219,16 +1225,16 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 6,
     marginTop: 8,
-    backgroundColor: "#fef2f2",
+    backgroundColor: ds.flame[1000],
     borderWidth: 1,
-    borderColor: "#fecaca",
+    borderColor: ds.flame[800],
     borderRadius: 8,
     paddingHorizontal: 10,
     paddingVertical: 6,
     alignSelf: "flex-start",
   },
   qrChipText: {
-    color: "#dc2626",
+    color: ds.flame[100],
     fontSize: 12,
     fontWeight: "600",
     flex: 1,
@@ -1241,17 +1247,17 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 8,
   },
-  sectionTitle: { fontSize: 14, fontWeight: "700", color: "#0f172a" },
-  sectionCount: { fontSize: 12, fontWeight: "500", color: "#94a3b8" },
+  sectionTitle: { fontSize: 14, fontWeight: "700", color: ds.carbon[100] },
+  sectionCount: { fontSize: 12, fontWeight: "500", color: ds.carbon[600] },
 
   // PM Card
   card: {
-    backgroundColor: "#fff",
+    backgroundColor: ds.white,
     borderRadius: 16,
     padding: 14,
     marginBottom: 6,
     borderWidth: 1,
-    borderColor: "#f1f5f9",
+    borderColor: ds.carbon[1000],
     elevation: 2,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 2 },
@@ -1266,7 +1272,7 @@ const styles = StyleSheet.create({
   freqBadge: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#f8fafc",
+    backgroundColor: ds.field,
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 8,
@@ -1275,7 +1281,7 @@ const styles = StyleSheet.create({
   freqText: {
     fontSize: 10,
     fontWeight: "700",
-    color: "#64748b",
+    color: ds.carbon[500],
     textTransform: "uppercase",
     marginLeft: 4,
   },
@@ -1295,12 +1301,12 @@ const styles = StyleSheet.create({
   cardTitle: {
     fontSize: 15,
     fontWeight: "700",
-    color: "#0f172a",
+    color: ds.carbon[100],
     marginBottom: 2,
   },
   cardSubTitle: {
     fontSize: 13,
-    color: "#64748b",
+    color: ds.carbon[500],
     marginBottom: 6,
   },
   attrRow: {
@@ -1314,21 +1320,21 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 4,
   },
-  assetText: { fontSize: 12, color: "#94a3b8", marginLeft: 4, flexShrink: 1 },
+  assetText: { fontSize: 12, color: ds.carbon[600], marginLeft: 4, flexShrink: 1 },
   idBadge: {
-    backgroundColor: "#f1f5f9",
+    backgroundColor: ds.carbon[1000],
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 4,
   },
-  idText: { fontSize: 10, color: "#64748b", fontWeight: "600" },
+  idText: { fontSize: 10, color: ds.carbon[500], fontWeight: "600" },
   progressBadge: {
-    backgroundColor: "#f1f5f9",
+    backgroundColor: ds.carbon[1000],
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 6,
   },
-  progressText: { fontSize: 10, fontWeight: "700", color: "#64748b" },
+  progressText: { fontSize: 10, fontWeight: "700", color: ds.carbon[500] },
 
   cardFooter: {
     flexDirection: "row",
@@ -1337,44 +1343,44 @@ const styles = StyleSheet.create({
     marginTop: 12,
     paddingTop: 12,
     borderTopWidth: 1,
-    borderTopColor: "#f8fafc",
+    borderTopColor: ds.field,
   },
   footerLeft: { flexDirection: "row", alignItems: "center", gap: 4 },
-  footerText: { fontSize: 12, color: "#94a3b8", marginLeft: 4 },
+  footerText: { fontSize: 12, color: ds.carbon[600], marginLeft: 4 },
   footerRight: { flexDirection: "row", alignItems: "center" },
   avatar: {
     width: 20,
     height: 20,
     borderRadius: 10,
-    backgroundColor: "#f1f5f9",
+    backgroundColor: ds.carbon[1000],
     alignItems: "center",
     justifyContent: "center",
     marginRight: 4,
   },
-  avatarText: { fontSize: 10, fontWeight: "700", color: "#64748b" },
+  avatarText: { fontSize: 10, fontWeight: "700", color: ds.carbon[500] },
   assigneeName: {
     fontSize: 12,
-    color: "#64748b",
+    color: ds.carbon[500],
     fontWeight: "500",
     maxWidth: 100,
   },
-  unassigned: { fontSize: 10, color: "#cbd5e1", fontStyle: "italic" },
+  unassigned: { fontSize: 10, color: ds.carbon[800], fontStyle: "italic" },
 
   // States
   emptyState: { alignItems: "center", paddingTop: 80 },
   emptyIcon: {
     width: 80,
     height: 80,
-    backgroundColor: "#f1f5f9",
+    backgroundColor: ds.carbon[1000],
     borderRadius: 40,
     alignItems: "center",
     justifyContent: "center",
     marginBottom: 16,
   },
-  emptyTitle: { fontSize: 18, fontWeight: "700", color: "#0f172a" },
+  emptyTitle: { fontSize: 18, fontWeight: "700", color: ds.carbon[100] },
   emptyBody: {
     fontSize: 14,
-    color: "#94a3b8",
+    color: ds.carbon[600],
     marginTop: 4,
     textAlign: "center",
     paddingHorizontal: 40,
@@ -1423,7 +1429,7 @@ const styles = StyleSheet.create({
     marginTop: 8,
     alignSelf: "flex-start",
   },
-  startRetakeText: { color: "#3b82f6", fontSize: 12, fontWeight: "700" },
+  startRetakeText: { color: ds.sky[100], fontSize: 12, fontWeight: "700" },
   startModalActions: {
     flexDirection: "row",
     gap: 10,
@@ -1436,4 +1442,4 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-});
+}));

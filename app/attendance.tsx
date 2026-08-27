@@ -44,7 +44,7 @@ import appLogger from "@/utils/logger";
 import { format } from "date-fns";
 import { useNetworkStatus } from "@/hooks/useNetworkStatus";
 import Skeleton from "@/components/Skeleton";
-import { ds } from "@/constants/ds";
+import { makeThemedStyles, useDs, type DsTheme } from "@/hooks/useDs";
 import { soRadius, soShadow } from "@/components/home/SiteOverview";
 
 /** Reuse cached foreground location reads for this long (ms). */
@@ -124,6 +124,8 @@ const HistoryRow = React.memo(function HistoryRow({
   now: Date;
   last: boolean;
 }) {
+  const styles = useStyles();
+  const ds = useDs();
   const clean = isClean(kind);
   const mins = durationMinutes(log, now);
 
@@ -180,6 +182,7 @@ const HistoryRow = React.memo(function HistoryRow({
 });
 
 const AttendanceHistorySkeleton = React.memo(function AttendanceHistorySkeleton() {
+  const styles = useStyles();
   return (
     <View style={styles.historyCard}>
       {[1, 2, 3, 4, 5, 6].map((i) => (
@@ -211,6 +214,8 @@ const SiteItem = React.memo(function SiteItem({
   site: Site;
   onSelect: (code: string) => void | Promise<void>;
 }) {
+  const styles = useStyles();
+  const ds = useDs();
   const handleSelect = useCallback(() => {
     onSelect(site.site_code);
   }, [site.site_code, onSelect]);
@@ -268,6 +273,8 @@ function formatLocationFailureMessage(
 const HISTORY_FILTERS = ["All", "Short", "Missed"] as const;
 
 export default function AttendancePage() {
+  const styles = useStyles();
+  const ds = useDs();
   const insets = useSafeAreaInsets();
   const { isConnected } = useNetworkStatus();
   const { user, refreshProfile } = useAuth();
@@ -1031,7 +1038,7 @@ export default function AttendancePage() {
             accessibilityRole="button"
             accessibilityLabel="Go back"
           >
-            <ArrowLeft size={20} color={ds.white} strokeWidth={2} />
+            <ArrowLeft size={20} color={ds.onChrome} strokeWidth={2} />
           </TouchableOpacity>
           <Text style={styles.headerTitle}>Attendance</Text>
           <Text style={styles.headerDate}>{format(new Date(), "EEE d MMM")}</Text>
@@ -1043,21 +1050,21 @@ export default function AttendancePage() {
               styles.heroPill,
               {
                 backgroundColor: punchedIn
-                  ? MOCK.pillOnBg
-                  : MOCK.pillOffBg,
+                  ? mock(ds).pillOnBg
+                  : mock(ds).pillOffBg,
               },
             ]}
           >
             <View
               style={[
                 styles.heroPillDot,
-                { backgroundColor: punchedIn ? MOCK.pillOnDot : ds.sky[500] },
+                { backgroundColor: punchedIn ? mock(ds).pillOnDot : ds.sky[500] },
               ]}
             />
             <Text
               style={[
                 styles.heroPillLabel,
-                { color: punchedIn ? MOCK.pillOnFg : MOCK.pillOffFg },
+                { color: punchedIn ? mock(ds).pillOnFg : mock(ds).pillOffFg },
               ]}
             >
               {pillLabel}
@@ -1076,7 +1083,7 @@ export default function AttendancePage() {
               <Text
                 style={[
                   styles.heroTime,
-                  { color: todayAttendance ? ds.white : MOCK.heroMuted },
+                  { color: todayAttendance ? ds.onChrome : mock(ds).heroMuted },
                 ]}
               >
                 {safeTime(todayAttendance?.check_in_time, "hh:mm a")}
@@ -1088,7 +1095,7 @@ export default function AttendancePage() {
               <Text
                 style={[
                   styles.heroTime,
-                  { color: dayComplete ? ds.white : MOCK.heroMuted },
+                  { color: dayComplete ? ds.onChrome : mock(ds).heroMuted },
                 ]}
               >
                 {safeTime(todayAttendance?.check_out_time, "hh:mm a")}
@@ -1106,7 +1113,7 @@ export default function AttendancePage() {
           style={[
             styles.punch,
             {
-              backgroundColor: punchedIn ? ds.thunder[100] : ds.flame[100],
+              backgroundColor: punchedIn ? ds.controlOn : ds.flame[100],
               opacity: validatingLocation ? 0.7 : 1,
             },
           ]}
@@ -1114,13 +1121,13 @@ export default function AttendancePage() {
           accessibilityLabel={punchedIn ? "End day" : "Start day"}
         >
           {validatingLocation ? (
-            <ActivityIndicator size="small" color={ds.white} />
+            <ActivityIndicator size="small" color={ds.onControl} />
           ) : (
             <>
               {punchedIn ? (
-                <LogOut size={19} color={ds.white} strokeWidth={2.2} />
+                <LogOut size={19} color={ds.onControl} strokeWidth={2.2} />
               ) : (
-                <LogIn size={19} color={ds.white} strokeWidth={2.2} />
+                <LogIn size={19} color={ds.onControl} strokeWidth={2.2} />
               )}
               <Text style={styles.punchLabel}>
                 {punchedIn ? "End day" : "Start day"}
@@ -1183,7 +1190,7 @@ export default function AttendancePage() {
             >
               <ChevronLeft
                 size={16}
-                color={hasOlder ? ds.carbon[400] : MOCK.navDisabled}
+                color={hasOlder ? ds.carbon[400] : mock(ds).navDisabled}
                 strokeWidth={2.2}
               />
             </TouchableOpacity>
@@ -1198,7 +1205,7 @@ export default function AttendancePage() {
             >
               <ChevronRight
                 size={16}
-                color={hasNewer ? ds.carbon[400] : MOCK.navDisabled}
+                color={hasNewer ? ds.carbon[400] : mock(ds).navDisabled}
                 strokeWidth={2.2}
               />
             </TouchableOpacity>
@@ -1228,7 +1235,7 @@ export default function AttendancePage() {
                 <Text
                   style={[
                     styles.filterLabel,
-                    { color: on ? ds.white : ds.carbon[400] },
+                    { color: on ? ds.onChrome : ds.carbon[400] },
                   ]}
                 >
                   {f}
@@ -1370,7 +1377,7 @@ export default function AttendancePage() {
 }
 
 /** Mock-only tints from the artboard with no design-system token. */
-const MOCK = {
+const mock = (ds: DsTheme) => ({
   /** On-shift pill: sky wash, mint dot, mint label. */
   pillOnBg: "rgba(40,147,157,0.28)",
   pillOnFg: "#A9E3CC",
@@ -1382,12 +1389,12 @@ const MOCK = {
   heroMuted: "rgba(255,255,255,0.45)",
   heroDivider: "rgba(255,255,255,0.16)",
   /** Month stepper at the end of its range. */
-  navDisabled: "#D6D4D3",
+  navDisabled: ds.isDark ? ds.carbon[800] : "#D6D4D3",
   /** Hairline between history rows. */
-  divider: "#F0EFEF",
-} as const;
+  divider: ds.isDark ? ds.carbon[900] : "#F0EFEF",
+});
 
-const styles = StyleSheet.create({
+const useStyles = makeThemedStyles((ds) => ({
   screen: { flex: 1, backgroundColor: ds.pageBg },
 
   /* ── Thunder header ── */
@@ -1411,7 +1418,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     marginLeft: -4,
   },
-  headerTitle: { flex: 1, fontSize: 16, fontWeight: "700", color: ds.white },
+  headerTitle: { flex: 1, fontSize: 16, fontWeight: "700", color: ds.onChrome },
   headerDate: {
     fontSize: 9,
     fontWeight: "600",
@@ -1444,7 +1451,7 @@ const styles = StyleSheet.create({
     lineHeight: 66,
     fontWeight: "300",
     letterSpacing: -1.24,
-    color: ds.white,
+    color: ds.onChrome,
   },
   heroUnit: { fontSize: 26, fontWeight: "600" },
   heroTimes: {
@@ -1453,7 +1460,7 @@ const styles = StyleSheet.create({
     gap: 26,
     marginTop: 16,
   },
-  heroDivider: { width: 1, backgroundColor: MOCK.heroDivider },
+  heroDivider: { width: 1, backgroundColor: mock(ds).heroDivider },
   heroEyebrow: {
     fontSize: 9,
     fontWeight: "600",
@@ -1474,7 +1481,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: 9,
   },
-  punchLabel: { fontSize: 16, fontWeight: "700", color: ds.white },
+  punchLabel: { fontSize: 16, fontWeight: "700", color: ds.onControl },
   geoRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -1535,7 +1542,7 @@ const styles = StyleSheet.create({
     gap: 12,
     paddingVertical: 12,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: MOCK.divider,
+    borderBottomColor: mock(ds).divider,
   },
   historyRowLast: { borderBottomWidth: 0 },
   historyDay: { width: 44, fontSize: 12, fontWeight: "600" },
@@ -1587,8 +1594,8 @@ const styles = StyleSheet.create({
   },
   modalBtnGhost: { borderWidth: 1, borderColor: ds.carbon[900] },
   modalBtnGhostText: { fontSize: 13.5, fontWeight: "600", color: ds.carbon[400] },
-  modalBtnPrimary: { backgroundColor: ds.thunder[100] },
-  modalBtnPrimaryText: { fontSize: 13.5, fontWeight: "700", color: ds.white },
+  modalBtnPrimary: { backgroundColor: ds.controlOn },
+  modalBtnPrimaryText: { fontSize: 13.5, fontWeight: "700", color: ds.onControl },
 
   /* ── Site picker sheet ── */
   sheetScrim: {
@@ -1641,4 +1648,4 @@ const styles = StyleSheet.create({
     backgroundColor: ds.sky[1000],
   },
   siteDistanceText: { fontSize: 10, fontWeight: "700", color: ds.sky[100] },
-});
+}));

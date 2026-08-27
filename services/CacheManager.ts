@@ -98,6 +98,7 @@ export interface OfflineQueueRow extends OfflineQueueItem {
   id: string;
   created_at: number;
   retry_count: number;
+  transient_retry_count: number;
   last_error: string | null;
   status: "pending" | "dead_letter";
 }
@@ -469,6 +470,7 @@ class CacheManagerImpl {
         payload: JSON.stringify(item.payload),
         created_at: Date.now(),
         retry_count: 0,
+        transient_retry_count: 0,
         last_error: null,
         status: "pending",
       });
@@ -499,6 +501,7 @@ class CacheManagerImpl {
         payload: JSON.parse(row.payload),
         created_at: row.created_at,
         retry_count: row.retry_count,
+        transient_retry_count: row.transient_retry_count ?? 0,
         last_error: row.last_error ?? null,
         status: row.status as OfflineQueueRow["status"],
       }));
@@ -545,6 +548,33 @@ class CacheManagerImpl {
     }
   }
 
+  // ── markQueueItemTransientFailed ──────────────────────────────────────────
+
+  /**
+   * Records a transient (5xx) delivery failure — the server was reachable but
+   * errored. Increments `transient_retry_count`, which is bounded far higher
+   * than the 4xx `retry_count` so a genuine server outage keeps retrying, while
+   * a payload the server chokes on 500-after-500 is eventually dead-lettered
+   * instead of retrying on every sync cycle forever.
+   */
+  async markQueueItemTransientFailed(id: string, error: string): Promise<void> {
+    try {
+      await db
+        .update(offlineQueue)
+        .set({
+          transient_retry_count: sql`${offlineQueue.transient_retry_count} + 1`,
+          last_error: error,
+        })
+        .where(eq(offlineQueue.id, id));
+    } catch (err) {
+      logger.error("CacheManager.markQueueItemTransientFailed failed", {
+        module: "CACHE_MANAGER",
+        id,
+        error: err,
+      });
+    }
+  }
+
   // ── deadLetterQueueItem ───────────────────────────────────────────────────
 
   async deadLetterQueueItem(id: string): Promise<void> {
@@ -559,6 +589,64 @@ class CacheManagerImpl {
         id,
         error,
       });
+    }
+  }
+
+  // ── getDeadLetterCount ────────────────────────────────────────────────────
+
+  /**
+   * Number of mutations that exhausted their retries and will never sync
+   * (status = "dead_letter"). getQueueCount() only counts "pending" rows, so
+   * these are otherwise invisible — surfaced here so the UI can warn the user
+   * and so logout can record what is about to be wiped rather than dropping it
+   * silently.
+   */
+  async getDeadLetterCount(): Promise<number> {
+    try {
+      ensureDatabaseConnection();
+      if (!db) return 0;
+      const result = await db
+        .select({ value: count() })
+        .from(offlineQueue)
+        .where(eq(offlineQueue.status, "dead_letter"));
+      return result[0]?.value ?? 0;
+    } catch (error) {
+      logger.error("CacheManager.getDeadLetterCount failed", {
+        module: "CACHE_MANAGER",
+        error,
+      });
+      return 0;
+    }
+  }
+
+  // ── getDeadLetterItems ────────────────────────────────────────────────────
+
+  /** Dead-lettered rows, for surfacing/auditing before a destructive wipe. */
+  async getDeadLetterItems(): Promise<OfflineQueueRow[]> {
+    try {
+      const rows = await db
+        .select()
+        .from(offlineQueue)
+        .where(eq(offlineQueue.status, "dead_letter"))
+        .orderBy(asc(offlineQueue.created_at));
+
+      return rows.map((row) => ({
+        id: row.id,
+        entity_type: row.entity_type as OfflineQueueRow["entity_type"],
+        operation: row.operation as OfflineQueueRow["operation"],
+        payload: JSON.parse(row.payload),
+        created_at: row.created_at,
+        retry_count: row.retry_count,
+        transient_retry_count: row.transient_retry_count ?? 0,
+        last_error: row.last_error ?? null,
+        status: row.status as OfflineQueueRow["status"],
+      }));
+    } catch (error) {
+      logger.error("CacheManager.getDeadLetterItems failed", {
+        module: "CACHE_MANAGER",
+        error,
+      });
+      return [];
     }
   }
 
@@ -624,6 +712,7 @@ class CacheManagerImpl {
         payload: JSON.parse(row.payload),
         created_at: row.created_at,
         retry_count: row.retry_count,
+        transient_retry_count: row.transient_retry_count ?? 0,
         last_error: row.last_error ?? null,
         status: row.status as OfflineQueueRow["status"],
       }));

@@ -13,14 +13,13 @@ import React from "react";
 import {
   ActivityIndicator,
   Image,
-  StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from "react-native";
 import { ChevronDown, ChevronRight, Clock, MapPin } from "lucide-react-native";
 import type { LucideIcon } from "lucide-react-native";
-import { ds } from "@/constants/ds";
+import { makeThemedStyles, useDs, type DsTheme } from "@/hooks/useDs";
 import { soShadow } from "@/components/home/SiteOverview";
 
 /** Corner scale read off the artboard. */
@@ -35,18 +34,18 @@ export const homeRadius = {
 } as const;
 
 /** Mock-only tints (no design-system token exists for these). */
-const MOCK = {
+const mock = (ds: DsTheme) => ({
   /** Idle weekday bar — a lighter sky wash than sky-900. */
-  barIdle: "#EAF4F5",
+  barIdle: ds.isDark ? "#14343A" : "#EAF4F5",
   /** Zero-hours day (weekend / not worked). */
-  barEmpty: "#F0EFEF",
+  barEmpty: ds.isDark ? "#122A2E" : "#F0EFEF",
   /** Ticket-count numeral in the hero. */
   heroAccent: "#F5A87F",
   /** "In progress" segment — the design system's `--chart-actual`. */
   inProgress: "#E5A93A",
   divider: "rgba(255,255,255,0.14)",
-  headerTile: "rgba(255,255,255,0.10)",
-} as const;
+  headerTile: ds.isDark ? "rgba(255,255,255,0.08)" : "rgba(255,255,255,0.10)",
+});
 
 /* ── Hero ─────────────────────────────────────────────────────────────────
    Thunder chrome: who/where/when, the two headline numbers, and the punch
@@ -102,6 +101,9 @@ export function HomeHero({
   ctaBusy?: boolean;
   onPressCta: () => void;
 }) {
+  const styles = useStyles();
+  const ds = useDs();
+  const MOCK = mock(ds);
   return (
     <View style={[styles.hero, { paddingTop: topInset }]}>
       <View style={styles.heroTop}>
@@ -139,7 +141,7 @@ export function HomeHero({
           accessibilityRole="button"
           accessibilityLabel={bellLabel}
         >
-          <BellIcon size={18} color={ds.white} strokeWidth={2} />
+          <BellIcon size={18} color={ds.onChrome} strokeWidth={2} />
           {bellDot ? <View style={styles.heroTileDot} /> : null}
         </TouchableOpacity>
 
@@ -232,6 +234,9 @@ export function HoursWeekCard({
   /** Opens the attendance screen; the card is inert when omitted. */
   onPress?: () => void;
 }) {
+  const styles = useStyles();
+  const ds = useDs();
+  const MOCK = mock(ds);
   const peak = Math.max(...days.map((d) => d.minutes), 1);
 
   // A plain card when there is nowhere to go, so the affordance never lies.
@@ -315,6 +320,8 @@ export function TicketStatusCard({
   inProgress: number;
   resolved: number;
 }) {
+  const styles = useStyles();
+  const ds = useDs();
   const total = open + inProgress + resolved;
   const segments = [
     { key: "open", label: "Open", value: open, color: ds.flame[100] },
@@ -322,7 +329,7 @@ export function TicketStatusCard({
       key: "inprogress",
       label: "In progress",
       value: inProgress,
-      color: MOCK.inProgress,
+      color: mock(ds).inProgress,
     },
     { key: "resolved", label: "Resolved", value: resolved, color: ds.sky[100] },
   ];
@@ -376,6 +383,7 @@ export function HomeSectionHeading({
   actionLabel?: string;
   onAction?: () => void;
 }) {
+  const styles = useStyles();
   return (
     <View style={styles.sectionRow}>
       <Text style={styles.sectionTitle}>{title}</Text>
@@ -398,7 +406,7 @@ export interface ChipTone {
 }
 
 /** Status chip tones — Open reads flame, anything in flight reads sky. */
-export function statusTone(status: string): ChipTone {
+export function statusTone(status: string, ds: DsTheme): ChipTone {
   const s = status.toLowerCase();
   if (s === "open") return { bg: ds.flame[1000], fg: ds.flame[100] };
   if (s === "resolved" || s === "closed")
@@ -409,14 +417,15 @@ export function statusTone(status: string): ChipTone {
 }
 
 /** Priority chip tones — only "Very High" is filled solid. */
-export function priorityTone(priority: string): ChipTone {
+export function priorityTone(priority: string, ds: DsTheme): ChipTone {
   const p = priority.toLowerCase();
-  if (p.includes("very high")) return { bg: ds.flame[100], fg: ds.pageBg };
+  if (p.includes("very high")) return { bg: ds.flame[100], fg: ds.onAccent };
   if (p.includes("high")) return { bg: ds.flame[1000], fg: ds.flame[100] };
   return { bg: ds.carbon[1000], fg: ds.carbon[400] };
 }
 
 function Chip({ tone, label }: { tone: ChipTone; label: string }) {
+  const styles = useStyles();
   return (
     <View style={[styles.chip, { backgroundColor: tone.bg }]}>
       <Text style={[styles.chipText, { color: tone.fg }]} numberOfLines={1}>
@@ -453,6 +462,8 @@ export function HomeTicketCard({
   assignee?: string;
   onPress?: () => void;
 }) {
+  const styles = useStyles();
+  const ds = useDs();
   return (
     <TouchableOpacity
       onPress={onPress}
@@ -472,9 +483,9 @@ export function HomeTicketCard({
             <Text style={styles.ticketNo} numberOfLines={1}>
               {ticketNo}
             </Text>
-            {status ? <Chip tone={statusTone(status)} label={status} /> : null}
+            {status ? <Chip tone={statusTone(status, ds)} label={status} /> : null}
             {priority ? (
-              <Chip tone={priorityTone(priority)} label={priority} />
+              <Chip tone={priorityTone(priority, ds)} label={priority} />
             ) : null}
           </View>
 
@@ -518,6 +529,7 @@ export function HomeTicketCard({
 }
 
 export function HomeEmpty({ label }: { label: string }) {
+  const styles = useStyles();
   return (
     <View style={styles.empty}>
       <Text style={styles.emptyText}>{label}</Text>
@@ -525,7 +537,7 @@ export function HomeEmpty({ label }: { label: string }) {
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = makeThemedStyles((ds) => ({
   /* Hero */
   hero: {
     backgroundColor: ds.thunder[100],
@@ -560,13 +572,13 @@ const styles = StyleSheet.create({
     fontSize: 21,
     lineHeight: 24,
     fontWeight: "700",
-    color: ds.white,
+    color: ds.onChrome,
   },
   heroTile: {
     width: 36,
     height: 36,
     borderRadius: 17,
-    backgroundColor: MOCK.headerTile,
+    backgroundColor: mock(ds).headerTile,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -589,7 +601,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  heroAvatarText: { fontSize: 16, fontWeight: "700", color: ds.white },
+  heroAvatarText: { fontSize: 16, fontWeight: "700", color: ds.onChrome },
   heroAvatarImage: {
     width: 42,
     height: 42,
@@ -603,7 +615,7 @@ const styles = StyleSheet.create({
     fontSize: 30,
     lineHeight: 32,
     fontWeight: "700",
-    color: ds.white,
+    color: ds.onChrome,
   },
   statUnit: { fontSize: 12, fontWeight: "600", color: ds.sky[500] },
   statLabel: {
@@ -614,7 +626,7 @@ const styles = StyleSheet.create({
     color: ds.sky[500],
     marginTop: 5,
   },
-  statDivider: { width: 1, backgroundColor: MOCK.divider },
+  statDivider: { width: 1, backgroundColor: mock(ds).divider },
 
   ctaWrap: { paddingHorizontal: 22, paddingTop: 16 },
   cta: {
@@ -778,4 +790,4 @@ const styles = StyleSheet.create({
 
   empty: { paddingVertical: 24, alignItems: "center" },
   emptyText: { fontSize: 12, color: ds.carbon[600] },
-});
+}));

@@ -4,7 +4,6 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
-  StyleSheet,
 } from "react-native";
 import {
   Check,
@@ -18,7 +17,7 @@ import {
 } from "lucide-react-native";
 import { TaskItem } from "@/services/SiteConfigService";
 import { LogImagePicker } from "./LogImagePicker";
-import { ds } from "@/constants/ds";
+import { makeThemedStyles, useDs } from "@/hooks/useDs";
 import { soRadius, soShadow } from "@/components/home/SiteOverview";
 
 interface UnifiedLogItemProps {
@@ -43,6 +42,8 @@ export const UnifiedLogItem = React.memo(
     index,
     total,
   }: UnifiedLogItemProps) => {
+  const itemStyles = useItemStyles();
+  const ds = useDs();
     // The scheduling label; `remarks` is the technician's note, not this.
     const location = item.meta?.meta_date || null;
 
@@ -76,7 +77,7 @@ export const UnifiedLogItem = React.memo(
             </Text>
             {location && (
               <View className="flex-row items-center gap-1 mt-0.5">
-                <MapPin size={10} color="#94a3b8" />
+                <MapPin size={10} color={ds.carbon[600]} />
                 <Text
                   className="text-slate-400 dark:text-slate-500 text-[10px] flex-1"
                   numberOfLines={1}
@@ -116,7 +117,7 @@ export const UnifiedLogItem = React.memo(
                 !hasText(value.temp) && { borderColor: ds.flame[900] },
               ]}
             >
-              <Thermometer size={14} color="#ef4444" />
+              <Thermometer size={14} color={ds.flame[100]} />
               <View className="flex-1">
                 <Text className="text-[9px] text-slate-400 dark:text-slate-500 uppercase">
                   Temp °C
@@ -126,7 +127,7 @@ export const UnifiedLogItem = React.memo(
                   onChangeText={(t) => onUpdateValue(item.id, "temp", t)}
                   placeholder="— —"
                   keyboardType="numeric"
-                  placeholderTextColor="#94a3b8"
+                  placeholderTextColor={ds.carbon[600]}
                   className="text-[14px] font-bold text-slate-900 dark:text-slate-50 p-0 m-0"
                 />
               </View>
@@ -147,7 +148,7 @@ export const UnifiedLogItem = React.memo(
                   onChangeText={(t) => onUpdateValue(item.id, "rh", t)}
                   placeholder="— —"
                   keyboardType="numeric"
-                  placeholderTextColor="#94a3b8"
+                  placeholderTextColor={ds.carbon[600]}
                   className="text-[14px] font-bold text-slate-900 dark:text-slate-50 p-0 m-0"
                 />
               </View>
@@ -165,7 +166,7 @@ export const UnifiedLogItem = React.memo(
                 key: "hardness",
                 label: "Hard",
                 Icon: Beaker,
-                color: "#8b5cf6",
+                color: ds.sky[100],
               },
             ].map(({ key, label, Icon, color }) => (
               <View
@@ -186,7 +187,7 @@ export const UnifiedLogItem = React.memo(
                     onChangeText={(t) => onUpdateValue(item.id, key, t)}
                     placeholder="—"
                     keyboardType="numeric"
-                    placeholderTextColor="#94a3b8"
+                    placeholderTextColor={ds.carbon[600]}
                     className="text-[13px] font-bold text-slate-900 dark:text-slate-50 p-0 m-0"
                   />
                 </View>
@@ -214,14 +215,14 @@ export const UnifiedLogItem = React.memo(
               style={[
                 itemStyles.checkbox,
                 value.dosing === "Yes" && {
-                  backgroundColor: ds.thunder[100],
-                  borderColor: ds.thunder[100],
+                  backgroundColor: ds.controlOn,
+                  borderColor: ds.controlOn,
                 },
                 !hasText(value.dosing) && { borderColor: ds.flame[900] },
               ]}
             >
               {value.dosing === "Yes" ? (
-                <Check size={16} color={ds.white} strokeWidth={3} />
+                <Check size={16} color={ds.onControl} strokeWidth={3} />
               ) : value.dosing === "No" ? (
                 <Minus size={16} color={ds.carbon[500]} strokeWidth={3} />
               ) : null}
@@ -238,7 +239,7 @@ export const UnifiedLogItem = React.memo(
               value={value.mainRemarks}
               onChangeText={(t) => onUpdateValue(item.id, "mainRemarks", t)}
               className="flex-1 p-0 text-xs font-medium text-slate-600 dark:text-slate-300"
-              placeholderTextColor="#94a3b8"
+              placeholderTextColor={ds.carbon[600]}
             />
           </View>
           <LogImagePicker
@@ -271,7 +272,7 @@ UnifiedLogItem.displayName = "UnifiedLogItem";
 /** Shared height for the dosing checkbox and the remark input beside it. */
 const ROW_FIELD_HEIGHT = 36;
 
-const itemStyles = StyleSheet.create({
+const useItemStyles = makeThemedStyles((ds) => ({
   card: {
     backgroundColor: ds.white,
     borderRadius: soRadius.card,
@@ -305,4 +306,4 @@ const itemStyles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 8,
   },
-});
+}));

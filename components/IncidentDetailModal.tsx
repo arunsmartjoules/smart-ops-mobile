@@ -6,7 +6,6 @@ import {
   Modal,
   Platform,
   ScrollView,
-  StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
@@ -28,7 +27,7 @@ import DateTimePicker, {
 } from "@react-native-community/datetimepicker";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import FullscreenPicker from "./FullscreenPicker";
-import { ds } from "@/constants/ds";
+import { makeThemedStyles, useDs } from "@/hooks/useDs";
 import {
   Badge,
   DetailCard,
@@ -144,6 +143,8 @@ export default function IncidentDetailModal({
   pendingRcaAttachments,
   setPendingRcaAttachments,
 }: IncidentDetailModalProps) {
+  const ds = useDs();
+  const detailStyles = useDetailStyles();
   const isDark = useColorScheme() === "dark";
   const insets = useSafeAreaInsets();
   const iconMuted = isDark ? "#cbd5e1" : "#64748b";
@@ -268,8 +269,8 @@ export default function IncidentDetailModal({
   const isResolved = incident.status === "Resolved";
   const restrictResolvedEdits = isResolved && !canEditRca;
 
-  const statusTone = getIncidentStatus(incident.status);
-  const rcaTone = getIncidentRca(incident.rca_status);
+  const statusTone = getIncidentStatus(incident.status, ds);
+  const rcaTone = getIncidentRca(incident.rca_status, ds);
   const raisedMs = incident.incident_created_time
     ? typeof incident.incident_created_time === "number"
       ? incident.incident_created_time
@@ -448,7 +449,7 @@ export default function IncidentDetailModal({
                     value={remarks}
                     onChangeText={setRemarks}
                     placeholder="Enter remarks"
-                    placeholderTextColor="#94a3b8"
+                    placeholderTextColor={ds.carbon[600]}
                     multiline
                     textAlignVertical="top"
                     className="border border-slate-300 dark:border-slate-700 rounded-xl px-3 py-3 text-slate-900 dark:text-slate-50 min-h-[100px]"
@@ -465,7 +466,7 @@ export default function IncidentDetailModal({
                     value={remarks}
                     onChangeText={setRemarks}
                     placeholder="Enter remarks"
-                    placeholderTextColor="#94a3b8"
+                    placeholderTextColor={ds.carbon[600]}
                     multiline
                     textAlignVertical="top"
                     className="border border-slate-300 dark:border-slate-700 rounded-xl px-3 py-3 text-slate-900 dark:text-slate-50 min-h-[100px]"
@@ -778,7 +779,7 @@ export default function IncidentDetailModal({
   );
 }
 
-const detailStyles = StyleSheet.create({
+const useDetailStyles = makeThemedStyles((ds) => ({
   title: {
     fontSize: 16,
     lineHeight: 22,
@@ -816,4 +817,4 @@ const detailStyles = StyleSheet.create({
     color: ds.carbon[500],
     marginBottom: 7,
   },
-});
+}));

@@ -16,7 +16,7 @@ import {
   Wrench,
 } from "lucide-react-native";
 import type { LucideIcon } from "lucide-react-native";
-import { ds } from "@/constants/ds";
+import { makeThemedStyles, useDs } from "@/hooks/useDs";
 
 interface TabDef {
   name: string;
@@ -34,6 +34,8 @@ const TABS: TabDef[] = [
 ];
 
 export function JouleTabBar({ state, navigation }: BottomTabBarProps) {
+  const styles = useStyles();
+  const ds = useDs();
   const insets = useSafeAreaInsets();
   // The mock's 26px bottom padding stands in for the home indicator; on a
   // device the real inset takes over, with a floor for hardware-button phones.
@@ -98,11 +100,15 @@ export function JouleTabBar({ state, navigation }: BottomTabBarProps) {
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = makeThemedStyles((ds) => ({
   bar: {
     flexDirection: "row",
     gap: 2,
-    backgroundColor: ds.white,
+    // The artboard's dark tab bar sits a step below the card surface, with a
+    // hairline instead of the light build's lifted shadow.
+    backgroundColor: ds.tabBar,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: ds.carbon[900],
     paddingTop: 9,
     paddingHorizontal: 8,
     shadowColor: ds.carbon[100],
@@ -124,4 +130,4 @@ const styles = StyleSheet.create({
     letterSpacing: 0.54,
     textTransform: "uppercase",
   },
-});
+}));

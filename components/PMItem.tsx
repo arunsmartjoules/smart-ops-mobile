@@ -1,8 +1,8 @@
 import React from "react";
-import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
-import { Calendar, ChevronRight, Network } from "lucide-react-native";
+import { Text, TouchableOpacity, View } from "react-native";
+import { Calendar, ChevronRight } from "lucide-react-native";
 import { getInitials } from "@/utils/ticketVisuals";
-import { ds } from "@/constants/ds";
+import { makeThemedStyles, useDs } from "@/hooks/useDs";
 import { soRadius, soShadow } from "@/components/home/SiteOverview";
 import {
   formatPmDue,
@@ -33,8 +33,10 @@ interface PMItemProps {
 
 const PMItem = React.memo(
   ({ instance, onPress, showCompletedDate }: PMItemProps) => {
-    const status = getPmStatus(instance.status);
-    const frequency = getPmFrequency(instance.frequency);
+    const styles = useStyles();
+    const ds = useDs();
+    const status = getPmStatus(instance.status, ds);
+    const frequency = getPmFrequency(instance.frequency, ds);
     const due = formatPmDue(
       instance.start_due_date,
       instance.completed_on,
@@ -72,13 +74,6 @@ const PMItem = React.memo(
           <Text style={styles.title} numberOfLines={1}>
             {instance.title || "PM task"}
           </Text>
-
-          <View style={styles.areaRow}>
-            <Network size={12} color={ds.carbon[600]} strokeWidth={2} />
-            <Text style={styles.area} numberOfLines={1}>
-              {instance.location || "—"}
-            </Text>
-          </View>
 
           <View style={styles.dueRow}>
             <Calendar size={12} color={ds.carbon[600]} strokeWidth={2} />
@@ -128,7 +123,7 @@ const PMItem = React.memo(
 
 PMItem.displayName = "PMItem";
 
-const styles = StyleSheet.create({
+const useStyles = makeThemedStyles((ds) => ({
   card: {
     backgroundColor: ds.white,
     borderRadius: soRadius.card,
@@ -173,20 +168,6 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
 
-  areaRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 5,
-    marginBottom: 5,
-  },
-  area: {
-    flexShrink: 1,
-    fontFamily: "monospace",
-    fontSize: 10,
-    fontWeight: "500",
-    letterSpacing: 0.2,
-    color: ds.carbon[500],
-  },
 
   dueRow: { flexDirection: "row", alignItems: "center", gap: 7 },
   due: { fontSize: 10.5, color: ds.carbon[400] },
@@ -228,6 +209,6 @@ const styles = StyleSheet.create({
     backgroundColor: ds.sky[100],
   },
   progressLabel: { fontSize: 9.5, fontWeight: "600", color: ds.carbon[400] },
-});
+}));
 
 export default PMItem;

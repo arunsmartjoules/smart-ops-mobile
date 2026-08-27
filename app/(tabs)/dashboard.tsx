@@ -15,7 +15,6 @@ import {
   Alert,
   Modal,
   Platform,
-  StyleSheet,
   InteractionManager,
 } from "react-native";
 import NetInfo from "@react-native-community/netinfo";
@@ -58,7 +57,7 @@ import { db, userSites } from "@/database";
 import { eq } from "drizzle-orm";
 import { WhatsAppService } from "@/services/WhatsAppService";
 import { ReportPickerModal } from "@/components/ReportPickerModal";
-import { ds } from "@/constants/ds";
+import { makeThemedStyles, useDs } from "@/hooks/useDs";
 import { soRadius, soShadow } from "@/components/home/SiteOverview";
 import {
   type DayBar,
@@ -261,7 +260,9 @@ function readStatusCounts(byStatus: Record<string, number>) {
 }
 
 // --- Memoized Skeleton Component ---
-const DashboardSkeleton = React.memo(() => (
+const DashboardSkeleton = React.memo(() => {
+  const ds = useDs();
+  return (
   <View style={{ flex: 1, backgroundColor: ds.pageBg }}>
     <View
       style={{
@@ -295,11 +296,14 @@ const DashboardSkeleton = React.memo(() => (
       ))}
     </View>
   </View>
-));
+  );
+});
 
 DashboardSkeleton.displayName = "DashboardSkeleton";
 
 export default function Dashboard() {
+  const styles = useStyles();
+  const ds = useDs();
   const { isConnected } = useNetworkStatus();
   const [refreshing, setRefreshing] = useState(false);
   const { user, signOut } = useAuth();
@@ -1247,7 +1251,7 @@ export default function Dashboard() {
           onPress: () => handleTicketPress(t),
         };
       }),
-    [pendingTickets, handleTicketPress, currentTime],
+    [pendingTickets, handleTicketPress, currentTime, ds],
   );
 
   const displayName = user?.full_name || user?.name || "JouleOps user";
@@ -1262,7 +1266,7 @@ export default function Dashboard() {
         label: "End Day",
         icon: LogOut,
         bg: "rgba(255,255,255,0.14)",
-        fg: ds.white,
+        fg: ds.onChrome,
         onPress: handleQuickCheckOut,
       }
     : shiftComplete
@@ -1277,7 +1281,7 @@ export default function Dashboard() {
           label: "Start Day",
           icon: LogIn,
           bg: ds.flame[100],
-          fg: ds.white,
+          fg: ds.onAccent,
           onPress: handleQuickCheckIn,
         };
 
@@ -1335,7 +1339,7 @@ export default function Dashboard() {
 
       {!isConnected && (
         <View style={styles.offline}>
-          <WifiOff size={13} color={ds.white} />
+          <WifiOff size={13} color={ds.onAccent} />
           <Text style={styles.offlineText}>Offline — showing cached data</Text>
         </View>
       )}
@@ -1431,13 +1435,13 @@ export default function Dashboard() {
                   }}
                   style={[
                     styles.sheetRow,
-                    on && { backgroundColor: ds.thunder[100] },
+                    on && { backgroundColor: ds.controlOn },
                   ]}
                 >
                   <Text
                     style={[
                       styles.sheetRowText,
-                      { color: on ? ds.white : ds.carbon[100] },
+                      { color: on ? ds.onControl : ds.carbon[100] },
                     ]}
                   >
                     {site.name || site.site_code}
@@ -1492,7 +1496,7 @@ export default function Dashboard() {
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = makeThemedStyles((ds) => ({
   screen: { flex: 1, backgroundColor: ds.pageBg },
   offline: {
     flexDirection: "row",
@@ -1506,7 +1510,7 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: "600",
     letterSpacing: 0.3,
-    color: ds.white,
+    color: ds.onAccent,
   },
   body: { paddingHorizontal: 18, paddingTop: 16, paddingBottom: 28 },
 
@@ -1539,4 +1543,4 @@ const styles = StyleSheet.create({
   },
   sheetRowText: { fontSize: 14, fontWeight: "600" },
   sheetRowCode: { fontSize: 10.5, marginTop: 2 },
-});
+}));

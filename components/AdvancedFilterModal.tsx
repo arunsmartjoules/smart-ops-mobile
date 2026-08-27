@@ -8,7 +8,7 @@ import {
   TextInput,
   Platform,
 } from "react-native";
-import { useTheme } from "@/contexts/ThemeContext";
+import { useDs } from "@/hooks/useDs";
 import { X, Search as SearchIcon, Calendar } from "lucide-react-native";
 import DateTimePicker from "@expo/ui/community/datetime-picker";
 import {
@@ -144,7 +144,7 @@ const AdvancedFilterModal = ({
   selectedDateField,
   setSelectedDateField,
 }: AdvancedFilterModalProps) => {
-  const { isDark } = useTheme();
+  const ds = useDs();
 
   const [showStartPicker, setShowStartPicker] = React.useState(false);
   const [showEndPicker, setShowEndPicker] = React.useState(false);
@@ -167,15 +167,17 @@ const AdvancedFilterModal = ({
   }, [tempFromDate, tempToDate]);
 
   // --- Colors based on theme ---
-  const bg = isDark ? "#0f172a" : "#ffffff";
-  const cardBg = isDark ? "#1e293b" : "#f8fafc";
-  const borderColor = isDark ? "#334155" : "#f1f5f9";
-  const textPrimary = isDark ? "#f1f5f9" : "#0f172a";
-  const textSecondary = isDark ? "#94a3b8" : "#94a3b8";
-  const textMuted = isDark ? "#64748b" : "#475569";
-  const pillBg = isDark ? "#1e293b" : "#f8fafc";
-  const pillActiveBg = isDark ? "#7f1d1d" : "#fef2f2";
-  const pillActiveBorder = isDark ? "#dc2626" : "#fecaca";
+  // Retuned off the JouleOps palette so the sheet matches the screens that
+  // open it, rather than the slate ramp it used to carry.
+  const bg = ds.white;
+  const cardBg = ds.field;
+  const borderColor = ds.isDark ? ds.carbon[900] : "#f1f5f9";
+  const textPrimary = ds.carbon[100];
+  const textSecondary = ds.carbon[600];
+  const textMuted = ds.carbon[400];
+  const pillBg = ds.field;
+  const pillActiveBg = ds.flame[1000];
+  const pillActiveBorder = ds.isDark ? ds.flame[100] : "#fecaca";
 
   const onStartChange = (event: any, selectedDate?: Date) => {
     setShowStartPicker(Platform.OS === "ios");
@@ -365,7 +367,7 @@ const AdvancedFilterModal = ({
                               style={{
                                 fontSize: 12,
                                 fontWeight: "800",
-                                color: active ? "#dc2626" : textMuted,
+                                color: active ? ds.flame[100] : textMuted,
                               }}
                             >
                               {opt.label}
@@ -409,7 +411,7 @@ const AdvancedFilterModal = ({
                             fontWeight: "700",
                             color:
                               selectedQuickRange === r.key
-                                ? "#dc2626"
+                                ? ds.flame[100]
                                 : textMuted,
                           }}
                         >
@@ -438,7 +440,7 @@ const AdvancedFilterModal = ({
                   <View
                     style={{ flexDirection: "row", alignItems: "center" }}
                   >
-                    <Calendar size={20} color="#dc2626" />
+                    <Calendar size={20} color={ds.flame[100]} />
                     <Text
                       style={{
                         marginLeft: 12,
@@ -623,7 +625,7 @@ const AdvancedFilterModal = ({
                             fontSize: 12,
                             fontWeight: "700",
                             color:
-                              statusFilter === s ? "#dc2626" : textMuted,
+                              statusFilter === s ? ds.flame[100] : textMuted,
                           }}
                         >
                           {statusOptionLabels?.[s] || s}
@@ -679,7 +681,7 @@ const AdvancedFilterModal = ({
                             fontSize: 12,
                             fontWeight: "700",
                             color:
-                              priorityFilter === p ? "#dc2626" : textMuted,
+                              priorityFilter === p ? ds.flame[100] : textMuted,
                           }}
                         >
                           {p}
@@ -728,11 +730,11 @@ const AdvancedFilterModal = ({
               onPress={applyAdvancedFilters}
               style={{
                 flex: 2,
-                backgroundColor: "#dc2626",
+                backgroundColor: ds.flame[100],
                 borderRadius: 24,
                 paddingVertical: 16,
                 alignItems: "center",
-                shadowColor: "#dc2626",
+                shadowColor: ds.flame[100],
                 shadowOffset: { width: 0, height: 8 },
                 shadowOpacity: 0.2,
                 shadowRadius: 16,
@@ -741,7 +743,7 @@ const AdvancedFilterModal = ({
             >
               <Text
                 style={{
-                  color: "#ffffff",
+                  color: ds.onAccent,
                   fontWeight: "900",
                   textTransform: "uppercase",
                   letterSpacing: 1.5,

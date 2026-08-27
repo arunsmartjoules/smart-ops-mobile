@@ -3,7 +3,7 @@ import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { Clock, MapPin } from "lucide-react-native";
 import { type Ticket } from "@/services/TicketsService";
 import { getCategoryVisual, getInitials } from "@/utils/ticketVisuals";
-import { ds } from "@/constants/ds";
+import { makeThemedStyles, useDs } from "@/hooks/useDs";
 import {
   getTicketPriority,
   getTicketStatus,
@@ -56,9 +56,11 @@ const TicketItem = React.memo(
       [item, onLongPress],
     );
 
-    const status = getTicketStatus(item.status);
-    const priority = getTicketPriority(item.priority);
-    const tone = getTicketTint(item.status);
+    const styles = useStyles();
+    const ds = useDs();
+    const status = getTicketStatus(item.status, ds);
+    const priority = getTicketPriority(item.priority, ds);
+    const tone = getTicketTint(item.status, ds);
     const CatIcon = getCategoryVisual(item.category).Icon;
     const area = item.area_asset || item.location || item.site_name || "—";
     const late = isLate(item);
@@ -135,7 +137,7 @@ const TicketItem = React.memo(
 
 TicketItem.displayName = "TicketItem";
 
-const styles = StyleSheet.create({
+const useStyles = makeThemedStyles((ds) => ({
   card: {
     backgroundColor: ds.white,
     borderRadius: soRadius.card,
@@ -143,6 +145,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     marginBottom: 7,
     marginHorizontal: 4,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: ds.cardBorder,
     ...soShadow,
   },
   row: { flexDirection: "row", alignItems: "flex-start", gap: 11 },
@@ -203,6 +207,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   assigneeText: { fontSize: 9, fontWeight: "600", color: ds.carbon[400] },
-});
+}));
 
 export default TicketItem;

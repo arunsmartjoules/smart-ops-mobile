@@ -174,6 +174,12 @@ const PMService = {
             const d = new Date(inst.completed_on);
             return isNaN(d.getTime()) ? null : d.getTime();
           })(),
+          // Server sends it as a numeric string; keep null rather than NaN so
+          // the execution screen can simply test for presence.
+          design_cfm: (() => {
+            const n = Number(inst.design_cfm);
+            return inst.design_cfm == null || Number.isNaN(n) ? null : n;
+          })(),
           created_at: inst.created_at ? new Date(inst.created_at).getTime() : Date.now(),
           updated_at: Date.now(),
         }));
@@ -389,6 +395,12 @@ const PMService = {
           completed_on: (() => {
             const d = new Date(inst.completed_on);
             return isNaN(d.getTime()) ? null : d.getTime();
+          })(),
+          // Server sends it as a numeric string; keep null rather than NaN so
+          // the execution screen can simply test for presence.
+          design_cfm: (() => {
+            const n = Number(inst.design_cfm);
+            return inst.design_cfm == null || Number.isNaN(n) ? null : n;
           })(),
           created_at: inst.created_at ? new Date(inst.created_at).getTime() : Date.now(),
           updated_at: Date.now(),

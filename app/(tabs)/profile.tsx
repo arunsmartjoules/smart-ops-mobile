@@ -53,7 +53,7 @@ import { StorageService } from "@/services/StorageService";
 import { apiFetch } from "@/utils/apiHelper";
 import { API_BASE_URL } from "@/constants/api";
 import { APP_VERSION_DISPLAY } from "@/constants/version";
-import { ds } from "@/constants/ds";
+import { makeThemedStyles, useDs, type DsTheme } from "@/hooks/useDs";
 
 /** Corner scale read off the artboard. */
 const radius = {
@@ -65,11 +65,11 @@ const radius = {
 } as const;
 
 /** Mock-only tints (no design-system token exists for these). */
-const MOCK = {
+const mock = (ds: DsTheme) => ({
   /** Hairline between rows inside a card. */
-  divider: "#F0EFEF",
+  divider: ds.isDark ? ds.carbon[900] : "#F0EFEF",
   /** Sign-out button outline — a flame wash lighter than flame-800. */
-  signOutBorder: "#F6DAD3",
+  signOutBorder: ds.isDark ? ds.flame[800] : "#F6DAD3",
   /** "On-site" presence dot and its label, on the sky-tinted pill. */
   presenceDot: "#6FD3A8",
   presenceText: "#A9E3CC",
@@ -78,8 +78,8 @@ const MOCK = {
   headerTile: "rgba(255,255,255,0.10)",
   headerBullet: "rgba(142,198,202,0.6)",
   /** Underline under the delete-account link. */
-  linkUnderline: "#D6D4D3",
-} as const;
+  linkUnderline: ds.isDark ? ds.carbon[800] : "#D6D4D3",
+});
 
 function formatRelativeTime(isoTimestamp: string | null): string {
   if (!isoTimestamp) return "Never synced";
@@ -118,6 +118,8 @@ function DetailRow({
   value: string;
   last?: boolean;
 }) {
+  const styles = useStyles();
+  const ds = useDs();
   return (
     <View style={[styles.detailRow, last && styles.rowLast]}>
       <View style={styles.detailIcon}>
@@ -153,6 +155,8 @@ function MenuRow({
   onPress?: () => void;
   last?: boolean;
 }) {
+  const styles = useStyles();
+  const ds = useDs();
   const solid = badgeTone === "solid";
   return (
     <TouchableOpacity
@@ -192,6 +196,8 @@ function MenuRow({
 /* ── Screen ───────────────────────────────────────────────────────────── */
 
 export default function Profile() {
+  const styles = useStyles();
+  const ds = useDs();
   const { user, signOut, deleteAccount, refreshProfile } = useAuth();
   const { theme, setTheme } = useTheme();
   const { lastSyncedAt, pendingQueueCount } = useSyncStatus();
@@ -493,7 +499,7 @@ export default function Profile() {
             accessibilityRole="button"
             accessibilityLabel="Go back"
           >
-            <ChevronLeft size={24} color={ds.white} strokeWidth={2} />
+            <ChevronLeft size={24} color={ds.onChrome} strokeWidth={2} />
           </TouchableOpacity>
           <Text style={styles.headerTitle}>Profile</Text>
           <View style={{ flex: 1 }} />
@@ -506,7 +512,7 @@ export default function Profile() {
             accessibilityRole="button"
             accessibilityLabel="Edit profile picture"
           >
-            <Pencil size={16} color={ds.white} strokeWidth={2} />
+            <Pencil size={16} color={ds.onChrome} strokeWidth={2} />
           </TouchableOpacity>
         </View>
 
@@ -531,9 +537,9 @@ export default function Profile() {
             )}
             <View style={styles.avatarBadge}>
               {isUploadingPhoto ? (
-                <ActivityIndicator size="small" color={ds.white} />
+                <ActivityIndicator size="small" color={ds.onChrome} />
               ) : (
-                <Camera size={11} color={ds.white} strokeWidth={2.2} />
+                <Camera size={11} color={ds.onAccent} strokeWidth={2.2} />
               )}
             </View>
           </TouchableOpacity>
@@ -681,7 +687,7 @@ export default function Profile() {
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = makeThemedStyles((ds) => ({
   screen: { flex: 1, backgroundColor: ds.pageBg },
 
   /* ── Header ── */
@@ -706,12 +712,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  headerTitle: { fontSize: 17, fontWeight: "700", color: ds.white },
+  headerTitle: { fontSize: 17, fontWeight: "700", color: ds.onChrome },
   headerTile: {
     width: 34,
     height: 34,
     borderRadius: radius.tile,
-    backgroundColor: MOCK.headerTile,
+    backgroundColor: mock(ds).headerTile,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -729,7 +735,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  avatarText: { fontSize: 23, fontWeight: "700", color: ds.white },
+  avatarText: { fontSize: 23, fontWeight: "700", color: ds.onChrome },
   avatarBadge: {
     position: "absolute",
     right: -3,
@@ -748,7 +754,7 @@ const styles = StyleSheet.create({
     fontSize: 19,
     lineHeight: 22,
     fontWeight: "700",
-    color: ds.white,
+    color: ds.onChrome,
     marginBottom: 5,
   },
   identityMeta: { flexDirection: "row", alignItems: "center", gap: 7 },
@@ -757,7 +763,7 @@ const styles = StyleSheet.create({
     width: 3,
     height: 3,
     borderRadius: radius.tile,
-    backgroundColor: MOCK.headerBullet,
+    backgroundColor: mock(ds).headerBullet,
   },
   presencePill: {
     flexDirection: "row",
@@ -766,20 +772,20 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 2,
     borderRadius: radius.badge,
-    backgroundColor: MOCK.presenceFill,
+    backgroundColor: mock(ds).presenceFill,
   },
   presenceDot: {
     width: 5,
     height: 5,
     borderRadius: radius.tile,
-    backgroundColor: MOCK.presenceDot,
+    backgroundColor: mock(ds).presenceDot,
   },
   presenceLabel: {
     fontSize: 9,
     fontWeight: "600",
     letterSpacing: 1.08,
     textTransform: "uppercase",
-    color: MOCK.presenceText,
+    color: mock(ds).presenceText,
   },
 
   /* ── Body ── */
@@ -817,7 +823,7 @@ const styles = StyleSheet.create({
     gap: 11,
     paddingVertical: 13,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: MOCK.divider,
+    borderBottomColor: mock(ds).divider,
   },
   detailIcon: { width: 18, alignItems: "flex-start" },
   detailLabel: {
@@ -842,7 +848,7 @@ const styles = StyleSheet.create({
     gap: 12,
     paddingVertical: 15,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: MOCK.divider,
+    borderBottomColor: mock(ds).divider,
   },
   menuLabelWrap: { flex: 1, minWidth: 0 },
   menuLabel: { fontSize: 13.5, fontWeight: "500", color: ds.carbon[100] },
@@ -868,7 +874,7 @@ const styles = StyleSheet.create({
     textTransform: "uppercase",
     color: ds.flame[100],
   },
-  badgeTextSolid: { color: ds.white, letterSpacing: 0.54 },
+  badgeTextSolid: { color: ds.onAccent, letterSpacing: 0.54 },
 
   /* ── Footer actions ── */
   signOut: {
@@ -879,7 +885,7 @@ const styles = StyleSheet.create({
     padding: 14,
     borderRadius: radius.button,
     borderWidth: 1.5,
-    borderColor: MOCK.signOutBorder,
+    borderColor: mock(ds).signOutBorder,
     backgroundColor: ds.white,
     marginBottom: 12,
   },
@@ -892,9 +898,9 @@ const styles = StyleSheet.create({
     gap: 6,
     paddingBottom: 1,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: MOCK.linkUnderline,
+    borderBottomColor: mock(ds).linkUnderline,
   },
   deleteLabel: { fontSize: 11, fontWeight: "500", color: ds.carbon[600] },
 
   dimmed: { opacity: 0.55 },
-});
+}));

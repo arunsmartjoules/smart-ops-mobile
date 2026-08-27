@@ -48,7 +48,7 @@ import TicketItem from "@/components/TicketItem";
 import TicketSkeleton, {
   TicketSkeletonItem,
 } from "@/components/TicketSkeleton";
-import { ds } from "@/constants/ds";
+import { useDs } from "@/hooks/useDs";
 import Animated from "react-native-reanimated";
 import {
   ListCountLine,
@@ -158,6 +158,7 @@ const normalizeRealtimeTicket = (source: any): Ticket => ({
 });
 
 export default function Tickets() {
+  const ds = useDs();
   const { canEdit } = useAttendanceGate();
   const { user } = useAuth();
   const { isConnected } = useNetworkStatus();

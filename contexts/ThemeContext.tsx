@@ -9,7 +9,6 @@ import React, {
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useColorScheme as useSystemColorScheme, Platform } from "react-native";
 import { useColorScheme as useNativeWindColorScheme } from "nativewind";
-import { StatusBar } from "expo-status-bar";
 import logger from "@/utils/logger";
 
 type Theme = "light" | "dark" | "system";
@@ -117,9 +116,6 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   );
 
   return (
-    <ThemeContext.Provider value={value}>
-      <StatusBar style={isDark ? "light" : "dark"} />
-      {children}
-    </ThemeContext.Provider>
+    <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>
   );
 }

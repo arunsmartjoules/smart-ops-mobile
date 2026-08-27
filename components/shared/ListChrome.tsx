@@ -10,7 +10,6 @@
 import React, { useEffect, useState } from "react";
 import {
   ScrollView,
-  StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
@@ -34,7 +33,7 @@ import {
   X,
 } from "lucide-react-native";
 import type { LucideIcon } from "lucide-react-native";
-import { ds } from "@/constants/ds";
+import { makeThemedStyles, useDs, type DsTheme } from "@/hooks/useDs";
 import { soRadius, soShadow } from "@/components/home/SiteOverview";
 
 export { soRadius, soShadow };
@@ -89,44 +88,44 @@ export interface UnderlineTabTone {
 }
 
 /** Thunder header: white on dark. */
-export const TAB_TONE_DARK: UnderlineTabTone = {
-  active: ds.white,
+export const tabToneDark = (ds: DsTheme): UnderlineTabTone => ({
+  active: ds.onChrome,
   inactive: ds.thunder[700],
   countActive: "#E9B7A8",
   countInactive: ds.thunder[700],
   rule: "rgba(255,255,255,0.24)",
   indicator: ds.flame[100],
-};
+});
 
 /**
  * The hairline under the tab strip when it sits on the page canvas. Not a
  * design-system token — the artboard uses this one value for that rule.
  */
-const CANVAS_RULE = "#E2E1E0";
+const canvasRule = (ds: DsTheme) => (ds.isDark ? ds.carbon[900] : "#E2E1E0");
 
 /**
  * Page canvas, below a rounded thunder header. The rule is drawn by the strip
  * wrapper so it spans the full screen width rather than only the tab content,
  * so the tone itself carries none.
  */
-export const TAB_TONE_CANVAS: UnderlineTabTone = {
+export const tabToneCanvas = (ds: DsTheme): UnderlineTabTone => ({
   active: ds.carbon[100],
   inactive: ds.carbon[500],
   countActive: ds.flame[100],
   countInactive: ds.carbon[700],
   rule: "transparent",
   indicator: ds.flame[100],
-};
+});
 
 /** White surfaces (cards, sheets): carbon on light. */
-export const TAB_TONE_LIGHT: UnderlineTabTone = {
+export const tabToneLight = (ds: DsTheme): UnderlineTabTone => ({
   active: ds.carbon[100],
   inactive: ds.carbon[500],
   countActive: ds.flame[100],
   countInactive: ds.carbon[600],
   rule: ds.carbon[900],
   indicator: ds.flame[100],
-};
+});
 
 /**
  * Text tabs on a hairline with an indicator that slides between them. Shared by
@@ -137,7 +136,7 @@ export function UnderlineTabs({
   chips,
   activeChip,
   onSelectChip,
-  tone = TAB_TONE_DARK,
+  tone,
   gap = 20,
   minHeight = 36,
   contentContainerStyle,
@@ -151,6 +150,9 @@ export function UnderlineTabs({
   minHeight?: number;
   contentContainerStyle?: object;
 }) {
+  const styles = useStyles();
+  const ds = useDs();
+  const activeTone = tone ?? tabToneDark(ds);
   const [layouts, setLayouts] = useState<Record<string, { x: number; w: number }>>(
     {},
   );
@@ -183,7 +185,7 @@ export function UnderlineTabs({
     >
       <View>
         <View
-          style={[styles.tabRow, { gap, borderBottomColor: tone.rule }]}
+          style={[styles.tabRow, { gap, borderBottomColor: activeTone.rule }]}
         >
           {chips.map((c) => {
             const on = c.key === activeChip;
@@ -210,7 +212,7 @@ export function UnderlineTabs({
                     styles.tabLabel,
                     {
                       fontWeight: on ? "600" : "400",
-                      color: on ? tone.active : tone.inactive,
+                      color: on ? activeTone.active : activeTone.inactive,
                     },
                   ]}
                 >
@@ -220,7 +222,7 @@ export function UnderlineTabs({
                   <Text
                     style={[
                       styles.tabCount,
-                      { color: on ? tone.countActive : tone.countInactive },
+                      { color: on ? activeTone.countActive : activeTone.countInactive },
                     ]}
                   >
                     {c.count}
@@ -231,7 +233,7 @@ export function UnderlineTabs({
           })}
         </View>
         <Animated.View
-          style={[styles.tabBar, { backgroundColor: tone.indicator }, barStyle]}
+          style={[styles.tabBar, { backgroundColor: activeTone.indicator }, barStyle]}
         />
       </View>
     </ScrollView>
@@ -285,13 +287,15 @@ export function ModuleListHeader({
    */
   tabPlacement?: "header" | "canvas";
 }) {
+  const styles = useStyles();
+  const ds = useDs();
   const onCanvas = tabPlacement === "canvas";
   const tabs = (
     <StatusTabs
       chips={chips}
       activeChip={activeChip}
       onSelectChip={onSelectChip}
-      tone={onCanvas ? TAB_TONE_CANVAS : TAB_TONE_DARK}
+      tone={onCanvas ? tabToneCanvas(ds) : tabToneDark(ds)}
       minHeight={onCanvas ? 44 : 36}
       contentContainerStyle={onCanvas ? styles.tabScrollCanvas : undefined}
     />
@@ -340,7 +344,7 @@ export function ModuleListHeader({
           accessibilityRole="button"
           accessibilityLabel="Refresh"
         >
-          <RefreshCw size={18} color={ds.white} strokeWidth={2} />
+          <RefreshCw size={18} color={ds.onChrome} strokeWidth={2} />
         </TouchableOpacity>
 
         <TouchableOpacity
@@ -354,7 +358,7 @@ export function ModuleListHeader({
           accessibilityRole="button"
           accessibilityLabel="Filters"
         >
-          <Filter size={18} color={ds.white} strokeWidth={2} />
+          <Filter size={18} color={ds.onChrome} strokeWidth={2} />
         </TouchableOpacity>
       </View>
 
@@ -413,6 +417,8 @@ export function ListCountLine({
   sortLabel: string;
   onSort: () => void;
 }) {
+  const styles = useStyles();
+  const ds = useDs();
   return (
     <View style={styles.countRow}>
       <Text style={styles.countValue}>{count}</Text>
@@ -442,6 +448,8 @@ export function ListEmptyCard({
   label?: string;
   icon?: LucideIcon;
 }) {
+  const styles = useStyles();
+  const ds = useDs();
   return (
     <View style={styles.empty}>
       <Icon size={26} color={ds.carbon[800]} strokeWidth={1.9} />
@@ -450,7 +458,7 @@ export function ListEmptyCard({
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = makeThemedStyles((ds) => ({
   header: { backgroundColor: ds.thunder[100] },
   /** The artboard's `border-radius: 0 0 26px 26px` on the thunder block. */
   headerRounded: {
@@ -474,7 +482,7 @@ const styles = StyleSheet.create({
     lineHeight: 22,
     fontWeight: "700",
     letterSpacing: 0.38,
-    color: ds.white,
+    color: ds.onChrome,
   },
   dateRow: {
     flexDirection: "row",
@@ -507,7 +515,7 @@ const styles = StyleSheet.create({
     flex: 1,
     padding: 0,
     fontSize: 13.5,
-    color: ds.white,
+    color: ds.onChrome,
     letterSpacing: 0.13,
   },
 
@@ -516,7 +524,7 @@ const styles = StyleSheet.create({
   tabStrip: {
     backgroundColor: ds.pageBg,
     borderBottomWidth: 1,
-    borderBottomColor: CANVAS_RULE,
+    borderBottomColor: canvasRule(ds),
   },
   tabRow: { flexDirection: "row", borderBottomWidth: 1 },
   tab: {
@@ -562,4 +570,4 @@ const styles = StyleSheet.create({
     ...soShadow,
   },
   emptyText: { fontSize: 12.5, color: ds.carbon[400] },
-});
+}));

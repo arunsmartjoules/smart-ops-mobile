@@ -6,7 +6,7 @@
  * chemical_dosing, Chiller → the chiller_readings shape.
  */
 import React from "react";
-import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { Text, TouchableOpacity, View } from "react-native";
 import {
   Droplets,
   FlaskRound,
@@ -15,14 +15,20 @@ import {
 } from "lucide-react-native";
 import type { LucideIcon } from "lucide-react-native";
 import { format } from "date-fns";
-import { ds } from "@/constants/ds";
+import { makeThemedStyles, useDs, type DsTheme } from "@/hooks/useDs";
 import { soRadius, soShadow } from "@/components/home/SiteOverview";
 
-const STATUS: Record<string, { label: string; bg: string; fg: string }> = {
+const statusMap = (
+  ds: DsTheme,
+): Record<string, { label: string; bg: string; fg: string }> => ({
   Pending: { label: "Pending", bg: ds.flame[1000], fg: ds.flame[100] },
   Inprogress: { label: "In progress", bg: ds.sky[1000], fg: ds.sky[100] },
-  Completed: { label: "Completed", bg: ds.sky[900], fg: "#1F757D" },
-};
+  Completed: {
+    label: "Completed",
+    bg: ds.sky[900],
+    fg: ds.isDark ? ds.sky[100] : "#1F757D",
+  },
+});
 
 /** Legacy rows use "In-progress"/"in_progress"; an empty status means logged. */
 export const normaliseLogStatus = (raw?: string | null) => {
@@ -32,12 +38,14 @@ export const normaliseLogStatus = (raw?: string | null) => {
   return "Pending";
 };
 
-const TYPE_VISUAL: Record<string, { icon: LucideIcon; tint: string; color: string }> = {
+const typeVisual = (
+  ds: DsTheme,
+): Record<string, { icon: LucideIcon; tint: string; color: string }> => ({
   "Temp RH": { icon: Thermometer, tint: ds.flame[1000], color: ds.flame[100] },
   "Chiller Logs": { icon: Snowflake, tint: ds.flame[1000], color: ds.flame[100] },
   Water: { icon: Droplets, tint: ds.sky[1000], color: ds.sky[100] },
   "Chemical Dosing": { icon: FlaskRound, tint: ds.sky[1000], color: ds.sky[100] },
-};
+});
 
 interface Reading {
   label: string;
@@ -107,9 +115,12 @@ export const LogHistoryCard = React.memo(
     logName: string;
     onPress: () => void;
   }) => {
+    const styles = useStyles();
+    const ds = useDs();
+    const TYPE_VISUAL = typeVisual(ds);
     const visual = TYPE_VISUAL[logName] ?? TYPE_VISUAL["Temp RH"];
     const Icon = visual.icon;
-    const status = STATUS[normaliseLogStatus(item.status)];
+    const status = statusMap(ds)[normaliseLogStatus(item.status)];
     const readings = readingsFor(logName, item);
     const shift = shiftLabelToName(item.shift_label);
     const person = item.assigned_to || item.executor_id || "Unassigned";
@@ -182,7 +193,7 @@ export const LogHistoryCard = React.memo(
 
 LogHistoryCard.displayName = "LogHistoryCard";
 
-const styles = StyleSheet.create({
+const useStyles = makeThemedStyles((ds) => ({
   card: {
     backgroundColor: ds.white,
     borderRadius: soRadius.card,
@@ -250,18 +261,18 @@ const styles = StyleSheet.create({
   readings: {
     flexDirection: "row",
     marginTop: 10,
-    backgroundColor: "#F7F7F8",
+    backgroundColor: ds.field,
     borderRadius: soRadius.sm,
     overflow: "hidden",
   },
   reading: { flex: 1, paddingVertical: 8, paddingHorizontal: 12 },
-  readingDivider: { borderRightWidth: 1, borderRightColor: "#ECECED" },
+  readingDivider: { borderRightWidth: 1, borderRightColor: ds.fieldBorder },
   readingLabel: {
     fontSize: 9,
     fontWeight: "600",
     letterSpacing: 1.08,
     textTransform: "uppercase",
-    color: "#9B9897",
+    color: ds.carbon[600],
     marginBottom: 3,
   },
   readingValue: {
@@ -270,6 +281,6 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     color: ds.carbon[100],
   },
-});
+}));
 
 export default LogHistoryCard;

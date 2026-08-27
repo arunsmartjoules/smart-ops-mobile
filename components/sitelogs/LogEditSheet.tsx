@@ -9,7 +9,6 @@
 import React, { useMemo, useState } from "react";
 import {
   ActivityIndicator,
-  StyleSheet,
   Text,
   TouchableOpacity,
   View,
@@ -20,18 +19,24 @@ import BottomSheet, {
   BottomSheetView,
 } from "@expo/ui/community/bottom-sheet";
 import { Check } from "lucide-react-native";
-import { ds } from "@/constants/ds";
+import { makeThemedStyles, useDs, type DsTheme } from "@/hooks/useDs";
 import { soRadius } from "@/components/home/SiteOverview";
 import {
   normaliseLogStatus,
   shiftLabelToName,
 } from "@/components/sitelogs/LogHistoryCard";
 
-const STATUS: Record<string, { label: string; bg: string; fg: string }> = {
+const statusMap = (
+  ds: DsTheme,
+): Record<string, { label: string; bg: string; fg: string }> => ({
   Pending: { label: "Pending", bg: ds.flame[1000], fg: ds.flame[100] },
   Inprogress: { label: "In progress", bg: ds.sky[1000], fg: ds.sky[100] },
-  Completed: { label: "Completed", bg: ds.sky[900], fg: "#1F757D" },
-};
+  Completed: {
+    label: "Completed",
+    bg: ds.sky[900],
+    fg: ds.isDark ? ds.sky[100] : "#1F757D",
+  },
+});
 
 interface FieldDef {
   key: string;
@@ -68,6 +73,8 @@ export function LogEditSheet({
   onSave: (patch: Record<string, any>) => void;
 }) {
   const fields = FIELDS[logName] ?? [];
+  const styles = useStyles();
+  const ds = useDs();
   const isChemical = logName === "Chemical Dosing";
 
   const [values, setValues] = useState<Record<string, string>>(() => {
@@ -81,7 +88,7 @@ export function LogEditSheet({
     return seed;
   });
 
-  const status = STATUS[normaliseLogStatus(row?.status)];
+  const status = statusMap(ds)[normaliseLogStatus(row?.status)];
   const meta = useMemo(() => {
     const shift = shiftLabelToName(row?.shift_label);
     const person = row?.assigned_to || row?.executor_id || "Unassigned";
@@ -140,7 +147,7 @@ export function LogEditSheet({
                   value={values[f.key]}
                   onChangeText={(v: string) => set(f.key, v)}
                   placeholder={`Enter ${f.label.toLowerCase()}`}
-                  placeholderTextColor="#9B9897"
+                  placeholderTextColor={ds.carbon[600]}
                   keyboardType="decimal-pad"
                   style={styles.input}
                 />
@@ -173,7 +180,7 @@ export function LogEditSheet({
                   ]}
                 >
                   {values.dosing === "Yes" ? (
-                    <Check size={13} color={ds.white} strokeWidth={3} />
+                    <Check size={13} color={ds.onChrome} strokeWidth={3} />
                   ) : null}
                 </View>
                 <Text style={styles.checkLabel}>Dosing done</Text>
@@ -191,7 +198,7 @@ export function LogEditSheet({
                 value={values.mainRemarks}
                 onChangeText={(v: string) => set("mainRemarks", v)}
                 placeholder="Add a remark…"
-                placeholderTextColor="#9B9897"
+                placeholderTextColor={ds.carbon[600]}
                 multiline
                 style={[styles.input, styles.inputMultiline]}
               />
@@ -215,10 +222,10 @@ export function LogEditSheet({
           style={styles.save}
         >
           {saving ? (
-            <ActivityIndicator size="small" color={ds.white} />
+            <ActivityIndicator size="small" color={ds.onChrome} />
           ) : (
             <>
-              <Check size={17} color={ds.white} strokeWidth={2.6} />
+              <Check size={17} color={ds.onChrome} strokeWidth={2.6} />
               <Text style={styles.saveText}>Update readings</Text>
             </>
           )}
@@ -228,7 +235,7 @@ export function LogEditSheet({
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = makeThemedStyles((ds) => ({
   head: { paddingHorizontal: 22, paddingTop: 6, paddingBottom: 14 },
   headRow: { flexDirection: "row", alignItems: "flex-start", gap: 10 },
   title: {
@@ -262,8 +269,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     borderRadius: soRadius.sm,
     borderWidth: 1.5,
-    borderColor: "#E4E3E2",
-    backgroundColor: "#FAFAFA",
+    borderColor: ds.fieldBorder,
+    backgroundColor: ds.field,
   },
   fieldTall: { height: 84, alignItems: "flex-start", paddingVertical: 12 },
   input: {
@@ -279,7 +286,7 @@ const styles = StyleSheet.create({
     marginLeft: 8,
     fontSize: 13,
     fontWeight: "600",
-    color: "#9B9897",
+    color: ds.carbon[600],
   },
 
   checkRow: { gap: 10 },
@@ -313,7 +320,7 @@ const styles = StyleSheet.create({
     paddingTop: 14,
     paddingBottom: 30,
     borderTopWidth: 1,
-    borderTopColor: "#F0EFEF",
+    borderTopColor: ds.carbon[900],
   },
   cancel: {
     minHeight: 48,
@@ -339,8 +346,8 @@ const styles = StyleSheet.create({
     fontSize: 14.5,
     fontWeight: "600",
     letterSpacing: 0.15,
-    color: ds.white,
+    color: ds.onChrome,
   },
-});
+}));
 
 export default LogEditSheet;

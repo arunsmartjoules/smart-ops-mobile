@@ -6,7 +6,7 @@
 import React from "react";
 import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { Check, Plus, ArrowRight } from "lucide-react-native";
-import { ds } from "@/constants/ds";
+import { makeThemedStyles, useDs } from "@/hooks/useDs";
 import { soRadius, soShadow } from "@/components/home/SiteOverview";
 
 export { soRadius, soShadow };
@@ -26,6 +26,8 @@ export function LogSummaryCards({
   filter: LogStatusFilter;
   onToggle: (next: LogStatusFilter) => void;
 }) {
+  const styles = useStyles();
+  const ds = useDs();
   const card = (
     key: Exclude<LogStatusFilter, "all">,
     label: string,
@@ -71,6 +73,8 @@ export function ShiftChips({
   onChange: (shift: string) => void;
   shifts?: string[];
 }) {
+  const styles = useStyles();
+  const ds = useDs();
   return (
     <View style={styles.chipRow}>
       {shifts.map((sh) => {
@@ -93,7 +97,7 @@ export function ShiftChips({
             <Text
               style={[
                 styles.chipText,
-                { color: on ? ds.white : ds.carbon[400] },
+                { color: on ? ds.onChrome : ds.carbon[400] },
               ]}
             >
               Shift {sh}
@@ -108,6 +112,7 @@ export function ShiftChips({
 /* ── History heading ────────────────────────────────────────────────────── */
 
 export function HistoryHeading({ label }: { label: string }) {
+  const styles = useStyles();
   return (
     <View style={styles.historyRow}>
       <Text style={styles.historyTitle}>History</Text>
@@ -129,6 +134,8 @@ export function LogFilterPopover({
   onSelect: (next: LogStatusFilter) => void;
   onDismiss: () => void;
 }) {
+  const styles = useStyles();
+  const ds = useDs();
   const options: { key: LogStatusFilter; label: string; dot: string }[] = [
     { key: "all", label: "All entries", dot: ds.carbon[800] },
     { key: "pending", label: "Pending", dot: ds.flame[100] },
@@ -150,7 +157,7 @@ export function LogFilterPopover({
               key={o.key}
               onPress={() => onSelect(o.key)}
               activeOpacity={0.8}
-              style={[styles.popRow, on && { backgroundColor: "#F7F7F8" }]}
+              style={[styles.popRow, on && { backgroundColor: ds.field }]}
               accessibilityRole="button"
               accessibilityState={{ selected: on }}
             >
@@ -187,6 +194,8 @@ export function LogFab({
   onPress: () => void;
   bottom: number;
 }) {
+  const styles = useStyles();
+  const ds = useDs();
   const Icon = continuing ? ArrowRight : Plus;
   return (
     <TouchableOpacity
@@ -196,13 +205,13 @@ export function LogFab({
       accessibilityRole="button"
       accessibilityLabel={label}
     >
-      <Icon size={21} color={ds.white} strokeWidth={2.4} />
+      <Icon size={21} color={ds.onChrome} strokeWidth={2.4} />
       <Text style={styles.fabLabel}>{label}</Text>
     </TouchableOpacity>
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = makeThemedStyles((ds) => ({
   eyebrow: {
     fontSize: 9,
     fontWeight: "600",
@@ -299,6 +308,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "600",
     letterSpacing: 0.14,
-    color: ds.white,
+    color: ds.onChrome,
   },
-});
+}));

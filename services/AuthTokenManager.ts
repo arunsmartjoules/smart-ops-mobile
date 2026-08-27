@@ -1,5 +1,6 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { API_BASE_URL } from "../constants/api";
+import NetInfo from "@react-native-community/netinfo";
+import { API_BASE_URL, API_TIMEOUT_SHORT } from "../constants/api";
 import { authEvents } from "../utils/authEvents";
 
 // JouleOps session tokens (issued by /api/auth/login|google|refresh). Replaces
@@ -12,6 +13,24 @@ const LEGACY_TOKEN_KEY = "firebase-token";
 const DEFAULT_MIN_VALIDITY_MS = 5 * 60 * 1000;
 
 let refreshInFlight: Promise<string | null> | null = null;
+
+/**
+ * Best-effort connectivity check. Returns true only when the device reports a
+ * usable connection; on any error we assume ONLINE so a genuinely-dead session
+ * can still be detected (we never want a flaky NetInfo read to trap a user with
+ * a truly expired session). Offline is the case we must be certain about before
+ * forcing a re-auth, so we only act on an explicit `isConnected === false`.
+ */
+async function isOnline(): Promise<boolean> {
+  try {
+    const state = await NetInfo.fetch();
+    if (state.isConnected === false) return false;
+    if (state.isInternetReachable === false) return false;
+    return true;
+  } catch {
+    return true;
+  }
+}
 
 function base64UrlDecode(input: string): string {
   const normalized = input.replace(/-/g, "+").replace(/_/g, "/");
@@ -107,15 +126,28 @@ export async function forceRefreshAuthToken(): Promise<string | null> {
   refreshInFlight = (async () => {
     const refreshToken = await getStoredRefreshToken();
     if (!refreshToken) {
-      // No refresh token at all — the session can't be refreshed. Re-auth.
-      authEvents.emitUnauthorized("session_expired");
+      // No refresh token stored. Only treat this as an unrecoverable session
+      // when we're actually online — offline (or connectivity unknown) it must
+      // NOT force a logout: a field user with hours of no signal would be
+      // dropped at the sign-in screen and lose their session. Return null and
+      // let the caller fall back to the cached access token.
+      const online = await isOnline();
+      if (online) {
+        authEvents.emitUnauthorized("session_expired");
+      }
       return null;
     }
+    // Bound the refresh so a "connected but dead" network (captive portal,
+    // plant-room dead zone) can't hang this promise — and every caller de-duped
+    // onto it — forever. Falls through to `catch` → returns null on timeout.
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), API_TIMEOUT_SHORT);
     try {
       const res = await fetch(`${API_BASE_URL}/api/auth/refresh`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ refresh_token: refreshToken }),
+        signal: controller.signal,
       });
       // 401 = the refresh token is dead (revoked / expired / logged out). This
       // is unrecoverable, so signal re-authentication. Other non-2xx (5xx,
@@ -134,6 +166,8 @@ export async function forceRefreshAuthToken(): Promise<string | null> {
       return newAccess;
     } catch {
       return null;
+    } finally {
+      clearTimeout(timeoutId);
     }
   })();
 

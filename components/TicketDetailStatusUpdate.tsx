@@ -3,7 +3,6 @@ import {
   Alert,
   Image,
   ScrollView,
-  StyleSheet,
   Text,
   TouchableOpacity,
   View,
@@ -24,7 +23,7 @@ import type { LucideIcon } from "lucide-react-native";
 import { type SelectOption } from "./SearchableSelect";
 import FullscreenPicker from "./FullscreenPicker";
 import { type Ticket } from "@/services/TicketsService";
-import { ds } from "@/constants/ds";
+import { makeThemedStyles, useDs } from "@/hooks/useDs";
 import {
   AttachButton,
   CardHead,
@@ -277,6 +276,8 @@ const TicketDetailStatusUpdate = ({
   setIncidentDraft,
   attempted = false,
 }: TicketDetailStatusUpdateProps) => {
+  const styles = useStyles();
+  const ds = useDs();
   const incidentFaultTypeOptions = useMemo(
     () => FAULT_TYPE_OPTIONS.map((value) => ({ value, label: value })),
     [],
@@ -634,7 +635,7 @@ const TicketDetailStatusUpdate = ({
               accessibilityRole="button"
               accessibilityLabel="Remove photo"
             >
-              <X size={14} color={ds.white} strokeWidth={2.4} />
+              <X size={14} color={ds.onChrome} strokeWidth={2.4} />
             </TouchableOpacity>
           </View>
         ) : null}
@@ -766,7 +767,7 @@ const TicketDetailStatusUpdate = ({
                       accessibilityRole="button"
                       accessibilityLabel="Remove attachment"
                     >
-                      <X size={13} color={ds.white} strokeWidth={2.4} />
+                      <X size={13} color={ds.onChrome} strokeWidth={2.4} />
                     </TouchableOpacity>
                   </View>
                 ))}
@@ -779,7 +780,7 @@ const TicketDetailStatusUpdate = ({
   );
 };
 
-const styles = StyleSheet.create({
+const useStyles = makeThemedStyles((ds) => ({
   statusRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -825,6 +826,6 @@ const styles = StyleSheet.create({
     color: ds.carbon[500],
     marginBottom: 7,
   },
-});
+}));
 
 export default TicketDetailStatusUpdate;

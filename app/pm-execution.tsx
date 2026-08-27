@@ -37,7 +37,8 @@ import logger from "@/utils/logger";
 import Skeleton from "@/components/Skeleton";
 import { StorageService } from "@/services/StorageService";
 import { cacheManager } from "@/services/CacheManager";
-import { ds, dsRadius, dsCardShadow } from "@/constants/ds";
+import { dsRadius, dsCardShadow } from "@/constants/ds";
+import { makeThemedStyles, useDs } from "@/hooks/useDs";
 import NetInfo from "@react-native-community/netinfo";
 
 // Drizzle row type inferred from the schema
@@ -130,6 +131,8 @@ const TaskRow = React.memo(
     missingResponse?: boolean;
     missingReadings?: boolean;
   }) => {
+    const styles = useStyles();
+    const ds = useDs();
     const value = response?.response_value || null;
     const fieldType = item.field_type || "Multiple Choice";
     const isChoice = fieldType === "Multiple Choice";
@@ -165,13 +168,14 @@ const TaskRow = React.memo(
           missingEvidenceImage),
     );
 
-    // Box visuals per state — thunder fill when Done, flame outline when Not
-    // Done, hairline carbon outline when still unanswered.
+    // Box visuals per state — filled when Done, flame outline when Not Done,
+    // hairline carbon outline when still unanswered. The unanswered box takes
+    // the inset-field fill so it stays discernible against the task card.
     const boxStyle = isDone
-      ? { backgroundColor: ds.thunder[100], borderColor: ds.thunder[100] }
+      ? { backgroundColor: ds.controlOn, borderColor: ds.controlOn }
       : isNotDone
         ? { backgroundColor: ds.flame[1000], borderColor: ds.flame[100] }
-        : { backgroundColor: ds.white, borderColor: ds.carbon[800] };
+        : { backgroundColor: ds.field, borderColor: ds.carbon[800] };
 
     const cycleResponse = () => {
       if (isCompleted) return;
@@ -201,7 +205,7 @@ const TaskRow = React.memo(
             ) : (
               <Check
                 size={17}
-                color={isDone ? ds.white : "transparent"}
+                color={isDone ? ds.onControl : "transparent"}
                 strokeWidth={2.6}
               />
             )}
@@ -352,6 +356,7 @@ TaskRow.displayName = "TaskRow";
 
 // ─── Checklist Skeleton ─────────────────────────────────────────────────────
 const ChecklistSkeleton = () => {
+  const styles = useStyles();
   return (
     <View style={styles.listContent}>
       {[1, 2, 3, 4, 5, 6, 7, 8].map((i) => (
@@ -383,6 +388,8 @@ const ChecklistSkeleton = () => {
 
 // ─── Main Screen ────────────────────────────────────────────────────────────
 export default function PMExecutionScreen() {
+  const styles = useStyles();
+  const ds = useDs();
   const { instanceId } = useLocalSearchParams<{ instanceId: string }>();
   const { isConnected } = useNetworkStatus();
   const { canEdit } = useAttendanceGate();
@@ -850,6 +857,20 @@ export default function PMExecutionScreen() {
   const total = checklistItems.length;
   // Visual percentage for the progress bar fill
   const progressPercent = total > 0 ? (answered / total) * 100 : 0;
+
+  /**
+   * Commissioning airflow for this asset, resolved server-side from
+   * `assets.commissioning_cfm`. Only ~47% of PM rows have one, so the chip is
+   * omitted entirely rather than showing an em-dash the operator can't act on.
+   * Trailing ".0" is dropped — the source stores one decimal place.
+   */
+  const commissioningCfm = (() => {
+    const raw = Number(instance?.design_cfm);
+    if (instance?.design_cfm == null || Number.isNaN(raw)) return null;
+    return Number.isInteger(raw)
+      ? raw.toLocaleString("en-IN")
+      : raw.toLocaleString("en-IN", { maximumFractionDigits: 1 });
+  })();
 
   // Signature-sheet summary chips
   const doneCount = checklistItems.filter(
@@ -1331,13 +1352,61 @@ export default function PMExecutionScreen() {
 
   const keyExtractor = useCallback((item: PMChecklistItemRow) => item.id, []);
 
+  /**
+   * One large evidence tile — a thumbnail once shot, a prompt before that.
+   * A render FUNCTION, not a component: declaring a component inside render
+   * gives it a new type each pass, which remounts the tile (and re-decodes the
+   * photo) on every keystroke in the checklist above it.
+   */
+  const renderEvidenceTile = (
+    type: "before_image" | "after_image",
+    label: string,
+  ) => {
+    const uri = instance?.[type] as string | undefined;
+    return (
+      <TouchableOpacity
+        key={type}
+        onPress={() => onEvidencePress(type)}
+        activeOpacity={0.85}
+        style={[styles.evTile, uri ? styles.evTileFilled : null]}
+        accessibilityRole="button"
+        accessibilityLabel={`${label} photo. ${uri ? "Tap to preview or replace" : "Tap to add"}`}
+      >
+        {uri ? (
+          <Image source={{ uri }} style={styles.evImage} resizeMode="cover" />
+        ) : (
+          <View style={styles.evEmpty}>
+            <Camera size={26} color={ds.carbon[600]} strokeWidth={1.8} />
+            <Text style={styles.evAdd}>Add photo</Text>
+          </View>
+        )}
+        <View style={styles.evCaption}>
+          <Text style={styles.evLabel}>{label}</Text>
+          {uri ? <Check size={13} color={ds.sky[100]} strokeWidth={2.6} /> : null}
+        </View>
+      </TouchableOpacity>
+    );
+  };
+
   const ListFooter = (
-    <View style={styles.hintRow}>
-      <Info size={14} color={ds.carbon[600]} />
-      <Text style={styles.hintText}>
-        Tap the box to cycle Done → Not Done → clear. Fields marked Required
-        must be filled before completion.
-      </Text>
+    <View>
+      {/* Evidence lives at the bottom, at a size worth looking at — it used to
+          be two 14px tiles in the header, too small to read or verify. */}
+      <View style={styles.evSection}>
+        <Text style={styles.evHeading}>Photos</Text>
+        <View style={styles.evRow}>
+          {renderEvidenceTile("before_image", "Before")}
+          {renderEvidenceTile("after_image", "After")}
+        </View>
+      </View>
+
+      <View style={styles.hintRow}>
+        <Info size={14} color={ds.carbon[600]} />
+        <Text style={styles.hintText}>
+          Tap the box to cycle Done → Not Done → clear. Fields marked Required
+          must be filled before completion.
+        </Text>
+      </View>
     </View>
   );
 
@@ -1389,11 +1458,6 @@ export default function PMExecutionScreen() {
       })
     : null;
 
-  const evidenceTileStyle = (has: boolean) => [
-    styles.evidenceTile,
-    has ? styles.evidenceTileActive : styles.evidenceTileIdle,
-  ];
-
   if (loading && !instance) {
     return (
       <View style={[styles.flex, { backgroundColor: ds.pageBg }]}>
@@ -1404,7 +1468,7 @@ export default function PMExecutionScreen() {
               style={styles.headerTile}
               accessibilityLabel="Go back"
             >
-              <ArrowLeft size={20} color={ds.white} />
+              <ArrowLeft size={20} color={ds.onChrome} />
             </TouchableOpacity>
             <View style={styles.headerText}>
               <Text style={styles.headerTitle}>PM Task</Text>
@@ -1430,7 +1494,7 @@ export default function PMExecutionScreen() {
             style={styles.headerTile}
             accessibilityLabel="Go back"
           >
-            <ArrowLeft size={20} color={ds.white} />
+            <ArrowLeft size={20} color={ds.onChrome} />
           </TouchableOpacity>
           <View style={styles.headerText}>
             <Text style={styles.headerTitle} numberOfLines={1}>
@@ -1450,9 +1514,9 @@ export default function PMExecutionScreen() {
               accessibilityLabel="Refresh checklist"
             >
               {fetchingChecklist ? (
-                <ActivityIndicator size="small" color={ds.white} />
+                <ActivityIndicator size="small" color={ds.onChrome} />
               ) : (
-                <RefreshCw size={18} color={ds.white} />
+                <RefreshCw size={18} color={ds.onChrome} />
               )}
             </TouchableOpacity>
           )}
@@ -1468,28 +1532,15 @@ export default function PMExecutionScreen() {
             {answered}
             <Text style={styles.progressTotal}>/{total}</Text>
           </Text>
-          <View style={styles.evidenceGroup}>
-            <TouchableOpacity
-              onPress={() => onEvidencePress("before_image")}
-              style={evidenceTileStyle(!!instance?.before_image)}
-              accessibilityLabel="Before photo"
-            >
-              <Camera
-                size={14}
-                color={instance?.before_image ? ds.sky[800] : ds.thunder[600]}
-              />
-            </TouchableOpacity>
-            <TouchableOpacity
-              onPress={() => onEvidencePress("after_image")}
-              style={evidenceTileStyle(!!instance?.after_image)}
-              accessibilityLabel="After photo"
-            >
-              <Camera
-                size={14}
-                color={instance?.after_image ? ds.sky[800] : ds.thunder[600]}
-              />
-            </TouchableOpacity>
-          </View>
+          {commissioningCfm != null && (
+            <View style={styles.cfmChip}>
+              <Text style={styles.cfmLabel}>Commissioning</Text>
+              <Text style={styles.cfmValue}>
+                {commissioningCfm}
+                <Text style={styles.cfmUnit}> CFM</Text>
+              </Text>
+            </View>
+          )}
         </View>
       </View>
 
@@ -1557,13 +1608,13 @@ export default function PMExecutionScreen() {
             activeOpacity={0.85}
             style={[
               styles.cta,
-              { backgroundColor: ctaReady ? ds.thunder[100] : ds.carbon[900] },
+              { backgroundColor: ctaReady ? ds.controlOn : ds.carbon[900] },
             ]}
           >
             <Text
               style={[
                 styles.ctaText,
-                { color: ctaReady ? ds.white : ds.carbon[700] },
+                { color: ctaReady ? ds.onControl : ds.carbon[700] },
               ]}
             >
               Complete &amp; Sign
@@ -1674,7 +1725,7 @@ export default function PMExecutionScreen() {
               onPress={() => setPreviewImageUrl(null)}
               style={styles.closePreviewBtn}
             >
-              <X size={24} color={ds.white} />
+              <X size={24} color={ds.onChrome} />
             </TouchableOpacity>
           </View>
         </TouchableOpacity>
@@ -1684,7 +1735,7 @@ export default function PMExecutionScreen() {
 }
 
 // ─── Styles ─────────────────────────────────────────────────────────────────
-const styles = StyleSheet.create({
+const useStyles = makeThemedStyles((ds) => ({
   flex: { flex: 1 },
   listContent: {
     paddingHorizontal: 14,
@@ -1717,7 +1768,7 @@ const styles = StyleSheet.create({
     lineHeight: 19,
     fontWeight: "700",
     letterSpacing: 0.16,
-    color: ds.white,
+    color: ds.onChrome,
   },
   headerSub: {
     fontSize: 11.5,
@@ -1747,29 +1798,80 @@ const styles = StyleSheet.create({
   progressCount: {
     fontSize: 12,
     fontWeight: "600",
-    color: ds.white,
+    color: ds.onChrome,
   },
   progressTotal: {
     fontWeight: "400",
     color: ds.thunder[700],
   },
-  evidenceGroup: { flexDirection: "row", gap: 5 },
-  evidenceTile: {
-    width: 34,
-    height: 26,
-    borderRadius: dsRadius.sm,
+  /* Commissioning CFM chip — sits where the evidence tiles used to. */
+  cfmChip: {
+    alignItems: "flex-end",
+    paddingLeft: 10,
+  },
+  cfmLabel: {
+    fontSize: 8,
+    fontWeight: "600",
+    letterSpacing: 0.96,
+    textTransform: "uppercase",
+    color: ds.sky[500],
+    marginBottom: 2,
+  },
+  cfmValue: { fontSize: 14, fontWeight: "700", color: ds.onChrome },
+  cfmUnit: { fontSize: 9, fontWeight: "600", color: ds.sky[500] },
+
+  /* Before / After evidence, at the bottom of the checklist. */
+  evSection: { paddingTop: 18, paddingBottom: 4 },
+  evHeading: {
+    fontSize: 9,
+    fontWeight: "600",
+    letterSpacing: 1.08,
+    textTransform: "uppercase",
+    color: ds.carbon[500],
+    marginBottom: 9,
+  },
+  evRow: { flexDirection: "row", gap: 10 },
+  evTile: {
+    flex: 1,
+    height: 168,
+    borderRadius: dsRadius.tile,
+    backgroundColor: ds.field,
     borderWidth: 1,
+    borderColor: ds.carbon[900],
+    overflow: "hidden",
+    justifyContent: "flex-end",
+  },
+  evTileFilled: { borderColor: ds.sky[100] },
+  evImage: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0 },
+  evEmpty: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
     alignItems: "center",
     justifyContent: "center",
+    gap: 7,
   },
-  evidenceTileIdle: {
-    backgroundColor: "rgba(255,255,255,0.07)",
-    borderColor: "rgba(255,255,255,0.18)",
+  evAdd: { fontSize: 11, fontWeight: "500", color: ds.carbon[600] },
+  evCaption: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    // Reads over both a photo and the empty fill.
+    backgroundColor: "rgba(6,20,23,0.72)",
   },
-  evidenceTileActive: {
-    backgroundColor: "rgba(40,147,157,0.35)",
-    borderColor: ds.sky[300],
+  evLabel: {
+    fontSize: 11,
+    fontWeight: "700",
+    letterSpacing: 0.55,
+    textTransform: "uppercase",
+    color: "#F1F4F4",
   },
+
 
   // ── Offline strip ──
   offlineStrip: {
@@ -2101,4 +2203,4 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-});
+}));

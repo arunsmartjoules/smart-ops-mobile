@@ -7,7 +7,6 @@
 import React from "react";
 import {
   ActivityIndicator,
-  StyleSheet,
   Text,
   TextInput,
   TextInputProps,
@@ -17,7 +16,7 @@ import {
 } from "react-native";
 import { ArrowLeft, Check, CircleAlert, MoreVertical } from "lucide-react-native";
 import type { LucideIcon } from "lucide-react-native";
-import { ds } from "@/constants/ds";
+import { makeThemedStyles, useDs } from "@/hooks/useDs";
 import { soRadius, soShadow } from "@/components/home/SiteOverview";
 
 export { soRadius, soShadow };
@@ -37,6 +36,8 @@ export function DetailHeader({
   onBack: () => void;
   onMore?: () => void;
 }) {
+  const styles = useStyles();
+  const ds = useDs();
   return (
     <View style={[styles.header, { paddingTop: topInset }]}>
       <View style={styles.headerRow}>
@@ -48,7 +49,7 @@ export function DetailHeader({
           accessibilityRole="button"
           accessibilityLabel="Close ticket"
         >
-          <ArrowLeft size={20} color={ds.white} strokeWidth={2} />
+          <ArrowLeft size={20} color={ds.onChrome} strokeWidth={2} />
         </TouchableOpacity>
 
         <View style={styles.headerLead}>
@@ -71,7 +72,7 @@ export function DetailHeader({
             accessibilityRole="button"
             accessibilityLabel="More actions"
           >
-            <MoreVertical size={19} color={ds.white} strokeWidth={2} />
+            <MoreVertical size={19} color={ds.onChrome} strokeWidth={2} />
           </TouchableOpacity>
         ) : null}
       </View>
@@ -90,6 +91,7 @@ export function Badge({
   bg: string;
   fg: string;
 }) {
+  const styles = useStyles();
   return (
     <View style={[styles.badge, { backgroundColor: bg }]}>
       <Text style={[styles.badgeText, { color: fg }]}>{label}</Text>
@@ -104,6 +106,7 @@ export function DetailCard({
   children: React.ReactNode;
   style?: ViewStyle;
 }) {
+  const styles = useStyles();
   return <View style={[styles.card, style]}>{children}</View>;
 }
 
@@ -114,10 +117,12 @@ export function SectionTitle({
   children: React.ReactNode;
   style?: ViewStyle;
 }) {
+  const styles = useStyles();
   return <Text style={[styles.sectionTitle, style as never]}>{children}</Text>;
 }
 
 export function MetaBlock({ label, value }: { label: string; value: string }) {
+  const styles = useStyles();
   return (
     <View style={styles.metaBlock}>
       <Text style={styles.eyebrow}>{label}</Text>
@@ -138,6 +143,8 @@ export function CardHead({
   hintTone?: "muted" | "error";
   style?: ViewStyle;
 }) {
+  const styles = useStyles();
+  const ds = useDs();
   return (
     <View style={[styles.cardHead, style]}>
       <Text style={styles.eyebrow}>{label}</Text>
@@ -166,6 +173,8 @@ export function StatusChip({
   active: boolean;
   onPress: () => void;
 }) {
+  const styles = useStyles();
+  const ds = useDs();
   return (
     <TouchableOpacity
       onPress={onPress}
@@ -181,13 +190,13 @@ export function StatusChip({
       accessibilityRole="button"
       accessibilityState={{ selected: active }}
     >
-      {active ? <Check size={14} color={ds.white} strokeWidth={2.6} /> : null}
+      {active ? <Check size={14} color={ds.onChrome} strokeWidth={2.6} /> : null}
       <Text
         style={[
           styles.statusChipText,
           {
             fontWeight: active ? "600" : "400",
-            color: active ? ds.white : ds.carbon[100],
+            color: active ? ds.onChrome : ds.carbon[100],
           },
         ]}
       >
@@ -205,6 +214,8 @@ export function StatusHint({
   icon: LucideIcon;
   children: React.ReactNode;
 }) {
+  const styles = useStyles();
+  const ds = useDs();
   return (
     <View style={styles.statusHint}>
       <Icon size={14} color={ds.carbon[400]} strokeWidth={2} />
@@ -235,6 +246,8 @@ export function Field({
   containerStyle,
   ...input
 }: FieldProps) {
+  const styles = useStyles();
+  const ds = useDs();
   return (
     <View style={containerStyle}>
       {label ? <Text style={styles.fieldLabel}>{label}</Text> : null}
@@ -268,6 +281,8 @@ export function AttachButton({
   active?: boolean;
   onPress: () => void;
 }) {
+  const styles = useStyles();
+  const ds = useDs();
   const fg = active ? ds.sky[100] : ds.carbon[400];
   return (
     <TouchableOpacity
@@ -304,6 +319,8 @@ export function ToggleRow({
   value: boolean;
   onToggle: () => void;
 }) {
+  const styles = useStyles();
+  const ds = useDs();
   return (
     <TouchableOpacity
       onPress={onToggle}
@@ -354,6 +371,7 @@ export function ActivityRow({
   dot: string;
   line: boolean;
 }) {
+  const styles = useStyles();
   return (
     <View style={styles.activityRow}>
       <View style={styles.rail}>
@@ -388,8 +406,10 @@ export function SubmitBar({
   bottomInset: number;
   onPress: () => void;
 }) {
-  const bg = done ? ds.sky[100] : ready ? ds.thunder[100] : ds.carbon[900];
-  const fg = done || ready ? ds.white : ds.carbon[500];
+  const styles = useStyles();
+  const ds = useDs();
+  const bg = done ? ds.sky[100] : ready ? ds.controlOn : ds.carbon[900];
+  const fg = done ? ds.onAccent : ready ? ds.onControl : ds.carbon[500];
 
   return (
     <View
@@ -410,7 +430,7 @@ export function SubmitBar({
         accessibilityLabel={label}
       >
         {busy ? (
-          <ActivityIndicator size="small" color={ds.white} />
+          <ActivityIndicator size="small" color={ds.onChrome} />
         ) : (
           <Text style={[styles.submitLabel, { color: fg }]}>{label}</Text>
         )}
@@ -419,7 +439,7 @@ export function SubmitBar({
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = makeThemedStyles((ds) => ({
   header: { backgroundColor: ds.thunder[100] },
   headerRow: {
     flexDirection: "row",
@@ -435,7 +455,7 @@ const styles = StyleSheet.create({
     lineHeight: 21,
     fontWeight: "700",
     letterSpacing: 0.34,
-    color: ds.white,
+    color: ds.onChrome,
   },
   headerSub: { fontSize: 11.5, color: ds.thunder[700], marginTop: 2 },
   tile: {
@@ -605,4 +625,4 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   submitLabel: { fontSize: 15, fontWeight: "600", letterSpacing: 0.15 },
-});
+}));

@@ -2,28 +2,42 @@
  * PM-specific colour maps and date copy — Claude Design "JouleOps PM.dc.html".
  * The surrounding chrome is shared; see components/shared/ListChrome.
  */
-import { ds } from "@/constants/ds";
+import type { DsTheme } from "@/hooks/useDs";
 import { formatIST, istDayStartMs } from "@/utils/istDate";
 
 export { soRadius, soShadow } from "@/components/home/SiteOverview";
 
 /** The mock's amber "Due" pair has no ds token — it's specific to PM. */
-const DUE_BG = "#FEF4E9";
-const DUE_FG = "#B5710A";
+const DUE_BG_LIGHT = "#FEF4E9";
+const DUE_FG_LIGHT = "#B5710A";
+/** Dark counterparts — the artboard's amber `#E5A93A` on a deep wash. */
+const DUE_BG_DARK = "#3A2E12";
+const DUE_FG_DARK = "#E5A93A";
 
-export const PM_STATUS: Record<string, { label: string; bg: string; fg: string }> = {
+export const pmStatusMap = (
+  ds: DsTheme,
+): Record<string, { label: string; bg: string; fg: string }> => ({
   Overdue: { label: "Overdue", bg: ds.flame[1000], fg: ds.flame[100] },
-  Due: { label: "Due", bg: DUE_BG, fg: DUE_FG },
+  Due: {
+    label: "Due",
+    bg: ds.isDark ? DUE_BG_DARK : DUE_BG_LIGHT,
+    fg: ds.isDark ? DUE_FG_DARK : DUE_FG_LIGHT,
+  },
   "In progress": { label: "In progress", bg: ds.sky[1000], fg: ds.sky[100] },
-  Completed: { label: "Completed", bg: ds.sky[900], fg: "#1F757D" },
+  Completed: {
+    label: "Completed",
+    bg: ds.sky[900],
+    fg: ds.isDark ? ds.sky[100] : "#1F757D",
+  },
   Skipped: { label: "Skipped", bg: ds.carbon[1000], fg: ds.carbon[500] },
-};
+});
 
 /**
  * The backend's PM vocabulary (Pending / Overdue / In-progress / Completed,
  * with assorted casing) mapped onto the design's five states.
  */
-export const getPmStatus = (status?: string | null) => {
+export const getPmStatus = (status: string | null | undefined, ds: DsTheme) => {
+  const PM_STATUS = pmStatusMap(ds);
   const s = (status || "").toLowerCase().trim();
   if (s === "completed") return PM_STATUS.Completed;
   if (s === "in-progress" || s === "in progress" || s === "inprogress") {
@@ -35,7 +49,10 @@ export const getPmStatus = (status?: string | null) => {
 };
 
 /** Frequency rides in the second badge, in neutral carbon. */
-export const getPmFrequency = (frequency?: string | null) => {
+export const getPmFrequency = (
+  frequency: string | null | undefined,
+  ds: DsTheme,
+) => {
   const label = (frequency || "").trim();
   if (!label) return null;
   return { label, bg: ds.carbon[1000], fg: ds.carbon[400] };
@@ -71,13 +88,9 @@ export function formatPmDue(
 
   if (days === 0) return { label: "Due today", late: false };
   if (days === 1) return { label: "Due tomorrow", late: false };
-  if (days < 0) {
-    const late = Math.abs(days);
-    return {
-      label: `Due ${formatIST(dueMs, DM)} · ${late}d late`,
-      late: true,
-    };
-  }
+  // Overdue shows the due date only — the day count was noise on the card.
+  // `late` still drives the flame treatment, so the row reads as overdue.
+  if (days < 0) return { label: `Due ${formatIST(dueMs, DM)}`, late: true };
   return { label: `Due ${formatIST(dueMs, DM)}`, late: false };
 }
 

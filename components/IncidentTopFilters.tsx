@@ -7,8 +7,8 @@
  * thing worth slicing by.
  */
 import React from "react";
-import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
-import { ds } from "@/constants/ds";
+import { ScrollView, Text, TouchableOpacity, View } from "react-native";
+import { makeThemedStyles, useDs } from "@/hooks/useDs";
 import { soRadius } from "@/components/home/SiteOverview";
 
 interface IncidentTopFiltersProps {
@@ -24,6 +24,8 @@ const IncidentTopFilters = ({
   onChange,
   canEdit,
 }: IncidentTopFiltersProps) => {
+  const styles = useStyles();
+  const ds = useDs();
   return (
     <View style={styles.wrap}>
       <ScrollView
@@ -53,7 +55,7 @@ const IncidentTopFilters = ({
               <Text
                 style={[
                   styles.chipLabel,
-                  { color: active ? ds.white : ds.carbon[100] },
+                  { color: active ? ds.onChrome : ds.carbon[100] },
                 ]}
               >
                 {item}
@@ -66,7 +68,7 @@ const IncidentTopFilters = ({
   );
 };
 
-const styles = StyleSheet.create({
+const useStyles = makeThemedStyles((ds) => ({
   wrap: { paddingBottom: 12 },
   scroll: { gap: 6, paddingHorizontal: 20 },
   chip: {
@@ -77,6 +79,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   chipLabel: { fontSize: 11.5, fontWeight: "600", letterSpacing: 0.23 },
-});
+}));
 
 export default IncidentTopFilters;

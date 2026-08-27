@@ -16,7 +16,7 @@ import "./global.css";
 enableFreeze(true);
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { AttendanceGateProvider } from "@/contexts/AttendanceGateContext";
-import { ThemeProvider } from "@/contexts/ThemeContext";
+import { ThemeProvider, useTheme } from "@/contexts/ThemeContext";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import { useEffect } from "react";
@@ -133,6 +133,8 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
  * dark ones. `usePathname` drops the `(tabs)` group, so tab routes are bare.
  */
 const LIGHT_STATUS_BAR_ROUTES = new Set([
+  "/sign-up",
+  "/signup-verify",
   "/dashboard",
   "/tickets",
   "/incidents",
@@ -151,11 +153,11 @@ const LIGHT_STATUS_BAR_ROUTES = new Set([
  */
 function RouteStatusBar() {
   const pathname = usePathname();
-  return (
-    <StatusBar
-      style={LIGHT_STATUS_BAR_ROUTES.has(pathname) ? "light" : "dark"}
-    />
-  );
+  const { isDark } = useTheme();
+  // In dark mode every surface is near-black, so the icons are always light;
+  // in light mode only the thunder-header routes need them.
+  const light = isDark || LIGHT_STATUS_BAR_ROUTES.has(pathname);
+  return <StatusBar style={light ? "light" : "dark"} />;
 }
 
 /**
@@ -266,6 +268,7 @@ export default function RootLayout() {
                   <Stack.Screen name="sign-in" />
                   <Stack.Screen name="sign-up" />
                   <Stack.Screen name="verify-email" />
+                  <Stack.Screen name="signup-verify" />
                   <Stack.Screen name="(tabs)" />
                   <Stack.Screen name="forgot-password" />
                   <Stack.Screen name="reset-password" />

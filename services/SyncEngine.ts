@@ -84,6 +84,12 @@ export interface SyncStatus {
   downloading: boolean;
   lastSyncedAt: string | null; // ISO 8601 timestamp
   pendingQueueCount: number;
+  /**
+   * Mutations that exhausted their retries and will never sync on their own
+   * (dead-lettered). Non-zero means captured work the server permanently
+   * rejected — surface it so it isn't silently lost (e.g. on logout wipe).
+   */
+  failedQueueCount: number;
 }
 
 export interface SyncEngine {
@@ -117,6 +123,15 @@ const TTL = {
   reference: 120 * 60 * 1000,
 } as const;
 
+// ─── Queue give-up thresholds ─────────────────────────────────────────────────
+// An item dead-letters once EITHER counter exceeds its cap. 4xx means the server
+// rejected the payload (unlikely to succeed on replay), so we give up quickly.
+// 5xx means the server errored (often a transient outage), so we retry far more
+// before concluding the payload itself is poison. Each counter increments at
+// most once per flush cycle (~15 min / on reconnect / on foreground).
+const MAX_4XX_RETRIES = 5;
+const MAX_5XX_RETRIES = 50;
+
 // ─── Shared apiFetch helper ───────────────────────────────────────────────────
 
 const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
@@ -131,6 +146,7 @@ class SyncEngineImpl implements SyncEngine {
     downloading: false,
     lastSyncedAt: null,
     pendingQueueCount: 0,
+    failedQueueCount: 0,
   };
 
   private listeners: Set<(status: SyncStatus) => void> = new Set();
@@ -585,6 +601,17 @@ class SyncEngineImpl implements SyncEngine {
     this.emit();
   }
 
+  /** Refresh both the pending and dead-letter queue counts on the status. */
+  private async refreshQueueCounts(
+    extra: Partial<SyncStatus> = {},
+  ): Promise<void> {
+    const [pendingQueueCount, failedQueueCount] = await Promise.all([
+      cacheManager.getQueueCount(),
+      cacheManager.getDeadLetterCount(),
+    ]);
+    this.setStatus({ pendingQueueCount, failedQueueCount, ...extra });
+  }
+
   private emit(): void {
     const snapshot = this.status;
     this.listeners.forEach((l) => {
@@ -643,11 +670,7 @@ class SyncEngineImpl implements SyncEngine {
     // Seed connected state
     const netState = await NetInfo.fetch();
     this.wasConnected = netState.isConnected === true;
-    const pendingQueueCount = await cacheManager.getQueueCount();
-    this.setStatus({
-      connected: this.wasConnected,
-      pendingQueueCount,
-    });
+    await this.refreshQueueCounts({ connected: this.wasConnected });
 
     // If local caches are empty, force a complete first sync (ignore TTL once).
     this.forceFullSyncOnce = await this.areLocalCachesEmpty();
@@ -725,6 +748,7 @@ class SyncEngineImpl implements SyncEngine {
       downloading: false,
       lastSyncedAt: null,
       pendingQueueCount: 0,
+      failedQueueCount: 0,
     });
 
     logger.info("SyncEngine cleaned up", { module: "SYNC_ENGINE" });
@@ -758,8 +782,7 @@ class SyncEngineImpl implements SyncEngine {
       return;
     }
     await this._flushQueue();
-    const pendingQueueCount = await cacheManager.getQueueCount();
-    this.setStatus({ pendingQueueCount });
+    await this.refreshQueueCounts();
   }
 
   private async _runSync(): Promise<void> {
@@ -822,11 +845,9 @@ class SyncEngineImpl implements SyncEngine {
       }
     } finally {
       // Always clear downloading flag and update lastSyncedAt (Req 2.6)
-      const pendingQueueCount = await cacheManager.getQueueCount();
-      this.setStatus({
+      await this.refreshQueueCounts({
         downloading: false,
         lastSyncedAt: new Date(syncStartedAt).toISOString(),
-        pendingQueueCount,
       });
     }
   }
@@ -901,13 +922,23 @@ class SyncEngineImpl implements SyncEngine {
     });
 
     for (const item of items) {
-      // Items with retry_count > 5 → dead letter (Req 3.5)
-      if (item.retry_count > 5) {
+      // Give up on an item once EITHER counter is exhausted (Req 3.5):
+      //  - retry_count > MAX_4XX_RETRIES        → the server keeps rejecting it
+      //  - transient_retry_count > MAX_5XX_RETRIES → the server keeps erroring on
+      //    it (a "poison" payload). Bounded far higher than the 4xx cap so a real
+      //    outage retries for a long time before we conclude the payload itself
+      //    is the problem — but it is no longer retried forever.
+      if (
+        item.retry_count > MAX_4XX_RETRIES ||
+        item.transient_retry_count > MAX_5XX_RETRIES
+      ) {
         await cacheManager.deadLetterQueueItem(item.id);
         logger.warn("SyncEngine: item moved to dead_letter", {
           module: "SYNC_ENGINE",
           id: item.id,
           entity_type: item.entity_type,
+          retry_count: item.retry_count,
+          transient_retry_count: item.transient_retry_count,
         });
         continue;
       }
@@ -932,14 +963,20 @@ class SyncEngineImpl implements SyncEngine {
             statusCode,
           });
         } else if (is5xx) {
-          // 5xx: transient, do NOT increment retry_count (Req 3.4 / design)
-          logger.warn("SyncEngine: queue item 5xx, will retry next cycle", {
+          // 5xx: server reached but errored. Bump the (high-cap) transient
+          // counter so a payload that consistently 500s can't retry forever.
+          await cacheManager.markQueueItemTransientFailed(
+            item.id,
+            err?.message ?? String(err),
+          );
+          logger.warn("SyncEngine: queue item 5xx, incremented transient_retry_count", {
             module: "SYNC_ENGINE",
             id: item.id,
             statusCode,
           });
         } else {
-          // Network error or unknown — treat as transient
+          // Pure network error (offline / unreachable) — genuinely transient,
+          // increment NEITHER counter so an offline stint never burns retries.
           logger.warn("SyncEngine: queue item network error, will retry", {
             module: "SYNC_ENGINE",
             id: item.id,
@@ -949,9 +986,8 @@ class SyncEngineImpl implements SyncEngine {
       }
     }
 
-    // Refresh pending count after flush
-    const pendingQueueCount = await cacheManager.getQueueCount();
-    this.setStatus({ pendingQueueCount });
+    // Refresh pending + failed counts after flush
+    await this.refreshQueueCounts();
   }
 
   private async _processQueueItem(item: {
