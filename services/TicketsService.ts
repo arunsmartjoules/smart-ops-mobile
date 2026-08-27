@@ -1,10 +1,15 @@
 import NetInfo from "@react-native-community/netinfo";
 import logger from "../utils/logger";
 import { authEvents } from "../utils/authEvents";
-import { areas, categories as categoriesTable } from "../database";
+import {
+  areas,
+  categories as categoriesTable,
+  db,
+  tickets,
+  ticketUpdates,
+} from "../database";
 import { apiFetch as centralApiFetch } from "../utils/apiHelper";
-import { db, tickets } from "../database";
-import { eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import { StorageService } from "./StorageService";
 import { AttachmentQueueService } from "./AttachmentQueueService";
 import cacheManager from "./CacheManager";
@@ -602,10 +607,70 @@ export const TicketsService = {
   },
 
   /**
-   * Get ticket line items (images/videos/texts)
+   * Get ticket line items (images/videos/texts).
+   *
+   * Offline-first: on a successful fetch the timeline is cached into the local
+   * `ticket_updates` table (update_type "line_item"); when the network is
+   * unavailable the cached timeline is served instead of a blank list, so the
+   * ticket detail's conversation/photos still render in the field. The cache is
+   * refreshed wholesale on each success so server-side deletions don't linger.
    */
   async getLineItems(id: string) {
-    return await apiFetch(`/api/complaints/${id}/line-items`);
+    const result = await apiFetch(`/api/complaints/${id}/line-items`);
+
+    if (result?.success && Array.isArray(result.data)) {
+      try {
+        await db
+          .delete(ticketUpdates)
+          .where(
+            and(
+              eq(ticketUpdates.ticket_id, id),
+              eq(ticketUpdates.update_type, "line_item"),
+            ),
+          );
+        const now = Date.now();
+        for (let i = 0; i < result.data.length; i++) {
+          const item = result.data[i];
+          const createdMs = item?.created_at
+            ? new Date(item.created_at).getTime()
+            : now;
+          await db.insert(ticketUpdates).values({
+            id: `li-${id}-${item?.id ?? i}`,
+            ticket_id: id,
+            update_type: "line_item",
+            update_data: JSON.stringify(item),
+            created_at: Number.isNaN(createdMs) ? now : createdMs,
+          });
+        }
+      } catch (cacheErr) {
+        logger.warn("Failed to cache ticket line items", { error: cacheErr });
+      }
+      return result;
+    }
+
+    // Offline / network error — serve the cached timeline.
+    if (result?.isNetworkError) {
+      try {
+        const rows = await db
+          .select()
+          .from(ticketUpdates)
+          .where(
+            and(
+              eq(ticketUpdates.ticket_id, id),
+              eq(ticketUpdates.update_type, "line_item"),
+            ),
+          )
+          .orderBy(asc(ticketUpdates.created_at));
+        if (rows.length > 0) {
+          const data = rows.map((r) => JSON.parse(r.update_data));
+          return { success: true, data, isFromCache: true, isNetworkError: true };
+        }
+      } catch (readErr) {
+        logger.warn("Failed to read cached ticket line items", { error: readErr });
+      }
+    }
+
+    return result;
   },
 
   /**

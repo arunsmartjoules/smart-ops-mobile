@@ -545,47 +545,87 @@ class SyncEngineImpl implements SyncEngine {
       domain: "areas", // used as the representative domain for TTL check
       ttlMs: TTL.reference,
       sync: async (_userId: string) => {
-        // areas — per site
+        // areas — per site. Write each site with `stampSync: false` so a single
+        // site's write does not mark the whole `areas` domain fresh; only stamp
+        // at the end when every site succeeded. Without this, a transient
+        // failure on one site's /api/assets call silently locked `areas` fresh
+        // for TTL.reference (2h) with a partial asset cache, so an offline
+        // operator on the failed site couldn't pick an asset for a ticket or
+        // incident. Same partial-fresh guard the other per-site domains use.
         const sites = await cacheManager.read<{ site_code: string }>("sites");
         const siteCodes = [...new Set(sites.map((s) => s.site_code))].filter(
           (c) => typeof c === "string" && c.length > 0,
         );
-        // Site-scoped reference data is skipped when no sites are authorized,
-        // but global reference data (categories, log_master) below still runs.
+        const failures: Array<{ siteCode: string; error: any }> = [];
         for (const siteCode of siteCodes) {
-          const response = await apiFetch(`/api/assets/site/${siteCode}`);
-          if (!response.ok) continue;
-          const result = await response.json();
-          const records = (result.data || []).map((a: any) => ({
-            id: a.id,
-            site_code: a.site_code || siteCode,
-            asset_id: a.asset_id ?? null,
-            asset_name: a.asset_name || "",
-            asset_type: a.asset_type ?? null,
-            equipment_type: a.equipment_type ?? null,
-            location: a.location ?? null,
-            description: a.description ?? null,
-            created_at: a.created_at ? new Date(a.created_at).getTime() : null,
-            updated_at: a.updated_at ? new Date(a.updated_at).getTime() : null,
-          }));
-          await cacheManager.write("areas", records);
+          try {
+            const response = await apiFetch(`/api/assets/site/${siteCode}`);
+            if (!response.ok) {
+              throw new Error(`assets ${siteCode} HTTP ${response.status}`);
+            }
+            const result = await response.json();
+            const records = (result.data || []).map((a: any) => ({
+              id: a.id,
+              site_code: a.site_code || siteCode,
+              asset_id: a.asset_id ?? null,
+              asset_name: a.asset_name || "",
+              asset_type: a.asset_type ?? null,
+              equipment_type: a.equipment_type ?? null,
+              location: a.location ?? null,
+              description: a.description ?? null,
+              created_at: a.created_at ? new Date(a.created_at).getTime() : null,
+              updated_at: a.updated_at ? new Date(a.updated_at).getTime() : null,
+            }));
+            await cacheManager.write("areas", records, { stampSync: false });
+          } catch (error) {
+            failures.push({ siteCode, error });
+            logger.warn("SyncEngine.areas: site asset sync failed", {
+              module: "SYNC_ENGINE",
+              siteCode,
+              error,
+            });
+          }
         }
 
-        // categories
-        const catResponse = await apiFetch("/api/complaint-categories");
-        if (catResponse.ok) {
-          const catResult = await catResponse.json();
-          const catRecords = (catResult.data || []).map((c: any) => ({
-            id: c.id,
-            category: c.category || "",
-            description: c.description ?? null,
-          }));
-          await cacheManager.write("categories", catRecords);
+        // Global reference data (categories, log_master) is independent of the
+        // per-site asset pull — guard each so its failure doesn't abort the
+        // areas stamp decision below.
+        try {
+          const catResponse = await apiFetch("/api/complaint-categories");
+          if (catResponse.ok) {
+            const catResult = await catResponse.json();
+            const catRecords = (catResult.data || []).map((c: any) => ({
+              id: c.id,
+              category: c.category || "",
+              description: c.description ?? null,
+            }));
+            await cacheManager.write("categories", catRecords);
+          }
+        } catch (error) {
+          logger.warn("SyncEngine.areas: categories sync failed", {
+            module: "SYNC_ENGINE",
+            error,
+          });
         }
 
-        // log_master
-        await SiteLogService.pullLogMaster();
-        await cacheManager.write("log_master", []);
+        try {
+          await SiteLogService.pullLogMaster();
+        } catch (error) {
+          logger.warn("SyncEngine.areas: log_master sync failed", {
+            module: "SYNC_ENGINE",
+            error,
+          });
+        }
+
+        // Only mark the reference (areas) domain fresh when every site's assets
+        // loaded; otherwise throw so _runSync skips the stamp and the next tick
+        // (TTL still expired) re-attempts the failed site(s).
+        if (failures.length > 0) {
+          throw new Error(
+            `reference sync partial: ${failures.length}/${siteCodes.length} sites failed`,
+          );
+        }
+        await cacheManager.stampSyncedAt("areas");
       },
     },
   ];

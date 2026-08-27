@@ -45,6 +45,40 @@ async function getCachedAssetsBySite(siteCode: string, equipmentType?: string) {
   }
 }
 
+/**
+ * Offline fallback for a QR scan: resolve the scanned code against the locally
+ * synced `areas` table (matching either the AST-style `asset_id` or the row
+ * `id`). Field operators scan asset QRs in no-signal plant rooms/basements, so
+ * this must work from cache — otherwise the live lookup fails and the scan is
+ * indistinguishable from "asset not found".
+ */
+async function getCachedAssetByQrId(
+  qrId: string,
+): Promise<{ asset_name: string; site_id: string } | null> {
+  try {
+    const wanted = String(qrId ?? "").trim().toLowerCase();
+    if (!wanted) return null;
+    const rows = await db.select().from(areas);
+    const match = rows.find((r: any) => {
+      const aid = String(r.asset_id ?? "").trim().toLowerCase();
+      const rid = String(r.id ?? "").trim().toLowerCase();
+      return aid === wanted || rid === wanted;
+    });
+    if (!match) return null;
+    return {
+      asset_name: match.asset_name || match.asset_id || match.id,
+      // The QR result's `site_id` is really the site_code (see QRScannerModal).
+      site_id: match.site_code,
+    };
+  } catch (error: any) {
+    logger.error("Error reading cached asset by QR ID", {
+      module: "ASSET_SERVICE",
+      error: error.message,
+    });
+    return null;
+  }
+}
+
 const BACKEND_URL = API_BASE_URL;
 
 // Helper for API requests with auth
@@ -72,6 +106,16 @@ export const AssetService = {
       const result = await response.json();
       return result.success ? result.data : null;
     } catch (error: any) {
+      // Offline / unreachable — resolve from the locally-synced areas cache so a
+      // scan in a no-signal basement still identifies the asset.
+      const cached = await getCachedAssetByQrId(qrId);
+      if (cached) {
+        logger.info("Serving QR asset from offline cache", {
+          module: "ASSET_SERVICE",
+          qrId,
+        });
+        return cached;
+      }
       logger.error("Error fetching asset by QR ID", {
         module: "ASSET_SERVICE",
         error: error.message,
