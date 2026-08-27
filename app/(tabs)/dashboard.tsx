@@ -29,7 +29,6 @@ import {
   LogOut,
   Thermometer,
   Wrench,
-  WifiOff,
   Zap,
 } from "lucide-react-native";
 import { router, useFocusEffect } from "expo-router";
@@ -42,7 +41,6 @@ import AttendanceService, {
   type Site,
 } from "@/services/AttendanceService";
 import { addDays, format } from "date-fns";
-import { useNetworkStatus } from "@/hooks/useNetworkStatus";
 import Skeleton from "@/components/Skeleton";
 import TicketsService, { type Ticket } from "@/services/TicketsService";
 import TicketDetailModal from "@/components/TicketDetailModal";
@@ -304,7 +302,6 @@ DashboardSkeleton.displayName = "DashboardSkeleton";
 export default function Dashboard() {
   const styles = useStyles();
   const ds = useDs();
-  const { isConnected } = useNetworkStatus();
   const [refreshing, setRefreshing] = useState(false);
   const { user, signOut } = useAuth();
   const {
@@ -1337,13 +1334,6 @@ export default function Dashboard() {
         onPressCta={cta.onPress}
       />
 
-      {!isConnected && (
-        <View style={styles.offline}>
-          <WifiOff size={13} color={ds.onAccent} />
-          <Text style={styles.offlineText}>Offline — showing cached data</Text>
-        </View>
-      )}
-
       <ScrollView
         contentContainerStyle={styles.body}
         showsVerticalScrollIndicator={false}
@@ -1498,20 +1488,6 @@ export default function Dashboard() {
 
 const useStyles = makeThemedStyles((ds) => ({
   screen: { flex: 1, backgroundColor: ds.pageBg },
-  offline: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 7,
-    paddingVertical: 6,
-    backgroundColor: ds.flame[100],
-  },
-  offlineText: {
-    fontSize: 11,
-    fontWeight: "600",
-    letterSpacing: 0.3,
-    color: ds.onAccent,
-  },
   body: { paddingHorizontal: 18, paddingTop: 16, paddingBottom: 28 },
 
   sheetBackdrop: {

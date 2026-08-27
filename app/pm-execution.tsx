@@ -22,7 +22,6 @@ import {
   AlertCircle,
   Info,
   RefreshCw,
-  WifiOff,
   X,
 } from "lucide-react-native";
 import * as ImagePicker from "expo-image-picker";
@@ -36,7 +35,6 @@ import SmartJoulesWordmark from "@/components/SmartJoulesWordmark";
 import logger from "@/utils/logger";
 import Skeleton from "@/components/Skeleton";
 import { StorageService } from "@/services/StorageService";
-import { cacheManager } from "@/services/CacheManager";
 import { dsRadius, dsCardShadow } from "@/constants/ds";
 import { makeThemedStyles, useDs } from "@/hooks/useDs";
 import NetInfo from "@react-native-community/netinfo";
@@ -409,7 +407,6 @@ export default function PMExecutionScreen() {
   );
   const [previewImageUrl, setPreviewImageUrl] = useState<string | null>(null);
   const [completionAttempted, setCompletionAttempted] = useState(false);
-  const [queuedCount, setQueuedCount] = useState(0);
 
   // ── Load instance then checklist ──────────────────────────────────────────
   const loadData = useCallback(
@@ -824,28 +821,6 @@ export default function PMExecutionScreen() {
       loadData(false);
     }
   }, [instanceId, isConnected, loadData]);
-
-  // Offline strip count — how many mutations are still waiting in the queue.
-  useEffect(() => {
-    if (isConnected !== false) {
-      setQueuedCount(0);
-      return;
-    }
-    let cancelled = false;
-    const read = () =>
-      cacheManager
-        .getQueueCount()
-        .then((n) => {
-          if (!cancelled) setQueuedCount(n);
-        })
-        .catch(() => {});
-    read();
-    const timer = setInterval(read, 5000);
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-    };
-  }, [isConnected, responses]);
 
   // ── Progress derived value ────────────────────────────────────────────────
   // Count only responses tied to a current checklist item. Responses left
@@ -1544,18 +1519,6 @@ export default function PMExecutionScreen() {
         </View>
       </View>
 
-      {/* ── Offline strip ── */}
-      {isConnected === false && (
-        <View style={styles.offlineStrip}>
-          <WifiOff size={13} color={ds.flame[100]} />
-          <Text style={styles.offlineText} numberOfLines={1}>
-            {queuedCount > 0
-              ? `Offline — ${queuedCount} response${queuedCount > 1 ? "s" : ""} queued, will sync automatically`
-              : "Offline — changes are saved locally and will sync automatically"}
-          </Text>
-        </View>
-      )}
-
       {/* ── Task list ── */}
       {(loading || fetchingChecklist) && checklistItems.length === 0 ? (
         <ChecklistSkeleton />
@@ -1872,22 +1835,6 @@ const useStyles = makeThemedStyles((ds) => ({
     color: "#F1F4F4",
   },
 
-
-  // ── Offline strip ──
-  offlineStrip: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 7,
-    backgroundColor: ds.flame[900],
-    paddingHorizontal: 18,
-    paddingVertical: 5,
-  },
-  offlineText: {
-    flex: 1,
-    fontSize: 10.5,
-    fontWeight: "500",
-    color: ds.flame[100],
-  },
 
   // ── Task card ──
   taskCard: {

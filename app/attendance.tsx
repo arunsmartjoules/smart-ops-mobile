@@ -27,7 +27,6 @@ import {
   LogOut,
   Map as LucideMap,
   MapPin,
-  WifiOff,
   X,
 } from "lucide-react-native";
 import { router, useFocusEffect } from "expo-router";
@@ -42,7 +41,6 @@ import {
 } from "@/services/AttendanceService";
 import appLogger from "@/utils/logger";
 import { format } from "date-fns";
-import { useNetworkStatus } from "@/hooks/useNetworkStatus";
 import Skeleton from "@/components/Skeleton";
 import { makeThemedStyles, useDs, type DsTheme } from "@/hooks/useDs";
 import { soRadius, soShadow } from "@/components/home/SiteOverview";
@@ -276,7 +274,6 @@ export default function AttendancePage() {
   const styles = useStyles();
   const ds = useDs();
   const insets = useSafeAreaInsets();
-  const { isConnected } = useNetworkStatus();
   const { user, refreshProfile } = useAuth();
   const {
     refresh: refreshAttendanceGate,
@@ -1153,14 +1150,6 @@ export default function AttendancePage() {
           </Text>
         </View>
 
-        {!isConnected ? (
-          <View style={styles.offlineRow}>
-            <WifiOff size={13} color={ds.carbon[500]} strokeWidth={2} />
-            <Text style={styles.offlineText}>
-              Offline — punches sync when the connection returns
-            </Text>
-          </View>
-        ) : null}
       </View>
 
       {/* ── History ── */}
@@ -1490,14 +1479,6 @@ const useStyles = makeThemedStyles((ds) => ({
     marginTop: 10,
   },
   geoNote: { flexShrink: 1, fontSize: 11, color: ds.carbon[500] },
-  offlineRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 6,
-    marginTop: 8,
-  },
-  offlineText: { flexShrink: 1, fontSize: 11, color: ds.carbon[500] },
 
   /* ── History ── */
   body: { paddingHorizontal: 20, paddingTop: 18, paddingBottom: 28 },

@@ -6,7 +6,7 @@ import {
   Text,
   View,
 } from "react-native";
-import { ShieldAlert, RefreshCw, LogOut, WifiOff } from "lucide-react-native";
+import { ShieldAlert, RefreshCw, LogOut } from "lucide-react-native";
 import { useAuth } from "@/contexts/AuthContext";
 import { useSiteResolver } from "@/hooks/useSiteResolver";
 import { useNetworkStatus } from "@/hooks/useNetworkStatus";
@@ -31,7 +31,7 @@ export function SiteAccessGate({ children }: SiteAccessGateProps) {
   const { user, signOut } = useAuth();
   const { isConnected } = useNetworkStatus();
   const userId = user?.user_id || user?.id;
-  const { sites, loading, refresh, initialized, state } = useSiteResolver(userId);
+  const { sites, loading, refresh, initialized } = useSiteResolver(userId);
   const [refreshing, setRefreshing] = useState(false);
 
   const handleRefresh = useCallback(async () => {
@@ -59,9 +59,6 @@ export function SiteAccessGate({ children }: SiteAccessGateProps) {
   }
 
   if (sites.length === 0) {
-    const isOffline = isConnected === false;
-    const apiUnavailable = state?.staleReason === "api_unavailable";
-
     return (
       <ScrollView
         className="flex-1 bg-white dark:bg-slate-900"
@@ -80,17 +77,6 @@ export function SiteAccessGate({ children }: SiteAccessGateProps) {
             No site has been assigned to you. Please contact your administrator
             to get access.
           </Text>
-
-          {(isOffline || apiUnavailable) && (
-            <View className="mt-6 flex-row items-center bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg px-4 py-3">
-              <WifiOff size={18} color="#b45309" />
-              <Text className="ml-2 text-sm text-amber-800 dark:text-amber-200 flex-1">
-                {isOffline
-                  ? "You're offline. We'll re-check access when you reconnect."
-                  : "Couldn't reach the server. Showing cached access."}
-              </Text>
-            </View>
-          )}
 
           <Pressable
             onPress={handleRefresh}

@@ -6,22 +6,22 @@ import {
   TouchableOpacity,
   StyleSheet,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
 import ServerStatusService, {
   type ServerStatusState,
 } from "@/services/ServerStatusService";
 import VersionGateService from "@/services/VersionGateService";
 
 /**
- * Renders the two backend-trouble states:
+ * Renders the maintenance-mode blocking notice.
  *
- *  - Maintenance mode  → full-screen blocking notice.
- *  - Server unreachable (device online, backend down) → non-blocking top
- *    banner; the app stays usable offline.
+ *  - Maintenance mode → full-screen blocking notice.
+ *  - Server unreachable (device online, backend down) → nothing is shown; the
+ *    app stays usable on cached data with no banner.
  *
- * While either is showing it polls the backend so the screen clears itself
- * once maintenance ends or the server recovers. Mounted once near the root
- * (see app/_layout.tsx).
+ * While maintenance is showing (or the server is down) it polls the backend so
+ * the notice clears itself once maintenance ends or the server recovers, and so
+ * any state that gates functional behaviour recovers on its own. Mounted once
+ * near the root (see app/_layout.tsx).
  */
 export default function ServerStatusOverlay() {
   const [status, setStatus] = useState<ServerStatusState>(
@@ -56,9 +56,9 @@ export default function ServerStatusOverlay() {
       />
     );
   }
-  if (serverDown) {
-    return <ServerDownBanner />;
-  }
+  // A plain server outage (device online, backend down) shows no banner — the
+  // app stays usable on cached data. We still poll above so any state that
+  // gates functional behaviour recovers on its own once the server is back.
   return null;
 }
 
@@ -141,25 +141,6 @@ function MaintenanceModal({
   );
 }
 
-function ServerDownBanner() {
-  return (
-    <SafeAreaView edges={["top"]} style={styles.bannerSafe}>
-      <View style={styles.bannerContent}>
-        <Text style={styles.bannerText}>
-          Server unavailable — working offline. Your changes are saved and will
-          sync when it&apos;s back.
-        </Text>
-        <TouchableOpacity
-          onPress={() => VersionGateService.check()}
-          style={styles.bannerButton}
-        >
-          <Text style={styles.bannerButtonText}>Retry</Text>
-        </TouchableOpacity>
-      </View>
-    </SafeAreaView>
-  );
-}
-
 const styles = StyleSheet.create({
   // Maintenance modal
   maintContainer: {
@@ -222,35 +203,5 @@ const styles = StyleSheet.create({
     fontSize: 40,
     fontWeight: "800",
     fontVariant: ["tabular-nums"],
-  },
-  // Server-down banner
-  bannerSafe: {
-    width: "100%",
-    backgroundColor: "#475569",
-  },
-  bannerContent: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    paddingVertical: 8,
-    paddingHorizontal: 14,
-  },
-  bannerText: {
-    flex: 1,
-    color: "white",
-    fontSize: 12,
-    fontWeight: "600",
-    lineHeight: 16,
-  },
-  bannerButton: {
-    backgroundColor: "rgba(255,255,255,0.2)",
-    paddingHorizontal: 12,
-    paddingVertical: 5,
-    borderRadius: 10,
-  },
-  bannerButtonText: {
-    color: "white",
-    fontSize: 11,
-    fontWeight: "800",
   },
 });

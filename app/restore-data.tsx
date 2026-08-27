@@ -273,14 +273,6 @@ export default function RestoreData() {
             </TouchableOpacity>
           </View>
 
-          {isConnected === false && (
-            <View className="bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/50 rounded-xl p-3 mb-4">
-              <Text className="text-amber-900 dark:text-amber-200 text-xs">
-                Offline — restore is disabled until you reconnect.
-              </Text>
-            </View>
-          )}
-
           {result && (
             <View className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4">
               <Text className="text-slate-900 dark:text-slate-50 font-black text-base mb-3">
