@@ -1,11 +1,14 @@
 /**
  * Sign up — Claude Design "JouleOps Sign Up.dc.html".
  *
- * This screen does NOT create an account. It collects the same nine details
- * the web signup form does, emails a verification code, and hands the payload
- * to /signup-verify, which files a `signup_requests` row once the code checks
- * out. An admin or super-admin approving that request is what creates the
- * user, so the app stays closed until then.
+ * This screen does NOT create an account. It collects the same details the web
+ * signup form does, emails a verification code, and hands the payload to
+ * /signup-verify, which files a `signup_requests` row once the code checks out.
+ * An admin or super-admin approving that request is what creates the user, so
+ * the app stays closed until then.
+ *
+ * The sites picked here are a REQUEST, not a grant: they arrive prefilled in
+ * the approver's dialog on web, which is where site access is settled.
  */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Platform, ScrollView, View } from "react-native";
@@ -14,8 +17,17 @@ import DateTimePicker, {
 } from "@react-native-community/datetimepicker";
 import { router } from "expo-router";
 import { format } from "date-fns";
-import { CalendarDays, MailCheck, Map as MapIcon } from "lucide-react-native";
-import { useAuth, type ApprovingAuthority } from "@/contexts/AuthContext";
+import {
+  Building2,
+  CalendarDays,
+  MailCheck,
+  Map as MapIcon,
+} from "lucide-react-native";
+import {
+  useAuth,
+  type ApprovingAuthority,
+  type SignupSite,
+} from "@/contexts/AuthContext";
 import { showAlert } from "@/utils/alert";
 import logger from "@/utils/logger";
 import { useDs } from "@/hooks/useDs";
@@ -39,11 +51,12 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 /** Same shape the backend's create handler accepts. */
 const PHONE_RE = /^[0-9+()\s-]{6,20}$/;
 
-type SheetKind = "manager" | null;
+type SheetKind = "manager" | "sites" | null;
 
 export default function SignUp() {
   const ds = useDs();
-  const { fetchApprovingAuthorities, sendVerificationCode } = useAuth();
+  const { fetchApprovingAuthorities, fetchSignupSites, sendVerificationCode } =
+    useAuth();
 
   const [name, setName] = useState("");
   const [employeeCode, setEmployeeCode] = useState("");
@@ -52,6 +65,7 @@ export default function SignUp() {
   const [designation, setDesignation] = useState("");
   const [dateOfJoining, setDateOfJoining] = useState("");
   const [manager, setManager] = useState("");
+  const [siteCodes, setSiteCodes] = useState<string[]>([]);
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
 
@@ -63,19 +77,26 @@ export default function SignUp() {
 
   const [authorities, setAuthorities] = useState<ApprovingAuthority[]>([]);
   const [authoritiesLoading, setAuthoritiesLoading] = useState(true);
+  const [sites, setSites] = useState<SignupSite[]>([]);
+  const [sitesLoading, setSitesLoading] = useState(true);
 
   useEffect(() => {
     let alive = true;
     (async () => {
-      const rows = await fetchApprovingAuthorities();
+      const [people, siteRows] = await Promise.all([
+        fetchApprovingAuthorities(),
+        fetchSignupSites(),
+      ]);
       if (!alive) return;
-      setAuthorities(rows);
+      setAuthorities(people);
       setAuthoritiesLoading(false);
+      setSites(siteRows);
+      setSitesLoading(false);
     })();
     return () => {
       alive = false;
     };
-  }, [fetchApprovingAuthorities]);
+  }, [fetchApprovingAuthorities, fetchSignupSites]);
 
   const managerOptions = useMemo<SheetOption[]>(
     () =>
@@ -91,6 +112,31 @@ export default function SignUp() {
     [authorities, manager],
   );
 
+  const siteOptions = useMemo<SheetOption[]>(
+    () =>
+      sites.map((s) => ({
+        label: s.name,
+        sub: s.name === s.site_code ? undefined : s.site_code,
+        value: s.site_code,
+      })),
+    [sites],
+  );
+  /** "Ansal Plaza", "Ansal Plaza +2" — the picker field's one-line summary. */
+  const sitesSummary = useMemo(() => {
+    if (siteCodes.length === 0) return undefined;
+    const first =
+      sites.find((s) => s.site_code === siteCodes[0])?.name ?? siteCodes[0];
+    return siteCodes.length === 1
+      ? first
+      : `${first} +${siteCodes.length - 1}`;
+  }, [siteCodes, sites]);
+
+  const toggleSite = useCallback((code: string) => {
+    setSiteCodes((prev) =>
+      prev.includes(code) ? prev.filter((c) => c !== code) : [...prev, code],
+    );
+  }, []);
+
   /* ── Validity ──────────────────────────────────────────────────────────── */
 
   const trimmedEmail = email.trim();
@@ -101,6 +147,7 @@ export default function SignUp() {
   const designationOk = designation.trim().length > 0;
   const dateOk = !!dateOfJoining;
   const managerOk = !!manager;
+  const sitesOk = siteCodes.length > 0;
   const passOk = password.length >= MIN_PASSWORD_LENGTH && strengthOf(password) >= 2;
   const matched = confirm.length > 0 && confirm === password;
   const mismatch = confirm.length > 0 && confirm !== password;
@@ -113,6 +160,7 @@ export default function SignUp() {
     designationOk,
     dateOk,
     managerOk,
+    sitesOk,
     passOk,
     matched,
   ];
@@ -135,9 +183,11 @@ export default function SignUp() {
                 ? "Pick your date of joining"
                 : !managerOk
                   ? "Choose your approving authority"
-                  : !passOk
-                    ? `Password needs ${MIN_PASSWORD_LENGTH}+ characters`
-                    : "Passwords don't match";
+                  : !sitesOk
+                    ? "Select at least one site you work at"
+                    : !passOk
+                      ? `Password needs ${MIN_PASSWORD_LENGTH}+ characters`
+                      : "Passwords don't match";
 
   /* ── Date of joining ───────────────────────────────────────────────────── */
 
@@ -195,6 +245,9 @@ export default function SignUp() {
           phone: phone.trim(),
           date_of_joining: dateOfJoining,
           approving_authority: manager,
+          // expo-router params are strings; the verify screen splits this back
+          // into an array, and the backend accepts either shape anyway.
+          site_codes: siteCodes.join(","),
           password,
         },
       });
@@ -310,6 +363,18 @@ export default function SignUp() {
           onPress={() => setSheet("manager")}
         />
 
+        <SignupPickerField
+          label="Sites you work at"
+          placeholder={sitesLoading ? "Loading sites…" : "Select one or more"}
+          value={sitesSummary}
+          sub={
+            siteCodes.length > 1 ? `${siteCodes.length} sites selected` : undefined
+          }
+          line={fieldLine(false, sitesOk, ds)}
+          leading={Building2}
+          onPress={() => setSheet("sites")}
+        />
+
         <SectionEyebrow>Security</SectionEyebrow>
 
         <View style={{ marginBottom: 14 }}>
@@ -369,6 +434,21 @@ export default function SignUp() {
           setManager(v);
           setSheet(null);
         }}
+        onClose={() => setSheet(null)}
+      />
+
+      <SignupSheet
+        visible={sheet === "sites"}
+        title="Sites you work at"
+        options={siteOptions}
+        selectedValues={siteCodes}
+        multiple
+        searchable
+        searchPlaceholder="Search sites…"
+        doneLabel="Done"
+        loading={sitesLoading}
+        emptyLabel="No sites are available right now"
+        onSelect={toggleSite}
         onClose={() => setSheet(null)}
       />
 

@@ -65,11 +65,21 @@ export interface SignupRequestPayload {
   date_of_joining: string;
   approving_authority: string;
   password: string;
+  /**
+   * Sites the applicant works at. A REQUEST, not a grant — it prefills the
+   * approver's dialog on web, where the final site access is decided.
+   */
+  site_codes: string[];
 }
 
 export interface ApprovingAuthority {
   name: string;
   designation: string | null;
+}
+
+export interface SignupSite {
+  site_code: string;
+  name: string;
 }
 
 interface AuthContextType {
@@ -107,6 +117,7 @@ interface AuthContextType {
   ) => Promise<{ error: any }>;
   /** Public directory of admins/managers who can approve a request. */
   fetchApprovingAuthorities: () => Promise<ApprovingAuthority[]>;
+  fetchSignupSites: () => Promise<SignupSite[]>;
   resendVerificationEmail: () => Promise<{ error: any }>;
   isEmailVerified: boolean;
   refreshUser: () => Promise<void>;
@@ -130,6 +141,7 @@ const AuthContext = createContext<AuthContextType>({
   verifySignupCode: async () => ({ error: null }),
   submitSignupRequest: async () => ({ error: null }),
   fetchApprovingAuthorities: async () => [],
+  fetchSignupSites: async () => [],
   resendVerificationEmail: async () => ({ error: null }),
   isEmailVerified: false,
   refreshUser: async () => {},
@@ -867,10 +879,46 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       );
       const result = await res.json().catch(() => ({}));
       if (!res.ok || !result?.success) return [];
-      const rows = (result.data ?? result.authorities ?? []) as unknown;
+      // `sendSuccess` nests the payload under `data`, so the list is at
+      // `data.authorities` — reading `data` itself yielded the wrapper object
+      // and silently emptied the picker.
+      const rows = (result.data?.authorities ??
+        result.data ??
+        result.authorities ??
+        []) as unknown;
       return Array.isArray(rows) ? (rows as ApprovingAuthority[]) : [];
     } catch (e: any) {
       logger.warn("Could not load approving authorities", {
+        module: "AUTH_CONTEXT",
+        error: e?.message,
+      });
+      return [];
+    }
+  }, []);
+
+  /**
+   * The sites a new joiner can name on the sign-up form. Public and
+   * deliberately thin — code and display name only. Returns an empty list
+   * rather than throwing, so the form degrades instead of breaking.
+   */
+  const fetchSignupSites = useCallback(async (): Promise<SignupSite[]> => {
+    try {
+      const res = await fetchWithTimeout(
+        `${BACKEND_URL}/api/signup-requests/sites`,
+        { method: "GET" },
+      );
+      const result = await res.json().catch(() => ({}));
+      if (!res.ok || !result?.success) return [];
+      const rows = (result.data?.sites ?? []) as unknown;
+      if (!Array.isArray(rows)) return [];
+      return rows
+        .map((row: any) => {
+          const site_code = String(row?.site_code ?? "").trim();
+          return { site_code, name: String(row?.name ?? site_code).trim() };
+        })
+        .filter((s) => s.site_code.length > 0);
+    } catch (e: any) {
+      logger.warn("Could not load sites for signup", {
         module: "AUTH_CONTEXT",
         error: e?.message,
       });
@@ -910,6 +958,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       verifySignupCode,
       submitSignupRequest,
       fetchApprovingAuthorities,
+      fetchSignupSites,
       resendVerificationEmail,
       isEmailVerified,
       refreshUser,
@@ -932,6 +981,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       verifySignupCode,
       submitSignupRequest,
       fetchApprovingAuthorities,
+      fetchSignupSites,
       resendVerificationEmail,
       isEmailVerified,
       refreshUser,

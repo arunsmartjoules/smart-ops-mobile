@@ -451,13 +451,26 @@ export interface SheetOption {
   label: string;
   sub?: string;
   initials?: string;
+  /** What `onSelect` reports. Defaults to `label` — sites pick by site_code. */
+  value?: string;
 }
 
+/**
+ * Bottom-sheet picker. Single-select by default (tap closes the sheet); pass
+ * `multiple` and the sheet stays open, ticking each tap on and off against
+ * `selectedValues` until the footer button dismisses it. `searchable` adds a
+ * filter box, which the site list needs and a short manager list doesn't.
+ */
 export function SignupSheet({
   visible,
   title,
   options,
   selected,
+  selectedValues,
+  multiple,
+  searchable,
+  searchPlaceholder = "Search…",
+  doneLabel = "Done",
   loading,
   emptyLabel = "Nothing to choose from",
   onSelect,
@@ -466,7 +479,14 @@ export function SignupSheet({
   visible: boolean;
   title: string;
   options: SheetOption[];
+  /** Single-select: the chosen value. */
   selected?: string;
+  /** Multi-select: every chosen value. */
+  selectedValues?: string[];
+  multiple?: boolean;
+  searchable?: boolean;
+  searchPlaceholder?: string;
+  doneLabel?: string;
   loading?: boolean;
   emptyLabel?: string;
   onSelect: (value: string) => void;
@@ -475,20 +495,57 @@ export function SignupSheet({
   const styles = useStyles();
   const ds = useDs();
   const insets = useSafeAreaInsets();
+  const [search, setSearch] = React.useState("");
+
+  /**
+   * Every dismissal path goes through here so a stale filter can't hide options
+   * the next time the sheet opens. Clearing it from an effect on `visible`
+   * would be a setState-in-effect cascade instead.
+   */
+  const close = React.useCallback(() => {
+    setSearch("");
+    onClose();
+  }, [onClose]);
+
+  /** Single-select dismisses on pick, so that path clears the filter too. */
+  const pick = React.useCallback(
+    (value: string) => {
+      if (!multiple) setSearch("");
+      onSelect(value);
+    },
+    [multiple, onSelect],
+  );
+
+  const chosen = React.useMemo(
+    () => new Set(selectedValues ?? []),
+    [selectedValues],
+  );
+
+  const shown = React.useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!searchable || !q) return options;
+    return options.filter(
+      (o) =>
+        o.label.toLowerCase().includes(q) ||
+        (o.sub ?? "").toLowerCase().includes(q) ||
+        (o.value ?? "").toLowerCase().includes(q),
+    );
+  }, [options, search, searchable]);
+
   return (
     <Modal
       visible={visible}
       transparent
       animationType="slide"
-      onRequestClose={onClose}
+      onRequestClose={close}
     >
-      <Pressable style={styles.sheetScrim} onPress={onClose} />
+      <Pressable style={styles.sheetScrim} onPress={close} />
       <View style={styles.sheetWrap} pointerEvents="box-none">
         <View style={[styles.sheet, { paddingBottom: insets.bottom + 12 }]}>
           <View style={styles.sheetHead}>
             <Text style={styles.sheetTitle}>{title}</Text>
             <TouchableOpacity
-              onPress={onClose}
+              onPress={close}
               hitSlop={10}
               style={styles.sheetClose}
               accessibilityRole="button"
@@ -498,25 +555,44 @@ export function SignupSheet({
             </TouchableOpacity>
           </View>
 
+          {searchable && !loading && options.length > 0 ? (
+            <View style={styles.sheetSearch}>
+              <TextInput
+                value={search}
+                onChangeText={setSearch}
+                placeholder={searchPlaceholder}
+                placeholderTextColor={ds.carbon[700]}
+                style={styles.sheetSearchInput}
+                autoCapitalize="none"
+                autoCorrect={false}
+                returnKeyType="search"
+              />
+            </View>
+          ) : null}
+
           {loading ? (
             <View style={styles.sheetEmpty}>
               <ActivityIndicator size="small" color={ds.thunder[100]} />
             </View>
-          ) : options.length === 0 ? (
+          ) : shown.length === 0 ? (
             <View style={styles.sheetEmpty}>
-              <Text style={styles.sheetEmptyText}>{emptyLabel}</Text>
+              <Text style={styles.sheetEmptyText}>
+                {options.length === 0 ? emptyLabel : "Nothing matches that."}
+              </Text>
             </View>
           ) : (
             <ScrollView
               contentContainerStyle={styles.sheetList}
               showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
             >
-              {options.map((o) => {
-                const on = o.label === selected;
+              {shown.map((o) => {
+                const value = o.value ?? o.label;
+                const on = multiple ? chosen.has(value) : value === selected;
                 return (
                   <TouchableOpacity
-                    key={o.label}
-                    onPress={() => onSelect(o.label)}
+                    key={value}
+                    onPress={() => pick(value)}
                     activeOpacity={0.75}
                     style={[
                       styles.sheetOption,
@@ -548,6 +624,19 @@ export function SignupSheet({
               })}
             </ScrollView>
           )}
+
+          {multiple && !loading ? (
+            <TouchableOpacity
+              onPress={close}
+              activeOpacity={0.85}
+              style={styles.sheetDone}
+              accessibilityRole="button"
+            >
+              <Text style={styles.sheetDoneText}>
+                {chosen.size > 0 ? `${doneLabel} (${chosen.size})` : doneLabel}
+              </Text>
+            </TouchableOpacity>
+          ) : null}
         </View>
       </View>
     </Modal>
@@ -752,4 +841,27 @@ const useStyles = makeThemedStyles((ds) => ({
   sheetSub: { fontSize: 10.5, color: ds.carbon[600], marginTop: 2 },
   sheetEmpty: { paddingVertical: 34, alignItems: "center" },
   sheetEmptyText: { fontSize: 12.5, color: ds.carbon[500] },
+  sheetSearch: {
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 2,
+  },
+  sheetSearchInput: {
+    backgroundColor: ds.pageBg,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    fontSize: 13.5,
+    color: ds.carbon[100],
+  },
+  sheetDone: {
+    marginHorizontal: 16,
+    marginTop: 4,
+    marginBottom: 6,
+    borderRadius: 14,
+    paddingVertical: 13,
+    alignItems: "center",
+    backgroundColor: ds.thunder[100],
+  },
+  sheetDoneText: { fontSize: 14, fontWeight: "700", color: ds.white },
 }));

@@ -75,6 +75,11 @@ export default function SignupVerify() {
         phone: String(params.phone ?? ""),
         date_of_joining: String(params.date_of_joining ?? ""),
         approving_authority: String(params.approving_authority ?? ""),
+        // Carried across the router as CSV — params are strings.
+        site_codes: String(params.site_codes ?? "")
+          .split(",")
+          .map((code) => code.trim())
+          .filter(Boolean),
         password: String(params.password ?? ""),
       };
 
