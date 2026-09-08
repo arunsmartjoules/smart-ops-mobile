@@ -78,7 +78,7 @@ type ChecklistImageAction = "MENU" | "CAMERA" | "LIBRARY" | null;
  * Editable fields on a checklist response. `"value"` is the merged
  * reading+response used by Number/Text tasks: one box writes both columns, so
  * the row counts as answered (backend completion requires `response_value`)
- * while Fieldproxy still gets its `readings` value.
+ * while the server still gets its `readings` value.
  */
 type ResponseField = "response_value" | "remarks" | "readings" | "value";
 
@@ -140,7 +140,7 @@ const TaskRow = React.memo(
     const isNotDone = isChoice && value === "Not Done";
     // Number/Text tasks have ONE value box, and it is the reading: it writes
     // both `readings` and `response_value` (the backend rejects completion
-    // while any row has no response_value; Fieldproxy reads `readings`).
+    // while any row has no response_value; the server reads `readings`).
     // Previously they rendered a second, separate response input above it, so
     // operators saw two boxes for the same measurement and filled them
     // inconsistently. Multiple-Choice rows keep an optional reading box,

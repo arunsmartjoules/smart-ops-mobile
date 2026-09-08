@@ -313,7 +313,6 @@ export const attendanceLogs = sqliteTable("attendance_logs", {
   shift_id: text("shift_id"),
   status: text("status").notNull(),
   remarks: text("remarks"),
-  fieldproxy_punch_id: integer("fieldproxy_punch_id"),
   created_at: real("created_at"),
   updated_at: real("updated_at"),
 });

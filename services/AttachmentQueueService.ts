@@ -234,7 +234,7 @@ export const AttachmentQueueService = {
 
     // The local record now carries the public URL, but the backend still has
     // the stale local file:// URI it received at capture time. Re-push so the
-    // backend (and downstream Fieldproxy) get the public URL.
+    // backend gets the public URL.
     await this._repushUploadedUrl(
       item.related_entity_type,
       item.related_entity_id,
@@ -335,7 +335,7 @@ export const AttachmentQueueService = {
    *
    * Capture-time sync sends the local file:// URI; the public URL is only
    * known once the Firebase upload finishes here. Without this re-push the
-   * backend keeps the dead file:// URI forever and Fieldproxy never receives
+   * backend keeps the dead file:// URI forever and never receives
    * the image/signature.
    *
    * Scoped to pm_instance (before_image / after_image / client_sign). The

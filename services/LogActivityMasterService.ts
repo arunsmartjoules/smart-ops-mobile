@@ -1,12 +1,11 @@
 /**
  * Log Activity Master Service (mobile)
  *
- * Thin wrapper around the new backend endpoint that records start/finish
- * timestamps for `log_activity_master` rows in BOTH our database and
- * Fieldproxy. The mobile app fires these calls when the user starts /
- * finishes a site log task so the row's `startdatetime`, `enddatetime`,
- * `executor_id` and `assigned_to` columns stay accurate without manual
- * Fieldproxy updates.
+ * Thin wrapper around the backend endpoint that records start/finish
+ * timestamps for `log_activity_master` rows. The mobile app fires these calls
+ * when the user starts / finishes a site log task so the row's
+ * `startdatetime`, `enddatetime`, `executor_id` and `assigned_to` columns stay
+ * accurate without manual updates.
  *
  * Best-effort by design: failures must not block the existing offline-first
  * site logs flow. SyncEngine + the nightly server cron will reconcile.
@@ -69,7 +68,7 @@ async function enqueueEvent(payload: Record<string, unknown>): Promise<void> {
 
 /**
  * Convert a UI shift letter ("A" | "B" | "C") into the metadata token used
- * by Fieldproxy ("1/3" | "2/3" | "3/3"). Returns null when the letter is
+ * in the log metadata ("1/3" | "2/3" | "3/3"). Returns null when the letter is
  * unknown or the log type doesn't use shifts.
  */
 export function uiShiftToLabel(shift?: string | null): LogActivityShiftLabel | null {

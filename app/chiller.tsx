@@ -122,7 +122,7 @@ function ChillerEntryContent() {
   // User-controllable reading timestamp. Defaults to "now" so opening the
   // screen and immediately submitting works without the operator having to
   // touch this field. The backend derives the LAM `due_date` and the
-  // Fieldproxy task mapping from this value (chillerReadingsController →
+  // server-side task mapping from this value (chillerReadingsController →
   // toYmd(reading_time)), so a mis-set time silently routes the reading to
   // the wrong LAM row.
   const [readingTime, setReadingTime] = useState<number>(() => {
@@ -1072,7 +1072,7 @@ function ChillerEntryContent() {
                 />
 
                 {/* Reading date & time — defaults to "now". Drives the LAM
-                    due_date and Fieldproxy mapping on the server. */}
+                    due_date and task mapping on the server. */}
                 <View className="mb-4">
                   <View className="flex-row items-center mb-1.5 ml-1">
                     <Text className="text-slate-500 dark:text-slate-400 text-[10px] font-bold uppercase tracking-widest">

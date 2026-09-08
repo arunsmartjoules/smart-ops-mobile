@@ -296,7 +296,6 @@ function init() {
           shift_id TEXT,
           status TEXT NOT NULL,
           remarks TEXT,
-          fieldproxy_punch_id INTEGER,
           created_at REAL,
           updated_at REAL
         );

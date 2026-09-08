@@ -489,7 +489,6 @@ class SyncEngineImpl implements SyncEngine {
           shift_id: log.shift_id ?? null,
           status: log.status || "Present",
           remarks: log.remarks ?? null,
-          fieldproxy_punch_id: log.fieldproxy_punch_id ?? null,
           created_at: log.created_at ? new Date(log.created_at).getTime() : Date.now(),
           updated_at: log.updated_at ? new Date(log.updated_at).getTime() : Date.now(),
         }));
