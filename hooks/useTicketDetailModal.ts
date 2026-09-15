@@ -16,6 +16,7 @@ import { WhatsAppService } from "@/services/WhatsAppService";
 import {
   isTempMandatoryCategory,
   isBreakdownTypeCategory,
+  ticketCategory,
 } from "@/components/TicketDetailStatusUpdate";
 import { type SelectOption } from "@/components/SearchableSelect";
 import logger from "@/utils/logger";
@@ -113,7 +114,7 @@ export function useTicketDetailModal(params: {
           setUpdateStatus(defaultStatus);
           setUpdateRemarks(getInitialUpdateRemarks(ticket, defaultStatus));
           setUpdateArea(ticket.area_asset || "");
-          setUpdateCategory(ticket.category || "");
+          setUpdateCategory(ticketCategory(ticket));
           setUpdateBreakdownType(ticket.breakdown_type || "");
           setBeforeTemp(
             ticket.before_temp != null &&
@@ -168,7 +169,7 @@ export function useTicketDetailModal(params: {
     if (
       needsAreaAndCategory &&
       isBreakdownTypeCategory(
-        updateCategory.trim() || selectedTicket.category || "",
+        updateCategory.trim() || ticketCategory(selectedTicket),
       ) &&
       !updateBreakdownType.trim()
     ) {
@@ -179,11 +180,8 @@ export function useTicketDetailModal(params: {
       return;
     }
     if (needsAreaAndCategory) {
-      const effectiveCategory = (
-        updateCategory.trim() ||
-        selectedTicket.category ||
-        ""
-      ).trim();
+      const effectiveCategory =
+        updateCategory.trim() || ticketCategory(selectedTicket);
       if (isTempMandatoryCategory(effectiveCategory)) {
         const isOpen = selectedTicket.status === "Open";
         const isInprogress = selectedTicket.status === "Inprogress";
@@ -212,7 +210,7 @@ export function useTicketDetailModal(params: {
     }
 
     const effectiveArea = updateArea || selectedTicket.area_asset;
-    const effectivePayloadCategory = updateCategory || selectedTicket.category;
+    const effectivePayloadCategory = updateCategory || ticketCategory(selectedTicket);
     const payload: any = {
       status: updateStatus,
       internal_remarks: updateRemarks,

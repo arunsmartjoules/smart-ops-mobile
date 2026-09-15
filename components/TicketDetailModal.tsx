@@ -7,6 +7,7 @@ import TicketDetailStatusUpdate, {
   getTicketUpdateBlocker,
   isTempMandatoryCategory,
   statusLabel,
+  ticketCategory,
 } from "./TicketDetailStatusUpdate";
 import TicketActivity from "@/components/tickets/TicketActivity";
 import {
@@ -124,12 +125,8 @@ const TicketDetailModal = React.memo(
       if (!ticket) return false;
       const originalRemarks = ticket.internal_remarks || "";
       const originalArea = ticket.area_asset || "";
-      const originalCategory = ticket.category || "";
-      const effectiveCategory = (
-        updateCategory.trim() ||
-        ticket.category ||
-        ""
-      ).trim();
+      const originalCategory = ticketCategory(ticket);
+      const effectiveCategory = updateCategory.trim() || originalCategory;
       const mandatoryTempsIncomplete =
         (updateStatus === "Inprogress" || updateStatus === "Resolved") &&
         isTempMandatoryCategory(effectiveCategory) &&
@@ -235,7 +232,7 @@ const TicketDetailModal = React.memo(
                   label="Area"
                   value={ticket.area_asset || ticket.location || "—"}
                 />
-                <MetaBlock label="Category" value={ticket.category || "—"} />
+                <MetaBlock label="Category" value={ticketCategory(ticket) || "—"} />
                 <MetaBlock
                   label="Assigned"
                   value={ticket.assigned_to || "Unassigned"}

@@ -37,6 +37,7 @@ import TicketDetailModal from "@/components/TicketDetailModal";
 import {
   isTempMandatoryCategory,
   isBreakdownTypeCategory,
+  ticketCategory,
 } from "@/components/TicketDetailStatusUpdate";
 import {
   makeTicketIncidentDraft,
@@ -907,7 +908,7 @@ export default function Tickets() {
     // already on the record. An Open ticket carries neither, so this is still
     // an empty picker on the first update — matching dashboard.tsx and
     // useTicketDetailModal.ts, which have always seeded both.
-    setUpdateCategory(ticket.category || "");
+    setUpdateCategory(ticketCategory(ticket));
     setUpdateBreakdownType(ticket.breakdown_type || "");
     setBeforeTemp(
       ticket.before_temp != null && !Number.isNaN(Number(ticket.before_temp))
@@ -1167,7 +1168,7 @@ export default function Tickets() {
     // already on the record. An Open ticket carries neither, so this is still
     // an empty picker on the first update — matching dashboard.tsx and
     // useTicketDetailModal.ts, which have always seeded both.
-    setUpdateCategory(ticket.category || "");
+    setUpdateCategory(ticketCategory(ticket));
     setUpdateBreakdownType(ticket.breakdown_type || "");
     setBeforeTemp(
       ticket.before_temp != null && !Number.isNaN(Number(ticket.before_temp))
@@ -1243,14 +1244,14 @@ export default function Tickets() {
     }
     if (
       needsAreaAndCategory &&
-      !(updateCategory || selectedTicket.category || "").trim()
+      !(updateCategory.trim() || ticketCategory(selectedTicket))
     ) {
       Alert.alert("Required", "Please select a category before updating the ticket.");
       return;
     }
     if (
       needsAreaAndCategory &&
-      isBreakdownTypeCategory(updateCategory.trim() || selectedTicket.category || "") &&
+      isBreakdownTypeCategory(updateCategory.trim() || ticketCategory(selectedTicket)) &&
       !updateBreakdownType.trim()
     ) {
       Alert.alert(
@@ -1260,11 +1261,8 @@ export default function Tickets() {
       return;
     }
     if (needsAreaAndCategory) {
-      const effectiveCategory = (
-        updateCategory.trim() ||
-        selectedTicket.category ||
-        ""
-      ).trim();
+      const effectiveCategory =
+        updateCategory.trim() || ticketCategory(selectedTicket);
       if (isTempMandatoryCategory(effectiveCategory)) {
         // Which temps are captured tracks the current ticket status (see
         // TicketDetailStatusUpdate): Before only while Open; both Before and
@@ -1314,7 +1312,7 @@ export default function Tickets() {
     }
 
     const effectiveArea = updateArea || selectedTicket.area_asset;
-    const effectivePayloadCategory = updateCategory || selectedTicket.category;
+    const effectivePayloadCategory = updateCategory || ticketCategory(selectedTicket);
     const payload: any = {
       status: updateStatus,
       internal_remarks: updateRemarks,

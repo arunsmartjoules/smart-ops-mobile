@@ -47,6 +47,7 @@ import TicketDetailModal from "@/components/TicketDetailModal";
 import {
   isTempMandatoryCategory,
   isBreakdownTypeCategory,
+  ticketCategory,
 } from "@/components/TicketDetailStatusUpdate";
 import { type SelectOption } from "@/components/SearchableSelect";
 import SiteLogService from "@/services/SiteLogService";
@@ -681,7 +682,7 @@ export default function Dashboard() {
           setUpdateStatus(defaultStatus);
           setUpdateRemarks(getInitialUpdateRemarks(ticket, defaultStatus));
           setUpdateArea(ticket.area_asset || "");
-          setUpdateCategory(ticket.category || "");
+          setUpdateCategory(ticketCategory(ticket));
           setUpdateBreakdownType(ticket.breakdown_type || "");
           setBeforeTemp(
             ticket.before_temp != null && !Number.isNaN(Number(ticket.before_temp))
@@ -729,7 +730,7 @@ export default function Dashboard() {
     }
     if (
       needsAreaAndCategory &&
-      isBreakdownTypeCategory(updateCategory.trim() || selectedTicket.category || "") &&
+      isBreakdownTypeCategory(updateCategory.trim() || ticketCategory(selectedTicket)) &&
       !updateBreakdownType.trim()
     ) {
       Alert.alert(
@@ -739,11 +740,8 @@ export default function Dashboard() {
       return;
     }
     if (needsAreaAndCategory) {
-      const effectiveCategory = (
-        updateCategory.trim() ||
-        selectedTicket.category ||
-        ""
-      ).trim();
+      const effectiveCategory =
+        updateCategory.trim() || ticketCategory(selectedTicket);
       if (isTempMandatoryCategory(effectiveCategory)) {
         // Which temps are captured tracks the current ticket status (see
         // TicketDetailStatusUpdate): Before only while Open; both Before and
@@ -778,7 +776,7 @@ export default function Dashboard() {
     }
 
     const effectiveArea = updateArea || selectedTicket.area_asset;
-    const effectivePayloadCategory = updateCategory || selectedTicket.category;
+    const effectivePayloadCategory = updateCategory || ticketCategory(selectedTicket);
     const payload: any = {
       status: updateStatus,
       internal_remarks: updateRemarks,

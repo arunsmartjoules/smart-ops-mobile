@@ -58,6 +58,18 @@ export const AHU_FCU_BREAKDOWN_CATEGORY = "AHU and FCU Breakdown";
 export const isBreakdownTypeCategory = (category: string) =>
   category.trim().toLowerCase() === AHU_FCU_BREAKDOWN_CATEGORY.toLowerCase();
 
+/** `complaints.category` has a DB default of 'Complaint', so tickets raised
+ *  without one (web, WhatsApp) carry it. It isn't in the category master, so
+ *  it's treated as "not yet categorised" — never seeded into the picker nor
+ *  allowed to satisfy the mandatory-category check. */
+const PLACEHOLDER_CATEGORIES = ["complaint"];
+
+/** The ticket's real category, or "" when it has none (or only the placeholder). */
+export const ticketCategory = (ticket: Pick<Ticket, "category">): string => {
+  const category = (ticket.category || "").trim();
+  return PLACEHOLDER_CATEGORIES.includes(category.toLowerCase()) ? "" : category;
+};
+
 const BREAKDOWN_TYPE_OPTIONS: SelectOption[] = [
   { value: "Electrical", label: "Electrical" },
   { value: "Mechanical", label: "Mechanical" },
@@ -161,16 +173,12 @@ export function getTicketUpdateBlocker({
   }
   if (
     needsAreaAndCategory &&
-    !(updateCategory || ticket.category || "").trim()
+    !(updateCategory.trim() || ticketCategory(ticket))
   ) {
     return "Select a category before updating";
   }
 
-  const effectiveCategory = (
-    updateCategory.trim() ||
-    ticket.category ||
-    ""
-  ).trim();
+  const effectiveCategory = updateCategory.trim() || ticketCategory(ticket);
 
   if (
     needsAreaAndCategory &&
@@ -342,11 +350,7 @@ const TicketDetailStatusUpdate = ({
   // already Inprogress (e.g. tech starts work, then discovers it's a breakdown).
   const canCreateIncidentFromTicket =
     ticket.status === "Open" || ticket.status === "Inprogress";
-  const effectiveCategory = (
-    updateCategory.trim() ||
-    ticket.category ||
-    ""
-  ).trim();
+  const effectiveCategory = updateCategory.trim() || ticketCategory(ticket);
   const mandatoryTempsForCategory =
     showAreaAndCategory && isTempMandatoryCategory(effectiveCategory);
   const beforeTempMissing = mandatoryTempsForCategory && !beforeTemp.trim();
