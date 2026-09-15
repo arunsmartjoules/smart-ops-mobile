@@ -1,27 +1,32 @@
 /**
  * Asset Mapping — screen 2, Asset Detail: the hub for one asset.
  *
- * Identity card, then either the no-access summary or the documentation
- * block: progress (nameplate 50 + location 50), the two capture rows, the
- * nameplate data read off the plate, the data-pending note, and the
- * "I cannot access this asset." entry.
+ * Identity card, the review / approval banner, photo previews, then either
+ * the no-access summary or the documentation block: progress (nameplate 50 +
+ * location 50), the two capture rows, the nameplate data read off the plate,
+ * the data-pending note, and the "I cannot access this asset." entry.
+ *
+ * Approve (review → completed) is shown only to managers and admins.
  */
 import React from "react";
-import { ScrollView, Text, TouchableOpacity, View } from "react-native";
+import { Image, ScrollView, Text, TouchableOpacity, View } from "react-native";
 import {
   Ban,
+  Check,
   CircleAlert,
   CircleCheck,
+  Hourglass,
   IdCard,
   Map as MapIcon,
   QrCode,
 } from "lucide-react-native";
 import type { LucideIcon } from "lucide-react-native";
 import { makeThemedStyles } from "@/hooks/useDs";
+import { formatISTDateTime } from "@/utils/istDate";
 import { soShadow } from "@/components/shared/ListChrome";
 import type { MappedAsset } from "@/services/AssetMappingService";
 import { MONO, amPalette, statusChip, tint, typeMeta } from "./lib";
-import { BackHeader, Chip, Eyebrow, Notice, TypeBadge, usePalette } from "./ui";
+import { BackHeader, Button, Chip, Eyebrow, Notice, TypeBadge, usePalette } from "./ui";
 
 interface Props {
   topInset: number;
@@ -31,6 +36,10 @@ interface Props {
   onCaptureNameplate: () => void;
   onCaptureLocation: () => void;
   onCannotAccess: () => void;
+  onPreview: (url: string, title: string) => void;
+  canApprove: boolean;
+  approving: boolean;
+  onApprove: () => void;
 }
 
 export default function AssetDetailView({
@@ -41,6 +50,10 @@ export default function AssetDetailView({
   onCaptureNameplate,
   onCaptureLocation,
   onCannotAccess,
+  onPreview,
+  canApprove,
+  approving,
+  onApprove,
 }: Props) {
   const styles = useStyles();
   const p = usePalette();
@@ -52,6 +65,23 @@ export default function AssetDetailView({
   const progress = (hasNameplate ? 50 : 0) + (hasLocation ? 50 : 0);
   const progressColor = progress === 100 ? p.success : p.accent;
   const specs = asset.nameplate_data?.fields ?? [];
+  const photos = [
+    asset.nameplate_photo_url && {
+      title: "Nameplate",
+      url: asset.nameplate_photo_url,
+      by: asset.nameplate_captured_by_name,
+    },
+    asset.location_photo_url && {
+      title: "Location",
+      url: asset.location_photo_url,
+      by: asset.location_captured_by_name,
+    },
+    asset.no_access_proof_url && {
+      title: "No-access proof",
+      url: asset.no_access_proof_url,
+      by: asset.no_access_logged_by_name,
+    },
+  ].filter(Boolean) as { title: string; url: string; by: string | null }[];
 
   return (
     <View style={[styles.screen, { paddingTop: topInset }]}>
@@ -97,6 +127,70 @@ export default function AssetDetailView({
             </View>
           </View>
         </View>
+
+        {asset.mapping_status === "review" ? (
+          <View
+            style={[
+              styles.card,
+              { backgroundColor: tint(p.info, 0.08), borderColor: tint(p.info, 0.3), marginBottom: 12 },
+            ]}
+          >
+            <View style={styles.naHead}>
+              <Hourglass size={17} color={p.info} strokeWidth={2.2} />
+              <Text style={[styles.naTitle, { color: p.info }]}>Waiting for manager approval</Text>
+            </View>
+            <Text style={styles.bannerBody}>
+              {canApprove
+                ? "Check the photos and nameplate data below, then approve."
+                : "Documentation is complete. A manager will review it. Retaking a photo sends it back for review."}
+            </Text>
+            {canApprove ? (
+              <Button
+                label="Approve"
+                icon={Check}
+                onPress={onApprove}
+                loading={approving}
+                style={{ marginTop: 12, backgroundColor: approving ? undefined : p.success }}
+              />
+            ) : null}
+          </View>
+        ) : null}
+
+        {asset.mapping_status === "completed" ? (
+          <Notice color={p.success} icon={CircleCheck} title="Completed" style={{ marginBottom: 12 }}>
+            {`Approved${asset.approved_by_name ? ` by ${asset.approved_by_name}` : ""}${
+              asset.approved_at ? ` · ${formatISTDateTime(asset.approved_at)}` : ""
+            }`}
+          </Notice>
+        ) : null}
+
+        {photos.length > 0 ? (
+          <View style={[styles.card, { marginBottom: 12 }]}>
+            <Eyebrow style={{ marginBottom: 10 }}>Photos</Eyebrow>
+            <View style={styles.photos}>
+              {photos.map((ph) => (
+                <TouchableOpacity
+                  key={ph.title}
+                  onPress={() => onPreview(ph.url, ph.title)}
+                  activeOpacity={0.85}
+                  style={styles.photo}
+                  accessibilityRole="imagebutton"
+                  accessibilityLabel={`Preview ${ph.title}`}
+                >
+                  <Image source={{ uri: ph.url }} style={styles.photoImage} />
+                  <Text style={styles.photoLabel} numberOfLines={1}>
+                    {ph.title}
+                  </Text>
+                  {ph.by ? (
+                    <Text style={styles.photoBy} numberOfLines={1}>
+                      {ph.by}
+                    </Text>
+                  ) : null}
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+        ) : null}
 
         {noAccess ? (
           <View
@@ -282,6 +376,12 @@ const useStyles = makeThemedStyles((ds) => {
     naReason: { fontSize: 13, lineHeight: 19.5, fontWeight: "500", color: p.text, marginBottom: 8 },
     naNotes: { fontSize: 12, lineHeight: 18, color: p.sub, marginBottom: 8 },
     naProof: { flexDirection: "row", alignItems: "center", gap: 7, marginTop: 4 },
+    bannerBody: { fontSize: 12, lineHeight: 18, fontWeight: "500", color: p.text },
+    photos: { flexDirection: "row", gap: 10 },
+    photo: { flex: 1, minWidth: 0, maxWidth: "33%" },
+    photoImage: { width: "100%", aspectRatio: 1, borderRadius: 10, backgroundColor: p.raised, marginBottom: 6 },
+    photoLabel: { fontSize: 11.5, fontWeight: "600", color: p.text },
+    photoBy: { fontSize: 10.5, color: p.sub, marginTop: 1 },
     naProofText: { fontSize: 11.5, fontWeight: "500", color: p.sub },
     progressHead: {
       flexDirection: "row",

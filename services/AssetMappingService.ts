@@ -14,7 +14,20 @@ import { apiFetch } from "@/utils/apiHelper";
 import { StorageService } from "@/services/StorageService";
 import logger from "@/utils/logger";
 
-export type MappingStatus = "pending" | "mapped" | "no_access";
+/**
+ * This flow's own status (not the asset's status):
+ *   pending   — waiting for photos / nameplate data
+ *   review    — documented, waiting for a manager's approval
+ *   completed — approved
+ *   no_access — logged as non-accessible with proof
+ */
+export type MappingStatus = "pending" | "review" | "completed" | "no_access";
+
+/** Roles that may approve review → completed (superadmins always can). */
+export const MAPPING_APPROVER_ROLES = ["manager", "regional_manager", "admin", "superadmin"];
+
+export const canApproveMapping = (user: { role?: string | null; is_superadmin?: boolean } | null | undefined) =>
+  !!user && (!!user.is_superadmin || MAPPING_APPROVER_ROLES.includes(String(user.role ?? "").toLowerCase()));
 
 export type NameplateQualityIssue =
   | "blurry"
@@ -36,6 +49,7 @@ export interface NameplateData {
 export interface MappedAsset {
   asset_id: string;
   site_code: string;
+  site_name: string | null;
   asset_name: string;
   asset_type: string | null;
   equipment_type: string | null;
@@ -56,6 +70,10 @@ export interface MappedAsset {
   no_access_proof_url: string | null;
   no_access_logged_at: string | null;
   no_access_logged_by_name: string | null;
+  approved_at: string | null;
+  approved_by_name: string | null;
+  /** Row version — sent back on approve so changed documentation isn't approved unseen. */
+  mapping_updated_at: string | null;
 }
 
 export type ScanResult =
@@ -104,7 +122,7 @@ const safe = (s: string) => s.replace(/[^A-Za-z0-9._-]/g, "_");
 export const AssetMappingService = {
   async getSiteAssets(siteCode: string): Promise<MappedAsset[]> {
     const res = await apiFetch(
-      `${API_URL}/assets/site/${encodeURIComponent(siteCode)}/mapping`,
+      `${API_URL}/asset-mapping/site/${encodeURIComponent(siteCode)}`,
     );
     if (!res.ok) throw new Error(await readError(res, "Couldn't load assets."));
     const body = await res.json();
@@ -126,7 +144,7 @@ export const AssetMappingService = {
 
   scanNameplate(assetId: string, photoUrl: string, acceptPoorQuality = false) {
     return post<ScanResult>(
-      `/assets/${encodeURIComponent(assetId)}/mapping/nameplate/scan`,
+      `/asset-mapping/${encodeURIComponent(assetId)}/nameplate/scan`,
       { photo_url: photoUrl, accept_poor_quality: acceptPoorQuality },
       "Couldn't read this nameplate. Please try again.",
       SCAN_TIMEOUT_MS,
@@ -135,7 +153,7 @@ export const AssetMappingService = {
 
   confirmNameplate(assetId: string, input: { photoUrl: string; text: string; manual: boolean }) {
     return post<MappedAsset>(
-      `/assets/${encodeURIComponent(assetId)}/mapping/nameplate/confirm`,
+      `/asset-mapping/${encodeURIComponent(assetId)}/nameplate/confirm`,
       { photo_url: input.photoUrl, text: input.text, manual: input.manual },
       "Couldn't save the nameplate data.",
     );
@@ -143,7 +161,7 @@ export const AssetMappingService = {
 
   saveLocation(assetId: string, photoUrl: string) {
     return post<MappedAsset>(
-      `/assets/${encodeURIComponent(assetId)}/mapping/location`,
+      `/asset-mapping/${encodeURIComponent(assetId)}/location`,
       { photo_url: photoUrl },
       "Couldn't save the location photo.",
     );
@@ -151,9 +169,18 @@ export const AssetMappingService = {
 
   logNoAccess(assetId: string, input: { reason: string; notes: string; proofPhotoUrl: string }) {
     return post<MappedAsset>(
-      `/assets/${encodeURIComponent(assetId)}/mapping/no-access`,
+      `/asset-mapping/${encodeURIComponent(assetId)}/no-access`,
       { reason: input.reason, notes: input.notes, proof_photo_url: input.proofPhotoUrl },
       "Couldn't log this asset as non-accessible.",
+    );
+  },
+
+  /** Manager / admin: review → completed. */
+  approve(asset: MappedAsset) {
+    return post<MappedAsset>(
+      `/asset-mapping/${encodeURIComponent(asset.asset_id)}/approve`,
+      { seen_updated_at: asset.mapping_updated_at },
+      "Couldn't approve this asset.",
     );
   },
 };

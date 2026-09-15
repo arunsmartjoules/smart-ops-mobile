@@ -1,7 +1,8 @@
 /**
  * Asset Mapping — screen 1, the Equipment Register.
  *
- * Header with the site picker, four live counters, search, filter pills (a
+ * Header with the site picker, live counters for this flow's own statuses
+ * (Pending / Review / Completed / No access), search, filter pills (a
  * "⚠ Data Pending" pill appears only when some nameplate couldn't be read),
  * then one row per asset.
  */
@@ -58,15 +59,16 @@ export default function AssetListView(props: Props) {
   const counts = useMemo(
     () => ({
       total: assets.length,
-      mapped: assets.filter((a) => a.mapping_status === "mapped").length,
       pending: assets.filter((a) => a.mapping_status === "pending").length,
+      review: assets.filter((a) => a.mapping_status === "review").length,
+      completed: assets.filter((a) => a.mapping_status === "completed").length,
       noAccess: assets.filter((a) => a.mapping_status === "no_access").length,
       dataPending: assets.filter((a) => a.data_pending).length,
     }),
     [assets],
   );
 
-  const filters: ListFilter[] = ["All", "Pending", "Mapped", "No Access"];
+  const filters: ListFilter[] = ["All", "Pending", "Review", "Completed", "No Access"];
   if (counts.dataPending > 0) filters.push("Data Pending");
   // The pill disappears once nothing is pending — don't strand the filter.
   const activeFilter = filters.includes(filter) ? filter : "All";
@@ -75,7 +77,8 @@ export default function AssetListView(props: Props) {
     const q = search.trim().toLowerCase();
     return assets.filter((a) => {
       if (activeFilter === "Pending" && a.mapping_status !== "pending") return false;
-      if (activeFilter === "Mapped" && a.mapping_status !== "mapped") return false;
+      if (activeFilter === "Review" && a.mapping_status !== "review") return false;
+      if (activeFilter === "Completed" && a.mapping_status !== "completed") return false;
       if (activeFilter === "No Access" && a.mapping_status !== "no_access") return false;
       if (activeFilter === "Data Pending" && !a.data_pending) return false;
       if (!q) return true;
@@ -107,9 +110,9 @@ export default function AssetListView(props: Props) {
       </View>
 
       <View style={styles.stats}>
-        <Stat value={counts.total} label="Total" color={p.info} />
-        <Stat value={counts.mapped} label="Mapped" color={p.success} />
         <Stat value={counts.pending} label="Pending" color={p.muted} />
+        <Stat value={counts.review} label="Review" color={p.info} />
+        <Stat value={counts.completed} label="Completed" color={p.success} />
         <Stat value={counts.noAccess} label="No acc." color={p.warning} />
       </View>
 
@@ -155,7 +158,7 @@ export default function AssetListView(props: Props) {
               ]}
             >
               <Text style={[styles.filterText, { color: on ? p.onAccent : p.sub }]}>
-                {f === "Data Pending" ? "⚠ Data Pending" : f}
+                {f === "Data Pending" ? "⚠ Data Pending" : f === "All" ? `All · ${counts.total}` : f}
               </Text>
             </TouchableOpacity>
           );
@@ -227,11 +230,7 @@ function AssetRow({ asset, onPress }: { asset: MappedAsset; onPress: () => void 
   const status = statusChip(asset, p);
   const place = [asset.floor, asset.location].filter(Boolean).join(" · ");
   const border =
-    asset.mapping_status === "mapped"
-      ? tint(p.success, 0.28)
-      : asset.mapping_status === "no_access"
-        ? tint(p.warning, 0.28)
-        : p.border;
+    asset.mapping_status === "pending" ? p.border : tint(status.color, 0.28);
 
   return (
     <TouchableOpacity

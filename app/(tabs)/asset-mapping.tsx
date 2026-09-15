@@ -4,7 +4,9 @@
  *
  * A one-time walk of each site: every asset gets a nameplate photo (read by
  * AI on the backend) and a location photo, or is logged as non-accessible
- * with proof. Unrelated to asset status or any other asset flow.
+ * with proof. Documented assets go to Review; a manager/admin approves them
+ * to Completed (here or on the web Asset Mapping page). These statuses are
+ * this flow's own — unrelated to asset status or any other asset flow.
  *
  * Navigation mirrors the prototype:
  *   in the tab (bar visible)   list → detail → QR
@@ -23,6 +25,7 @@ import { useNetworkStatus } from "@/hooks/useNetworkStatus";
 import { useDs } from "@/hooks/useDs";
 import {
   AssetMappingService,
+  canApproveMapping,
   type MappedAsset,
   type NameplateQualityIssue,
 } from "@/services/AssetMappingService";
@@ -36,6 +39,7 @@ import CannotAccessForm, {
   type CannotAccessDraft,
 } from "@/components/asset-mapping/CannotAccessForm";
 import SiteSheet from "@/components/asset-mapping/SiteSheet";
+import PhotoViewer from "@/components/asset-mapping/PhotoViewer";
 import {
   amPalette,
   manualSeedText,
@@ -129,6 +133,9 @@ export default function AssetMappingTab() {
   const [sitesOpen, setSitesOpen] = useState(false);
   const [flow, setFlow] = useState<Flow | null>(null);
   const [draft, setDraft] = useState<CannotAccessDraft>(EMPTY_DRAFT);
+  const [preview, setPreview] = useState<{ url: string; title: string } | null>(null);
+  const [approvingId, setApprovingId] = useState<string | null>(null);
+  const canApprove = canApproveMapping(user);
 
   const asset = assets.find((a) => a.asset_id === selectedId) ?? null;
   const onScreen = asset ? screen : "list";
@@ -172,7 +179,36 @@ export default function AssetMappingTab() {
 
   const openCamera = (mode: CaptureMode) => {
     if (mode !== "proof" && !requireOnline()) return;
-    setFlow({ step: "camera", mode, busy: null, issues: null });
+    const go = () => setFlow({ step: "camera", mode, busy: null, issues: null });
+    if (mode !== "proof" && asset?.mapping_status === "completed") {
+      Alert.alert(
+        "Asset already approved",
+        "Retaking a photo sends this asset back to Review for a manager to approve again.",
+        [
+          { text: "Cancel", style: "cancel" },
+          { text: "Retake", onPress: go },
+        ],
+      );
+      return;
+    }
+    go();
+  };
+
+  const approve = async () => {
+    if (!asset || approvingId || !requireOnline()) return;
+    setApprovingId(asset.asset_id);
+    try {
+      const updated = await AssetMappingService.approve(asset);
+      replaceAsset(updated);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+    } catch (error: any) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
+      Alert.alert("Couldn't approve", error?.message || "Please try again.");
+      // The asset may have changed underneath us — show the latest.
+      if (siteCode) void fetchSite(siteCode);
+    } finally {
+      setApprovingId(null);
+    }
   };
 
   const aimFlow = (mode: CaptureMode): Flow => ({ step: "camera", mode, busy: null, issues: null });
@@ -433,6 +469,10 @@ export default function AssetMappingTab() {
             setDraft(EMPTY_DRAFT);
             setFlow({ step: "cannot", submitting: false });
           }}
+          onPreview={(url, title) => setPreview({ url, title })}
+          canApprove={canApprove}
+          approving={approvingId === asset.asset_id}
+          onApprove={approve}
         />
       )}
 
@@ -445,6 +485,8 @@ export default function AssetMappingTab() {
       >
         {renderFlow()}
       </Modal>
+
+      <PhotoViewer photo={preview} onClose={() => setPreview(null)} />
 
       <SiteSheet
         visible={sitesOpen}

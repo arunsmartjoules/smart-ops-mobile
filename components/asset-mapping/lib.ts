@@ -129,12 +129,20 @@ export const manualSeedText = (meta: TypeMeta) =>
 
 /* ── Status ────────────────────────────────────────────────────────────── */
 
-export type ListFilter = "All" | "Pending" | "Mapped" | "No Access" | "Data Pending";
+export type ListFilter = "All" | "Pending" | "Review" | "Completed" | "No Access" | "Data Pending";
 
+/** Label + colour for this flow's own status (not the asset's status). */
 export function statusChip(asset: MappedAsset, p: AmPalette) {
-  if (asset.mapping_status === "mapped") return { label: "Mapped", color: p.success };
-  if (asset.mapping_status === "no_access") return { label: "No access", color: p.warning };
-  return { label: "Pending", color: p.sub };
+  switch (asset.mapping_status) {
+    case "completed":
+      return { label: "Completed", color: p.success };
+    case "review":
+      return { label: "Review", color: p.info };
+    case "no_access":
+      return { label: "No access", color: p.warning };
+    default:
+      return { label: "Pending", color: p.sub };
+  }
 }
 
 /* ── Nameplate text ────────────────────────────────────────────────────── */
