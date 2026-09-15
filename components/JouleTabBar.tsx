@@ -11,6 +11,7 @@ import type { BottomTabBarProps } from "@react-navigation/bottom-tabs";
 import {
   CircleAlert,
   LayoutDashboard,
+  ScanText,
   Sheet,
   SquareCheck,
   Wrench,
@@ -31,6 +32,8 @@ const TABS: TabDef[] = [
   { name: "incidents", label: "Incidents", icon: CircleAlert },
   { name: "site-logs", label: "Logs", icon: Sheet },
   { name: "preventive-maintenance", label: "PM", icon: SquareCheck },
+  // Asset Mapping (nameplate verification) — appended after the mock's five.
+  { name: "asset-mapping", label: "Assets", icon: ScanText },
 ];
 
 export function JouleTabBar({ state, navigation }: BottomTabBarProps) {
