@@ -1,6 +1,8 @@
 /**
- * Asset Mapping tab — built to the Claude Design "JouleOps Asset Mapping"
- * prototype (layout and flow), in the app's own theme colours.
+ * Asset Mapping tab — the Claude Design "JouleOps Asset Mapping" flow,
+ * presented like the other module tabs (Tickets / Incidents): shared list
+ * chrome in the tab, and a full-screen detail modal with the ticket-detail
+ * header, cards and sticky action bar.
  *
  * A one-time walk of each site: every asset gets a nameplate photo (read by
  * AI on the backend) and a location photo, or is logged as non-accessible
@@ -8,15 +10,15 @@
  * to Completed (here or on the web Asset Mapping page). These statuses are
  * this flow's own — unrelated to asset status or any other asset flow.
  *
- * Navigation mirrors the prototype:
- *   in the tab (bar visible)   list → detail → QR
- *   full-screen (bar hidden)   camera · confirm nameplate · extraction failed · cannot access
+ * Navigation:
+ *   tab                  the asset list
+ *   full-screen modal    detail ↔ QR label, and the capture flow on top of it
+ *                        (camera · confirm nameplate · not read · cannot access)
  *
  * Online-only (see AssetMappingService).
  */
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { Alert, BackHandler, Modal, View } from "react-native";
-import { useFocusEffect } from "expo-router";
+import { Alert, Modal, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Haptics from "expo-haptics";
 import { useAuth } from "@/contexts/AuthContext";
@@ -40,14 +42,9 @@ import CannotAccessForm, {
 } from "@/components/asset-mapping/CannotAccessForm";
 import SiteSheet from "@/components/asset-mapping/SiteSheet";
 import PhotoViewer from "@/components/asset-mapping/PhotoViewer";
-import {
-  amPalette,
-  manualSeedText,
-  typeMeta,
-  type ListFilter,
-} from "@/components/asset-mapping/lib";
+import { manualSeedText, typeMeta } from "@/components/asset-mapping/lib";
 
-type Screen = "list" | "detail" | "qr";
+type Screen = "detail" | "qr";
 
 type Busy = { title: string; sub: string };
 
@@ -69,7 +66,6 @@ const EMPTY: MappedAsset[] = [];
 
 export default function AssetMappingTab() {
   const ds = useDs();
-  const p = amPalette(ds);
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
   const { isConnected } = useNetworkStatus();
@@ -126,10 +122,8 @@ export default function AssetMappingTab() {
   }, []);
 
   /* ── navigation ── */
-  const [screen, setScreen] = useState<Screen>("list");
+  const [screen, setScreen] = useState<Screen>("detail");
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [filter, setFilter] = useState<ListFilter>("All");
-  const [search, setSearch] = useState("");
   const [sitesOpen, setSitesOpen] = useState(false);
   const [flow, setFlow] = useState<Flow | null>(null);
   const [draft, setDraft] = useState<CannotAccessDraft>(EMPTY_DRAFT);
@@ -137,8 +131,8 @@ export default function AssetMappingTab() {
   const [approvingId, setApprovingId] = useState<string | null>(null);
   const canApprove = canApproveMapping(user);
 
+  // The detail modal is open while an asset is selected (and still listed).
   const asset = assets.find((a) => a.asset_id === selectedId) ?? null;
-  const onScreen = asset ? screen : "list";
 
   // Ignore results from a flow the operator has already left.
   const flowSeq = useRef(0);
@@ -146,23 +140,6 @@ export default function AssetMappingTab() {
     flowSeq.current += 1;
     setFlow(null);
   }, []);
-
-  useFocusEffect(
-    useCallback(() => {
-      const sub = BackHandler.addEventListener("hardwareBackPress", () => {
-        if (onScreen === "qr") {
-          setScreen("detail");
-          return true;
-        }
-        if (onScreen === "detail") {
-          setScreen("list");
-          return true;
-        }
-        return false;
-      });
-      return () => sub.remove();
-    }, [onScreen]),
-  );
 
   const requireOnline = () => {
     if (!offline) return true;
@@ -401,12 +378,14 @@ export default function AssetMappingTab() {
           <ExtractionFailed
             topInset={top}
             bottomInset={bottom}
+            assetName={asset.asset_name}
+            onBack={closeFlow}
             onRetake={() => setFlow(aimFlow("nameplate"))}
             onEnterManually={() =>
               setFlow({
                 step: "confirm",
                 photoUrl: flow.photoUrl,
-                text: manualSeedText(typeMeta(asset, p.sub)),
+                text: manualSeedText(typeMeta(asset)),
                 rawText: asset.nameplate_data?.raw_text ?? "",
                 manual: true,
                 saving: false,
@@ -432,61 +411,81 @@ export default function AssetMappingTab() {
     }
   };
 
+  const closeDetail = () => {
+    if (flow || approvingId) return;
+    setSelectedId(null);
+    setScreen("detail");
+  };
+
+  const onModalBack = () => {
+    if (flow) onFlowBack();
+    else if (screen === "qr") setScreen("detail");
+    else closeDetail();
+  };
+
   return (
-    <View style={{ flex: 1, backgroundColor: p.screen }}>
-      {onScreen === "list" || !asset ? (
-        <AssetListView
-          topInset={insets.top}
-          siteName={siteName}
-          onPressSite={() => setSitesOpen(true)}
-          assets={assets}
-          loading={!!siteCode && !current}
-          error={current ? loaded.error : null}
-          offline={offline}
-          refreshing={refreshing}
-          onRefresh={refresh}
-          search={search}
-          onSearch={setSearch}
-          filter={filter}
-          onFilter={setFilter}
-          onOpen={(a) => {
-            setSelectedId(a.asset_id);
-            setScreen("detail");
-          }}
-        />
-      ) : onScreen === "qr" ? (
-        <AssetQrView topInset={insets.top} asset={asset} onBack={() => setScreen("detail")} />
-      ) : (
-        <AssetDetailView
-          topInset={insets.top}
-          asset={asset}
-          onBack={() => setScreen("list")}
-          onViewQr={() => setScreen("qr")}
-          onCaptureNameplate={() => openCamera("nameplate")}
-          onCaptureLocation={() => openCamera("location")}
-          onCannotAccess={() => {
-            if (!requireOnline()) return;
-            setDraft(EMPTY_DRAFT);
-            setFlow({ step: "cannot", submitting: false });
-          }}
-          onPreview={(url, title) => setPreview({ url, title })}
-          canApprove={canApprove}
-          approving={approvingId === asset.asset_id}
-          onApprove={approve}
-        />
-      )}
+    <View style={{ flex: 1, backgroundColor: ds.pageBg }}>
+      <AssetListView
+        topInset={insets.top}
+        siteName={siteName}
+        onPressSite={() => setSitesOpen(true)}
+        assets={assets}
+        loading={!!siteCode && !current}
+        error={current ? loaded.error : null}
+        offline={offline}
+        refreshing={refreshing}
+        onRefresh={refresh}
+        onOpen={(a) => {
+          setScreen("detail");
+          setSelectedId(a.asset_id);
+        }}
+      />
 
       <Modal
-        visible={!!flow && !!asset}
+        visible={!!asset}
         animationType="slide"
         presentationStyle="fullScreen"
         statusBarTranslucent
-        onRequestClose={onFlowBack}
+        onRequestClose={onModalBack}
       >
-        {renderFlow()}
+        {!asset ? null : flow ? (
+          renderFlow()
+        ) : screen === "qr" ? (
+          <AssetQrView topInset={insets.top} asset={asset} onBack={() => setScreen("detail")} />
+        ) : (
+          <AssetDetailView
+            topInset={insets.top}
+            bottomInset={insets.bottom}
+            asset={asset}
+            onBack={closeDetail}
+            onViewQr={() => setScreen("qr")}
+            onCaptureNameplate={() => openCamera("nameplate")}
+            onCaptureLocation={() => openCamera("location")}
+            onCannotAccess={() => {
+              if (!requireOnline()) return;
+              setDraft(EMPTY_DRAFT);
+              setFlow({ step: "cannot", submitting: false });
+            }}
+            onEnterSpecs={() => {
+              if (!asset.nameplate_photo_url || !requireOnline()) return;
+              setFlow({
+                step: "confirm",
+                photoUrl: asset.nameplate_photo_url,
+                text: manualSeedText(typeMeta(asset)),
+                rawText: asset.nameplate_data?.raw_text ?? "",
+                manual: true,
+                saving: false,
+              });
+            }}
+            onPreview={(url, title) => setPreview({ url, title })}
+            canApprove={canApprove}
+            approving={approvingId === asset.asset_id}
+            onApprove={approve}
+          />
+        )}
+        {/* Inside the presented modal so it stacks above the detail on iOS. */}
+        <PhotoViewer photo={preview} onClose={() => setPreview(null)} />
       </Modal>
-
-      <PhotoViewer photo={preview} onClose={() => setPreview(null)} />
 
       <SiteSheet
         visible={sitesOpen}
@@ -497,7 +496,6 @@ export default function AssetMappingTab() {
           setSitesOpen(false);
           const site = sites.find((x) => x.site_code === s.site_code);
           if (site) {
-            setScreen("list");
             setSelectedId(null);
             await selectSite(site);
           }

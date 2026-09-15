@@ -53,6 +53,10 @@ export interface MappedAsset {
   asset_name: string;
   asset_type: string | null;
   equipment_type: string | null;
+  /** High Side / Low Side. */
+  category: string | null;
+  /** Critical / Non Critical. */
+  criticality: string | null;
   location: string | null;
   floor: string | null;
   qr_id: string | null;

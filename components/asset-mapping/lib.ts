@@ -1,53 +1,70 @@
 /**
- * Asset Mapping — shared vocabulary, palette and pure helpers.
+ * Asset Mapping — shared vocabulary, colour maps and pure helpers.
  *
- * Layout and flow come from the Claude Design "JouleOps Asset Mapping"
- * artboard; colours are the app's own DS tokens so the screens follow the
- * light/dark theme. The design's status accents (green / amber / purple) have
- * no DS token, so they're defined here per theme, the same way HomeUI keeps
- * its mock-only tints.
+ * Presentation follows the other module tabs (Tickets / Incidents): the same
+ * list chrome, card, detail header and badge treatment, with this flow's
+ * statuses mapped onto the same DS colour roles:
+ *   Pending   → flame (work to do, like an Open ticket)
+ *   Review    → sky   (in progress, waiting on a manager)
+ *   Completed → teal  (same as a completed incident)
+ *   No access → neutral carbon
+ * These statuses are this flow's own — unrelated to the asset's status.
  */
 import type { DsTheme } from "@/hooks/useDs";
-import type { MappedAsset, NameplateQualityIssue } from "@/services/AssetMappingService";
+import type {
+  MappedAsset,
+  MappingStatus,
+  NameplateQualityIssue,
+} from "@/services/AssetMappingService";
 
-/* ── Palette ───────────────────────────────────────────────────────────── */
+/* ── Status ────────────────────────────────────────────────────────────── */
 
-export function amPalette(ds: DsTheme) {
-  return {
-    screen: ds.pageBg,
-    card: ds.white,
-    raised: ds.isDark ? ds.thunder[400] : ds.carbon[1000],
-    border: ds.isDark ? "rgba(255,255,255,0.08)" : "rgba(7,43,49,0.09)",
-    borderStrong: ds.isDark ? "rgba(255,255,255,0.14)" : "rgba(7,43,49,0.16)",
-    text: ds.carbon[100],
-    sub: ds.carbon[500],
-    muted: ds.carbon[700],
-    accent: ds.flame[100],
-    onAccent: "#FFFFFF",
-    success: ds.isDark ? "#34C77B" : "#16924F",
-    warning: ds.isDark ? "#F5A524" : "#B86E00",
-    info: ds.sky[100],
-    ai: ds.isDark ? "#B39CF0" : "#6E4FD0",
-  };
-}
-export type AmPalette = ReturnType<typeof amPalette>;
-
-/** `#RRGGBB` + alpha → rgba(). */
-export function tint(hex: string, alpha: number): string {
-  const h = hex.replace("#", "");
-  const r = parseInt(h.slice(0, 2), 16);
-  const g = parseInt(h.slice(2, 4), 16);
-  const b = parseInt(h.slice(4, 6), 16);
-  return `rgba(${r},${g},${b},${alpha})`;
+export interface Tone {
+  label: string;
+  bg: string;
+  fg: string;
 }
 
-export const MONO = "Menlo";
+export const mappingStatusMap = (ds: DsTheme): Record<MappingStatus, Tone> => ({
+  pending: { label: "Pending", bg: ds.flame[1000], fg: ds.flame[100] },
+  review: { label: "Review", bg: ds.sky[1000], fg: ds.sky[100] },
+  completed: { label: "Completed", bg: ds.sky[900], fg: ds.isDark ? ds.sky[100] : "#1F757D" },
+  no_access: { label: "No access", bg: ds.carbon[1000], fg: ds.carbon[400] },
+});
+
+export const getMappingStatus = (asset: MappedAsset, ds: DsTheme): Tone =>
+  mappingStatusMap(ds)[asset.mapping_status] ?? mappingStatusMap(ds).pending;
+
+/** Second badge on a card / detail summary when the AI couldn't read the plate. */
+export const dataPendingTone = (ds: DsTheme): Tone => ({
+  label: "Data pending",
+  bg: ds.flame[1000],
+  fg: ds.flame[100],
+});
+
+/** Criticality badge: Critical reads urgent (flame), anything else neutral. */
+export function criticalityTone(asset: MappedAsset, ds: DsTheme): Tone | null {
+  const value = asset.criticality?.trim();
+  if (!value) return null;
+  return /^critical$/i.test(value)
+    ? { label: "Critical", bg: ds.flame[1000], fg: ds.flame[100] }
+    : { label: value, bg: ds.carbon[1000], fg: ds.carbon[400] };
+}
+
+/** "High Side" / "Low Side" (assets.category) → "High side" / "Low side". */
+export function sideLabel(asset: MappedAsset): string | null {
+  const value = asset.category?.trim();
+  if (!value) return null;
+  const m = /^(high|low)\s*side$/i.exec(value);
+  return m ? `${m[1]![0]!.toUpperCase()}${m[1]!.slice(1).toLowerCase()} side` : value;
+}
+
+export type ListFilter = "all" | MappingStatus | "data_pending";
 
 /* ── Asset types ───────────────────────────────────────────────────────── */
 
 interface TypeDef {
   abbr: string;
-  color: string;
   test: RegExp;
   seeds: string[];
 }
@@ -57,13 +74,11 @@ const IDENT = ["Make / Brand", "Model No.", "Serial No.", "Tag No."];
 const TYPES: TypeDef[] = [
   {
     abbr: "CHR",
-    color: "#4A91EA",
     test: /chiller/i,
     seeds: [...IDENT, "Capacity (TR)", "Refrigerant", "Power Input (kW)", "Voltage / Phase", "Year of Mfg."],
   },
   {
     abbr: "AHU",
-    color: "#9B7FEA",
     test: /\bahu\b|air handling|\btfa\b|fahu/i,
     seeds: [
       ...IDENT,
@@ -79,19 +94,16 @@ const TYPES: TypeDef[] = [
   },
   {
     abbr: "FCU",
-    color: "#1FAFAF",
     test: /\bfcu\b|fan coil/i,
     seeds: [...IDENT, "Airflow (CFM)", "Cooling Capacity (kW)", "Motor (W)", "Rows / Speed"],
   },
   {
     abbr: "CT",
-    color: "#6F8FC8",
     test: /cooling tower|\bct\b/i,
     seeds: [...IDENT, "Nominal (TR)", "Water Flow (GPM)", "Fan Motor (kW)", "Range / Approach"],
   },
   {
     abbr: "PMP",
-    color: "#D0668F",
     test: /pump/i,
     seeds: [...IDENT, "Flow (m3/hr)", "Head (m)", "Motor (kW)", "RPM"],
   },
@@ -102,16 +114,15 @@ const GENERIC_SEEDS = [...IDENT, "Capacity", "Power", "Voltage / Phase", "Year o
 export interface TypeMeta {
   abbr: string;
   label: string;
-  color: string;
   seeds: string[];
 }
 
-/** Badge abbreviation, label and tint for an asset, from its type columns. */
-export function typeMeta(asset: MappedAsset, fallbackColor: string): TypeMeta {
+/** Short type code, label and manual-entry labels for an asset. */
+export function typeMeta(asset: MappedAsset): TypeMeta {
   const label = asset.equipment_type || asset.asset_type || "Asset";
   const haystack = `${asset.equipment_type ?? ""} ${asset.asset_type ?? ""} ${asset.asset_name}`;
   const def = TYPES.find((t) => t.test.test(haystack));
-  if (def) return { abbr: def.abbr, label, color: def.color, seeds: def.seeds };
+  if (def) return { abbr: def.abbr, label, seeds: def.seeds };
   const abbr =
     label
       .split(/[^A-Za-z0-9]+/)
@@ -120,29 +131,41 @@ export function typeMeta(asset: MappedAsset, fallbackColor: string): TypeMeta {
       .join("")
       .slice(0, 3)
       .toUpperCase() || "AST";
-  return { abbr, label, color: fallbackColor, seeds: GENERIC_SEEDS };
+  return { abbr, label, seeds: GENERIC_SEEDS };
 }
 
 /** Seed text for manual entry: that type's labels with empty values. */
 export const manualSeedText = (meta: TypeMeta) =>
   meta.seeds.map((l) => `• ${l}: `).join("\n");
 
-/* ── Status ────────────────────────────────────────────────────────────── */
+export const placeOf = (asset: MappedAsset) =>
+  [asset.floor, asset.location].filter(Boolean).join(" · ");
 
-export type ListFilter = "All" | "Pending" | "Review" | "Completed" | "No Access" | "Data Pending";
+/** Most recent capture / approval on the record. */
+export function lastActivity(asset: MappedAsset): string | null {
+  const stamps = [
+    asset.nameplate_captured_at,
+    asset.location_captured_at,
+    asset.no_access_logged_at,
+    asset.approved_at,
+  ].filter((v): v is string => !!v);
+  if (stamps.length === 0) return null;
+  return stamps.reduce((a, b) => (Date.parse(b) > Date.parse(a) ? b : a));
+}
 
-/** Label + colour for this flow's own status (not the asset's status). */
-export function statusChip(asset: MappedAsset, p: AmPalette) {
-  switch (asset.mapping_status) {
-    case "completed":
-      return { label: "Completed", color: p.success };
-    case "review":
-      return { label: "Review", color: p.info };
-    case "no_access":
-      return { label: "No access", color: p.warning };
-    default:
-      return { label: "Pending", color: p.sub };
-  }
+/** "1h 29m" / "2d 8h" / "5d" — the compact age the ticket and incident rows use. */
+export function formatAge(value?: string | null): string {
+  if (!value) return "—";
+  const started = Date.parse(value);
+  if (Number.isNaN(started)) return "—";
+  const mins = Math.max(0, Math.floor((Date.now() - started) / 60000));
+  if (mins < 60) return `${mins}m`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ${String(mins % 60).padStart(2, "0")}m`;
+  const days = Math.floor(hours / 24);
+  const rest = hours % 24;
+  if (days >= 3 || rest === 0) return `${days}d`;
+  return `${days}d ${rest}h`;
 }
 
 /* ── Nameplate text ────────────────────────────────────────────────────── */

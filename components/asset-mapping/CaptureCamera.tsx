@@ -29,7 +29,7 @@ import Animated, {
 import { Camera, ImageOff } from "lucide-react-native";
 import { useDs } from "@/hooks/useDs";
 import type { NameplateQualityIssue } from "@/services/AssetMappingService";
-import { QUALITY_ISSUE_COPY, tint } from "./lib";
+import { QUALITY_ISSUE_COPY } from "./lib";
 
 export type CaptureMode = "nameplate" | "location" | "proof";
 
@@ -48,10 +48,10 @@ const COPY: Record<CaptureMode, { title: string; hint: string }> = {
   },
 };
 
-const INK = "#EEF2FF";
-const INK_SUB = "#8FA3C4";
-const DIM = "rgba(6,12,26,0.9)";
-const AMBER = "#F59E0B";
+// Viewfinder chrome sits on the app's thunder, dark in both themes.
+const INK = "#F1F4F4";
+const INK_SUB = "#9FB0B3";
+const DIM = "rgba(7,33,38,0.9)";
 
 interface Props {
   mode: CaptureMode;
@@ -219,8 +219,8 @@ export default function CaptureCamera({
               { paddingTop: topInset + 30, paddingBottom: bottomInset + 24 },
             ]}
           >
-            <View style={[styles.failIcon, { backgroundColor: tint(AMBER, 0.14) }]}>
-              <ImageOff size={26} color={AMBER} strokeWidth={2} />
+            <View style={[styles.failIcon, { backgroundColor: "rgba(202,54,4,0.18)" }]}>
+              <ImageOff size={26} color={accent} strokeWidth={2} />
             </View>
             <Text style={styles.failTitle}>Poor image quality</Text>
             <Text style={styles.failBody}>We couldn&apos;t get a clear read. Fix these and try again:</Text>
@@ -272,7 +272,7 @@ function Corner({ pos, color }: { pos: "tl" | "tr" | "bl" | "br"; color: string 
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: "#05080F" },
+  screen: { flex: 1, backgroundColor: "#041417" },
   shade: { backgroundColor: "rgba(5,8,15,0.28)" },
   grid: { opacity: 0.35 },
   gridV: { position: "absolute", top: 0, bottom: 0, width: 1, backgroundColor: "rgba(200,220,255,0.12)" },
@@ -318,7 +318,7 @@ const styles = StyleSheet.create({
   overlay: { backgroundColor: DIM, alignItems: "center", justifyContent: "center", gap: 14 },
   busyTitle: { fontSize: 14, fontWeight: "600", color: INK },
   busySub: { fontSize: 11.5, fontWeight: "500", color: INK_SUB },
-  failOverlay: { backgroundColor: "rgba(6,12,26,0.96)" },
+  failOverlay: { backgroundColor: "rgba(7,33,38,0.97)" },
   failContent: { paddingHorizontal: 24 },
   failIcon: {
     width: 52,
@@ -331,14 +331,14 @@ const styles = StyleSheet.create({
   failTitle: { fontSize: 18, lineHeight: 22, fontWeight: "700", color: INK, marginBottom: 8 },
   failBody: { fontSize: 12.5, lineHeight: 19, fontWeight: "500", color: INK_SUB, marginBottom: 18 },
   issue: {
-    backgroundColor: "#0F1828",
+    backgroundColor: "rgba(255,255,255,0.06)",
     borderWidth: 1,
-    borderColor: "rgba(245,158,11,0.22)",
+    borderColor: "rgba(255,255,255,0.1)",
     borderRadius: 13,
     paddingVertical: 12,
     paddingHorizontal: 13,
   },
-  issueTitle: { fontSize: 12, fontWeight: "700", color: AMBER, marginBottom: 4 },
+  issueTitle: { fontSize: 12, fontWeight: "700", color: "#F5A87F", marginBottom: 4 },
   issueFix: { fontSize: 11.5, lineHeight: 17, fontWeight: "500", color: INK_SUB },
   retake: {
     minHeight: 48,

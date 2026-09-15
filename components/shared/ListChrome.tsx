@@ -263,6 +263,7 @@ export function ModuleListHeader({
   onSelectChip,
   showSiteIcon = true,
   tabPlacement = "header",
+  subtitleIcon: SubtitleIcon = Calendar,
 }: {
   topInset: number;
   siteName: string;
@@ -286,6 +287,8 @@ export function ModuleListHeader({
    * artboard's layout — a rounded header, then the tabs on the page below it.
    */
   tabPlacement?: "header" | "canvas";
+  /** Glyph before `dateLabel` — screens without a date range swap the calendar out. */
+  subtitleIcon?: LucideIcon;
 }) {
   const styles = useStyles();
   const ds = useDs();
@@ -328,7 +331,7 @@ export function ModuleListHeader({
             <ChevronDown size={18} color={ds.sky[500]} strokeWidth={2} />
           </TouchableOpacity>
           <View style={styles.dateRow}>
-            <Calendar size={12} color={ds.sky[500]} strokeWidth={2} />
+            <SubtitleIcon size={12} color={ds.sky[500]} strokeWidth={2} />
             <Text style={styles.dateLabel} numberOfLines={1}>
               {dateLabel}
             </Text>
