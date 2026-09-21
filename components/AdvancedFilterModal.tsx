@@ -116,6 +116,22 @@ interface AdvancedFilterModalProps {
   dateFieldOptions?: { value: string; label: string }[];
   selectedDateField?: string;
   setSelectedDateField?: (value: string) => void;
+  /** Placeholder for the keyword box. */
+  searchPlaceholder?: string;
+  /** Hide the date section for screens with no date to filter on. */
+  showDate?: boolean;
+  /** Extra single-choice pill groups rendered after Status (e.g. asset fields). */
+  extraFilters?: ExtraFilterGroup[];
+  /** Replaces the default Reset behaviour (which assumes the ticket/PM vocabulary). */
+  onReset?: () => void;
+}
+
+export interface ExtraFilterGroup {
+  key: string;
+  label: string;
+  options: { value: string; label: string }[];
+  value: string;
+  onChange: (value: string) => void;
 }
 
 const AdvancedFilterModal = ({
@@ -143,6 +159,10 @@ const AdvancedFilterModal = ({
   dateFieldOptions,
   selectedDateField,
   setSelectedDateField,
+  searchPlaceholder = "Ticket #, Title, description...",
+  showDate = true,
+  extraFilters,
+  onReset,
 }: AdvancedFilterModalProps) => {
   const ds = useDs();
 
@@ -303,7 +323,7 @@ const AdvancedFilterModal = ({
                 >
                   <SearchIcon size={20} color={textSecondary} />
                   <TextInput
-                    placeholder="Ticket #, Title, description..."
+                    placeholder={searchPlaceholder}
                     placeholderTextColor={textSecondary}
                     style={{
                       flex: 1,
@@ -318,6 +338,7 @@ const AdvancedFilterModal = ({
               </View>
 
               {/* Date Section */}
+              {showDate && (
               <View>
                 <Text
                   style={{
@@ -543,6 +564,8 @@ const AdvancedFilterModal = ({
                 )}
               </View>
 
+              )}
+
               {/* Site Selection */}
               <View>
                 <Text
@@ -691,6 +714,54 @@ const AdvancedFilterModal = ({
                   </View>
                 </View>
               )}
+
+              {/* Extra pill groups supplied by the screen */}
+              {extraFilters?.map((group) => (
+                <View key={group.key}>
+                  <Text
+                    style={{
+                      color: textSecondary,
+                      fontSize: 10,
+                      fontWeight: "900",
+                      textTransform: "uppercase",
+                      letterSpacing: 1.5,
+                      marginBottom: 12,
+                      marginLeft: 4,
+                    }}
+                  >
+                    {group.label}
+                  </Text>
+                  <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+                    {group.options.map((o) => {
+                      const on = group.value === o.value;
+                      return (
+                        <TouchableOpacity
+                          key={o.value}
+                          onPress={() => group.onChange(o.value)}
+                          style={{
+                            paddingHorizontal: 16,
+                            paddingVertical: 10,
+                            borderRadius: 14,
+                            borderWidth: 1,
+                            backgroundColor: on ? pillActiveBg : pillBg,
+                            borderColor: on ? pillActiveBorder : borderColor,
+                          }}
+                        >
+                          <Text
+                            style={{
+                              fontSize: 12,
+                              fontWeight: "700",
+                              color: on ? ds.flame[100] : textMuted,
+                            }}
+                          >
+                            {o.label}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                </View>
+              ))}
             </View>
           </ScrollView>
 
@@ -698,6 +769,10 @@ const AdvancedFilterModal = ({
           <View style={{ flexDirection: "row", gap: 16, marginTop: 24 }}>
             <TouchableOpacity
               onPress={() => {
+                if (onReset) {
+                  onReset();
+                  return;
+                }
                 setTempSearch("");
                 setTempFromDate(format(new Date(), "yyyy-MM-dd"));
                 setTempToDate?.(format(new Date(), "yyyy-MM-dd"));

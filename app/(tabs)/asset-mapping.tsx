@@ -40,7 +40,6 @@ import ExtractionFailed from "@/components/asset-mapping/ExtractionFailed";
 import CannotAccessForm, {
   type CannotAccessDraft,
 } from "@/components/asset-mapping/CannotAccessForm";
-import SiteSheet from "@/components/asset-mapping/SiteSheet";
 import PhotoViewer from "@/components/asset-mapping/PhotoViewer";
 import { manualSeedText, typeMeta } from "@/components/asset-mapping/lib";
 
@@ -124,7 +123,6 @@ export default function AssetMappingTab() {
   /* ── navigation ── */
   const [screen, setScreen] = useState<Screen>("detail");
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [sitesOpen, setSitesOpen] = useState(false);
   const [flow, setFlow] = useState<Flow | null>(null);
   const [draft, setDraft] = useState<CannotAccessDraft>(EMPTY_DRAFT);
   const [preview, setPreview] = useState<{ url: string; title: string } | null>(null);
@@ -428,7 +426,13 @@ export default function AssetMappingTab() {
       <AssetListView
         topInset={insets.top}
         siteName={siteName}
-        onPressSite={() => setSitesOpen(true)}
+        sites={sites}
+        siteCode={siteCode}
+        onSelectSite={(site) => {
+          setSelectedId(null);
+          void selectSite(site);
+        }}
+        user={user}
         assets={assets}
         loading={!!siteCode && !current}
         error={current ? loaded.error : null}
@@ -487,20 +491,6 @@ export default function AssetMappingTab() {
         <PhotoViewer photo={preview} onClose={() => setPreview(null)} />
       </Modal>
 
-      <SiteSheet
-        visible={sitesOpen}
-        sites={sites}
-        selectedCode={siteCode}
-        onClose={() => setSitesOpen(false)}
-        onSelect={async (s) => {
-          setSitesOpen(false);
-          const site = sites.find((x) => x.site_code === s.site_code);
-          if (site) {
-            setSelectedId(null);
-            await selectSite(site);
-          }
-        }}
-      />
     </View>
   );
 }
