@@ -858,6 +858,8 @@ export default function Dashboard() {
           slaTone={slaTone(slaScoreNum)}
           slaMonth={monthLabel(slaMonth, true)}
           onPressSla={() => setSheet("month")}
+          onPress={navigateToAttendance}
+          accessibilityLabel="Attendance. Open attendance"
         >
           {!isOperator ? (
             <View style={{ marginTop: 12 }}>

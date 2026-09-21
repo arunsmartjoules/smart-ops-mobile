@@ -246,6 +246,8 @@ export function SiteCard({
   slaTone,
   slaMonth,
   onPressSla,
+  onPress,
+  accessibilityLabel,
   children,
 }: {
   siteName: string;
@@ -257,13 +259,25 @@ export function SiteCard({
   slaTone: Tone;
   slaMonth: string;
   onPressSla: () => void;
+  /** Tapping the card itself (outside its own buttons) — opens Attendance. */
+  onPress?: () => void;
+  accessibilityLabel?: string;
   children?: React.ReactNode;
 }) {
   const JO = useJo();
   const s = useS();
   const hasTone = slaTone !== "neutral";
   return (
-    <DashCard>
+    // Inner buttons (site name, SLA chip, punch CTA) are their own touchables,
+    // so they keep their actions; a tap anywhere else lands on `onPress`.
+    <TouchableOpacity
+      onPress={onPress}
+      disabled={!onPress}
+      activeOpacity={0.85}
+      style={s.card}
+      accessibilityRole={onPress ? "button" : undefined}
+      accessibilityLabel={accessibilityLabel}
+    >
       <View style={s.siteTop}>
         <View style={{ flexShrink: 1, minWidth: 0 }}>
           <TouchableOpacity
@@ -314,7 +328,7 @@ export function SiteCard({
         </TouchableOpacity>
       </View>
       {children}
-    </DashCard>
+    </TouchableOpacity>
   );
 }
 
