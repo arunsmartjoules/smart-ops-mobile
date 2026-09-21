@@ -54,12 +54,12 @@
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#FFFFFF",
-          "image": "./assets/images/jouleops-splash-light.png",
+          "backgroundColor": "#060C1A",
+          "image": "./assets/images/jouleops-splash-dark.png",
           "imageWidth": 180,
           "resizeMode": "contain",
           "dark": {
-            "backgroundColor": "#061417",
+            "backgroundColor": "#060C1A",
             "image": "./assets/images/jouleops-splash-dark.png"
           }
         }

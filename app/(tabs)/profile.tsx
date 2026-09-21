@@ -37,16 +37,12 @@ import {
   LogOut,
   Mail,
   MessageSquareWarning,
-  Monitor,
-  Moon,
   Pencil,
   Shield,
-  Sun,
 } from "lucide-react-native";
 import type { LucideIcon } from "lucide-react-native";
 
 import { useAuth } from "@/contexts/AuthContext";
-import { useTheme } from "@/contexts/ThemeContext";
 import { useSyncStatus } from "@/hooks/useSyncStatus";
 import UpdateService from "@/services/UpdateService";
 import { StorageService } from "@/services/StorageService";
@@ -199,7 +195,6 @@ export default function Profile() {
   const styles = useStyles();
   const ds = useDs();
   const { user, signOut, deleteAccount, refreshProfile } = useAuth();
-  const { theme, setTheme } = useTheme();
   const { lastSyncedAt, pendingQueueCount } = useSyncStatus();
   const insets = useSafeAreaInsets();
 
@@ -472,19 +467,12 @@ export default function Profile() {
     }
   }, []);
 
-  const handleCycleTheme = useCallback(() => {
-    if (theme === "light") setTheme("dark");
-    else if (theme === "dark") setTheme("system");
-    else setTheme("light");
-  }, [theme, setTheme]);
-
   const fullName = user?.full_name || user?.name || "Team Member";
   const joinedRaw = user?.created_at || user?.date_of_joining;
   const joined = joinedRaw
     ? format(new Date(joinedRaw as string), "MMM yyyy")
     : "—";
   const presence = user?.work_location_type;
-  const ThemeIcon = theme === "light" ? Sun : theme === "dark" ? Moon : Monitor;
 
   return (
     <View style={styles.screen}>
@@ -612,12 +600,6 @@ export default function Profile() {
 
         <Text style={styles.groupLabel}>App</Text>
         <View style={styles.card}>
-          <MenuRow
-            icon={ThemeIcon}
-            label="Appearance"
-            value={theme.charAt(0).toUpperCase() + theme.slice(1)}
-            onPress={handleCycleTheme}
-          />
           <MenuRow
             icon={MessageSquareWarning}
             label="Report an Issue"

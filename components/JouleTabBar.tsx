@@ -1,11 +1,11 @@
 /**
- * Bottom bar from the Claude Design "JouleOps Home Redesign" artboard: five
- * labelled tabs on a white surface, the active one carried by the flame accent
- * alone — no pill. Profile is deliberately absent; it lives in the Home hero's
- * avatar.
+ * Bottom bar from the Claude Design "JouleOps Role Dashboard v2" artboard: a
+ * navy #0B1220 bar under a hairline, labelled tabs, the active one carried by
+ * the red accent alone and the rest in the artboard's faint #3E506A. Profile
+ * is deliberately absent; it lives in the Home header's avatar button.
  */
 import React from "react";
-import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { Text, TouchableOpacity, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { BottomTabBarProps } from "@react-navigation/bottom-tabs";
 import {
@@ -52,7 +52,7 @@ export function JouleTabBar({ state, navigation }: BottomTabBarProps) {
 
         const route = state.routes[index];
         const focused = state.index === index;
-        const color = focused ? ds.flame[100] : ds.carbon[700];
+        const color = focused ? ds.flame[100] : ds.carbon[800];
         const Icon = tab.icon;
 
         const onPress = () => {
@@ -80,7 +80,7 @@ export function JouleTabBar({ state, navigation }: BottomTabBarProps) {
             style={styles.tab}
           >
             <Icon
-              size={21}
+              size={19}
               color={color}
               strokeWidth={focused ? 2.4 : 2}
               fill={focused ? color : "transparent"}
@@ -91,7 +91,7 @@ export function JouleTabBar({ state, navigation }: BottomTabBarProps) {
               numberOfLines={1}
               style={[
                 styles.label,
-                { color, fontWeight: focused ? "600" : "500" },
+                { color },
               ]}
             >
               {tab.label}
@@ -110,27 +110,22 @@ const useStyles = makeThemedStyles((ds) => ({
     // The artboard's dark tab bar sits a step below the card surface, with a
     // hairline instead of the light build's lifted shadow.
     backgroundColor: ds.tabBar,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: ds.carbon[900],
+    borderTopWidth: 1,
+    borderTopColor: ds.cardBorder,
     paddingTop: 9,
     paddingHorizontal: 8,
-    shadowColor: ds.carbon[100],
-    shadowOffset: { width: 0, height: -2 },
-    shadowOpacity: 0.07,
-    shadowRadius: 12,
-    elevation: 16,
   },
   tab: {
     flex: 1,
     flexDirection: "column",
     alignItems: "center",
     gap: 3,
-    paddingTop: 5,
     paddingBottom: 2,
   },
   label: {
-    fontSize: 9,
-    letterSpacing: 0.54,
+    fontSize: 8.5,
+    fontWeight: "700",
+    letterSpacing: 0.6,
     textTransform: "uppercase",
   },
 }));

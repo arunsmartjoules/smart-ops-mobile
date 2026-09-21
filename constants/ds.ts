@@ -91,86 +91,88 @@ export const dsCardShadow = {
 export default ds;
 
 /**
- * Dark palette — Claude Design "JouleOps Dark Mode.dc.html".
+ * Dark palette — the app's only live palette (ThemeContext pins dark).
+ *
+ * Values are the navy/red scheme from Claude Design "JouleOps Role Dashboard
+ * v2.dc.html": page #060C1A, card #0F1828, tile #152038, ink #EEF2FF, muted
+ * #7A91BB, faint #3E506A, accent red #D43535, info blue #4A91EA. Ramp steps the
+ * artboard doesn't state are interpolated between those.
  *
  * Deliberately keyed to the SAME token names as the light set, because the
  * screens use the brand scales semantically rather than literally: carbon 100
  * is always "primary text", carbon 1000 is always "the faintest fill", white
- * is always "card surface". So the dark set inverts the neutral ramps and
- * brightens the accents, and every screen keeps reading the same token.
- *
- * Values are the artboard's, verbatim; the few that it doesn't state outright
- * are interpolated along the ramp it does state.
+ * is always "card surface", flame is always "the accent". So the dark set
+ * inverts the neutral ramps and every screen keeps reading the same token.
  */
 export const dsDark: DsTheme = {
   isDark: true,
-  tabBar: "#0A1D21",
-  cardBorder: "rgba(255,255,255,0.07)",
-  field: "#0A1D21",
-  fieldBorder: "rgba(255,255,255,0.08)",
-  controlOn: "#4FC0C9",
-  onControl: "#04171A",
-  onAccent: "#170804",
-  onChrome: "#F1F4F4",
+  tabBar: "#0B1220",
+  cardBorder: "rgba(230,240,255,0.10)",
+  field: "#152038",
+  fieldBorder: "rgba(230,240,255,0.10)",
+  controlOn: "#D43535",
+  onControl: "#FFFFFF",
+  onAccent: "#FFFFFF",
+  onChrome: "#EEF2FF",
 
-  // Chrome. The artboard's header/tabbar surfaces, stepping up from near-black.
+  // Chrome — header/tab surfaces stepping up from the page.
   thunder: {
-    100: "#0A2126",
-    200: "#0E2429",
-    300: "#122A2E",
-    400: "#14343A",
-    500: "#1A3339",
-    600: "#2A4A50",
-    700: "#7FA9AD",
-    800: "#9FB0B3",
-    900: "#B9C7C9",
-    1000: "#F1F4F4",
+    100: "#0B1220",
+    200: "#0F1828",
+    300: "#121C2F",
+    400: "#152038",
+    500: "#1A2742",
+    600: "#25344F",
+    700: "#7A91BB",
+    800: "#93A6C8",
+    900: "#B4C2DB",
+    1000: "#EEF2FF",
   },
-  // Sky brightens so it still reads on a dark ground.
+  // Secondary accent → the artboard's info blue.
   sky: {
-    100: "#4FC0C9",
-    200: "#28939D",
-    300: "#2E8891",
-    400: "#2A7A82",
-    500: "#7FA9AD",
-    600: "#1F656D",
-    700: "#1A555C",
-    800: "#14434A",
-    900: "#0F3238",
-    1000: "#0F3238",
+    100: "#4A91EA",
+    200: "#3A7FD6",
+    300: "#336FBD",
+    400: "#2C60A3",
+    500: "#7FB4F2",
+    600: "#1F4A80",
+    700: "#1A3D69",
+    800: "#153152",
+    900: "#10243D",
+    1000: "#10243D",
   },
-  // Flame brightens to #E4551F; #F5A87F is its on-dark text weight.
+  // Primary accent → the artboard's red; #F2A7A7 is its on-dark text weight.
   flame: {
-    100: "#E4551F",
-    200: "#EA6A38",
-    300: "#EE7F52",
-    400: "#F1936B",
-    500: "#F5A87F",
-    600: "#C4713F",
-    700: "#8E4F2C",
-    800: "#63361E",
-    900: "#3A1A10",
-    1000: "#3A1A10",
+    100: "#D43535",
+    200: "#DB4E4E",
+    300: "#E16767",
+    400: "#E78080",
+    500: "#F2A7A7",
+    600: "#B03A3A",
+    700: "#862E2E",
+    800: "#5E2323",
+    900: "#3A1616",
+    1000: "#3A1616",
   },
-  // Neutral ramp inverted: 100 = brightest text → 1000 = faintest fill.
+  // Neutral ramp inverted: 100 = ink → 1000 = faintest fill.
   carbon: {
-    100: "#F1F4F4",
-    200: "#DCE4E5",
-    300: "#C8D3D5",
-    400: "#9FB0B3",
-    500: "#8EA1A4",
-    600: "#6C8589",
-    700: "#6C8589",
-    800: "#4A6266",
-    900: "rgba(255,255,255,0.10)",
-    1000: "#1A3339",
+    100: "#EEF2FF",
+    200: "#D6DEEF",
+    300: "#BCC8E0",
+    400: "#93A6C8",
+    500: "#7A91BB",
+    600: "#5D7196",
+    700: "#4B5E80",
+    800: "#3E506A",
+    900: "rgba(230,240,255,0.10)",
+    1000: "#152038",
   },
 
   // Card surface — what every `ds.white` fill becomes on dark.
-  white: "#0E2429",
+  white: "#0F1828",
   black: "#000000",
 
-  pageBg: "#061417",
+  pageBg: "#060C1A",
 };
 
 /** The shape both palettes share, so a screen can take either. */

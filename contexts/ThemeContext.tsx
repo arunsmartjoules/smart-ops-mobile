@@ -2,12 +2,10 @@ import React, {
   createContext,
   useContext,
   useEffect,
-  useState,
   useCallback,
   useMemo,
 } from "react";
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useColorScheme as useSystemColorScheme, Platform } from "react-native";
+import { Platform } from "react-native";
 import { useColorScheme as useNativeWindColorScheme } from "nativewind";
 import logger from "@/utils/logger";
 
@@ -20,99 +18,44 @@ interface ThemeContextType {
 }
 
 const ThemeContext = createContext<ThemeContextType>({
-  theme: "system",
+  theme: "dark",
   setTheme: () => {},
-  isDark: false,
+  isDark: true,
 });
 
 export const useTheme = () => useContext(ThemeContext);
 
+/**
+ * The app is dark-only: every screen uses the navy/red palette from the
+ * "JouleOps Role Dashboard v2" design. The Light / System options were retired
+ * with it, so the provider pins "dark" and ignores any saved preference.
+ * `setTheme` stays on the context as a no-op for existing callers.
+ */
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const systemColorScheme = useSystemColorScheme();
   const { setColorScheme } = useNativeWindColorScheme();
-  const [theme, setThemeState] = useState<Theme>("system");
-  const [isReady, setIsReady] = useState(false);
 
+  // Pin NativeWind so every `dark:` class applies. Deferred a tick — a
+  // synchronous call during mount trips "Can't perform a React state update
+  // on a component that hasn't mounted yet" under React 19 / NativeWind 4.
   useEffect(() => {
-    loadTheme();
-  }, []);
-
-  // Apply theme to both Web (DOM) and Native (NativeWind)
-  useEffect(() => {
-    if (!isReady) return;
-
-    // Sync with NativeWind - use timeout to avoid sync update error in React 19/NativeWind 4
-    // This prevents "Can't perform a React state update on a component that hasn't mounted yet"
     const timer = setTimeout(() => {
       try {
-        setColorScheme(theme);
+        setColorScheme("dark");
       } catch (e) {
         logger.warn("Failed to sync NativeWind color scheme", { error: e });
       }
     }, 0);
-
-    const effectiveTheme =
-      theme === "system"
-        ? systemColorScheme === "dark"
-          ? "dark"
-          : "light"
-        : theme;
-
-    // For web, apply dark class to document manually (NativeWind might handle this too, but safety first)
     if (Platform.OS === "web" && typeof document !== "undefined") {
-      if (effectiveTheme === "dark") {
-        document.documentElement.classList.add("dark");
-      } else {
-        document.documentElement.classList.remove("dark");
-      }
+      document.documentElement.classList.add("dark");
     }
-
     return () => clearTimeout(timer);
-  }, [theme, systemColorScheme, isReady, setColorScheme]);
+  }, [setColorScheme]);
 
-  const loadTheme = useCallback(async () => {
-    try {
-      const savedTheme = await AsyncStorage.getItem("user-theme");
-      if (
-        savedTheme === "light" ||
-        savedTheme === "dark" ||
-        savedTheme === "system"
-      ) {
-        setThemeState(savedTheme as Theme);
-      }
-    } catch (error: any) {
-      logger.error("Failed to load theme preference", {
-        module: "THEME_CONTEXT",
-        error: error.message,
-      });
-    } finally {
-      setIsReady(true);
-    }
-  }, []);
-
-  const setTheme = useCallback(async (newTheme: Theme) => {
-    setThemeState(newTheme);
-    try {
-      await AsyncStorage.setItem("user-theme", newTheme);
-    } catch (error: any) {
-      logger.error("Failed to save theme preference", {
-        module: "THEME_CONTEXT",
-        error: error.message,
-        theme: newTheme,
-      });
-    }
-  }, []);
-
-  const isDark =
-    theme === "dark" || (theme === "system" && systemColorScheme === "dark");
+  const setTheme = useCallback((_theme: Theme) => {}, []);
 
   const value = useMemo(
-    () => ({
-      theme,
-      setTheme,
-      isDark,
-    }),
-    [theme, setTheme, isDark]
+    () => ({ theme: "dark" as Theme, setTheme, isDark: true }),
+    [setTheme],
   );
 
   return (

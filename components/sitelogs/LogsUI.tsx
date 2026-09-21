@@ -61,7 +61,7 @@ export function LogSummaryCards({
   return (
     <View style={styles.summaryRow}>
       {card("pending", "Pending", pending, ds.flame[100], ds.flame[100])}
-      {card("completed", "Completed", completed, ds.sky[100], "#1F757D")}
+      {card("completed", "Completed", completed, ds.sky[100], ds.isDark ? ds.sky[100] : "#1F757D")}
     </View>
   );
 }
@@ -143,7 +143,7 @@ export function LogFilterPopover({
   const options: { key: LogStatusFilter; label: string; dot: string }[] = [
     { key: "all", label: "All entries", dot: ds.carbon[800] },
     { key: "pending", label: "Pending", dot: ds.flame[100] },
-    { key: "completed", label: "Completed", dot: "#1F757D" },
+    { key: "completed", label: "Completed", dot: ds.isDark ? ds.sky[100] : "#1F757D" },
   ];
 
   return (
@@ -199,19 +199,16 @@ const FAB_BOUNCE = {
   "100%": { transform: [{ translateY: 0 }] },
 } as const;
 
-/** A sonar ring leaving the pill. Scale + opacity only — both are free. */
-const FAB_HALO = {
-  "0%": { transform: [{ scale: 0.94 }], opacity: 0 },
-  "12%": { opacity: 0.38 },
-  "40%": { transform: [{ scale: 1.45 }], opacity: 0 },
-  "100%": { transform: [{ scale: 1.45 }], opacity: 0 },
-} as const;
-
-/** Reduced motion keeps the pull but drops the movement: a bare glow. */
+/**
+ * A border glow hugging the pill — it brightens with the hops and fades
+ * during the rest. Opacity only: the ring never grows, so the button doesn't
+ * read as zooming.
+ */
 const FAB_GLOW = {
   "0%": { opacity: 0 },
-  "15%": { opacity: 0.32 },
-  "45%": { opacity: 0 },
+  "10%": { opacity: 0.9 },
+  "32%": { opacity: 0.55 },
+  "60%": { opacity: 0 },
   "100%": { opacity: 0 },
 } as const;
 
@@ -237,9 +234,10 @@ export function LogFab({
   const reduced = useReducedMotion();
   const Icon = continuing ? ArrowRight : Plus;
 
-  const halo = attention
+  // The glow is opacity only, so it stays on under reduced motion.
+  const glow = attention
     ? {
-        animationName: reduced ? FAB_GLOW : FAB_HALO,
+        animationName: FAB_GLOW,
         animationDuration: NUDGE_CYCLE_MS,
         animationIterationCount: NUDGE_REPEATS,
         animationTimingFunction: EASE_OUT,
@@ -260,12 +258,12 @@ export function LogFab({
 
   return (
     <View style={[styles.fabDock, { bottom }]} pointerEvents="box-none">
-      {/* Behind the pill by document order; no elevation of its own, so it
-          never animates an Android shadow. */}
-      {halo ? (
-        <Animated.View style={[styles.fabHalo, halo]} pointerEvents="none" />
-      ) : null}
       <Animated.View style={bounce}>
+        {/* Rides with the bounce, behind the pill by document order. No
+            elevation of its own, so it never animates an Android shadow. */}
+        {glow ? (
+          <Animated.View style={[styles.fabGlow, glow]} pointerEvents="none" />
+        ) : null}
         <TouchableOpacity
           onPress={onPress}
           activeOpacity={0.9}
@@ -359,14 +357,16 @@ const useStyles = makeThemedStyles((ds) => ({
   popLabel: { flex: 1, fontSize: 12.5, color: ds.carbon[100] },
 
   fabDock: { position: "absolute", right: 20 },
-  fabHalo: {
+  fabGlow: {
     position: "absolute",
-    left: -8,
-    right: -8,
-    top: -8,
-    bottom: -8,
+    left: -5,
+    right: -5,
+    top: -5,
+    bottom: -5,
     borderRadius: soRadius.pill,
-    backgroundColor: ds.flame[100],
+    borderWidth: 3,
+    borderColor: ds.flame[100],
+    opacity: 0,
   },
   fab: {
     flexDirection: "row",

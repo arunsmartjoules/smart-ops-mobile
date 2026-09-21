@@ -1,14 +1,20 @@
 /**
  * Asset Mapping — the asset's QR label, in the detail-screen layout.
  *
- * Encodes the same value as the web Assets page (qr_id, falling back to
- * asset_id), so a printed label scans back to this asset in the app's QR
- * scanner. The image comes from QuickChart like the web page's.
+ * The same QR the web Assets table shows (web/src/lib/qr-code.ts): QuickChart
+ * with the Smart Joules logo in the centre, encoding qr_id (falling back to
+ * asset_id), so a printed label scans back to this asset.
  *
- * The app has no native print module, so "Print label" opens the full-size
- * image in the device browser, where the system print / save options live.
+ * Loaded like the web's `loadAssetQrImage`: the with-logo image is downloaded
+ * first and only kept when QuickChart answers 200 — a failed logo overlay
+ * comes back as HTTP 400 carrying a valid "Could not generate QR" PNG, which
+ * an <Image> would happily show — otherwise the plain QR is used.
+ *
+ * The app has no native print module: on iOS "Print label" opens the share
+ * sheet on the saved image (Print is in it); on Android it opens the image in
+ * the browser, where print / save live.
  */
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -20,6 +26,7 @@ import {
   Text,
   View,
 } from "react-native";
+import * as FileSystem from "expo-file-system/legacy";
 import { Printer, Share2 } from "lucide-react-native";
 import { makeThemedStyles, useDs } from "@/hooks/useDs";
 import {
@@ -31,6 +38,31 @@ import {
 } from "@/components/tickets/TicketDetailUI";
 import type { MappedAsset } from "@/services/AssetMappingService";
 import { getMappingStatus, qrImageUrl, qrValue, typeMeta } from "./lib";
+
+/** Big enough to print sharply; the web thumbnails use the same image scaled down. */
+const QR_SIZE = 600;
+
+interface LoadedQr {
+  /** Local cache file the <Image> shows and the iOS share sheet sends. */
+  fileUri: string;
+  /** The QuickChart URL that produced it (with or without the logo). */
+  remoteUrl: string;
+}
+
+async function loadQr(value: string): Promise<LoadedQr> {
+  const base = `${FileSystem.cacheDirectory}asset-qr-${value.replace(/[^A-Za-z0-9._-]/g, "_")}`;
+  const withLogo = qrImageUrl(value, QR_SIZE, true);
+  try {
+    const res = await FileSystem.downloadAsync(withLogo, `${base}.png`);
+    if (res.status === 200) return { fileUri: res.uri, remoteUrl: withLogo };
+  } catch {
+    // network / QuickChart error — fall through to the plain QR
+  }
+  const plain = qrImageUrl(value, QR_SIZE, false);
+  const res = await FileSystem.downloadAsync(plain, `${base}-plain.png`);
+  if (res.status !== 200) throw new Error(`QR ${res.status}`);
+  return { fileUri: res.uri, remoteUrl: plain };
+}
 
 export default function AssetQrView({
   topInset,
@@ -45,16 +77,36 @@ export default function AssetQrView({
   const ds = useDs();
   const value = qrValue(asset);
   const status = getMappingStatus(asset, ds);
-  const [loaded, setLoaded] = useState(false);
-  const [failed, setFailed] = useState(false);
+  // Keyed by the value it was loaded for, so a different asset never shows a
+  // stale QR while its own is still downloading.
+  const [result, setResult] = useState<{ value: string; qr: LoadedQr | null; failed: boolean }>({
+    value: "",
+    qr: null,
+    failed: false,
+  });
+  const current = result.value === value;
+  const qr = current ? result.qr : null;
+  const failed = current && result.failed;
+
+  useEffect(() => {
+    let cancelled = false;
+    loadQr(value)
+      .then((loaded) => !cancelled && setResult({ value, qr: loaded, failed: false }))
+      .catch(() => !cancelled && setResult({ value, qr: null, failed: true }));
+    return () => {
+      cancelled = true;
+    };
+  }, [value]);
 
   const share = async () => {
-    const link = qrImageUrl(value, 800);
+    if (!qr) return;
+    const caption = `${asset.asset_name} · ${value}`;
     try {
       await Share.share(
         Platform.OS === "ios"
-          ? { url: link, message: `${asset.asset_name} · ${value}` }
-          : { message: `${asset.asset_name} · ${value}\n${link}` },
+          ? { url: qr.fileUri, message: caption }
+          : // Android's share sheet takes text only; the plain link keeps it short.
+            { message: `${caption}\n${qrImageUrl(value, QR_SIZE, false)}` },
       );
     } catch {
       Alert.alert("Couldn't share", "Please try again.");
@@ -62,8 +114,13 @@ export default function AssetQrView({
   };
 
   const print = async () => {
+    if (!qr) return;
     try {
-      await Linking.openURL(qrImageUrl(value, 1000));
+      if (Platform.OS === "ios") {
+        await Share.share({ url: qr.fileUri });
+      } else {
+        await Linking.openURL(qr.remoteUrl);
+      }
     } catch {
       Alert.alert("Couldn't open the label", "Please try again.");
     }
@@ -83,24 +140,21 @@ export default function AssetQrView({
           <View style={styles.qrTile}>
             {failed ? (
               <Text style={styles.qrError}>QR image unavailable — check your connection</Text>
+            ) : qr ? (
+              <Image
+                source={{ uri: qr.fileUri }}
+                style={styles.qr}
+                accessibilityLabel={`QR code for ${value}`}
+              />
             ) : (
-              <>
-                <Image
-                  source={{ uri: qrImageUrl(value, 600) }}
-                  style={styles.qr}
-                  onLoad={() => setLoaded(true)}
-                  onError={() => setFailed(true)}
-                  accessibilityLabel={`QR code for ${value}`}
-                />
-                {!loaded ? <ActivityIndicator style={styles.qrSpinner} color={ds.thunder[100]} /> : null}
-              </>
+              <ActivityIndicator color={ds.thunder[100]} />
             )}
           </View>
           <Text style={styles.code}>{value}</Text>
 
           <View style={styles.actions}>
-            <AttachButton icon={Share2} label="Share" onPress={share} />
-            <AttachButton icon={Printer} label="Print label" onPress={print} />
+            <AttachButton icon={Share2} label="Share" onPress={share} active={!!qr} />
+            <AttachButton icon={Printer} label="Print label" onPress={print} active={!!qr} />
           </View>
         </DetailCard>
         <Text style={styles.helper}>
@@ -128,7 +182,6 @@ const useStyles = makeThemedStyles((ds) => ({
     minHeight: 240,
   },
   qr: { width: 200, height: 200 },
-  qrSpinner: { position: "absolute" },
   qrError: { fontSize: 12, color: "#5C5857", textAlign: "center" },
   code: {
     fontSize: 13,

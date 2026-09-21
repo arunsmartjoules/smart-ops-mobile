@@ -57,7 +57,7 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
           ))}
           <TouchableOpacity
             onPress={() => onRangeSelect(null, null)}
-            className="px-4 py-2 rounded-full border bg-white border-slate-200"
+            className="px-4 py-2 rounded-full border bg-white border-slate-200 dark:bg-slate-800 dark:border-slate-700"
           >
             <Text className="text-xs font-bold text-slate-600">Clear</Text>
           </TouchableOpacity>

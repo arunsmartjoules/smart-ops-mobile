@@ -16,10 +16,7 @@ export const authRadius = {
   mark: 9,
 } as const;
 
-/** Flame tint used for links/focus on the dark artboard — not part of the ds scale. */
-const FLAME_TINT = "#E9B7A8";
-/** Pressed states for the two CTA fills. */
-const FLAME_PRESSED = "#A32A02";
+/** Pressed state for the light artboard's thunder CTA. */
 const THUNDER_PRESSED = "#0C4048";
 
 export interface AuthPalette {
@@ -81,47 +78,51 @@ export interface AuthPalette {
   success: string;
 }
 
+/**
+ * Navy/red — the app-wide palette from "JouleOps Role Dashboard v2" (the app is
+ * dark-only, so this is the auth palette every user sees).
+ */
 const dark: AuthPalette = {
   isDark: true,
-  bg: ds.thunder[100],
-  text: ds.white,
-  body: ds.thunder[700],
-  labelIdle: ds.thunder[600],
-  accent: FLAME_TINT,
-  line: "rgba(255,255,255,0.28)",
-  placeholder: ds.thunder[600],
-  valid: ds.sky[500],
-  eye: ds.thunder[700],
-  backIcon: ds.thunder[700],
+  bg: "#060C1A",
+  text: "#EEF2FF",
+  body: "#7A91BB",
+  labelIdle: "#5D7196",
+  accent: "#F2A7A7",
+  line: "rgba(230,240,255,0.22)",
+  placeholder: "#5D7196",
+  valid: "#20BF6B",
+  eye: "#7A91BB",
+  backIcon: "#7A91BB",
 
-  ctaBg: ds.flame[100],
-  ctaBgPressed: FLAME_PRESSED,
-  ctaOffBg: "rgba(255,255,255,0.14)",
-  ctaOffFg: ds.thunder[700],
+  ctaBg: "#D43535",
+  ctaBgPressed: "#B32828",
+  ctaOffBg: "#152038",
+  ctaOffFg: "#5D7196",
 
-  dividerLine: "rgba(255,255,255,0.18)",
-  dividerLabel: ds.thunder[600],
+  dividerLine: "rgba(230,240,255,0.14)",
+  dividerLabel: "#5D7196",
 
   googleBg: "transparent",
-  googleBorder: "rgba(255,255,255,0.22)",
-  googleFg: ds.white,
+  googleBorder: "rgba(230,240,255,0.22)",
+  googleFg: "#EEF2FF",
 
-  cellOn: "rgba(255,255,255,0.08)",
-  hint: ds.thunder[600],
+  cellOn: "#152038",
+  hint: "#5D7196",
 
-  footText: ds.thunder[700],
-  footLink: ds.white,
+  footText: "#7A91BB",
+  footLink: "#EEF2FF",
 
-  pwStrong: ds.sky[500],
-  pwWeak: FLAME_TINT,
-  pwEmpty: "rgba(255,255,255,0.2)",
+  pwStrong: "#20BF6B",
+  pwWeak: "#F2A7A7",
+  pwEmpty: "rgba(230,240,255,0.14)",
 
-  bubbleLockBg: "rgba(255,255,255,0.1)",
-  bubbleLockFg: FLAME_TINT,
-  bubbleMailBg: "rgba(255,255,255,0.1)",
-  bubbleMailFg: ds.sky[500],
+  bubbleLockBg: "rgba(212,53,53,0.14)",
+  bubbleLockFg: "#F2A7A7",
+  bubbleMailBg: "rgba(74,145,234,0.14)",
+  bubbleMailFg: "#7FB4F2",
 
-  success: ds.sky[100],
+  success: "#20BF6B",
 };
 
 const light: AuthPalette = {

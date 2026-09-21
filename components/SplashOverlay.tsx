@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Image, StyleSheet, useColorScheme } from "react-native";
+import { Image, StyleSheet } from "react-native";
 import Animated, {
   cancelAnimation,
   Easing,
@@ -24,8 +24,10 @@ import { StatusBar } from "expo-status-bar";
  * image), android/res/values{,-night}/colors.xml and the iOS
  * SplashScreenBackground colorset + SplashScreen.storyboard.
  *
- * The native splash follows the SYSTEM scheme, not the in-app theme override,
- * so this reads useColorScheme() rather than ThemeContext.
+ * The app is dark-only now, so app.json configures the navy splash for BOTH
+ * system schemes and this overlay always uses `dark`. (A build made before
+ * that change still shows a white native splash on light-mode phones until
+ * the next native build.)
  */
 const SPLASH = {
   light: {
@@ -34,7 +36,7 @@ const SPLASH = {
     track: "rgba(10, 42, 51, 0.10)",
   },
   dark: {
-    bg: "#061417",
+    bg: "#060C1A",
     logo: require("@/assets/images/jouleops-splash-dark.png"),
     track: "rgba(255, 255, 255, 0.14)",
   },
@@ -60,8 +62,9 @@ export default function SplashOverlay({
   /** Exit animation finished — unmount the overlay. */
   onFinish: () => void;
 }) {
-  const scheme = useColorScheme() === "dark" ? "dark" : "light";
-  const palette = SPLASH[scheme];
+  // The app is dark-only (navy palette), so the splash is too — keyed to the
+  // system scheme it would flash white into a navy first screen.
+  const palette = SPLASH.dark;
   const reduceMotion = useReducedMotion();
   const [nativeHidden, setNativeHidden] = useState(false);
   const hideRequested = useRef(false);
@@ -175,7 +178,7 @@ export default function SplashOverlay({
         containerStyle,
       ]}
     >
-      <StatusBar style={scheme === "dark" ? "light" : "dark"} />
+      <StatusBar style="light" />
       <Animated.View style={logoStyle}>
         <Image
           source={palette.logo}

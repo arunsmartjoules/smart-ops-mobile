@@ -98,7 +98,7 @@ export function TicketActivity({ ticket }: { ticket: Ticket }) {
         at: resolved,
         title: "Resolved",
         meta: when(resolved),
-        dot: "#1F757D",
+        dot: ds.isDark ? ds.sky[100] : "#1F757D",
       });
     }
 

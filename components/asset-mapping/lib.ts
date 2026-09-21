@@ -11,6 +11,7 @@
  * These statuses are this flow's own — unrelated to the asset's status.
  */
 import type { DsTheme } from "@/hooks/useDs";
+import { QR_CENTER_LOGO } from "@/constants/qrLogo";
 import type {
   MappedAsset,
   MappingStatus,
@@ -215,9 +216,29 @@ export const NO_ACCESS_REASONS = [
 
 /* ── QR ────────────────────────────────────────────────────────────────── */
 
-/** What an asset's QR encodes — same rule as the web Assets page. */
-export const qrValue = (asset: MappedAsset) => asset.qr_id || asset.asset_id;
+/**
+ * What an asset's QR encodes — the web Assets table's rule (`assetQrValue` in
+ * web/src/lib/qr-code.ts): qr_id, falling back to asset_id when blank.
+ */
+export const qrValue = (asset: MappedAsset) =>
+  (asset.qr_id ?? "").trim() || asset.asset_id;
 
-/** Plain QR image (QuickChart, as the web Assets page uses). */
-export const qrImageUrl = (value: string, size: number) =>
-  `https://quickchart.io/qr?size=${size}&margin=1&text=${encodeURIComponent(value)}`;
+/**
+ * QuickChart QR URL built like the web Assets table's (`buildUrl` in
+ * web/src/lib/qr-code.ts): same parameters and the same Smart Joules centre
+ * logo passed as a data URI, with the logo box scaled to the image size.
+ */
+export function qrImageUrl(value: string, size: number, withLogo = true): string {
+  const params = [`text=${encodeURIComponent(value)}`, `size=${size}`];
+  if (withLogo) {
+    params.push(
+      `centerImageUrl=${encodeURIComponent(QR_CENTER_LOGO)}`,
+      "centerImageSizeRatio=1.0",
+      // The web's logo box is 80×30 px on its 160 px table thumbnail; scale
+      // it so a larger label keeps the same proportions.
+      `centerImageHeight=${Math.round(size * (30 / 160))}`,
+      `centerImageWidth=${Math.round(size * (80 / 160))}`,
+    );
+  }
+  return `https://quickchart.io/qr?${params.join("&")}`;
+}
