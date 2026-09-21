@@ -809,9 +809,15 @@ export const LogEntryModule = ({
           [{ text: "OK", onPress: () => loadTasks(true, true) }],
         );
       } else {
-        Alert.alert("Success", "Logs submitted successfully!", [
-          { text: "OK", onPress: () => loadTasks() },
-        ]);
+        // Every scheduled task is done and signed — nothing left on this
+        // screen, so go back to the Logs overview, which re-reads its counts
+        // on focus.
+        Alert.alert(
+          "Success",
+          "Logs submitted successfully!",
+          [{ text: "OK", onPress: () => onBack() }],
+          { cancelable: false },
+        );
       }
     } catch {
       Alert.alert("Error", "Failed to save logs. Please try again.");

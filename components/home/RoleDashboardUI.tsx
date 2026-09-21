@@ -43,6 +43,8 @@ const JO_DARK = {
   page: "#060C1A",
   card: "#0F1828",
   tile: "#152038",
+  /** Tile placed directly on the page (dark: same as `tile`). */
+  pageTile: "#152038",
   line: "rgba(230,240,255,0.10)",
   lineStrong: "rgba(230,240,255,0.22)",
   sheetLine: "rgba(230,240,255,0.14)",
@@ -72,6 +74,7 @@ const JO_LIGHT: Jo = {
   page: "#F4F6FB",
   card: "#FFFFFF",
   tile: "#F1F4FA",
+  pageTile: "#FFFFFF",
   line: "#D6DDE9",
   lineStrong: "#BCC7DB",
   sheetLine: "#D6DDE9",
@@ -392,9 +395,15 @@ const TILE_SIZE = {
 export function TileRow({
   tiles,
   size = "mgr",
+  onPage,
 }: {
   tiles: TileData[];
   size?: keyof typeof TILE_SIZE;
+  /**
+   * The row sits straight on the page, not inside a card. In light mode the
+   * tile fill is nearly the page colour, so these tiles take the card fill.
+   */
+  onPage?: boolean;
 }) {
   const JO = useJo();
   const s = useS();
@@ -411,7 +420,11 @@ export function TileRow({
             onPress={t.onPress}
             disabled={!t.onPress}
             activeOpacity={0.75}
-            style={[s.tile, { paddingVertical: sz.padV, paddingHorizontal: sz.padH }]}
+            style={[
+              s.tile,
+              onPage && { backgroundColor: JO.pageTile },
+              { paddingVertical: sz.padV, paddingHorizontal: sz.padH },
+            ]}
             accessibilityRole={t.onPress ? "button" : "text"}
             accessibilityLabel={`${t.label}: ${t.value}`}
           >

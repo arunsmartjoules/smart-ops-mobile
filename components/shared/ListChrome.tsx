@@ -278,15 +278,17 @@ export function ModuleListHeader({
   onPressSite: () => void;
   onRefresh: () => void;
   refreshDisabled?: boolean;
-  onFilter: () => void;
+  /** Omit to render the header without a filter tile. */
+  onFilter?: () => void;
   filterActive?: boolean;
   /** Omit both to render the header without a search field. */
   search?: string;
   onChangeSearch?: (v: string) => void;
   searchPlaceholder?: string;
-  chips: StatusChip[];
-  activeChip: string;
-  onSelectChip: (key: string) => void;
+  /** Omit (or pass empty) to render the header without status tabs. */
+  chips?: StatusChip[];
+  activeChip?: string;
+  onSelectChip?: (key: string) => void;
   /** Pin before the title, for screens where the title isn't obviously a site. */
   showSiteIcon?: boolean;
   /** @deprecated The tabs always sit on the canvas now; kept for callers. */
@@ -338,6 +340,7 @@ export function ModuleListHeader({
             <RefreshCw size={17} color={ds.carbon[100]} strokeWidth={2} />
           </TouchableOpacity>
 
+          {onFilter ? (
           <TouchableOpacity
             onPress={onFilter}
             activeOpacity={0.8}
@@ -359,6 +362,7 @@ export function ModuleListHeader({
               strokeWidth={2}
             />
           </TouchableOpacity>
+          ) : null}
         </View>
 
         {onChangeSearch ? (
@@ -389,16 +393,18 @@ export function ModuleListHeader({
           </View>
         ) : null}
       </View>
-      <View style={styles.tabStrip}>
-        <StatusTabs
-          chips={chips}
-          activeChip={activeChip}
-          onSelectChip={onSelectChip}
-          tone={tabToneCanvas(ds)}
-          minHeight={44}
-          contentContainerStyle={styles.tabScrollCanvas}
-        />
-      </View>
+      {chips && chips.length > 0 && onSelectChip ? (
+        <View style={styles.tabStrip}>
+          <StatusTabs
+            chips={chips}
+            activeChip={activeChip ?? ""}
+            onSelectChip={onSelectChip}
+            tone={tabToneCanvas(ds)}
+            minHeight={44}
+            contentContainerStyle={styles.tabScrollCanvas}
+          />
+        </View>
+      ) : null}
     </>
   );
 }

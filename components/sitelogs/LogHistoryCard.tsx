@@ -38,7 +38,8 @@ export const normaliseLogStatus = (raw?: string | null) => {
   return "Pending";
 };
 
-const typeVisual = (
+/** Icon + tint per log type — shared by the Logs overview cards. */
+export const typeVisual = (
   ds: DsTheme,
 ): Record<string, { icon: LucideIcon; tint: string; color: string }> => ({
   "Temp RH": { icon: Thermometer, tint: ds.flame[1000], color: ds.flame[100] },

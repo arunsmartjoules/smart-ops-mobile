@@ -1,281 +1,313 @@
 /**
  * Site Logs chrome — Claude Design "JouleOps Logs.dc.html".
- * The header and status tabs are shared (components/shared/ListChrome); these
- * are the pieces specific to the Logs tab.
+ * The header is shared (components/shared/ListChrome); these are the pieces
+ * specific to the Logs tab: the per-type overview card and the history
+ * panel's filter chips.
  */
 import React from "react";
-import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
-import Animated, {
-  cubicBezier,
-  useReducedMotion,
-} from "react-native-reanimated";
-import { Check, Plus, ArrowRight } from "lucide-react-native";
+import { Text, TouchableOpacity, View } from "react-native";
+import { ArrowRight, Check, History, Plus } from "lucide-react-native";
 import { makeThemedStyles, useDs } from "@/hooks/useDs";
 import { soRadius, soShadow } from "@/components/home/SiteOverview";
+import { typeVisual } from "@/components/sitelogs/LogHistoryCard";
 
 export { soRadius, soShadow };
 
 export type LogStatusFilter = "all" | "pending" | "completed";
 
-/* ── Pending / Completed summary, doubling as the status filter ─────────── */
-
-export function LogSummaryCards({
-  pending,
-  completed,
-  filter,
-  onToggle,
-}: {
+export interface ShiftCount {
+  label: string;
   pending: number;
   completed: number;
-  filter: LogStatusFilter;
-  onToggle: (next: LogStatusFilter) => void;
+}
+
+/* ── One log type: today's pending/done, shift split, Start + History ───── */
+
+export function LogTypeCard({
+  logName,
+  label,
+  sub,
+  pending,
+  completed,
+  shiftCounts,
+  continuing,
+  done,
+  canStart,
+  onStart,
+  onHistory,
+}: {
+  /** Service key ("Temp RH", …) — picks the icon. */
+  logName: string;
+  label: string;
+  sub: string;
+  pending: number;
+  completed: number;
+  /** Temp & RH only — omit for the single-shift logs. */
+  shiftCounts?: ShiftCount[];
+  continuing?: boolean;
+  /** Everything owed today is logged — Start gives way to a static "Completed". */
+  done?: boolean;
+  canStart: boolean;
+  onStart: () => void;
+  onHistory: () => void;
 }) {
   const styles = useStyles();
   const ds = useDs();
-  const card = (
-    key: Exclude<LogStatusFilter, "all">,
-    label: string,
-    value: number,
-    dot: string,
-    valueColor: string,
-  ) => {
-    const on = filter === key;
-    return (
-      <TouchableOpacity
-        onPress={() => onToggle(on ? "all" : key)}
-        activeOpacity={0.85}
-        style={[styles.summary, on && { borderColor: valueColor }]}
-        accessibilityRole="button"
-        accessibilityState={{ selected: on }}
-        accessibilityLabel={`${value} ${label}`}
-      >
-        <View style={styles.summaryHead}>
-          <View style={[styles.dot, { backgroundColor: dot }]} />
-          <Text style={styles.eyebrow}>{label}</Text>
-        </View>
-        <Text style={[styles.summaryValue, { color: valueColor }]}>{value}</Text>
-      </TouchableOpacity>
-    );
-  };
+  const visual = typeVisual(ds)[logName] ?? typeVisual(ds)["Temp RH"];
+  const Icon = visual.icon;
+  const StartIcon = continuing ? ArrowRight : Plus;
+  const hasPending = pending > 0;
 
   return (
-    <View style={styles.summaryRow}>
-      {card("pending", "Pending", pending, ds.flame[100], ds.flame[100])}
-      {card("completed", "Completed", completed, ds.sky[100], ds.sky[100])}
+    <View style={styles.card}>
+      <View style={styles.cardHead}>
+        <View style={[styles.iconWell, { backgroundColor: visual.tint }]}>
+          <Icon size={17} color={visual.color} strokeWidth={2.1} />
+        </View>
+        <View style={styles.cardTitleWrap}>
+          <Text style={styles.cardTitle} numberOfLines={1}>
+            {label}
+          </Text>
+          <Text style={styles.cardSub} numberOfLines={1}>
+            {sub}
+          </Text>
+        </View>
+        <View style={styles.counts}>
+          <CountPill
+            text={`${pending} pending`}
+            bg={hasPending ? ds.flame[1000] : ds.carbon[1000]}
+            fg={hasPending ? ds.flame[100] : ds.carbon[600]}
+          />
+          <CountPill
+            text={`${completed} done`}
+            bg={ds.sky[900]}
+            fg={ds.sky[100]}
+          />
+        </View>
+      </View>
+
+      {shiftCounts && shiftCounts.length > 0 ? (
+        <ShiftCountStrip counts={shiftCounts} style={{ marginTop: 9 }} />
+      ) : null}
+
+      <View style={styles.actions}>
+        {done ? (
+          <View
+            style={[styles.action, styles.actionDone]}
+            accessibilityRole="text"
+            accessibilityLabel={`${label} completed for today`}
+          >
+            <Check size={15} color={ds.sky[100]} strokeWidth={2.4} />
+            <Text style={[styles.actionText, { color: ds.sky[100] }]}>
+              Completed
+            </Text>
+          </View>
+        ) : canStart ? (
+          <TouchableOpacity
+            onPress={onStart}
+            activeOpacity={0.85}
+            style={[styles.action, styles.actionPrimary]}
+            accessibilityRole="button"
+            accessibilityLabel={`${continuing ? "Continue" : "Start"} ${label} log`}
+          >
+            <StartIcon size={15} color={ds.onControl} strokeWidth={2.4} />
+            <Text style={[styles.actionText, { color: ds.onControl }]}>
+              {continuing ? "Continue" : "Start log"}
+            </Text>
+          </TouchableOpacity>
+        ) : null}
+        <TouchableOpacity
+          onPress={onHistory}
+          activeOpacity={0.85}
+          style={[styles.action, styles.actionSecondary]}
+          accessibilityRole="button"
+          accessibilityLabel={`${label} history`}
+        >
+          <History size={15} color={ds.carbon[400]} strokeWidth={2.1} />
+          <Text style={[styles.actionText, { color: ds.carbon[400] }]}>
+            History
+          </Text>
+        </TouchableOpacity>
+      </View>
     </View>
   );
 }
 
-/* ── Shift quick-filter (Temp & RH only) ────────────────────────────────── */
+function CountPill({ text, bg, fg }: { text: string; bg: string; fg: string }) {
+  const styles = useStyles();
+  return (
+    <View style={[styles.pill, { backgroundColor: bg }]}>
+      <Text style={[styles.pillText, { color: fg }]}>{text}</Text>
+    </View>
+  );
+}
 
-export function ShiftChips({
-  value,
-  onChange,
-  shifts = ["A", "B", "C"],
+/* ── Pending/done per shift; tappable in the history panel ─────────────── */
+
+export function ShiftCountStrip({
+  counts,
+  selected,
+  onSelect,
+  style,
 }: {
-  value: string;
-  onChange: (shift: string) => void;
-  shifts?: string[];
+  counts: ShiftCount[];
+  /** The selected shift's `label`, or null — only used when `onSelect` is set. */
+  selected?: string | null;
+  onSelect?: (label: string) => void;
+  style?: object;
 }) {
   const styles = useStyles();
   const ds = useDs();
   return (
-    <View style={styles.chipRow}>
-      {shifts.map((sh) => {
-        const on = sh === value;
-        return (
+    <View style={[styles.shiftStrip, style]}>
+      {counts.map((sc, i) => {
+        const on = !!onSelect && selected === sc.label;
+        const body = (
+          <>
+            <Text style={[styles.eyebrow, on && { color: ds.onChrome }]}>
+              {sc.label}
+            </Text>
+            <Text style={styles.shiftValue}>
+              <Text
+                style={{
+                  color: on
+                    ? ds.onChrome
+                    : sc.pending > 0
+                      ? ds.flame[100]
+                      : ds.carbon[600],
+                }}
+              >
+                {sc.pending}
+              </Text>
+              <Text
+                style={{
+                  color: on ? ds.onChrome : ds.carbon[800],
+                  fontWeight: "500",
+                }}
+              >
+                /
+              </Text>
+              <Text style={{ color: on ? ds.onChrome : ds.sky[100] }}>
+                {sc.completed}
+              </Text>
+            </Text>
+          </>
+        );
+        const cellStyle = [
+          styles.shiftCell,
+          i < counts.length - 1 && styles.shiftDivider,
+          on && { backgroundColor: ds.flame[100] },
+        ];
+        return onSelect ? (
           <TouchableOpacity
-            key={sh}
-            onPress={() => onChange(sh)}
+            key={sc.label}
+            onPress={() => onSelect(sc.label)}
             activeOpacity={0.85}
-            style={[
-              styles.chip,
-              {
-                backgroundColor: on ? ds.controlOn : ds.white,
-                borderColor: on ? ds.controlOn : ds.carbon[900],
-              },
-            ]}
+            style={cellStyle}
             accessibilityRole="button"
             accessibilityState={{ selected: on }}
+            accessibilityLabel={`${sc.label}: ${sc.pending} pending, ${sc.completed} done`}
           >
-            <Text
-              style={[
-                styles.chipText,
-                { color: on ? ds.onControl : ds.carbon[400] },
-              ]}
-            >
-              Shift {sh}
-            </Text>
+            {body}
           </TouchableOpacity>
+        ) : (
+          <View key={sc.label} style={cellStyle}>
+            {body}
+          </View>
         );
       })}
     </View>
   );
 }
 
-/* ── History heading ────────────────────────────────────────────────────── */
+/* ── History counters: total / pending / completed, doubling as filter ─── */
 
-export function HistoryHeading({ label }: { label: string }) {
+export function HistoryCounters({
+  total,
+  pending,
+  completed,
+  totalLabel = "Total",
+  completedLabel = "Completed",
+  status,
+  onStatus,
+}: {
+  total: number;
+  pending: number;
+  completed: number;
+  totalLabel?: string;
+  completedLabel?: string;
+  status: LogStatusFilter;
+  onStatus: (next: LogStatusFilter) => void;
+}) {
   const styles = useStyles();
+  const ds = useDs();
+  const tile = (
+    key: LogStatusFilter,
+    label: string,
+    value: number,
+    color: string,
+  ) => {
+    const on = key !== "all" && status === key;
+    return (
+      <TouchableOpacity
+        key={key}
+        onPress={() => onStatus(key === "all" || on ? "all" : key)}
+        activeOpacity={0.85}
+        style={[styles.counter, on && { borderColor: color }]}
+        accessibilityRole="button"
+        accessibilityState={{ selected: on }}
+        accessibilityLabel={`${value} ${label}`}
+      >
+        <Text style={styles.eyebrow}>{label}</Text>
+        <Text style={[styles.counterValue, { color }]}>{value}</Text>
+      </TouchableOpacity>
+    );
+  };
   return (
-    <View style={styles.historyRow}>
-      <Text style={styles.historyTitle}>History</Text>
-      <Text style={styles.historyLabel}>{label}</Text>
+    <View style={styles.counterRow}>
+      {tile("all", totalLabel, total, ds.carbon[100])}
+      {tile("pending", "Pending", pending, ds.flame[100])}
+      {tile("completed", completedLabel, completed, ds.sky[100])}
     </View>
   );
 }
 
-/* ── Status filter popover, anchored under the header's filter tile ─────── */
+/* ── History panel filter chip (status + shift) ─────────────────────────── */
 
-export function LogFilterPopover({
-  top,
-  value,
-  onSelect,
-  onDismiss,
-}: {
-  top: number;
-  value: LogStatusFilter;
-  onSelect: (next: LogStatusFilter) => void;
-  onDismiss: () => void;
-}) {
-  const styles = useStyles();
-  const ds = useDs();
-  const options: { key: LogStatusFilter; label: string; dot: string }[] = [
-    { key: "all", label: "All entries", dot: ds.carbon[800] },
-    { key: "pending", label: "Pending", dot: ds.flame[100] },
-    { key: "completed", label: "Completed", dot: ds.sky[100] },
-  ];
-
-  return (
-    <>
-      <TouchableOpacity
-        style={StyleSheet.absoluteFill}
-        activeOpacity={1}
-        onPress={onDismiss}
-      />
-      <View style={[styles.popover, { top }]}>
-        {options.map((o) => {
-          const on = o.key === value;
-          return (
-            <TouchableOpacity
-              key={o.key}
-              onPress={() => onSelect(o.key)}
-              activeOpacity={0.8}
-              style={[styles.popRow, on && { backgroundColor: ds.field }]}
-              accessibilityRole="button"
-              accessibilityState={{ selected: on }}
-            >
-              <View style={[styles.dot, { backgroundColor: o.dot }]} />
-              <Text
-                style={[
-                  styles.popLabel,
-                  { fontWeight: on ? "600" : "400" },
-                ]}
-              >
-                {o.label}
-              </Text>
-              {on ? (
-                <Check size={16} color={ds.flame[100]} strokeWidth={2.4} />
-              ) : null}
-            </TouchableOpacity>
-          );
-        })}
-      </View>
-    </>
-  );
-}
-
-/* ── Start / Continue FAB, with an idle attention nudge ─────────────────── */
-
-const EASE_OUT = cubicBezier(0.23, 1, 0.32, 1);
-
-/** One cycle: two quick hops, then a long rest so it never reads as a spinner. */
-const FAB_BOUNCE = {
-  "0%": { transform: [{ translateY: 0 }] },
-  "8%": { transform: [{ translateY: -10 }] },
-  "18%": { transform: [{ translateY: 0 }] },
-  "25%": { transform: [{ translateY: -4 }] },
-  "32%": { transform: [{ translateY: 0 }] },
-  "100%": { transform: [{ translateY: 0 }] },
-} as const;
-
-/**
- * A border glow hugging the pill — it brightens with the hops and fades
- * during the rest. Opacity only: the ring never grows, so the button doesn't
- * read as zooming.
- */
-const FAB_GLOW = {
-  "0%": { opacity: 0 },
-  "10%": { opacity: 0.9 },
-  "32%": { opacity: 0.55 },
-  "60%": { opacity: 0 },
-  "100%": { opacity: 0 },
-} as const;
-
-const NUDGE_CYCLE_MS = 2000;
-const NUDGE_REPEATS = 3;
-
-export function LogFab({
+export function FilterChip({
   label,
-  continuing,
+  on,
+  tone = "control",
   onPress,
-  bottom,
-  attention,
 }: {
   label: string;
-  continuing?: boolean;
+  on: boolean;
+  /** Status chips fill with the control colour, shift chips with flame. */
+  tone?: "control" | "flame";
   onPress: () => void;
-  bottom: number;
-  /** Idle operator — draw the eye to the button. See hooks/useIdleNudge. */
-  attention?: boolean;
 }) {
   const styles = useStyles();
   const ds = useDs();
-  const reduced = useReducedMotion();
-  const Icon = continuing ? ArrowRight : Plus;
-
-  // The glow is opacity only, so it stays on under reduced motion.
-  const glow = attention
-    ? {
-        animationName: FAB_GLOW,
-        animationDuration: NUDGE_CYCLE_MS,
-        animationIterationCount: NUDGE_REPEATS,
-        animationTimingFunction: EASE_OUT,
-      }
-    : null;
-
-  // The bounce is movement, so reduced motion opts out of it entirely and
-  // keeps only the glow above.
-  const bounce =
-    attention && !reduced
-      ? {
-          animationName: FAB_BOUNCE,
-          animationDuration: NUDGE_CYCLE_MS,
-          animationIterationCount: NUDGE_REPEATS,
-          animationTimingFunction: EASE_OUT,
-        }
-      : null;
-
+  const fill = tone === "flame" ? ds.flame[100] : ds.controlOn;
+  const onText = tone === "flame" ? ds.onChrome : ds.onControl;
   return (
-    <View style={[styles.fabDock, { bottom }]} pointerEvents="box-none">
-      <Animated.View style={bounce}>
-        {/* Rides with the bounce, behind the pill by document order. No
-            elevation of its own, so it never animates an Android shadow. */}
-        {glow ? (
-          <Animated.View style={[styles.fabGlow, glow]} pointerEvents="none" />
-        ) : null}
-        <TouchableOpacity
-          onPress={onPress}
-          activeOpacity={0.9}
-          style={styles.fab}
-          accessibilityRole="button"
-          accessibilityLabel={label}
-        >
-          <Icon size={21} color={ds.onControl} strokeWidth={2.4} />
-          <Text style={styles.fabLabel}>{label}</Text>
-        </TouchableOpacity>
-      </Animated.View>
-    </View>
+    <TouchableOpacity
+      onPress={onPress}
+      activeOpacity={0.85}
+      style={[
+        styles.chip,
+        {
+          backgroundColor: on ? fill : ds.white,
+          borderColor: on ? fill : ds.carbon[900],
+        },
+      ]}
+      accessibilityRole="button"
+      accessibilityState={{ selected: on }}
+    >
+      <Text style={[styles.chipText, { color: on ? onText : ds.carbon[400] }]}>
+        {label}
+      </Text>
+    </TouchableOpacity>
   );
 }
 
@@ -285,30 +317,88 @@ const useStyles = makeThemedStyles((ds) => ({
     fontWeight: "600",
     letterSpacing: 1.08,
     textTransform: "uppercase",
-    color: ds.carbon[500],
+    color: ds.carbon[600],
   },
-  dot: { width: 8, height: 8, borderRadius: 4 },
 
-  summaryRow: { flexDirection: "row", gap: 9, marginBottom: 16 },
-  summary: {
+  card: {
+    backgroundColor: ds.white,
+    borderRadius: soRadius.card,
+    paddingVertical: 11,
+    paddingHorizontal: 12,
+    marginBottom: 9,
+    ...soShadow,
+  },
+  cardHead: { flexDirection: "row", alignItems: "center", gap: 10 },
+  iconWell: {
+    width: 32,
+    height: 32,
+    borderRadius: soRadius.pill,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  cardTitleWrap: { flex: 1, minWidth: 0 },
+  cardTitle: {
+    fontSize: 13.5,
+    lineHeight: 16,
+    fontWeight: "600",
+    color: ds.carbon[100],
+  },
+  cardSub: { fontSize: 10.5, color: ds.carbon[600], marginTop: 2 },
+  counts: { flexDirection: "row", alignItems: "center", gap: 5 },
+  pill: { paddingVertical: 3, paddingHorizontal: 7, borderRadius: 5 },
+  pillText: { fontSize: 10, fontWeight: "600", letterSpacing: 0.1 },
+
+  shiftStrip: {
+    flexDirection: "row",
+    backgroundColor: ds.field,
+    borderRadius: soRadius.sm,
+    overflow: "hidden",
+  },
+  shiftCell: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "baseline",
+    justifyContent: "space-between",
+    gap: 6,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+  },
+  shiftDivider: { borderRightWidth: 1, borderRightColor: ds.fieldBorder },
+  shiftValue: { fontSize: 12, lineHeight: 12, fontWeight: "700" },
+
+  actions: { flexDirection: "row", gap: 8, marginTop: 9 },
+
+  counterRow: { flexDirection: "row", gap: 8 },
+  counter: {
     flex: 1,
     backgroundColor: ds.white,
     borderRadius: soRadius.card,
-    paddingVertical: 13,
-    paddingHorizontal: 14,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
     borderWidth: 2,
     borderColor: "transparent",
+    gap: 5,
     ...soShadow,
   },
-  summaryHead: {
+  counterValue: { fontSize: 22, lineHeight: 24, fontWeight: "700" },
+  action: {
+    flex: 1,
+    minHeight: 36,
     flexDirection: "row",
     alignItems: "center",
+    justifyContent: "center",
     gap: 6,
-    marginBottom: 6,
+    borderRadius: soRadius.sm,
   },
-  summaryValue: { fontSize: 26, lineHeight: 26, fontWeight: "700" },
+  actionPrimary: { backgroundColor: ds.controlOn },
+  actionDone: { backgroundColor: ds.sky[900] },
+  actionSecondary: {
+    backgroundColor: ds.white,
+    borderWidth: 1,
+    borderColor: ds.carbon[900],
+  },
+  actionText: { fontSize: 12.5, fontWeight: "600", letterSpacing: 0.13 },
 
-  chipRow: { flexDirection: "row", gap: 6, marginBottom: 13 },
   chip: {
     minHeight: 32,
     justifyContent: "center",
@@ -317,75 +407,4 @@ const useStyles = makeThemedStyles((ds) => ({
     borderWidth: 1,
   },
   chipText: { fontSize: 11, fontWeight: "600", letterSpacing: 0.22 },
-
-  historyRow: {
-    flexDirection: "row",
-    alignItems: "baseline",
-    gap: 7,
-    marginBottom: 9,
-  },
-  historyTitle: {
-    fontSize: 13,
-    fontWeight: "700",
-    letterSpacing: 0.13,
-    color: ds.carbon[100],
-  },
-  historyLabel: { fontSize: 11.5, color: ds.carbon[600] },
-
-  popover: {
-    position: "absolute",
-    right: 20,
-    width: 172,
-    backgroundColor: ds.white,
-    borderRadius: soRadius.sm,
-    padding: 5,
-    zIndex: 30,
-    shadowColor: ds.carbon[100],
-    shadowOffset: { width: 0, height: 12 },
-    shadowOpacity: 0.35,
-    shadowRadius: 16,
-    elevation: 18,
-  },
-  popRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 9,
-    paddingVertical: 9,
-    paddingHorizontal: 11,
-    borderRadius: 8,
-  },
-  popLabel: { flex: 1, fontSize: 12.5, color: ds.carbon[100] },
-
-  fabDock: { position: "absolute", right: 20 },
-  fabGlow: {
-    position: "absolute",
-    left: -5,
-    right: -5,
-    top: -5,
-    bottom: -5,
-    borderRadius: soRadius.pill,
-    borderWidth: 3,
-    borderColor: ds.controlOn,
-    opacity: 0,
-  },
-  fab: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    height: 52,
-    paddingHorizontal: 18,
-    borderRadius: soRadius.pill,
-    backgroundColor: ds.controlOn,
-    shadowColor: ds.controlOn,
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.5,
-    shadowRadius: 12,
-    elevation: 10,
-  },
-  fabLabel: {
-    fontSize: 14,
-    fontWeight: "600",
-    letterSpacing: 0.14,
-    color: ds.onControl,
-  },
 }));

@@ -897,7 +897,7 @@ export default function Dashboard() {
                   onPress={go("/(tabs)/tickets")}
                 />
               ) : null}
-              <TileRow tiles={opTiles} size="op" />
+              <TileRow tiles={opTiles} size="op" onPage />
             </View>
 
             <DashCard>
@@ -929,8 +929,8 @@ export default function Dashboard() {
             <View>
               <SectionLabel>OPERATIONAL STATUS · {periodLabel}</SectionLabel>
               <View style={{ gap: 8 }}>
-                <TileRow tiles={mgrTilesA} />
-                <TileRow tiles={mgrTilesB} />
+                <TileRow tiles={mgrTilesA} onPage />
+                <TileRow tiles={mgrTilesB} onPage />
               </View>
               <Footnote>Tiles follow the period filter · SLA follows its own month.</Footnote>
             </View>
