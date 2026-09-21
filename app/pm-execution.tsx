@@ -273,7 +273,7 @@ const TaskRow = React.memo(
 
               {isUploading ? (
                 <View style={[styles.camBtn, styles.camBtnIdle]}>
-                  <ActivityIndicator size="small" color={ds.thunder[100]} />
+                  <ActivityIndicator size="small" color={ds.carbon[500]} />
                 </View>
               ) : (
                 <TouchableOpacity
@@ -1656,7 +1656,7 @@ export default function PMExecutionScreen() {
 
             {saving && (
               <View style={styles.savingOverlay}>
-                <ActivityIndicator size="large" color={ds.thunder[100]} />
+                <ActivityIndicator size="large" color={ds.carbon[500]} />
                 <Text style={styles.savingText}>Processing completion...</Text>
               </View>
             )}

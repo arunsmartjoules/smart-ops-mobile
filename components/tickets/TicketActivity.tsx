@@ -98,7 +98,7 @@ export function TicketActivity({ ticket }: { ticket: Ticket }) {
         at: resolved,
         title: "Resolved",
         meta: when(resolved),
-        dot: ds.isDark ? ds.sky[100] : "#1F757D",
+        dot: ds.sky[100],
       });
     }
 
@@ -124,7 +124,7 @@ export function TicketActivity({ ticket }: { ticket: Ticket }) {
     <View style={{ marginTop: 16 }}>
       <SectionTitle>Activity</SectionTitle>
       {loading && entries.length === 0 ? (
-        <ActivityIndicator size="small" color={ds.thunder[100]} />
+        <ActivityIndicator size="small" color={ds.carbon[500]} />
       ) : entries.length === 0 ? (
         <Text style={{ fontSize: 12, color: ds.carbon[500] }}>
           Nothing recorded yet

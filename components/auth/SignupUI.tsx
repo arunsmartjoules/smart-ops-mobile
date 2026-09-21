@@ -572,7 +572,7 @@ export function SignupSheet({
 
           {loading ? (
             <View style={styles.sheetEmpty}>
-              <ActivityIndicator size="small" color={ds.thunder[100]} />
+              <ActivityIndicator size="small" color={ds.carbon[500]} />
             </View>
           ) : shown.length === 0 ? (
             <View style={styles.sheetEmpty}>

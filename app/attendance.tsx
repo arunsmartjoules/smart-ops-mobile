@@ -1161,7 +1161,7 @@ export default function AttendancePage() {
           <RefreshControl
             refreshing={refreshing}
             onRefresh={onRefresh}
-            tintColor={ds.thunder[100]}
+            tintColor={ds.carbon[500]}
           />
         }
       >
@@ -1214,8 +1214,8 @@ export default function AttendancePage() {
                 style={[
                   styles.filterChip,
                   {
-                    backgroundColor: on ? ds.thunder[100] : ds.white,
-                    borderColor: on ? ds.thunder[100] : ds.carbon[900],
+                    backgroundColor: on ? ds.controlOn : ds.white,
+                    borderColor: on ? ds.controlOn : ds.carbon[900],
                   },
                 ]}
                 accessibilityRole="button"
@@ -1224,7 +1224,7 @@ export default function AttendancePage() {
                 <Text
                   style={[
                     styles.filterLabel,
-                    { color: on ? ds.onChrome : ds.carbon[400] },
+                    { color: on ? ds.onControl : ds.carbon[400] },
                   ]}
                 >
                   {f}

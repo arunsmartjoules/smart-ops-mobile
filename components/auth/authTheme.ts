@@ -1,12 +1,8 @@
 /**
- * Auth palette — Claude Design "JouleOps Auth.dc.html".
- *
- * The mock ships a dark artboard (thunder canvas) and a light artboard (frost
- * canvas) for every auth screen. Colours below are copied verbatim from that
- * file; where a value already exists in the shared token set it is referenced
- * from `@/constants/ds` instead of being re-typed.
+ * Auth palette — layout from Claude Design "JouleOps Auth.dc.html", recoloured
+ * to the app-wide navy/red scheme ("JouleOps Role Dashboard v2") in both its
+ * dark and light variants.
  */
-import { ds } from "@/constants/ds";
 import { useTheme } from "@/contexts/ThemeContext";
 
 /** Derived from the mock's `cornerRadius = 10` default (rSm = 0.8r, rMark = 0.9r). */
@@ -16,8 +12,6 @@ export const authRadius = {
   mark: 9,
 } as const;
 
-/** Pressed state for the light artboard's thunder CTA. */
-const THUNDER_PRESSED = "#0C4048";
 
 export interface AuthPalette {
   isDark: boolean;
@@ -79,8 +73,7 @@ export interface AuthPalette {
 }
 
 /**
- * Navy/red — the app-wide palette from "JouleOps Role Dashboard v2" (the app is
- * dark-only, so this is the auth palette every user sees).
+ * Navy/red — the app-wide palette from "JouleOps Role Dashboard v2".
  */
 const dark: AuthPalette = {
   isDark: true,
@@ -125,47 +118,48 @@ const dark: AuthPalette = {
   success: "#20BF6B",
 };
 
+/** Light counterpart of the navy/red palette. */
 const light: AuthPalette = {
   isDark: false,
-  bg: ds.pageBg,
-  text: ds.carbon[100],
-  body: ds.carbon[400],
-  labelIdle: ds.carbon[500],
-  accent: ds.flame[100],
-  line: ds.carbon[900],
-  placeholder: ds.carbon[700],
-  valid: ds.sky[100],
-  eye: ds.carbon[500],
-  backIcon: ds.carbon[400],
+  bg: "#F4F6FB",
+  text: "#0F1828",
+  body: "#4B5A76",
+  labelIdle: "#5D6B86",
+  accent: "#D43535",
+  line: "#DDE2EC",
+  placeholder: "#98A2B6",
+  valid: "#17984F",
+  eye: "#5D6B86",
+  backIcon: "#4B5A76",
 
-  ctaBg: ds.thunder[100],
-  ctaBgPressed: THUNDER_PRESSED,
-  ctaOffBg: ds.carbon[900],
-  ctaOffFg: ds.carbon[500],
+  ctaBg: "#D43535",
+  ctaBgPressed: "#B32828",
+  ctaOffBg: "#DDE2EC",
+  ctaOffFg: "#7A869E",
 
-  dividerLine: ds.carbon[900],
-  dividerLabel: ds.carbon[700],
+  dividerLine: "#DDE2EC",
+  dividerLabel: "#98A2B6",
 
-  googleBg: ds.white,
-  googleBorder: ds.carbon[900],
-  googleFg: ds.carbon[100],
+  googleBg: "#FFFFFF",
+  googleBorder: "#DDE2EC",
+  googleFg: "#0F1828",
 
-  cellOn: ds.white,
-  hint: ds.carbon[600],
+  cellOn: "#FFFFFF",
+  hint: "#7A869E",
 
-  footText: ds.carbon[500],
-  footLink: ds.flame[100],
+  footText: "#5D6B86",
+  footLink: "#D43535",
 
-  pwStrong: "#1F757D",
-  pwWeak: ds.flame[100],
-  pwEmpty: ds.carbon[900],
+  pwStrong: "#17984F",
+  pwWeak: "#D43535",
+  pwEmpty: "#DDE2EC",
 
-  bubbleLockBg: ds.flame[1000],
-  bubbleLockFg: ds.flame[100],
-  bubbleMailBg: ds.sky[1000],
-  bubbleMailFg: ds.sky[100],
+  bubbleLockBg: "#FCEBEB",
+  bubbleLockFg: "#D43535",
+  bubbleMailBg: "#EEF5FD",
+  bubbleMailFg: "#2F74C9",
 
-  success: ds.sky[100],
+  success: "#17984F",
 };
 
 export function useAuthPalette(): AuthPalette {

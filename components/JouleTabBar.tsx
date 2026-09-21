@@ -1,7 +1,7 @@
 /**
  * Bottom bar from the Claude Design "JouleOps Role Dashboard v2" artboard: a
- * navy #0B1220 bar under a hairline, labelled tabs, the active one carried by
- * the red accent alone and the rest in the artboard's faint #3E506A. Profile
+ * navy #0B1220 bar (white in light mode) under a hairline, labelled tabs, the active one carried by
+ * the web app's primary alone and the rest in the artboard's faint #3E506A. Profile
  * is deliberately absent; it lives in the Home header's avatar button.
  */
 import React from "react";
@@ -52,7 +52,10 @@ export function JouleTabBar({ state, navigation }: BottomTabBarProps) {
 
         const route = state.routes[index];
         const focused = state.index === index;
-        const color = focused ? ds.flame[100] : ds.carbon[800];
+        // Inactive is the artboard's faint #3E506A on navy; on the white light bar
+        // that step is too pale, so light mode takes a darker one.
+        const idle = ds.isDark ? ds.carbon[800] : ds.carbon[600];
+        const color = focused ? ds.controlOn : idle;
         const Icon = tab.icon;
 
         const onPress = () => {

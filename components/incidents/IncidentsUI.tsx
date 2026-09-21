@@ -13,7 +13,7 @@ export const incidentStatusMap = (
 ): Record<string, { label: string; bg: string; fg: string }> => ({
   Open: { label: "Open", bg: ds.flame[1000], fg: ds.flame[100] },
   Inprogress: { label: "In progress", bg: ds.sky[1000], fg: ds.sky[100] },
-  Resolved: { label: "Completed", bg: ds.sky[900], fg: ds.isDark ? ds.sky[100] : "#1F757D" },
+  Resolved: { label: "Completed", bg: ds.sky[900], fg: ds.sky[100] },
 });
 
 export const getIncidentStatus = (status: string | undefined, ds: DsTheme) =>
@@ -46,7 +46,7 @@ export const getIncidentTint = (status: string | undefined, ds: DsTheme) => {
     case "Inprogress":
       return { tint: ds.sky[1000], icon: ds.sky[100] };
     case "Resolved":
-      return { tint: ds.sky[900], icon: ds.isDark ? ds.sky[100] : "#1F757D" };
+      return { tint: ds.sky[900], icon: ds.sky[100] };
     default:
       return { tint: ds.flame[1000], icon: ds.flame[100] };
   }

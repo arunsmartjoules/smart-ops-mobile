@@ -147,7 +147,7 @@ export default function AssetQrView({
                 accessibilityLabel={`QR code for ${value}`}
               />
             ) : (
-              <ActivityIndicator color={ds.thunder[100]} />
+              <ActivityIndicator color={ds.carbon[500]} />
             )}
           </View>
           <Text style={styles.code}>{value}</Text>

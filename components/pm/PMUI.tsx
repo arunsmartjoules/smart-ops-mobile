@@ -27,7 +27,7 @@ export const pmStatusMap = (
   Completed: {
     label: "Completed",
     bg: ds.sky[900],
-    fg: ds.isDark ? ds.sky[100] : "#1F757D",
+    fg: ds.sky[100],
   },
   Skipped: { label: "Skipped", bg: ds.carbon[1000], fg: ds.carbon[500] },
 });

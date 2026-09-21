@@ -177,7 +177,7 @@ export default function AssetListView({
             )
           }
           refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={ds.thunder[100]} />
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={ds.carbon[500]} />
           }
           showsVerticalScrollIndicator={false}
           contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: 24 }}

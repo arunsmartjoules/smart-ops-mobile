@@ -25,7 +25,7 @@ export const ticketStatusMap = (
   Inprogress: { label: "In progress", bg: ds.sky[1000], fg: ds.sky[100] },
   Hold: { label: "Hold", bg: ds.carbon[1000], fg: ds.carbon[400] },
   Waiting: { label: "Waiting", bg: ds.carbon[1000], fg: ds.carbon[400] },
-  Resolved: { label: "Resolved", bg: ds.sky[900], fg: ds.isDark ? ds.sky[100] : "#1F757D" },
+  Resolved: { label: "Resolved", bg: ds.sky[900], fg: ds.sky[100] },
   Cancelled: { label: "Cancelled", bg: ds.carbon[1000], fg: ds.carbon[500] },
 });
 
@@ -64,7 +64,7 @@ export const getTicketTint = (status: string | undefined, ds: DsTheme) => {
     case "Inprogress":
       return { tint: ds.sky[1000], icon: ds.sky[100] };
     case "Resolved":
-      return { tint: ds.sky[900], icon: ds.isDark ? ds.sky[100] : "#1F757D" };
+      return { tint: ds.sky[900], icon: ds.sky[100] };
     case "Hold":
     case "Waiting":
     case "Cancelled":

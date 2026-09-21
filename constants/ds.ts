@@ -91,7 +91,7 @@ export const dsCardShadow = {
 export default ds;
 
 /**
- * Dark palette — the app's only live palette (ThemeContext pins dark).
+ * Dark palette.
  *
  * Values are the navy/red scheme from Claude Design "JouleOps Role Dashboard
  * v2.dc.html": page #060C1A, card #0F1828, tile #152038, ink #EEF2FF, muted
@@ -110,7 +110,9 @@ export const dsDark: DsTheme = {
   cardBorder: "rgba(230,240,255,0.10)",
   field: "#152038",
   fieldBorder: "rgba(230,240,255,0.10)",
-  controlOn: "#D43535",
+  // Selected/primary controls = the web app's primary. Web's Thunder #072B31
+  // vanishes on navy, so dark takes the web's on-dark accent, SJ Sky.
+  controlOn: "#28939D",
   onControl: "#FFFFFF",
   onAccent: "#FFFFFF",
   onChrome: "#EEF2FF",
@@ -222,17 +224,76 @@ export type DsTheme = {
   pageBg: string;
 };
 
-/** The light set, typed as a palette so the two are interchangeable. */
+/**
+ * Light palette — the light counterpart of the navy/red scheme above: white
+ * cards on a pale blue-grey page, navy ink, the same red accent and info blue.
+ * Chrome (`thunder`, e.g. module headers) is navy, so white text sits on it as
+ * before. Same semantic token names as the dark set.
+ */
 export const dsLight: DsTheme = {
-  ...ds,
   isDark: false,
-  tabBar: ds.white,
-  cardBorder: "transparent",
-  field: "#F7F7F8",
-  fieldBorder: "#ECECED",
-  controlOn: ds.thunder[100],
-  onControl: ds.white,
-  onAccent: ds.white,
-  onChrome: ds.white,
-};
+  tabBar: "#FFFFFF",
+  cardBorder: "#D6DDE9",
+  field: "#F1F4FA",
+  fieldBorder: "#CFD7E4",
+  // Selected/primary controls = the web app's primary, SJ Thunder.
+  controlOn: "#072B31",
+  onControl: "#FFFFFF",
+  onAccent: "#FFFFFF",
+  onChrome: "#FFFFFF",
 
+  thunder: {
+    100: "#0F1828",
+    200: "#1A2742",
+    300: "#25344F",
+    400: "#3E506A",
+    500: "#5D7196",
+    600: "#7A91BB",
+    700: "#93A6C8",
+    800: "#B4C2DB",
+    900: "#D6DEEF",
+    1000: "#EEF2FF",
+  },
+  sky: {
+    100: "#2F74C9",
+    200: "#4A91EA",
+    300: "#6AA5EE",
+    400: "#8AB8F1",
+    500: "#A6C9F4",
+    600: "#BFD8F7",
+    700: "#D3E4FA",
+    800: "#E3EEFC",
+    900: "#EEF5FD",
+    1000: "#F6FAFE",
+  },
+  flame: {
+    100: "#D43535",
+    200: "#DB4E4E",
+    300: "#E16767",
+    400: "#E78080",
+    500: "#EC9A9A",
+    600: "#F2B5B5",
+    700: "#F6CACA",
+    800: "#F9DCDC",
+    900: "#FCEBEB",
+    1000: "#FDF4F4",
+  },
+  // Navy-tinted neutrals: 100 = ink → 1000 = faintest fill.
+  carbon: {
+    100: "#0F1828",
+    200: "#1F2A40",
+    300: "#33415B",
+    400: "#4B5A76",
+    500: "#5D6B86",
+    600: "#7A869E",
+    700: "#98A2B6",
+    800: "#B8C0CF",
+    900: "#D3DAE6",
+    1000: "#EEF1F7",
+  },
+
+  white: "#FFFFFF",
+  black: "#000000",
+
+  pageBg: "#F4F6FB",
+};

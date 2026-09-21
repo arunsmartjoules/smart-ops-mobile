@@ -833,6 +833,7 @@ export default function PreventiveMaintenance() {
     <View style={{ flex: 1, backgroundColor: ds.pageBg }}>
       <ModuleListHeader
         topInset={insets.top}
+        eyebrow="PREVENTIVE MAINTENANCE"
         siteName={siteName}
         dateLabel={dateRangeLabel}
         onPressSite={() => setShowFiltersModal(true)}
@@ -851,11 +852,6 @@ export default function PreventiveMaintenance() {
         chips={statusChips}
         activeChip={statusFilter}
         onSelectChip={selectStatusChip}
-        // Same list layout as tickets and incidents: the site name is the
-        // title (no pin) and the status tabs sit on the canvas below a
-        // rounded thunder header.
-        showSiteIcon={false}
-        tabPlacement="canvas"
       />
 
       <ListCountLine
@@ -885,7 +881,7 @@ export default function PreventiveMaintenance() {
           accessibilityRole="button"
           accessibilityLabel="Scan asset QR code"
         >
-          <QrCode size={15} color={ds.thunder[100]} />
+          <QrCode size={15} color={ds.sky[100]} />
           <Text style={styles.qrScanLabel}>
             {qrAssetFilter ? "Rescan" : "Scan asset"}
           </Text>
@@ -914,7 +910,7 @@ export default function PreventiveMaintenance() {
               <RefreshControl
                 refreshing={refreshing || (syncing && allInstances.length > 0)}
                 onRefresh={onRefresh}
-                tintColor={ds.thunder[100]}
+                tintColor={ds.carbon[500]}
               />
             }
             contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: 24 }}
@@ -1147,7 +1143,7 @@ const useStyles = makeThemedStyles((ds) => ({
     borderColor: ds.carbon[900],
     backgroundColor: ds.white,
   },
-  qrScanLabel: { fontSize: 11, fontWeight: "600", color: ds.thunder[100] },
+  qrScanLabel: { fontSize: 11, fontWeight: "600", color: ds.sky[100] },
   flex: { flex: 1 },
   container: { flex: 1 },
   listHeader: { paddingTop: 2, paddingHorizontal: 20, paddingBottom: 8 },

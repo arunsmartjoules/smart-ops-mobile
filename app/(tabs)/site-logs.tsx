@@ -418,6 +418,7 @@ export default function SiteLogs() {
     <View style={{ flex: 1, backgroundColor: ds.pageBg }}>
       <ModuleListHeader
         topInset={insets.top}
+        eyebrow="SITE LOGS"
         siteName={siteName}
         dateLabel={todayLabel}
         onPressSite={() => setSitePickerVisible(true)}
@@ -437,11 +438,6 @@ export default function SiteLogs() {
           bump();
           selectTab(key);
         }}
-        // Same list layout as tickets and incidents: the site name is the
-        // title (no pin) and the status tabs sit on the canvas below a
-        // rounded thunder header.
-        showSiteIcon={false}
-        tabPlacement="canvas"
       />
 
       <Animated.View style={[{ flex: 1 }, listSlideStyle]}>
@@ -457,7 +453,7 @@ export default function SiteLogs() {
             <RefreshControl
               refreshing={refreshing}
               onRefresh={onRefresh}
-              tintColor={ds.thunder[100]}
+              tintColor={ds.carbon[500]}
             />
           }
         >
@@ -586,18 +582,18 @@ export default function SiteLogs() {
                   activeOpacity={0.85}
                   style={[
                     sheetStyles.row,
-                    { backgroundColor: on ? ds.thunder[100] : ds.pageBg },
+                    { backgroundColor: on ? ds.controlOn : ds.pageBg },
                   ]}
                 >
                   <MapPin
                     size={15}
-                    color={on ? ds.onChrome : ds.carbon[500]}
+                    color={on ? ds.onControl : ds.carbon[500]}
                     strokeWidth={2}
                   />
                   <Text
                     style={[
                       sheetStyles.rowLabel,
-                      { color: on ? ds.onChrome : ds.carbon[100] },
+                      { color: on ? ds.onControl : ds.carbon[100] },
                     ]}
                   >
                     {s2.site_name || s2.site_code}
@@ -667,7 +663,7 @@ export default function SiteLogs() {
 
       {isLoading && !refreshing ? (
         <View style={{ position: "absolute", top: insets.top + 120, right: 22 }}>
-          <ActivityIndicator size="small" color={ds.thunder[100]} />
+          <ActivityIndicator size="small" color={ds.carbon[500]} />
         </View>
       ) : null}
     </View>

@@ -1049,6 +1049,7 @@ export default function IncidentsTab() {
     <View style={{ flex: 1, backgroundColor: ds.pageBg }}>
       <ModuleListHeader
         topInset={insets.top}
+        eyebrow="INCIDENTS"
         siteName={siteName}
         dateLabel={dateRangeLabel}
         onPressSite={() => setShowFilter(true)}
@@ -1065,10 +1066,6 @@ export default function IncidentsTab() {
         chips={statusChips}
         activeChip={statusFilter}
         onSelectChip={selectStatusChip}
-        // Same list layout as tickets: the site name is the title (no pin) and
-        // the status tabs sit on the canvas below a rounded thunder header.
-        showSiteIcon={false}
-        tabPlacement="canvas"
       />
 
       <ListCountLine
@@ -1113,7 +1110,7 @@ export default function IncidentsTab() {
             <RefreshControl
               refreshing={refreshing}
               onRefresh={onRefresh}
-              tintColor={ds.thunder[100]}
+              tintColor={ds.carbon[500]}
             />
           }
           showsVerticalScrollIndicator={false}

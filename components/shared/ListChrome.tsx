@@ -1,8 +1,8 @@
 /**
- * Shared list chrome for the module tabs (Tickets, Incidents, …), built from
- * the Claude Design list artboard: a thunder header carrying the site title,
- * date range, actions and search, underline status tabs with a sliding
- * indicator, then a count line above the rows.
+ * Shared list chrome for the module tabs (Tickets, Incidents, …): a header in
+ * the Home dashboard's style carrying the site title, date range, actions and
+ * search, underline status tabs with a sliding indicator, then a count line
+ * above the rows.
  *
  * One implementation, used by every module list — the per-module colour maps
  * live next to their screens.
@@ -101,30 +101,33 @@ export const tabToneDark = (ds: DsTheme): UnderlineTabTone => ({
  * The hairline under the tab strip when it sits on the page canvas. Not a
  * design-system token — the artboard uses this one value for that rule.
  */
-const canvasRule = (ds: DsTheme) => (ds.isDark ? ds.carbon[900] : "#E2E1E0");
+const canvasRule = (ds: DsTheme) => ds.carbon[900];
+
+/** Selected-state accent for thin marks (tab underline, active count) — the web primary. */
+const selectedAccent = (ds: DsTheme) => ds.controlOn;
 
 /**
- * Page canvas, below a rounded thunder header. The rule is drawn by the strip
+ * Page canvas, below the module header. The rule is drawn by the strip
  * wrapper so it spans the full screen width rather than only the tab content,
  * so the tone itself carries none.
  */
 export const tabToneCanvas = (ds: DsTheme): UnderlineTabTone => ({
   active: ds.carbon[100],
   inactive: ds.carbon[500],
-  countActive: ds.flame[100],
+  countActive: selectedAccent(ds),
   countInactive: ds.carbon[700],
   rule: "transparent",
-  indicator: ds.flame[100],
+  indicator: selectedAccent(ds),
 });
 
 /** White surfaces (cards, sheets): carbon on light. */
 export const tabToneLight = (ds: DsTheme): UnderlineTabTone => ({
   active: ds.carbon[100],
   inactive: ds.carbon[500],
-  countActive: ds.flame[100],
+  countActive: selectedAccent(ds),
   countInactive: ds.carbon[600],
   rule: ds.carbon[900],
-  indicator: ds.flame[100],
+  indicator: selectedAccent(ds),
 });
 
 /**
@@ -243,11 +246,14 @@ export function UnderlineTabs({
 const StatusTabs = UnderlineTabs;
 
 /* ── Header ──────────────────────────────────────────────────────────────
-   Thunder chrome carrying the title, site line, actions, search and the
-   status chips — the list below it starts on the page canvas.            */
+   Same header language as the Home dashboard ("JouleOps Role Dashboard v2"):
+   flat on the page canvas — a small module eyebrow, the site as the title
+   (tap to change), a muted date line, round card-style action buttons and a
+   tile-style search field. The status tabs follow on the canvas.          */
 
 export function ModuleListHeader({
   topInset,
+  eyebrow,
   siteName,
   dateLabel,
   onPressSite,
@@ -261,11 +267,12 @@ export function ModuleListHeader({
   chips,
   activeChip,
   onSelectChip,
-  showSiteIcon = true,
-  tabPlacement = "header",
+  showSiteIcon = false,
   subtitleIcon: SubtitleIcon = Calendar,
 }: {
   topInset: number;
+  /** Module name above the title — "TICKETS", "SITE LOGS", … */
+  eyebrow?: string;
   siteName: string;
   dateLabel: string;
   onPressSite: () => void;
@@ -280,129 +287,118 @@ export function ModuleListHeader({
   chips: StatusChip[];
   activeChip: string;
   onSelectChip: (key: string) => void;
-  /** The artboard drops the pin when the title IS the site name. */
+  /** Pin before the title, for screens where the title isn't obviously a site. */
   showSiteIcon?: boolean;
-  /**
-   * "header" keeps the tabs inside the thunder block; "canvas" is the
-   * artboard's layout — a rounded header, then the tabs on the page below it.
-   */
+  /** @deprecated The tabs always sit on the canvas now; kept for callers. */
   tabPlacement?: "header" | "canvas";
   /** Glyph before `dateLabel` — screens without a date range swap the calendar out. */
   subtitleIcon?: LucideIcon;
 }) {
   const styles = useStyles();
   const ds = useDs();
-  const onCanvas = tabPlacement === "canvas";
-  const tabs = (
-    <StatusTabs
-      chips={chips}
-      activeChip={activeChip}
-      onSelectChip={onSelectChip}
-      tone={onCanvas ? tabToneCanvas(ds) : tabToneDark(ds)}
-      minHeight={onCanvas ? 44 : 36}
-      contentContainerStyle={onCanvas ? styles.tabScrollCanvas : undefined}
-    />
-  );
-
-  const header = (
-    <View
-      style={[
-        styles.header,
-        onCanvas && styles.headerRounded,
-        onCanvas && !onChangeSearch && styles.headerRoundedNoSearch,
-        { paddingTop: topInset },
-      ]}
-    >
-      <View style={styles.titleRow}>
-        <View style={styles.titleLead}>
-          <TouchableOpacity
-            onPress={onPressSite}
-            activeOpacity={0.75}
-            style={styles.siteRow}
-            accessibilityRole="button"
-            accessibilityLabel={`Site ${siteName}. Change filters`}
-          >
-            {showSiteIcon ? (
-              <MapPin size={16} color={ds.sky[500]} strokeWidth={2.2} />
-            ) : null}
-            <Text style={styles.title} numberOfLines={1}>
-              {siteName}
-            </Text>
-            <ChevronDown size={18} color={ds.sky[500]} strokeWidth={2} />
-          </TouchableOpacity>
-          <View style={styles.dateRow}>
-            <SubtitleIcon size={12} color={ds.sky[500]} strokeWidth={2} />
-            <Text style={styles.dateLabel} numberOfLines={1}>
-              {dateLabel}
-            </Text>
-          </View>
-        </View>
-
-        <TouchableOpacity
-          onPress={onRefresh}
-          disabled={refreshDisabled}
-          activeOpacity={0.8}
-          hitSlop={6}
-          style={[styles.tile, refreshDisabled && { opacity: 0.4 }]}
-          accessibilityRole="button"
-          accessibilityLabel="Refresh"
-        >
-          <RefreshCw size={18} color={ds.onChrome} strokeWidth={2} />
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          onPress={onFilter}
-          activeOpacity={0.8}
-          hitSlop={6}
-          style={[
-            styles.tile,
-            filterActive && { backgroundColor: ds.flame[100] },
-          ]}
-          accessibilityRole="button"
-          accessibilityLabel="Filters"
-        >
-          <Filter size={18} color={ds.onChrome} strokeWidth={2} />
-        </TouchableOpacity>
-      </View>
-
-      {onChangeSearch ? (
-      <View style={[styles.searchWrap, onCanvas && styles.searchWrapCanvas]}>
-        <View style={styles.search}>
-          <Search size={16} color={ds.sky[500]} strokeWidth={2} />
-          <TextInput
-            value={search ?? ""}
-            onChangeText={onChangeSearch}
-            placeholder={searchPlaceholder}
-            placeholderTextColor={ds.sky[500]}
-            style={styles.searchInput}
-            returnKeyType="search"
-            autoCapitalize="none"
-            autoCorrect={false}
-          />
-          {(search ?? "").length > 0 ? (
-            <TouchableOpacity
-              onPress={() => onChangeSearch?.("")}
-              hitSlop={10}
-              accessibilityRole="button"
-              accessibilityLabel="Clear search"
-            >
-              <X size={17} color={ds.sky[500]} strokeWidth={2} />
-            </TouchableOpacity>
-          ) : null}
-        </View>
-      </View>
-      ) : null}
-
-      {onCanvas ? null : tabs}
-    </View>
-  );
-
-  if (!onCanvas) return header;
 
   return (
     <>
-      {header}
-      <View style={styles.tabStrip}>{tabs}</View>
+      <View style={[styles.header, { paddingTop: topInset + 2 }]}>
+        <View style={styles.titleRow}>
+          <View style={styles.titleLead}>
+            {eyebrow ? <Text style={styles.eyebrow}>{eyebrow}</Text> : null}
+            <TouchableOpacity
+              onPress={onPressSite}
+              activeOpacity={0.75}
+              style={styles.siteRow}
+              accessibilityRole="button"
+              accessibilityLabel={`Site ${siteName}. Change filters`}
+            >
+              {showSiteIcon ? (
+                <MapPin size={15} color={ds.carbon[500]} strokeWidth={2.2} />
+              ) : null}
+              <Text style={styles.title} numberOfLines={1}>
+                {siteName}
+              </Text>
+              <ChevronDown size={16} color={ds.carbon[500]} strokeWidth={2} />
+            </TouchableOpacity>
+            <View style={styles.dateRow}>
+              <SubtitleIcon size={13} color={ds.carbon[500]} strokeWidth={2} />
+              <Text style={styles.dateLabel} numberOfLines={1}>
+                {dateLabel}
+              </Text>
+            </View>
+          </View>
+
+          <TouchableOpacity
+            onPress={onRefresh}
+            disabled={refreshDisabled}
+            activeOpacity={0.8}
+            hitSlop={6}
+            style={[styles.tile, refreshDisabled && { opacity: 0.4 }]}
+            accessibilityRole="button"
+            accessibilityLabel="Refresh"
+          >
+            <RefreshCw size={17} color={ds.carbon[100]} strokeWidth={2} />
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            onPress={onFilter}
+            activeOpacity={0.8}
+            hitSlop={6}
+            style={[
+              styles.tile,
+              filterActive && {
+                backgroundColor: ds.controlOn,
+                borderColor: ds.controlOn,
+              },
+            ]}
+            accessibilityRole="button"
+            accessibilityLabel="Filters"
+            accessibilityState={{ selected: !!filterActive }}
+          >
+            <Filter
+              size={17}
+              color={filterActive ? ds.onControl : ds.carbon[100]}
+              strokeWidth={2}
+            />
+          </TouchableOpacity>
+        </View>
+
+        {onChangeSearch ? (
+          <View style={styles.searchWrap}>
+            <View style={styles.search}>
+              <Search size={16} color={ds.carbon[500]} strokeWidth={2} />
+              <TextInput
+                value={search ?? ""}
+                onChangeText={onChangeSearch}
+                placeholder={searchPlaceholder}
+                placeholderTextColor={ds.carbon[500]}
+                style={styles.searchInput}
+                returnKeyType="search"
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+              {(search ?? "").length > 0 ? (
+                <TouchableOpacity
+                  onPress={() => onChangeSearch?.("")}
+                  hitSlop={10}
+                  accessibilityRole="button"
+                  accessibilityLabel="Clear search"
+                >
+                  <X size={17} color={ds.carbon[500]} strokeWidth={2} />
+                </TouchableOpacity>
+              ) : null}
+            </View>
+          </View>
+        ) : null}
+      </View>
+      <View style={styles.tabStrip}>
+        <StatusTabs
+          chips={chips}
+          activeChip={activeChip}
+          onSelectChip={onSelectChip}
+          tone={tabToneCanvas(ds)}
+          minHeight={44}
+          contentContainerStyle={styles.tabScrollCanvas}
+        />
+      </View>
     </>
   );
 }
@@ -462,68 +458,76 @@ export function ListEmptyCard({
 }
 
 const useStyles = makeThemedStyles((ds) => ({
-  header: { backgroundColor: ds.thunder[100] },
-  /** The artboard's `border-radius: 0 0 26px 26px` on the thunder block. */
-  headerRounded: {
-    borderBottomLeftRadius: 26,
-    borderBottomRightRadius: 26,
-  },
-  headerRoundedNoSearch: { paddingBottom: 6 },
+  header: { backgroundColor: ds.pageBg },
   titleRow: {
     flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    paddingTop: 10,
-    paddingHorizontal: 20,
-    paddingBottom: 14,
+    alignItems: "flex-end",
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingBottom: 12,
   },
   titleLead: { flex: 1, minWidth: 0 },
-  siteRow: { flexDirection: "row", alignItems: "center", gap: 6 },
+  eyebrow: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: ds.carbon[500],
+    letterSpacing: 1.4,
+    marginBottom: 3,
+  },
+  siteRow: { flexDirection: "row", alignItems: "center", gap: 5 },
   title: {
     flexShrink: 1,
     fontSize: 19,
-    lineHeight: 22,
-    fontWeight: "700",
-    letterSpacing: 0.38,
-    color: ds.onChrome,
+    fontWeight: "800",
+    letterSpacing: -0.3,
+    color: ds.carbon[100],
   },
   dateRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: 5,
-    marginTop: 4,
+    marginTop: 5,
   },
-  dateLabel: { flexShrink: 1, fontSize: 11.5, color: ds.sky[500] },
+  dateLabel: {
+    flexShrink: 1,
+    fontSize: 11.5,
+    fontWeight: "600",
+    color: ds.carbon[500],
+  },
   tile: {
-    width: 36,
-    height: 36,
-    borderRadius: soRadius.tile,
-    backgroundColor: "rgba(255,255,255,0.1)",
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: ds.white,
+    borderWidth: 1,
+    borderColor: ds.cardBorder,
     alignItems: "center",
     justifyContent: "center",
   },
 
-  searchWrap: { paddingHorizontal: 20, paddingBottom: 12 },
-  searchWrapCanvas: { paddingBottom: 20 },
+  searchWrap: { paddingHorizontal: 16, paddingBottom: 12 },
   search: {
     flexDirection: "row",
     alignItems: "center",
     gap: 9,
-    backgroundColor: "rgba(255,255,255,0.1)",
-    borderRadius: soRadius.pill,
-    paddingVertical: 11,
-    paddingHorizontal: 14,
+    // On the light page the field fill is nearly the canvas colour, so the
+    // search box takes the card fill there to stand off the page.
+    backgroundColor: ds.isDark ? ds.field : ds.white,
+    borderWidth: 1,
+    borderColor: ds.fieldBorder,
+    borderRadius: 12,
+    height: 42,
+    paddingHorizontal: 13,
   },
   searchInput: {
     flex: 1,
     padding: 0,
     fontSize: 13.5,
-    color: ds.onChrome,
-    letterSpacing: 0.13,
+    color: ds.carbon[100],
   },
 
   tabScroll: { paddingHorizontal: 20, paddingBottom: 6 },
-  tabScrollCanvas: { paddingHorizontal: 20, paddingBottom: 0 },
+  tabScrollCanvas: { paddingHorizontal: 16, paddingBottom: 0 },
   tabStrip: {
     backgroundColor: ds.pageBg,
     borderBottomWidth: 1,

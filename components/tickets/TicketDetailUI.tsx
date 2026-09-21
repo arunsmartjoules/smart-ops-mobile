@@ -183,8 +183,8 @@ export function StatusChip({
       style={[
         styles.statusChip,
         {
-          backgroundColor: active ? ds.thunder[100] : ds.white,
-          borderColor: active ? ds.thunder[100] : ds.carbon[900],
+          backgroundColor: active ? ds.controlOn : ds.white,
+          borderColor: active ? ds.controlOn : ds.carbon[900],
         },
       ]}
       accessibilityRole="button"
@@ -196,7 +196,7 @@ export function StatusChip({
           styles.statusChipText,
           {
             fontWeight: active ? "600" : "400",
-            color: active ? ds.onChrome : ds.carbon[100],
+            color: active ? ds.onControl : ds.carbon[100],
           },
         ]}
       >

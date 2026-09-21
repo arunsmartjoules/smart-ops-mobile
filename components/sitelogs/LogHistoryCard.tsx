@@ -26,7 +26,7 @@ const statusMap = (
   Completed: {
     label: "Completed",
     bg: ds.sky[900],
-    fg: ds.isDark ? ds.sky[100] : "#1F757D",
+    fg: ds.sky[100],
   },
 });
 

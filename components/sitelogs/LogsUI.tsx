@@ -61,7 +61,7 @@ export function LogSummaryCards({
   return (
     <View style={styles.summaryRow}>
       {card("pending", "Pending", pending, ds.flame[100], ds.flame[100])}
-      {card("completed", "Completed", completed, ds.sky[100], ds.isDark ? ds.sky[100] : "#1F757D")}
+      {card("completed", "Completed", completed, ds.sky[100], ds.sky[100])}
     </View>
   );
 }
@@ -91,8 +91,8 @@ export function ShiftChips({
             style={[
               styles.chip,
               {
-                backgroundColor: on ? ds.thunder[100] : ds.white,
-                borderColor: on ? ds.thunder[100] : ds.carbon[900],
+                backgroundColor: on ? ds.controlOn : ds.white,
+                borderColor: on ? ds.controlOn : ds.carbon[900],
               },
             ]}
             accessibilityRole="button"
@@ -101,7 +101,7 @@ export function ShiftChips({
             <Text
               style={[
                 styles.chipText,
-                { color: on ? ds.onChrome : ds.carbon[400] },
+                { color: on ? ds.onControl : ds.carbon[400] },
               ]}
             >
               Shift {sh}
@@ -143,7 +143,7 @@ export function LogFilterPopover({
   const options: { key: LogStatusFilter; label: string; dot: string }[] = [
     { key: "all", label: "All entries", dot: ds.carbon[800] },
     { key: "pending", label: "Pending", dot: ds.flame[100] },
-    { key: "completed", label: "Completed", dot: ds.isDark ? ds.sky[100] : "#1F757D" },
+    { key: "completed", label: "Completed", dot: ds.sky[100] },
   ];
 
   return (
@@ -271,7 +271,7 @@ export function LogFab({
           accessibilityRole="button"
           accessibilityLabel={label}
         >
-          <Icon size={21} color={ds.onChrome} strokeWidth={2.4} />
+          <Icon size={21} color={ds.onControl} strokeWidth={2.4} />
           <Text style={styles.fabLabel}>{label}</Text>
         </TouchableOpacity>
       </Animated.View>
@@ -365,7 +365,7 @@ const useStyles = makeThemedStyles((ds) => ({
     bottom: -5,
     borderRadius: soRadius.pill,
     borderWidth: 3,
-    borderColor: ds.flame[100],
+    borderColor: ds.controlOn,
     opacity: 0,
   },
   fab: {
@@ -375,8 +375,8 @@ const useStyles = makeThemedStyles((ds) => ({
     height: 52,
     paddingHorizontal: 18,
     borderRadius: soRadius.pill,
-    backgroundColor: ds.flame[100],
-    shadowColor: ds.flame[100],
+    backgroundColor: ds.controlOn,
+    shadowColor: ds.controlOn,
     shadowOffset: { width: 0, height: 8 },
     shadowOpacity: 0.5,
     shadowRadius: 12,
@@ -386,6 +386,6 @@ const useStyles = makeThemedStyles((ds) => ({
     fontSize: 14,
     fontWeight: "600",
     letterSpacing: 0.14,
-    color: ds.onChrome,
+    color: ds.onControl,
   },
 }));

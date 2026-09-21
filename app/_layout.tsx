@@ -123,11 +123,6 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
 const LIGHT_STATUS_BAR_ROUTES = new Set([
   "/sign-up",
   "/signup-verify",
-  "/dashboard",
-  "/tickets",
-  "/incidents",
-  "/site-logs",
-  "/preventive-maintenance",
   "/profile",
   "/attendance",
   "/pm-execution",

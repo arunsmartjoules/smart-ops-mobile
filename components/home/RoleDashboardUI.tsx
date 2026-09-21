@@ -6,10 +6,9 @@
  * site card carrying the SLA chip and the punch CTA, stat tiles, progress bars,
  * the SLA scorecard and the plant-efficiency pair.
  *
- * Colours, sizes and spacing are the artboard's, verbatim — including its dark
- * navy ground and red accent, which this screen keeps in both app themes (the
- * design is drawn dark-only). Keep `JO` in sync with the artboard rather than
- * swapping in the app's theme tokens.
+ * Sizes and spacing are the artboard's, verbatim. Dark mode uses its colours
+ * verbatim too (`JO_DARK`); light mode (`JO_LIGHT`) is the same navy/red tone
+ * on white. Keep `JO_DARK` in sync with the artboard.
  */
 import React from "react";
 import {
@@ -35,10 +34,12 @@ import {
   X,
 } from "lucide-react-native";
 import type { LucideIcon } from "lucide-react-native";
+import { useIsDark } from "@/hooks/useDs";
 
 /* ── Palette (artboard literals) ───────────────────────────────────────── */
 
-export const JO = {
+/** Dark: the artboard's values, verbatim. */
+const JO_DARK = {
   page: "#060C1A",
   card: "#0F1828",
   tile: "#152038",
@@ -49,16 +50,54 @@ export const JO = {
   muted: "#7A91BB",
   faint: "#3E506A",
   accent: "#D43535",
+  /** Primary buttons (Start Day, Apply) — web primary on dark (SJ Sky), = ds.controlOn. */
+  primary: "#28939D",
   green: "#20BF6B",
   amber: "#F59E0B",
   red: "#D43535",
   blue: "#4A91EA",
   backdrop: "rgba(3,7,15,0.62)",
-} as const;
+  breachBg: "rgba(212,53,53,0.14)",
+  breachBorder: "rgba(212,53,53,0.45)",
+  breachSub: "#F2A7A7",
+};
+
+export type Jo = typeof JO_DARK;
+
+/**
+ * Light: the same tone on white — navy ink, the same red accent, and status
+ * colours deepened a step so amber/green still read on a white tile.
+ */
+const JO_LIGHT: Jo = {
+  page: "#F4F6FB",
+  card: "#FFFFFF",
+  tile: "#F1F4FA",
+  line: "#D6DDE9",
+  lineStrong: "#BCC7DB",
+  sheetLine: "#D6DDE9",
+  ink: "#0F1828",
+  muted: "#5D6B86",
+  faint: "#98A2B6",
+  accent: "#D43535",
+  primary: "#072B31",
+  green: "#17984F",
+  amber: "#C77A00",
+  red: "#D43535",
+  blue: "#2F74C9",
+  backdrop: "rgba(15,24,40,0.45)",
+  breachBg: "rgba(212,53,53,0.08)",
+  breachBorder: "rgba(212,53,53,0.35)",
+  breachSub: "#A62B2B",
+};
+
+/** The Home palette for the active app theme. */
+export function useJo(): Jo {
+  return useIsDark() ? JO_DARK : JO_LIGHT;
+}
 
 export type Tone = "good" | "warn" | "bad" | "info" | "neutral";
 
-export function toneColor(tone: Tone): string {
+export function toneColor(tone: Tone, JO: Jo): string {
   switch (tone) {
     case "good":
       return JO.green;
@@ -109,6 +148,8 @@ export function DashHeader({
   avatarLabel: string;
   onAvatar: () => void;
 }) {
+  const JO = useJo();
+  const s = useS();
   return (
     <View style={[s.header, { paddingTop: topInset + 2 }]}>
       <View style={{ flexShrink: 1, minWidth: 0 }}>
@@ -165,6 +206,7 @@ export function DashHeader({
 /* ── Cards & labels ────────────────────────────────────────────────────── */
 
 export function DashCard({ children }: { children: React.ReactNode }) {
+  const s = useS();
   return <View style={s.card}>{children}</View>;
 }
 
@@ -175,6 +217,7 @@ export function SectionLabel({
   children: React.ReactNode;
   style?: object;
 }) {
+  const s = useS();
   return <Text style={[s.sectionLabel, style]}>{children}</Text>;
 }
 
@@ -185,6 +228,7 @@ export function Footnote({
   children: React.ReactNode;
   style?: object;
 }) {
+  const s = useS();
   return <Text style={[s.footnote, style]}>{children}</Text>;
 }
 
@@ -212,6 +256,8 @@ export function SiteCard({
   onPressSla: () => void;
   children?: React.ReactNode;
 }) {
+  const JO = useJo();
+  const s = useS();
   const hasTone = slaTone !== "neutral";
   return (
     <DashCard>
@@ -254,13 +300,13 @@ export function SiteCard({
           style={[
             s.slaChip,
             hasTone
-              ? { backgroundColor: toneFill(slaTone), borderColor: toneColor(slaTone) }
+              ? { backgroundColor: toneFill(slaTone), borderColor: toneColor(slaTone, JO) }
               : { backgroundColor: JO.tile, borderColor: JO.line },
           ]}
           accessibilityRole="button"
           accessibilityLabel={`SLA ${slaMonth}: ${slaScore}. Change month`}
         >
-          <Text style={[s.slaChipScore, { color: toneColor(slaTone) }]}>{slaScore}</Text>
+          <Text style={[s.slaChipScore, { color: toneColor(slaTone, JO) }]}>{slaScore}</Text>
           <Text style={s.slaChipLabel}>SLA · {slaMonth}</Text>
         </TouchableOpacity>
       </View>
@@ -281,12 +327,14 @@ export function PunchButton({
 }: {
   label: string;
   icon: LucideIcon;
-  /** primary = accent fill (Start Day); secondary = tile fill (End Day / done). */
+  /** primary = web-primary fill (Start Day); secondary = tile fill (End Day / done). */
   variant: "primary" | "secondary";
   busy?: boolean;
   onPress: () => void;
   status?: string | null;
 }) {
+  const JO = useJo();
+  const s = useS();
   const primary = variant === "primary";
   const fg = primary ? "#FFFFFF" : JO.ink;
   return (
@@ -298,7 +346,7 @@ export function PunchButton({
         style={[
           s.punch,
           primary
-            ? { backgroundColor: JO.accent, borderColor: JO.accent }
+            ? { backgroundColor: JO.primary, borderColor: JO.primary }
             : { backgroundColor: JO.tile, borderColor: JO.lineStrong },
         ]}
         accessibilityRole="button"
@@ -348,11 +396,13 @@ export function TileRow({
   tiles: TileData[];
   size?: keyof typeof TILE_SIZE;
 }) {
+  const JO = useJo();
+  const s = useS();
   const sz = TILE_SIZE[size];
   return (
     <View style={s.tileRow}>
       {tiles.map((t) => {
-        const color = toneColor(t.tone ?? "neutral");
+        const color = toneColor(t.tone ?? "neutral", JO);
         return (
           // Static style on purpose: a Pressable function-style is dropped by
           // the NativeWind interop, which rendered these tiles borderless.
@@ -394,10 +444,12 @@ export interface BarData {
 
 /** `thin` is the SLA card's KPI variant (11.5px label, 5px track, 10px gap). */
 export function ProgressList({ bars, thin }: { bars: BarData[]; thin?: boolean }) {
+  const JO = useJo();
+  const s = useS();
   return (
     <View style={{ gap: thin ? 10 : 12 }}>
       {bars.map((b) => {
-        const color = toneColor(b.tone);
+        const color = toneColor(b.tone, JO);
         return (
           <View key={b.label}>
             <View style={[s.barHead, { marginBottom: thin ? 5 : 6 }]}>
@@ -432,6 +484,8 @@ export function BreachAlert({
   subtitle?: string | null;
   onPress?: () => void;
 }) {
+  const JO = useJo();
+  const s = useS();
   return (
     <TouchableOpacity
       onPress={onPress}
@@ -483,6 +537,8 @@ export function SlaCard({
   kpis: BarData[];
   loading?: boolean;
 }) {
+  const JO = useJo();
+  const s = useS();
   return (
     <DashCard>
       <View style={s.slaHead}>
@@ -513,7 +569,7 @@ export function SlaCard({
         {loading ? (
           <ActivityIndicator color={JO.muted} style={{ height: 34 }} />
         ) : (
-          <Text style={[s.slaBig, { color: toneColor(tone) }]}>{score}</Text>
+          <Text style={[s.slaBig, { color: toneColor(tone, JO) }]}>{score}</Text>
         )}
         <View style={{ alignItems: "flex-end", flexShrink: 1, minWidth: 0 }}>
           <Text style={s.slaSite} numberOfLines={1}>
@@ -542,6 +598,8 @@ export interface EffData {
 }
 
 export function EfficiencyCard({ items, note }: { items: EffData[]; note: string }) {
+  const JO = useJo();
+  const s = useS();
   return (
     <DashCard>
       <Text style={[s.sectionLabel, { marginBottom: 0 }]}>PLANT EFFICIENCY (SEC · kW/TR)</Text>
@@ -549,7 +607,7 @@ export function EfficiencyCard({ items, note }: { items: EffData[]; note: string
         {items.map((e) => (
           <View key={e.label} style={[s.tile, { padding: 11 }]}>
             <View style={{ flexDirection: "row", alignItems: "center", gap: 5 }}>
-              <Text style={[s.effValue, { color: toneColor(e.tone) }]}>{e.value}</Text>
+              <Text style={[s.effValue, { color: toneColor(e.tone, JO) }]}>{e.value}</Text>
               {e.trend === "down" ? (
                 <TrendingDown size={14} color={JO.green} />
               ) : e.trend === "up" ? (
@@ -593,6 +651,8 @@ export function DashSheet({
   children?: React.ReactNode;
   bottomInset?: number;
 }) {
+  const JO = useJo();
+  const s = useS();
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <Pressable style={s.backdrop} onPress={onClose}>
@@ -649,7 +709,8 @@ export function DashSheet({
 
 /* ── Styles ────────────────────────────────────────────────────────────── */
 
-const s = StyleSheet.create({
+const makeStyles = (JO: Jo) =>
+  StyleSheet.create({
   header: {
     flexDirection: "row",
     alignItems: "flex-end",
@@ -802,16 +863,16 @@ const s = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
-    backgroundColor: "rgba(212,53,53,0.14)",
+    backgroundColor: JO.breachBg,
     borderWidth: 1,
-    borderColor: "rgba(212,53,53,0.45)",
+    borderColor: JO.breachBorder,
     borderRadius: 12,
     paddingVertical: 11,
     paddingHorizontal: 12,
     marginBottom: 9,
   },
   breachTitle: { fontSize: 12.5, fontWeight: "700", color: JO.ink },
-  breachSub: { fontSize: 11, color: "#F2A7A7", marginTop: 2 },
+  breachSub: { fontSize: 11, color: JO.breachSub, marginTop: 2 },
 
 
   slaHead: {
@@ -886,3 +947,10 @@ const s = StyleSheet.create({
   sheetRowLabel: { fontSize: 13, fontWeight: "700", color: JO.ink, flexShrink: 1 },
   sheetRowMeta: { fontSize: 11.5, fontWeight: "600", color: JO.muted },
 });
+
+const STYLES_DARK = makeStyles(JO_DARK);
+const STYLES_LIGHT = makeStyles(JO_LIGHT);
+
+function useS() {
+  return useIsDark() ? STYLES_DARK : STYLES_LIGHT;
+}

@@ -56,7 +56,8 @@ import {
   DashHeader,
   DashSheet,
   EfficiencyCard,
-  JO,
+  type Jo,
+  useJo,
   Footnote,
   ProgressList,
   PunchButton,
@@ -177,6 +178,7 @@ function plural(n: number, word: string) {
 // --- Memoized Skeleton Component ---
 const DashboardSkeleton = React.memo(() => {
   const insets = useSafeAreaInsets();
+  const JO = useJo();
   return (
     <View style={{ flex: 1, backgroundColor: JO.page, paddingTop: insets.top + 12, paddingHorizontal: 16 }}>
       <Skeleton width={160} height={48} borderRadius={8} style={{ marginBottom: 16, backgroundColor: JO.tile }} />
@@ -192,6 +194,8 @@ DashboardSkeleton.displayName = "DashboardSkeleton";
 
 export default function Dashboard() {
   const insets = useSafeAreaInsets();
+  const JO = useJo();
+  const styles = useStyles();
   const { user, signOut } = useAuth();
   const {
     isPrivileged,
@@ -775,7 +779,7 @@ export default function Dashboard() {
       key: k,
       label: monthLabel(k),
       meta: score != null ? score.toFixed(2) : dash,
-      metaColor: score != null ? toneColor(slaTone(score)) : undefined,
+      metaColor: score != null ? toneColor(slaTone(score), JO) : undefined,
       selected: slaMonth === k,
       onPress: () => {
         setSlaMonth(k);
@@ -1021,7 +1025,8 @@ export default function Dashboard() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (JO: Jo) =>
+  StyleSheet.create({
   screen: { flex: 1, backgroundColor: JO.page },
   body: { paddingHorizontal: 16, paddingTop: 2, paddingBottom: 20, gap: 14 },
   offline: { fontSize: 11, color: JO.muted, marginTop: -4 },
@@ -1045,7 +1050,20 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: JO.accent,
+    backgroundColor: JO.primary,
   },
   applyText: { color: "#FFFFFF", fontSize: 13.5, fontWeight: "800" },
 });
+
+const STYLES = new Map<Jo, ReturnType<typeof makeStyles>>();
+
+/** One stylesheet per Home palette (light / dark), built on first use. */
+function useStyles() {
+  const JO = useJo();
+  let built = STYLES.get(JO);
+  if (!built) {
+    built = makeStyles(JO);
+    STYLES.set(JO, built);
+  }
+  return built;
+}

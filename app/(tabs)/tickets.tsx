@@ -1537,6 +1537,7 @@ export default function Tickets() {
     <View style={{ flex: 1, backgroundColor: ds.pageBg }}>
       <ModuleListHeader
         topInset={insets.top}
+        eyebrow="TICKETS"
         siteName={siteName}
         dateLabel={dateRangeLabel}
         onPressSite={() => setShowFiltersModal(true)}
@@ -1552,10 +1553,6 @@ export default function Tickets() {
         chips={statusChips}
         activeChip={statusFilter}
         onSelectChip={selectStatusChip}
-        // The artboard's list layout: the site name is the title (no pin) and
-        // the status tabs sit on the canvas below a rounded thunder header.
-        showSiteIcon={false}
-        tabPlacement="canvas"
       />
 
       <ListCountLine
@@ -1594,7 +1591,7 @@ export default function Tickets() {
             <RefreshControl
               refreshing={refreshing}
               onRefresh={onRefresh}
-              tintColor={ds.thunder[100]}
+              tintColor={ds.carbon[500]}
             />
           }
           showsVerticalScrollIndicator={false}

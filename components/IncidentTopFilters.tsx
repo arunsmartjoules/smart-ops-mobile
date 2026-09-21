@@ -44,8 +44,8 @@ const IncidentTopFilters = ({
               style={[
                 styles.chip,
                 {
-                  backgroundColor: active ? ds.thunder[100] : ds.white,
-                  borderColor: active ? ds.thunder[100] : ds.carbon[900],
+                  backgroundColor: active ? ds.controlOn : ds.white,
+                  borderColor: active ? ds.controlOn : ds.carbon[900],
                   opacity: canEdit ? 1 : 0.65,
                 },
               ]}
@@ -55,7 +55,7 @@ const IncidentTopFilters = ({
               <Text
                 style={[
                   styles.chipLabel,
-                  { color: active ? ds.onChrome : ds.carbon[100] },
+                  { color: active ? ds.onControl : ds.carbon[100] },
                 ]}
               >
                 {item}
