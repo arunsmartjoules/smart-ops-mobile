@@ -5,7 +5,14 @@ import "@/utils/navContextErrorTrap";
 // Dev-only LogBox filters for diagnosed third-party noise. Must be imported
 // before the modules that emit those logs (e.g. expo-notifications below).
 import "@/utils/devLogFilters";
-import { Stack, useRouter, useSegments, usePathname, router } from "expo-router";
+import {
+  Stack,
+  useRouter,
+  useSegments,
+  usePathname,
+  useRootNavigationState,
+  router,
+} from "expo-router";
 import "react-native-reanimated";
 import { enableFreeze } from "react-native-screens";
 import "./global.css";
@@ -63,9 +70,14 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
   const { token, isLoading, isEmailVerified } = useAuth();
   const segments = useSegments();
   const router = useRouter();
+  // The Stack below only mounts once auth resolves, so on that same commit the
+  // root navigator isn't ready yet — replacing then updates expo-router's
+  // store before it has mounted ("Can't perform a React state update on a
+  // component that hasn't mounted yet"). Wait for the navigator's state key.
+  const navigatorReady = !!useRootNavigationState()?.key;
 
   useEffect(() => {
-    if (isLoading) return;
+    if (isLoading || !navigatorReady) return;
 
     const isAuthRelated =
       segments[0] === "sign-in" ||
@@ -85,7 +97,7 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
     } else if (token && isEmailVerified && isUnauthenticatedInternal) {
       router.replace("/(tabs)/dashboard");
     }
-  }, [token, isLoading, isEmailVerified, segments, router]);
+  }, [token, isLoading, isEmailVerified, segments, router, navigatorReady]);
 
   // The animated splash stays on top while auth resolves, then cross-fades
   // onto the first screen — which mounts underneath it first, so the redirect

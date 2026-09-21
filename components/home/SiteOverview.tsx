@@ -3,7 +3,7 @@
  *
  * This module used to hold the pre-redesign home screen's building blocks
  * (OverviewHeader, IdentityCard, SectionHeading, OverviewRow, OverviewEmpty,
- * plus the BADGE/TINT maps). Those were superseded by components/home/HomeUI
+ * plus the BADGE/TINT maps). Those were superseded by the home redesigns (now components/home/RoleDashboardUI)
  * and had no remaining references, so they were removed when the app gained a
  * dark palette rather than being carried forward against a static light one.
  */

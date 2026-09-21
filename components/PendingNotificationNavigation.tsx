@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { useRouter } from "expo-router";
+import { useRootNavigationState, useRouter } from "expo-router";
 import * as Notifications from "expo-notifications";
 import { useAuth } from "@/contexts/AuthContext";
 import { applyNotificationNavigation } from "@/utils/notificationDeepLink";
@@ -17,9 +17,19 @@ export function PendingNotificationNavigation() {
   const router = useRouter();
   const routerRef = useRef(router);
   routerRef.current = router;
+  // Navigating before the root navigator has mounted updates expo-router's
+  // store too early — wait for its state key (see AuthGuard in app/_layout).
+  const navigatorReady = !!useRootNavigationState()?.key;
 
   useEffect(() => {
-    if (isLoading || !token || !isEmailVerified || coldStartConsumeStarted) return;
+    if (
+      isLoading ||
+      !navigatorReady ||
+      !token ||
+      !isEmailVerified ||
+      coldStartConsumeStarted
+    )
+      return;
     coldStartConsumeStarted = true;
 
     (async () => {
@@ -40,7 +50,7 @@ export function PendingNotificationNavigation() {
         });
       }
     })();
-  }, [isLoading, token, isEmailVerified]);
+  }, [isLoading, navigatorReady, token, isEmailVerified]);
 
   return null;
 }
