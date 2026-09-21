@@ -14,7 +14,7 @@ import {
   Thermometer,
 } from "lucide-react-native";
 import type { LucideIcon } from "lucide-react-native";
-import { format } from "date-fns";
+import { formatIST, istRelativeDayLabel } from "@/utils/istDate";
 import { makeThemedStyles, useDs, type DsTheme } from "@/hooks/useDs";
 import { soRadius, soShadow } from "@/components/home/SiteOverview";
 
@@ -93,16 +93,26 @@ export const shiftLabelToName = (label?: string | null) => {
   return s || null;
 };
 
+/** 24h clock in IST — never the device timezone. */
+const timeLabel = (input: unknown) =>
+  formatIST(input as any, { hour: "2-digit", minute: "2-digit", hour12: false });
+
+/**
+ * The day, relative where that reads better: the three days around now are
+ * "Today" / "Yesterday" / "Tomorrow", everything older falls back to a date.
+ */
 const whenLabel = (logName: string, row: any) => {
   if (logName === "Chiller Logs") {
     const ms = row.reading_time || row.created_at;
-    return ms ? format(new Date(ms), "d MMM · HH:mm") : "—";
+    return ms ? `${istRelativeDayLabel(ms)} · ${timeLabel(ms)}` : "—";
   }
   if (row.scheduled_date) {
-    const entry = row.entry_time ? ` · ${format(new Date(row.entry_time), "HH:mm")}` : "";
-    return `${row.scheduled_date}${entry}`;
+    const entry = row.entry_time ? ` · ${timeLabel(row.entry_time)}` : "";
+    return `${istRelativeDayLabel(row.scheduled_date)}${entry}`;
   }
-  return row.created_at ? format(new Date(row.created_at), "d MMM · HH:mm") : "—";
+  return row.created_at
+    ? `${istRelativeDayLabel(row.created_at)} · ${timeLabel(row.created_at)}`
+    : "—";
 };
 
 export const LogHistoryCard = React.memo(

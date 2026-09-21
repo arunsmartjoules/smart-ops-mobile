@@ -27,7 +27,7 @@
     "base64-arraybuffer": "^1.0.2",
     "date-fns": "^4.1.0",
     "drizzle-orm": "^0.36.0",
-    "expo": "~57.0.22",
+    "expo": "~57.0.24",
     "expo-apple-authentication": "~57.0.2",
     "expo-auth-session": "~57.0.12",
     "expo-background-task": "~57.0.17",

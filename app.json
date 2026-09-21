@@ -22,8 +22,9 @@
     "android": {
       "googleServicesFile": "./google-services.json",
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/images/jouleops-icon.png"
+        "backgroundColor": "#4C89B4",
+        "backgroundImage": "./assets/images/jouleops-icon-background.png",
+        "foregroundImage": "./assets/images/jouleops-icon-foreground.png"
       },
       "predictiveBackGestureEnabled": false,
       "package": "com.smartjoules.jouleops",
@@ -53,13 +54,13 @@
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#E11111",
-          "image": "./assets/images/jouleops-splash.png",
-          "imageWidth": 220,
+          "backgroundColor": "#FFFFFF",
+          "image": "./assets/images/jouleops-splash-light.png",
+          "imageWidth": 180,
           "resizeMode": "contain",
           "dark": {
-            "backgroundColor": "#E11111",
-            "image": "./assets/images/jouleops-splash.png"
+            "backgroundColor": "#061417",
+            "image": "./assets/images/jouleops-splash-dark.png"
           }
         }
       ],

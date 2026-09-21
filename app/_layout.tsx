@@ -19,8 +19,8 @@ import { AttendanceGateProvider } from "@/contexts/AttendanceGateContext";
 import { ThemeProvider, useTheme } from "@/contexts/ThemeContext";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
-import { useEffect } from "react";
-import { View, Image, AppState } from "react-native";
+import { useCallback, useEffect, useState } from "react";
+import { AppState } from "react-native";
 import { registerBackgroundSyncAsync } from "@/services/SyncEngine";
 import { syncManager } from "@/services/SyncManager";
 import { initDatabase } from "@/database";
@@ -32,6 +32,7 @@ import { presenceService } from "@/services/PresenceService";
 import UpdateRequiredScreen from "@/components/UpdateRequiredScreen";
 import NotificationGate from "@/components/NotificationGate";
 import ServerStatusOverlay from "@/components/ServerStatusOverlay";
+import SplashOverlay from "@/components/SplashOverlay";
 import * as SplashScreen from "expo-splash-screen";
 import * as Location from "expo-location";
 import * as Notifications from "expo-notifications";
@@ -53,37 +54,10 @@ if (!globalThis.crypto) {
   });
 }
 
-// Keep the native splash visible until React has mounted its first frame.
-// The JS-level splash in AuthGuard is rendered to look identical to the
-// native splash, so the handoff is invisible. Hiding too early (e.g. at
-// module load) causes a visible flash of a blank/different screen.
+// Keep the native splash visible until SplashOverlay has painted its logo —
+// it hides the native splash itself, so the handoff is invisible. Hiding at
+// module load or first mount shows a frame of bare background (the flicker).
 SplashScreen.preventAutoHideAsync().catch(() => {});
-
-// Splash background — must match app.json -> expo-splash-screen.backgroundColor
-// and the native splash colors in android/res/values/colors.xml +
-// ios/.../SplashScreenBackground.colorset.
-const SPLASH_BG = "#E11111";
-const SPLASH_LOGO_WIDTH = 220;
-const SPLASH_LOGO = require("@/assets/images/jouleops-splash.png");
-
-function SplashView() {
-  return (
-    <View
-      style={{
-        flex: 1,
-        backgroundColor: SPLASH_BG,
-        alignItems: "center",
-        justifyContent: "center",
-      }}
-    >
-      <Image
-        source={SPLASH_LOGO}
-        style={{ width: SPLASH_LOGO_WIDTH, height: SPLASH_LOGO_WIDTH }}
-        resizeMode="contain"
-      />
-    </View>
-  );
-}
 
 function AuthGuard({ children }: { children: React.ReactNode }) {
   const { token, isLoading, isEmailVerified } = useAuth();
@@ -113,18 +87,20 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
     }
   }, [token, isLoading, isEmailVerified, segments, router]);
 
-  useEffect(() => {
-    if (isLoading) return;
-  }, [token, isLoading]);
+  // The animated splash stays on top while auth resolves, then cross-fades
+  // onto the first screen — which mounts underneath it first, so the redirect
+  // above and the first paint both happen out of sight.
+  const [splashDone, setSplashDone] = useState(false);
+  const finishSplash = useCallback(() => setSplashDone(true), []);
 
-  // While auth is resolving, render a screen that visually matches the native
-  // splash (same color, same logo, same size) so users don't perceive a second
-  // splash when the native one hands off to React.
-  if (isLoading) {
-    return <SplashView />;
-  }
-
-  return <>{children}</>;
+  return (
+    <>
+      {!isLoading && children}
+      {!splashDone && (
+        <SplashOverlay ready={!isLoading} onFinish={finishSplash} />
+      )}
+    </>
+  );
 }
 
 /**
@@ -197,11 +173,6 @@ function PresenceTracker() {
 
 export default function RootLayout() {
   useEffect(() => {
-    // First-frame is mounted — hand off from the native splash to the JS
-    // SplashView, which is rendered to look identical. Done in a useEffect
-    // (not at module load) so React paints at least one frame first.
-    SplashScreen.hideAsync().catch(() => {});
-
     const init = async () => {
       try {
         // Initialize local SQLite database

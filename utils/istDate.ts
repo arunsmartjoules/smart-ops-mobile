@@ -209,3 +209,37 @@ export const formatISTDateTime = (input?: DateInput): string =>
 /** "2:30 PM" style time in IST. */
 export const formatISTTime = (input?: DateInput): string =>
   formatIST(input, { hour: "numeric", minute: "2-digit", hour12: true }, "en-US");
+
+/**
+ * "Today" / "Yesterday" / "Tomorrow" for the three days around now, and a
+ * plain "12 May" for anything else — with the year appended only when it
+ * differs from the current one, so a list spanning New Year stays unambiguous.
+ *
+ * Accepts the same shapes as {@link toIstYmd}: a "YYYY-MM-DD" calendar date is
+ * read verbatim (never round-tripped through `new Date(string)` — see
+ * {@link toIstDayMs}), an instant is bucketed into its IST calendar day.
+ */
+export const istRelativeDayLabel = (input?: DateInput): string => {
+  const ymd = toIstYmd(input);
+  if (!ymd) return "";
+
+  const today = istTodayString();
+  if (ymd === today) return "Today";
+
+  const dayMs = istDayStartMsFromYmd(ymd);
+  const todayMs = istDayStartMsFromYmd(today);
+  if (dayMs == null || todayMs == null) return ymd;
+
+  const delta = Math.round((dayMs - todayMs) / DAY_MS);
+  if (delta === -1) return "Yesterday";
+  if (delta === 1) return "Tomorrow";
+
+  // Format off the day's IST midnight rather than the raw input, so a
+  // date-only string can never drift a day on a non-IST device.
+  return formatIST(
+    dayMs,
+    ymd.slice(0, 4) === today.slice(0, 4)
+      ? { day: "numeric", month: "short" }
+      : { day: "numeric", month: "short", year: "numeric" },
+  );
+};

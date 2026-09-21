@@ -5,6 +5,10 @@
  */
 import React from "react";
 import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import Animated, {
+  cubicBezier,
+  useReducedMotion,
+} from "react-native-reanimated";
 import { Check, Plus, ArrowRight } from "lucide-react-native";
 import { makeThemedStyles, useDs } from "@/hooks/useDs";
 import { soRadius, soShadow } from "@/components/home/SiteOverview";
@@ -181,33 +185,99 @@ export function LogFilterPopover({
   );
 }
 
-/* ── Start / Continue FAB ───────────────────────────────────────────────── */
+/* ── Start / Continue FAB, with an idle attention nudge ─────────────────── */
+
+const EASE_OUT = cubicBezier(0.23, 1, 0.32, 1);
+
+/** One cycle: two quick hops, then a long rest so it never reads as a spinner. */
+const FAB_BOUNCE = {
+  "0%": { transform: [{ translateY: 0 }] },
+  "8%": { transform: [{ translateY: -10 }] },
+  "18%": { transform: [{ translateY: 0 }] },
+  "25%": { transform: [{ translateY: -4 }] },
+  "32%": { transform: [{ translateY: 0 }] },
+  "100%": { transform: [{ translateY: 0 }] },
+} as const;
+
+/** A sonar ring leaving the pill. Scale + opacity only — both are free. */
+const FAB_HALO = {
+  "0%": { transform: [{ scale: 0.94 }], opacity: 0 },
+  "12%": { opacity: 0.38 },
+  "40%": { transform: [{ scale: 1.45 }], opacity: 0 },
+  "100%": { transform: [{ scale: 1.45 }], opacity: 0 },
+} as const;
+
+/** Reduced motion keeps the pull but drops the movement: a bare glow. */
+const FAB_GLOW = {
+  "0%": { opacity: 0 },
+  "15%": { opacity: 0.32 },
+  "45%": { opacity: 0 },
+  "100%": { opacity: 0 },
+} as const;
+
+const NUDGE_CYCLE_MS = 2000;
+const NUDGE_REPEATS = 3;
 
 export function LogFab({
   label,
   continuing,
   onPress,
   bottom,
+  attention,
 }: {
   label: string;
   continuing?: boolean;
   onPress: () => void;
   bottom: number;
+  /** Idle operator — draw the eye to the button. See hooks/useIdleNudge. */
+  attention?: boolean;
 }) {
   const styles = useStyles();
   const ds = useDs();
+  const reduced = useReducedMotion();
   const Icon = continuing ? ArrowRight : Plus;
+
+  const halo = attention
+    ? {
+        animationName: reduced ? FAB_GLOW : FAB_HALO,
+        animationDuration: NUDGE_CYCLE_MS,
+        animationIterationCount: NUDGE_REPEATS,
+        animationTimingFunction: EASE_OUT,
+      }
+    : null;
+
+  // The bounce is movement, so reduced motion opts out of it entirely and
+  // keeps only the glow above.
+  const bounce =
+    attention && !reduced
+      ? {
+          animationName: FAB_BOUNCE,
+          animationDuration: NUDGE_CYCLE_MS,
+          animationIterationCount: NUDGE_REPEATS,
+          animationTimingFunction: EASE_OUT,
+        }
+      : null;
+
   return (
-    <TouchableOpacity
-      onPress={onPress}
-      activeOpacity={0.9}
-      style={[styles.fab, { bottom }]}
-      accessibilityRole="button"
-      accessibilityLabel={label}
-    >
-      <Icon size={21} color={ds.onChrome} strokeWidth={2.4} />
-      <Text style={styles.fabLabel}>{label}</Text>
-    </TouchableOpacity>
+    <View style={[styles.fabDock, { bottom }]} pointerEvents="box-none">
+      {/* Behind the pill by document order; no elevation of its own, so it
+          never animates an Android shadow. */}
+      {halo ? (
+        <Animated.View style={[styles.fabHalo, halo]} pointerEvents="none" />
+      ) : null}
+      <Animated.View style={bounce}>
+        <TouchableOpacity
+          onPress={onPress}
+          activeOpacity={0.9}
+          style={styles.fab}
+          accessibilityRole="button"
+          accessibilityLabel={label}
+        >
+          <Icon size={21} color={ds.onChrome} strokeWidth={2.4} />
+          <Text style={styles.fabLabel}>{label}</Text>
+        </TouchableOpacity>
+      </Animated.View>
+    </View>
   );
 }
 
@@ -288,9 +358,17 @@ const useStyles = makeThemedStyles((ds) => ({
   },
   popLabel: { flex: 1, fontSize: 12.5, color: ds.carbon[100] },
 
-  fab: {
+  fabDock: { position: "absolute", right: 20 },
+  fabHalo: {
     position: "absolute",
-    right: 20,
+    left: -8,
+    right: -8,
+    top: -8,
+    bottom: -8,
+    borderRadius: soRadius.pill,
+    backgroundColor: ds.flame[100],
+  },
+  fab: {
     flexDirection: "row",
     alignItems: "center",
     gap: 8,

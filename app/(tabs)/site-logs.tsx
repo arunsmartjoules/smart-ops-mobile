@@ -17,6 +17,7 @@ import Animated from "react-native-reanimated";
 import { useAuth } from "@/contexts/AuthContext";
 import { useAttendanceGate } from "@/contexts/AttendanceGateContext";
 import { useAutoSync } from "@/hooks/useAutoSync";
+import { useIdleNudge } from "@/hooks/useIdleNudge";
 import siteLogService from "@/services/SiteLogService";
 import { SiteConfigService } from "@/services/SiteConfigService";
 import { istTodayString, istDateString, formatIST } from "@/utils/istDate";
@@ -35,7 +36,10 @@ import {
   useListSlide,
   type StatusChip,
 } from "@/components/shared/ListChrome";
-import { LogHistoryCard } from "@/components/sitelogs/LogHistoryCard";
+import {
+  LogHistoryCard,
+  normaliseLogStatus,
+} from "@/components/sitelogs/LogHistoryCard";
 import { LogEditSheet } from "@/components/sitelogs/LogEditSheet";
 import {
   HistoryHeading,
@@ -80,9 +84,17 @@ const SHIFT_OPTIONS = [
   { value: "C", label: "Shift C · Night", window: "22:00 – 06:00" },
 ] as const;
 
-const isCompleted = (row: any) => {
-  const s = String(row?.status ?? "").toLowerCase().replace(/[\s_-]+/g, "");
-  return s === "completed" || s === "";
+const isCompleted = (row: any) => normaliseLogStatus(row?.status) === "Completed";
+const isPending = (row: any) => normaliseLogStatus(row?.status) === "Pending";
+
+/**
+ * The row's IST calendar day. Site logs carry `scheduled_date` ("YYYY-MM-DD");
+ * chiller readings only have an instant, so it comes off `reading_time`.
+ */
+const rowDay = (row: any): string => {
+  if (row?.scheduled_date) return String(row.scheduled_date).slice(0, 10);
+  const ms = row?.reading_time ?? row?.created_at;
+  return ms ? istDateString(new Date(ms)) : "";
 };
 
 export default function SiteLogs() {
@@ -242,7 +254,15 @@ export default function SiteLogs() {
 
   // ── Derived view data ────────────────────────────────────────────────────
   const scopedRows = useMemo(() => {
-    const rows = rowsByType[activeKey] ?? [];
+    // Today's placeholder rows are not history — they're what "Start log"
+    // creates. Showing them here reads as work already sitting in the list and
+    // bypasses the start flow, so they stay hidden until the operator has
+    // actually touched them (In progress) or finished them (Completed).
+    // Earlier days keep their Pending rows: there they are a genuine backlog.
+    const today = istTodayString();
+    const rows = (rowsByType[activeKey] ?? []).filter(
+      (r) => !(isPending(r) && rowDay(r) === today),
+    );
     if (!activeTab.hasShift) return rows;
     // shift_label is persisted as "1/3" | "2/3" | "3/3" (see uiShiftToLabel),
     // not "Shift A" — go through the same mapper the entry screen writes with.
@@ -279,10 +299,9 @@ export default function SiteLogs() {
 
   const hasInProgress = useMemo(
     () =>
-      (rowsByType[activeKey] ?? []).some((r) => {
-        const s = String(r?.status ?? "").toLowerCase().replace(/[\s_-]+/g, "");
-        return s === "inprogress";
-      }),
+      (rowsByType[activeKey] ?? []).some(
+        (r) => normaliseLogStatus(r?.status) === "Inprogress",
+      ),
     [rowsByType, activeKey],
   );
 
@@ -384,6 +403,17 @@ export default function SiteLogs() {
 
   const isLoading = loadingType === activeKey;
 
+  // An operator parked on the list is usually waiting to be told what to do —
+  // today's entries are behind the FAB, not in the list. Nudge the button once
+  // they have been still for a few seconds, but not while they are mid-task in
+  // a sheet, and not while the list is still painting.
+  const anySheetOpen =
+    filterOpen || sitePickerVisible || shiftModalVisible || editRow !== null;
+  const { nudge, bump } = useIdleNudge(
+    6000,
+    canEdit && !!siteCode && !isLoading && !anySheetOpen,
+  );
+
   return (
     <View style={{ flex: 1, backgroundColor: ds.pageBg }}>
       <ModuleListHeader
@@ -396,11 +426,17 @@ export default function SiteLogs() {
           onRefresh();
         }}
         refreshDisabled={!isConnected || !siteCode}
-        onFilter={() => setFilterOpen((v) => !v)}
+        onFilter={() => {
+          bump();
+          setFilterOpen((v) => !v);
+        }}
         filterActive={statusFilter !== "all" || filterOpen}
         chips={tabs}
         activeChip={activeKey}
-        onSelectChip={selectTab}
+        onSelectChip={(key) => {
+          bump();
+          selectTab(key);
+        }}
         // Same list layout as tickets and incidents: the site name is the
         // title (no pin) and the status tabs sit on the canvas below a
         // rounded thunder header.
@@ -416,6 +452,7 @@ export default function SiteLogs() {
             paddingBottom: 96,
           }}
           showsVerticalScrollIndicator={false}
+          onScrollBeginDrag={bump}
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
@@ -454,6 +491,18 @@ export default function SiteLogs() {
               <Text style={{ fontSize: 12.5, color: ds.carbon[400] }}>
                 No {activeTab.label.toLowerCase()} entries in this window
               </Text>
+              {canEdit && statusFilter === "all" ? (
+                <Text
+                  style={{
+                    fontSize: 11.5,
+                    color: ds.carbon[600],
+                    marginTop: 6,
+                    textAlign: "center",
+                  }}
+                >
+                  Tap Start log to record today&apos;s readings.
+                </Text>
+              ) : null}
             </View>
           ) : (
             visibleRows.map((row) => (
@@ -461,7 +510,10 @@ export default function SiteLogs() {
                 key={row.id}
                 item={row}
                 logName={activeKey}
-                onPress={() => openRow(row)}
+                onPress={() => {
+                  bump();
+                  openRow(row);
+                }}
               />
             ))
           )}
@@ -472,7 +524,11 @@ export default function SiteLogs() {
         <LogFab
           label={hasInProgress ? "Continue" : "Start log"}
           continuing={hasInProgress}
-          onPress={onStart}
+          attention={nudge}
+          onPress={() => {
+            bump();
+            onStart();
+          }}
           bottom={20}
         />
       ) : null}
