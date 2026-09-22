@@ -1,6 +1,6 @@
 /**
  * One asset row in the Asset Mapping list — the same card as the ticket and
- * incident rows: status-tinted icon well, ID + badges, title, and a meta
+ * incident rows: an icon well with the equipment code in its own type colour, ID + badges, title, and a meta
  * line with the equipment / asset type + high / low side, time since last
  * activity and area. Criticality rides in the badge row.
  */
@@ -17,6 +17,7 @@ import {
   getMappingStatus,
   lastActivity,
   sideLabel,
+  typeColor,
   typeMeta,
 } from "./lib";
 
@@ -27,6 +28,8 @@ const AssetMappingItem = React.memo(
     const ds = useDs();
     const status = getMappingStatus(item, ds);
     const meta = typeMeta(item);
+    // The code badge is coloured by equipment type, not status.
+    const typeTone = typeColor(meta.abbr, ds);
     const pending = item.nameplate_processing ? processingTone(ds) : null;
     const critical = criticalityTone(item, ds);
     const typeLine = [item.equipment_type || item.asset_type || "Type not set", sideLabel(item)]
@@ -43,8 +46,8 @@ const AssetMappingItem = React.memo(
         accessibilityLabel={`${item.asset_name}, ${status.label}`}
       >
         <View style={styles.row}>
-          <View style={[styles.iconWell, { backgroundColor: status.bg }]}>
-            <Text style={[styles.abbr, { color: status.fg }]}>{meta.abbr}</Text>
+          <View style={[styles.iconWell, { backgroundColor: typeTone.bg }]}>
+            <Text style={[styles.abbr, { color: typeTone.fg }]}>{meta.abbr}</Text>
           </View>
 
           <View style={styles.body}>

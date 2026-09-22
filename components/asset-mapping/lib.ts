@@ -110,6 +110,57 @@ const TYPES: TypeDef[] = [
 
 const GENERIC_SEEDS = [...IDENT, "Capacity", "Power", "Voltage / Phase", "Year of Mfg."];
 
+/* ── Type colours ──────────────────────────────────────────────────────── */
+
+/**
+ * One hue per equipment type for the code badge on each card, so a site's
+ * AHUs, FCUs, chillers… are told apart at a glance. Each entry is [light-mode
+ * text, dark-mode text]; the badge fill is the same hue at low opacity.
+ */
+const TYPE_HUES: [string, string][] = [
+  ["#1D5FC2", "#6FA8FF"], // blue
+  ["#6B3FC9", "#B39CF0"], // violet
+  ["#0B7F7A", "#4FD1C5"], // teal
+  ["#B4460C", "#F59E6B"], // orange
+  ["#B3246B", "#F28AC0"], // pink
+  ["#3F7D12", "#8BD65A"], // green
+  ["#8A6A00", "#E8C547"], // amber
+  ["#0E6FA3", "#5CC4F2"], // sky
+  ["#8C2F2F", "#F08A8A"], // red
+  ["#4B5B8C", "#A3B3E6"], // slate-indigo
+];
+
+/** Fixed hues for the common HVAC types; everything else is hashed. */
+const FIXED_HUE: Record<string, number> = {
+  AHU: 1,
+  FCU: 2,
+  CHR: 0,
+  CT: 7,
+  PMP: 4,
+  CU: 3,
+  C: 6,
+};
+
+export function typeColor(abbr: string, ds: DsTheme): { bg: string; fg: string } {
+  let index = FIXED_HUE[abbr];
+  if (index === undefined) {
+    let h = 0;
+    for (let i = 0; i < abbr.length; i++) h = (h * 31 + abbr.charCodeAt(i)) >>> 0;
+    index = h % TYPE_HUES.length;
+  }
+  const [light, dark] = TYPE_HUES[index]!;
+  const fg = ds.isDark ? dark : light;
+  return { fg, bg: withAlpha(fg, ds.isDark ? 0.18 : 0.12) };
+}
+
+function withAlpha(hex: string, alpha: number): string {
+  const h = hex.replace("#", "");
+  const r = parseInt(h.slice(0, 2), 16);
+  const g = parseInt(h.slice(2, 4), 16);
+  const b = parseInt(h.slice(4, 6), 16);
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+
 export interface TypeMeta {
   abbr: string;
   label: string;
