@@ -22,7 +22,6 @@ import {
   startOfYear,
   subMonths,
 } from "date-fns";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import { type Site } from "@/services/AttendanceService";
 import SearchableSelect from "./SearchableSelect";
 
@@ -587,13 +586,9 @@ const AdvancedFilterModal = ({
                   options={siteOptions}
                   value={selectedSiteCode}
                   onChange={(siteCode) => {
+                    // The screen's setter goes through the shared site
+                    // selection, which persists and broadcasts it.
                     setSelectedSiteCode(siteCode);
-                    if (user?.user_id || user?.id) {
-                      AsyncStorage.setItem(
-                        `last_site_${user.user_id || user.id}`,
-                        siteCode,
-                      );
-                    }
                   }}
                 />
               </View>

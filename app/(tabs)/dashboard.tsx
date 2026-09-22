@@ -16,6 +16,7 @@ import {
   Platform,
   StyleSheet,
 } from "react-native";
+import { useSelectedSiteCode } from "@/services/SiteSelection";
 import NetInfo from "@react-native-community/netinfo";
 import * as Location from "expo-location";
 import DateTimePicker from "@expo/ui/community/datetime-picker";
@@ -215,7 +216,8 @@ export default function Dashboard() {
   const [validatingLocation, setValidatingLocation] = useState(false);
   const [currentTime, setCurrentTime] = useState(new Date());
   const [sites, setSites] = useState<Site[]>([]);
-  const [selectedSiteCode, setSelectedSiteCode] = useState<string | null>(null);
+  // App-wide selection — switching site here moves every other tab too.
+  const [selectedSiteCode, setSelectedSiteCode] = useSelectedSiteCode(userId);
 
   // Period filter (operational tiles) and SLA month — independent by design.
   const todayIso = getISTDateString(currentTime);

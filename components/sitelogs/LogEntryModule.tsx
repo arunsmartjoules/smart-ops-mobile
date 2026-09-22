@@ -11,6 +11,7 @@ import {
   Platform,
   Modal,
 } from "react-native";
+import { getSelectedSiteCode, setSelectedSiteCode } from "@/services/SiteSelection";
 import { SafeAreaView } from "react-native-safe-area-context";
 // No expo-router hooks here on purpose — they throw "Couldn't find a
 // navigation context" during route teardown. Params arrive as props from the
@@ -106,7 +107,7 @@ export const LogEntryModule = ({
       try {
         const userSites = await db.query.userSites.findMany();
         if (!siteCode && userSites.length > 0) {
-          const lastSite = await AsyncStorage.getItem(`last_site_${user?.id}`);
+          const lastSite = await getSelectedSiteCode(user?.user_id || user?.id);
           setSiteCode(lastSite || userSites[0].site_code);
         }
       } catch {}
@@ -134,9 +135,9 @@ export const LogEntryModule = ({
   // Sync Site Selection to AsyncStorage
   useEffect(() => {
     if (siteCode) {
-      AsyncStorage.setItem(`last_site_${user?.id}`, siteCode);
+      void setSelectedSiteCode(user?.user_id || user?.id, siteCode);
     }
-  }, [siteCode, user?.id]);
+  }, [siteCode, user?.user_id, user?.id]);
 
   // Load Tasks
   // Load Tasks
