@@ -11,6 +11,7 @@ import {
   soRadius,
   soShadow,
 } from "@/components/tickets/TicketsUI";
+import { formatIST, formatISTTime, istParts } from "@/utils/istDate";
 
 interface TicketItemProps {
   item: Ticket;
@@ -32,6 +33,20 @@ const formatAge = (createdAt?: string) => {
   const restHours = hours % 24;
   if (days >= 3 || restHours === 0) return `${days}d`;
   return `${days}d ${restHours}h`;
+};
+
+/** "22 Sep, 10:30 AM" in IST — year appended only when it isn't this year. */
+const formatCreated = (createdAt?: string) => {
+  if (!createdAt) return "";
+  const ms = Date.parse(createdAt);
+  if (Number.isNaN(ms)) return "";
+  const sameYear = istParts(ms).year === istParts(new Date()).year;
+  const day = formatIST(ms, {
+    day: "numeric",
+    month: "short",
+    ...(sameYear ? {} : { year: "numeric" }),
+  });
+  return `${day}, ${formatISTTime(ms)}`;
 };
 
 const CLOSED = new Set(["Resolved", "Cancelled"]);
@@ -62,9 +77,16 @@ const TicketItem = React.memo(
     const priority = getTicketPriority(item.priority, ds);
     const tone = getTicketTint(item.status, ds);
     const CatIcon = getCategoryVisual(item.category).Icon;
-    const area = item.area_asset || item.location || item.site_name || "—";
+    // No site-name fallback: the list is already scoped to one site, so it
+    // would only repeat the header. No area → the pin is simply dropped.
+    const area = item.area_asset || item.location || "";
     const late = isLate(item);
     const assignee = (item.assigned_to || "").trim();
+    // Open tickets show when they were raised as well as how long ago;
+    // everything else keeps the compact age.
+    const createdLabel = item.status === "Open" ? formatCreated(item.created_at) : "";
+    const age = formatAge(item.created_at);
+    const timeLabel = createdLabel ? `${createdLabel} · ${age} ago` : age;
 
     return (
       <TouchableOpacity
@@ -80,53 +102,58 @@ const TicketItem = React.memo(
           </View>
 
           <View style={styles.body}>
-            <View style={styles.badgeRow}>
-              <Text style={styles.ticketNo}>{item.ticket_no}</Text>
-              <View style={[styles.badge, { backgroundColor: status.bg }]}>
-                <Text style={[styles.badgeText, { color: status.fg }]}>
-                  {status.label}
-                </Text>
-              </View>
-              {priority ? (
-                <View style={[styles.badge, { backgroundColor: priority.bg }]}>
-                  <Text style={[styles.badgeText, { color: priority.fg }]}>
-                    {priority.label}
+            {/* Header: identity + badges, assignee pinned to the right. */}
+            <View style={styles.headerRow}>
+              <View style={styles.badgeRow}>
+                <Text style={styles.ticketNo}>{item.ticket_no}</Text>
+                <View style={[styles.badge, { backgroundColor: status.bg }]}>
+                  <Text style={[styles.badgeText, { color: status.fg }]}>
+                    {status.label}
                   </Text>
                 </View>
-              ) : null}
+                {priority ? (
+                  <View style={[styles.badge, { backgroundColor: priority.bg }]}>
+                    <Text style={[styles.badgeText, { color: priority.fg }]}>
+                      {priority.label}
+                    </Text>
+                  </View>
+                ) : null}
+              </View>
+              <View style={styles.assignee}>
+                <Text style={styles.assigneeText}>
+                  {assignee ? getInitials(assignee) : "—"}
+                </Text>
+              </View>
             </View>
 
             <Text style={styles.title} numberOfLines={2}>
               {item.title}
             </Text>
 
-            <View style={styles.metaRow}>
-              <View style={styles.metaArea}>
+            {area ? (
+              <View style={styles.metaRow}>
                 <MapPin size={12} color={ds.carbon[600]} strokeWidth={2} />
                 <Text style={styles.metaText} numberOfLines={1}>
                   {area}
                 </Text>
               </View>
+            ) : null}
 
-              <View style={styles.metaAge}>
-                <Clock size={12} color={ds.carbon[600]} strokeWidth={2} />
-                <Text
-                  style={[
-                    styles.metaText,
-                    late && { color: ds.flame[100], fontWeight: "600" },
-                  ]}
-                >
-                  {formatAge(item.created_at)}
-                </Text>
-              </View>
-
-              <View style={{ flex: 1 }} />
-
-              <View style={styles.assignee}>
-                <Text style={styles.assigneeText}>
-                  {assignee ? getInitials(assignee) : "—"}
-                </Text>
-              </View>
+            <View style={styles.metaRow}>
+              <Clock
+                size={12}
+                color={late ? ds.flame[100] : ds.carbon[600]}
+                strokeWidth={2}
+              />
+              <Text
+                style={[
+                  styles.metaText,
+                  late && { color: ds.flame[100], fontWeight: "600" },
+                ]}
+                numberOfLines={1}
+              >
+                {timeLabel}
+              </Text>
             </View>
           </View>
         </View>
@@ -159,11 +186,19 @@ const useStyles = makeThemedStyles((ds) => ({
   },
   body: { flex: 1, minWidth: 0 },
 
+  headerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+    marginBottom: 5,
+  },
   badgeRow: {
     flexDirection: "row",
     alignItems: "center",
+    flexWrap: "wrap",
     gap: 7,
-    marginBottom: 5,
+    flexShrink: 1,
   },
   ticketNo: {
     fontSize: 10,
@@ -185,18 +220,15 @@ const useStyles = makeThemedStyles((ds) => ({
     fontWeight: "500",
     letterSpacing: 0.13,
     color: ds.carbon[100],
-    marginBottom: 7,
+    marginBottom: 3,
   },
 
-  metaRow: { flexDirection: "row", alignItems: "center", gap: 10 },
-  metaArea: {
+  metaRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 4,
-    flexShrink: 1,
-    minWidth: 0,
+    gap: 5,
+    marginTop: 3,
   },
-  metaAge: { flexDirection: "row", alignItems: "center", gap: 4 },
   metaText: { flexShrink: 1, fontSize: 10.5, color: ds.carbon[400] },
   assignee: {
     width: 24,

@@ -1052,7 +1052,6 @@ export default function IncidentsTab() {
         eyebrow="INCIDENTS"
         siteName={siteName}
         dateLabel={dateRangeLabel}
-        onPressSite={() => setShowFilter(true)}
         onRefresh={() => {
           if (!isConnected || !selectedSiteCode) return;
           onRefresh();
@@ -1130,7 +1129,7 @@ export default function IncidentsTab() {
             accessibilityRole="button"
             accessibilityLabel="Raise an incident"
           >
-            <Plus color={ds.onAccent} size={22} strokeWidth={2.2} />
+            <Plus color={ds.onControl} size={22} strokeWidth={2.2} />
             <Text style={styles.fabLabel}>Raise</Text>
           </PressableScale>
         )}
@@ -1290,9 +1289,10 @@ export default function IncidentsTab() {
                           }
                           className={`px-4 py-2 rounded-xl border ${
                             active
-                              ? "bg-red-600 border-red-600"
+                              ? ""
                               : "bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700"
                           }`}
+                          style={active ? { backgroundColor: ds.controlOn, borderColor: ds.controlOn } : undefined}
                         >
                           <Text
                             className={`text-xs font-bold ${
@@ -1404,8 +1404,8 @@ export default function IncidentsTab() {
                   <TouchableOpacity
                     onPress={onCreateIncident}
                     disabled={submitting}
-                    className="flex-1 bg-red-600 rounded-xl py-3"
-                    style={{ opacity: submitting ? 0.6 : 1 }}
+                    className="flex-1 rounded-xl py-3"
+                    style={{ backgroundColor: ds.controlOn, opacity: submitting ? 0.6 : 1 }}
                   >
                     <Text className="text-center font-bold text-white">
                       {submitting ? "Creating..." : "Create Incident"}
@@ -1505,13 +1505,13 @@ const useStyles = makeThemedStyles((ds) => ({
     minWidth: 52,
     height: 52,
     borderRadius: 99,
-    backgroundColor: ds.flame[100],
+    backgroundColor: ds.controlOn,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     gap: 7,
     paddingHorizontal: 18,
-    shadowColor: ds.flame[100],
+    shadowColor: ds.controlOn,
     shadowOffset: { width: 0, height: 6 },
     shadowOpacity: 0.5,
     shadowRadius: 8,
@@ -1521,6 +1521,6 @@ const useStyles = makeThemedStyles((ds) => ({
     fontSize: 13,
     fontWeight: "600",
     letterSpacing: 0.13,
-    color: ds.onAccent,
+    color: ds.onControl,
   },
 }));

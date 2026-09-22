@@ -4,7 +4,11 @@ import {
   RefreshControl,
   Alert,
   InteractionManager,
+  Text,
 } from "react-native";
+import { Plus } from "lucide-react-native";
+import PressableScale from "@/components/PressableScale";
+import CreateTicketModal from "@/components/tickets/CreateTicketModal";
 import { FlashList } from "@shopify/flash-list";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAttendanceGate } from "@/contexts/AttendanceGateContext";
@@ -209,6 +213,8 @@ export default function Tickets() {
   const [toDate, setToDate] = useState<string | null>(defaultToDate);
   const [tempFromDate, setTempFromDate] = useState<string | null>(defaultFromDate);
   const [tempToDate, setTempToDate] = useState<string | null>(defaultToDate);
+
+  const [creatingTicket, setCreatingTicket] = useState(false);
 
   // Detail Modal
   const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null);
@@ -1540,7 +1546,6 @@ export default function Tickets() {
         eyebrow="TICKETS"
         siteName={siteName}
         dateLabel={dateRangeLabel}
-        onPressSite={() => setShowFiltersModal(true)}
         onRefresh={() => {
           if (!isConnected || !selectedSiteCode) return;
           onRefresh();
@@ -1598,6 +1603,53 @@ export default function Tickets() {
           contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: 24 }}
         />
       </Animated.View>
+
+        {canEdit && (
+          <PressableScale
+            onPress={() => {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+              setCreatingTicket(true);
+            }}
+            style={{
+              position: "absolute",
+              right: 22,
+              bottom: 22,
+              minWidth: 52,
+              height: 52,
+              borderRadius: 99,
+              backgroundColor: ds.controlOn,
+              flexDirection: "row",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 7,
+              paddingHorizontal: 18,
+              shadowColor: ds.controlOn,
+              shadowOffset: { width: 0, height: 6 },
+              shadowOpacity: 0.5,
+              shadowRadius: 8,
+              elevation: 8,
+            }}
+            accessibilityRole="button"
+            accessibilityLabel="Raise a ticket"
+          >
+            <Plus color={ds.onControl} size={22} strokeWidth={2.2} />
+            <Text style={{ fontSize: 13, fontWeight: "600", letterSpacing: 0.13, color: ds.onControl }}>
+              Raise
+            </Text>
+          </PressableScale>
+        )}
+
+        {creatingTicket && (
+          <CreateTicketModal
+            visible
+            onClose={() => setCreatingTicket(false)}
+            onCreated={onRefresh}
+            sites={sites}
+            categoryOptions={categoryOptions}
+            defaultSiteCode={selectedSiteCode}
+            isConnected={isConnected !== false}
+          />
+        )}
 
         {showFiltersModal && (
           <AdvancedFilterModal

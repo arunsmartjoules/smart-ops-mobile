@@ -53,6 +53,7 @@ const STATUS_LABELS: Record<string, string> = {
 };
 
 const typeOf = (a: MappedAsset) => a.equipment_type || a.asset_type || "";
+const keyExtractor = (a: MappedAsset) => a.asset_id;
 
 /** Distinct non-empty values, sorted, as pill options behind an "All". */
 function optionsFrom(values: (string | null | undefined)[], format?: (v: string) => string) {
@@ -160,8 +161,9 @@ export default function AssetListView({
       if (fields.criticality !== "all" && (a.criticality ?? "").trim() !== fields.criticality) return false;
       if (fields.floor !== "all" && (a.floor ?? "").trim() !== fields.floor) return false;
       if (!q) return true;
-      return [a.asset_name, a.asset_id, a.qr_id, a.equipment_type, a.asset_type, a.category, a.criticality, a.floor, a.location]
-        .some((v) => (v || "").toLowerCase().includes(q));
+      // Keyword search covers the asset name and equipment type only; the
+      // other fields have their own filters in the advanced sheet.
+      return [a.asset_name, a.equipment_type].some((v) => (v || "").toLowerCase().includes(q));
     });
     return [...filtered].sort((x, y) => {
       if (sort === "Recent") {
@@ -173,6 +175,17 @@ export default function AssetListView({
       return x.asset_name.localeCompare(y.asset_name);
     });
   }, [assets, activeFilter, search, sort, fields, qrAsset]);
+
+  const listKey = [
+    activeFilter,
+    search.trim().toLowerCase(),
+    fields.type,
+    fields.side,
+    fields.criticality,
+    fields.floor,
+    qrAsset ?? "",
+    sort,
+  ].join("|");
 
   const openFilters = () => {
     setTempSearch(search);
@@ -239,14 +252,13 @@ export default function AssetListView({
         siteName={siteName}
         dateLabel={progressLabel}
         subtitleIcon={ClipboardCheck}
-        onPressSite={openFilters}
         onRefresh={onRefresh}
         refreshDisabled={offline}
         onFilter={openFilters}
         filterActive={filterActive}
         search={search}
         onChangeSearch={setSearch}
-        searchPlaceholder="Search asset, ID, type or area"
+        searchPlaceholder="Search asset name or equipment type"
         chips={chips}
         activeChip={activeFilter}
         onSelectChip={selectChip}
@@ -288,9 +300,13 @@ export default function AssetListView({
 
       <Animated.View style={[{ flex: 1 }, slideStyle]}>
         <FlashList
+          // FlashList 2.0.2 can keep showing recycled cells from the unfiltered
+          // list after the data shrinks (the count updated, the rows didn't).
+          // A fresh list per filter state sidesteps it and starts at the top.
+          key={listKey}
           data={rows}
           renderItem={renderItem}
-          keyExtractor={(item) => item.asset_id}
+          keyExtractor={keyExtractor}
           drawDistance={600}
           ListEmptyComponent={
             loading ? (
@@ -323,7 +339,7 @@ export default function AssetListView({
         showDate={false}
         tempSearch={tempSearch}
         setTempSearch={setTempSearch}
-        searchPlaceholder="Asset name, ID, type, area…"
+        searchPlaceholder="Asset name or equipment type"
         tempFromDate={null}
         setTempFromDate={() => {}}
         sites={sites}

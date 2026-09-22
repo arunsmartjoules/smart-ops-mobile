@@ -341,6 +341,34 @@ export const TicketsService = {
   },
 
   /**
+   * Raise a new ticket. Online-only: the ticket number is generated
+   * server-side and complaints carry no idempotency key, so an offline replay
+   * could double-create. `sendWhatsApp: false` suppresses the site-group
+   * "ticket created" announcement for this ticket only.
+   */
+  async createTicket(input: {
+    site_code: string;
+    title: string;
+    category: string;
+    area_asset?: string;
+    priority: string;
+    sendWhatsApp: boolean;
+  }) {
+    return await apiFetch(`/api/complaints`, {
+      method: "POST",
+      body: JSON.stringify({
+        site_code: input.site_code,
+        title: input.title,
+        category: input.category,
+        ...(input.area_asset ? { area_asset: input.area_asset } : {}),
+        priority: input.priority,
+        status: "Open",
+        ...(input.sendWhatsApp ? {} : { ignore_notification: true }),
+      }),
+    });
+  },
+
+  /**
    * Get ticket by ID
    */
   async getTicketById(id: string) {

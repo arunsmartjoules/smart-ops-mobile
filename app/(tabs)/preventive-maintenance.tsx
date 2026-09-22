@@ -836,7 +836,6 @@ export default function PreventiveMaintenance() {
         eyebrow="PREVENTIVE MAINTENANCE"
         siteName={siteName}
         dateLabel={dateRangeLabel}
-        onPressSite={() => setShowFiltersModal(true)}
         onRefresh={() => {
           if (!isConnected) return;
           handleHeaderManualRefresh();

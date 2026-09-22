@@ -248,8 +248,9 @@ const StatusTabs = UnderlineTabs;
 /* ── Header ──────────────────────────────────────────────────────────────
    Same header language as the Home dashboard ("JouleOps Role Dashboard v2"):
    flat on the page canvas — a small module eyebrow, the site as the title
-   (tap to change), a muted date line, round card-style action buttons and a
-   tile-style search field. The status tabs follow on the canvas.          */
+   (tappable only where the screen passes onPressSite), a muted date line,
+   round card-style action buttons and a tile-style search field. The status
+   tabs follow on the canvas.                                              */
 
 export function ModuleListHeader({
   topInset,
@@ -275,7 +276,11 @@ export function ModuleListHeader({
   eyebrow?: string;
   siteName: string;
   dateLabel: string;
-  onPressSite: () => void;
+  /**
+   * Omit to render the site as a plain title — screens with a filter tile
+   * already change site from there, so a second tap target only duplicates it.
+   */
+  onPressSite?: () => void;
   onRefresh: () => void;
   refreshDisabled?: boolean;
   /** Omit to render the header without a filter tile. */
@@ -307,10 +312,11 @@ export function ModuleListHeader({
             {eyebrow ? <Text style={styles.eyebrow}>{eyebrow}</Text> : null}
             <TouchableOpacity
               onPress={onPressSite}
+              disabled={!onPressSite}
               activeOpacity={0.75}
               style={styles.siteRow}
-              accessibilityRole="button"
-              accessibilityLabel={`Site ${siteName}. Change filters`}
+              accessibilityRole={onPressSite ? "button" : "text"}
+              accessibilityLabel={onPressSite ? `Site ${siteName}. Change site` : `Site ${siteName}`}
             >
               {showSiteIcon ? (
                 <MapPin size={15} color={ds.carbon[500]} strokeWidth={2.2} />
@@ -318,7 +324,9 @@ export function ModuleListHeader({
               <Text style={styles.title} numberOfLines={1}>
                 {siteName}
               </Text>
-              <ChevronDown size={16} color={ds.carbon[500]} strokeWidth={2} />
+              {onPressSite ? (
+                <ChevronDown size={16} color={ds.carbon[500]} strokeWidth={2} />
+              ) : null}
             </TouchableOpacity>
             <View style={styles.dateRow}>
               <SubtitleIcon size={13} color={ds.carbon[500]} strokeWidth={2} />
