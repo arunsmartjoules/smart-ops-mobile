@@ -394,9 +394,11 @@ export default function SiteLogs() {
               : todays.length === 0
               ? "Nothing scheduled or logged today"
                 : `${todays.length} entries today`;
-        // Done for today: nothing left owed and something was logged. Chiller
-        // is done once the daily target is met.
-        const done = target !== null ? completed >= target : pending === 0 && completed > 0;
+        // Done for today: nothing left owed and something was logged. Never
+        // for Chiller — the target is a scoring floor, not a cap, so operators
+        // can keep adding readings past it and Start must stay available.
+        const done =
+          target === null && pending === 0 && completed > 0;
         return {
           tab: t,
           loaded: rows !== undefined,
