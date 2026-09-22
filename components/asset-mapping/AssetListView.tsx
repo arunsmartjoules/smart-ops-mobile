@@ -42,14 +42,14 @@ interface FieldFilters {
 }
 const NO_FIELD_FILTERS: FieldFilters = { type: "all", side: "all", criticality: "all", floor: "all" };
 
-const STATUS_KEYS = ["all", "pending", "review", "completed", "no_access", "data_pending"];
+const STATUS_KEYS = ["all", "pending", "review", "completed", "failed", "no_access"];
 const STATUS_LABELS: Record<string, string> = {
   all: "All",
   pending: "Pending",
   review: "Review",
   completed: "Completed",
+  failed: "Failed",
   no_access: "No access",
-  data_pending: "Data pending",
 };
 
 const typeOf = (a: MappedAsset) => a.equipment_type || a.asset_type || "";
@@ -112,11 +112,8 @@ export default function AssetListView({
   const slideStyle = useListSlide(slide.seq, slide.dir);
 
   const counts = useMemo(() => {
-    const c = { pending: 0, review: 0, completed: 0, no_access: 0, data_pending: 0 };
-    for (const a of assets) {
-      c[a.mapping_status] += 1;
-      if (a.data_pending) c.data_pending += 1;
-    }
+    const c = { pending: 0, review: 0, completed: 0, failed: 0, no_access: 0 };
+    for (const a of assets) c[a.mapping_status] += 1;
     return c;
   }, [assets]);
 
@@ -126,16 +123,13 @@ export default function AssetListView({
       { key: "pending", label: "Pending", count: counts.pending },
       { key: "review", label: "Review", count: counts.review },
       { key: "completed", label: "Completed", count: counts.completed },
+      { key: "failed", label: "Failed", count: counts.failed },
       { key: "no_access", label: "No access", count: counts.no_access },
     ];
-    if (counts.data_pending > 0) {
-      list.push({ key: "data_pending", label: "Data pending", count: counts.data_pending });
-    }
     return list;
   }, [assets.length, counts]);
 
-  // The Data pending tab disappears once nothing is pending — fall back to All.
-  const activeFilter: ListFilter = chips.some((c) => c.key === filter) ? filter : "all";
+  const activeFilter: ListFilter = filter;
 
   const selectChip = useCallback(
     (key: string) => {
@@ -151,10 +145,7 @@ export default function AssetListView({
   const rows = useMemo(() => {
     const q = search.trim().toLowerCase();
     const filtered = assets.filter((a) => {
-      if (activeFilter === "data_pending" && !a.data_pending) return false;
-      if (activeFilter !== "all" && activeFilter !== "data_pending" && a.mapping_status !== activeFilter) {
-        return false;
-      }
+      if (activeFilter !== "all" && a.mapping_status !== activeFilter) return false;
       if (qrAsset && a.asset_name !== qrAsset) return false;
       if (fields.type !== "all" && typeOf(a) !== fields.type) return false;
       if (fields.side !== "all" && (a.category ?? "").trim() !== fields.side) return false;
@@ -351,7 +342,7 @@ export default function AssetListView({
         user={user}
         statusFilter={tempStatus}
         setStatusFilter={setTempStatus}
-        statusOptions={STATUS_KEYS.filter((k) => k !== "data_pending" || counts.data_pending > 0)}
+        statusOptions={STATUS_KEYS}
         statusOptionLabels={STATUS_LABELS}
         extraFilters={extraFilters}
         onReset={() => {

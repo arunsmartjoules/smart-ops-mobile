@@ -4,23 +4,30 @@
  * chrome in the tab, and a full-screen detail modal with the ticket-detail
  * header, cards and sticky action bar.
  *
- * A one-time walk of each site: every asset gets a nameplate photo (read by
- * AI on the backend) and a location photo, or is logged as non-accessible
- * with proof. Documented assets go to Review; a manager/admin approves them
- * to Completed (here or on the web Asset Mapping page). These statuses are
- * this flow's own — unrelated to asset status or any other asset flow.
+ * A one-time walk of each site: every asset gets a nameplate photo and a
+ * location photo (taken with the camera or picked from the gallery), or is
+ * logged as non-accessible with proof. The nameplate is read by AI on the
+ * backend in the background — the upload just confirms and closes, and the
+ * result arrives as a push naming the asset. A failed read moves the asset to
+ * the Failed tab for a re-upload. Documented assets go to Review; a
+ * manager/admin approves them to Completed (here or on the web Asset Mapping
+ * page). These statuses are this flow's own — unrelated to asset status.
  *
  * Navigation:
  *   tab                  the asset list
- *   full-screen modal    detail ↔ QR label, and the capture flow on top of it
- *                        (camera · confirm nameplate · not read · cannot access)
+ *   full-screen modal    detail ↔ QR label, and on top of it the camera,
+ *                        by-hand nameplate entry, or the cannot-access form
+ * A push about an asset deep-links here with ?assetId=&siteCode=.
  *
  * Online-only (see AssetMappingService).
  */
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { Alert, Modal, View } from "react-native";
+import { ActivityIndicator, Alert, Modal, StyleSheet, Text, View } from "react-native";
+import { useLocalSearchParams } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Haptics from "expo-haptics";
+import * as ImagePicker from "expo-image-picker";
+import * as Notifications from "expo-notifications";
 import { useAuth } from "@/contexts/AuthContext";
 import { useSites } from "@/hooks/useSites";
 import { useNetworkStatus } from "@/hooks/useNetworkStatus";
@@ -29,14 +36,12 @@ import {
   AssetMappingService,
   canApproveMapping,
   type MappedAsset,
-  type NameplateQualityIssue,
 } from "@/services/AssetMappingService";
 import AssetListView from "@/components/asset-mapping/AssetListView";
-import AssetDetailView from "@/components/asset-mapping/AssetDetailView";
+import AssetDetailView, { type PhotoSource } from "@/components/asset-mapping/AssetDetailView";
 import AssetQrView from "@/components/asset-mapping/AssetQrView";
 import CaptureCamera, { type CaptureMode } from "@/components/asset-mapping/CaptureCamera";
 import NameplateConfirm from "@/components/asset-mapping/NameplateConfirm";
-import ExtractionFailed from "@/components/asset-mapping/ExtractionFailed";
 import CannotAccessForm, {
   type CannotAccessDraft,
 } from "@/components/asset-mapping/CannotAccessForm";
@@ -44,24 +49,36 @@ import PhotoViewer from "@/components/asset-mapping/PhotoViewer";
 import { manualSeedText, typeMeta } from "@/components/asset-mapping/lib";
 
 type Screen = "detail" | "qr";
+type DocMode = "nameplate" | "location";
 
 type Busy = { title: string; sub: string };
 
 type Flow =
-  | { step: "camera"; mode: CaptureMode; busy: Busy | null; issues: NameplateQualityIssue[] | null; photoUrl?: string }
-  | { step: "confirm"; photoUrl: string; text: string; rawText: string; manual: boolean; saving: boolean }
-  | { step: "failed"; photoUrl: string }
+  | { step: "camera"; mode: CaptureMode; busy: Busy | null }
+  | { step: "confirm"; photoUrl: string; text: string; rawText: string; saving: boolean }
   | { step: "cannot"; submitting: boolean };
 
-const BUSY = {
-  uploading: { title: "Uploading photo…", sub: "Hold on a moment" },
-  checking: { title: "Checking image quality…", sub: "focus · lighting · glare" },
-  reading: { title: "Reading text with AI vision…", sub: "This can take up to 30 seconds" },
-  location: { title: "Saving location photo…", sub: "Hold on a moment" },
-} satisfies Record<string, Busy>;
+const UPLOADING: Busy = { title: "Uploading photo…", sub: "Hold on a moment" };
+
+const UPLOADED_COPY: Record<DocMode, { title: string; body: string }> = {
+  nameplate: {
+    title: "Nameplate uploaded",
+    body: "We're reading the details in the background. You'll get a notification when it's done.",
+  },
+  location: { title: "Location photo uploaded", body: "Saved to this asset." },
+};
+
+/** Same compression as the camera shot, so a gallery pick fits the 5 MB read limit. */
+const LIBRARY_OPTIONS: ImagePicker.ImagePickerOptions = {
+  mediaTypes: ["images"],
+  quality: 0.55,
+  allowsEditing: false,
+};
 
 const EMPTY_DRAFT: CannotAccessDraft = { reason: "", notes: "", proofUri: null };
 const EMPTY: MappedAsset[] = [];
+
+const firstParam = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
 
 export default function AssetMappingTab() {
   const ds = useDs();
@@ -72,6 +89,7 @@ export default function AssetMappingTab() {
   const { sites, selectedSite, selectSite } = useSites(user?.user_id || user?.id);
   const siteCode = selectedSite?.site_code || "";
   const siteName = selectedSite?.site_name || selectedSite?.site_code || "Select site";
+  const params = useLocalSearchParams<{ assetId?: string | string[]; siteCode?: string | string[] }>();
 
   /* ── data ── */
   // Results are tagged with the site they were loaded for, so switching sites
@@ -113,6 +131,17 @@ export default function AssetMappingTab() {
     setRefreshing(false);
   }, [siteCode, fetchSite]);
 
+  // A background read finished (push arrived while the app is open): reload
+  // this site so the asset leaves "Reading…" / lands in Failed right away.
+  useEffect(() => {
+    const sub = Notifications.addNotificationReceivedListener((n) => {
+      const data = n.request.content.data as Record<string, unknown> | undefined;
+      if (!String(data?.type ?? "").startsWith("asset_mapping")) return;
+      if (siteCode && (!data?.site_code || data.site_code === siteCode)) void fetchSite(siteCode);
+    });
+    return () => sub.remove();
+  }, [siteCode, fetchSite]);
+
   const replaceAsset = useCallback((updated: MappedAsset) => {
     setLoaded((prev) => ({
       ...prev,
@@ -127,10 +156,31 @@ export default function AssetMappingTab() {
   const [draft, setDraft] = useState<CannotAccessDraft>(EMPTY_DRAFT);
   const [preview, setPreview] = useState<{ url: string; title: string } | null>(null);
   const [approvingId, setApprovingId] = useState<string | null>(null);
+  // A gallery pick uploads straight from the detail screen.
+  const [libraryUpload, setLibraryUpload] = useState(false);
   const canApprove = canApproveMapping(user);
 
   // The detail modal is open while an asset is selected (and still listed).
   const asset = assets.find((a) => a.asset_id === selectedId) ?? null;
+
+  // Deep link from a push: switch to the asset's site, then open it once listed.
+  const handledLink = useRef("");
+  const linkAssetId = firstParam(params.assetId);
+  const linkSiteCode = firstParam(params.siteCode);
+  useEffect(() => {
+    if (!linkAssetId || handledLink.current === linkAssetId) return;
+    if (linkSiteCode && linkSiteCode !== siteCode) {
+      const site = sites.find((s) => s.site_code === linkSiteCode);
+      if (site) void selectSite(site);
+      return;
+    }
+    if (!current) return;
+    handledLink.current = linkAssetId;
+    if (assets.some((a) => a.asset_id === linkAssetId)) {
+      setScreen("detail");
+      setSelectedId(linkAssetId);
+    }
+  }, [linkAssetId, linkSiteCode, siteCode, sites, selectSite, current, assets]);
 
   // Ignore results from a flow the operator has already left.
   const flowSeq = useRef(0);
@@ -152,16 +202,55 @@ export default function AssetMappingTab() {
     setFlow(back);
   };
 
-  const openCamera = (mode: CaptureMode) => {
-    if (mode !== "proof" && !requireOnline()) return;
-    const go = () => setFlow({ step: "camera", mode, busy: null, issues: null });
-    if (mode !== "proof" && asset?.mapping_status === "completed") {
+  /** Upload a local photo to S3 and attach it — the only step the user waits on. */
+  const submitPhoto = async (target: MappedAsset, mode: DocMode, uri: string) => {
+    const photoUrl = await AssetMappingService.uploadPhoto(target, mode, uri);
+    return mode === "nameplate"
+      ? AssetMappingService.uploadNameplate(target.asset_id, photoUrl)
+      : AssetMappingService.saveLocation(target.asset_id, photoUrl);
+  };
+
+  const uploaded = (mode: DocMode) => {
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+    Alert.alert(UPLOADED_COPY[mode].title, UPLOADED_COPY[mode].body);
+  };
+
+  const pickFromLibrary = async (mode: DocMode) => {
+    if (!asset) return;
+    const target = asset;
+    try {
+      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!perm.granted) {
+        Alert.alert("Permission required", "Allow photo library access to upload a photo.");
+        return;
+      }
+      const result = await ImagePicker.launchImageLibraryAsync(LIBRARY_OPTIONS);
+      const uri = result.canceled ? null : result.assets?.[0]?.uri;
+      if (!uri) return;
+      setLibraryUpload(true);
+      replaceAsset(await submitPhoto(target, mode, uri));
+      uploaded(mode);
+    } catch (error: any) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
+      Alert.alert("Upload failed", error?.message || "Please try again.");
+    } finally {
+      setLibraryUpload(false);
+    }
+  };
+
+  const startPhoto = (mode: DocMode, source: PhotoSource) => {
+    if (!requireOnline()) return;
+    const go = () =>
+      source === "camera"
+        ? setFlow({ step: "camera", mode, busy: null })
+        : void pickFromLibrary(mode);
+    if (asset?.mapping_status === "completed") {
       Alert.alert(
         "Asset already approved",
-        "Retaking a photo sends this asset back to Review for a manager to approve again.",
+        "A new photo sends this asset back to Review for a manager to approve again.",
         [
           { text: "Cancel", style: "cancel" },
-          { text: "Retake", onPress: go },
+          { text: "Continue", onPress: go },
         ],
       );
       return;
@@ -186,55 +275,6 @@ export default function AssetMappingTab() {
     }
   };
 
-  const aimFlow = (mode: CaptureMode): Flow => ({ step: "camera", mode, busy: null, issues: null });
-
-  /* ── nameplate ── */
-  const runScan = async (target: MappedAsset, photoUrl: string, acceptPoorQuality: boolean) => {
-    const seq = flowSeq.current;
-    setFlow({
-      step: "camera",
-      mode: "nameplate",
-      busy: acceptPoorQuality ? BUSY.reading : BUSY.checking,
-      issues: null,
-      photoUrl,
-    });
-    // One backend call does both checks; move the label on once the quality
-    // check has plausibly finished.
-    const timer = acceptPoorQuality
-      ? null
-      : setTimeout(() => {
-          if (seq !== flowSeq.current) return;
-          setFlow((f) => (f?.step === "camera" && f.busy ? { ...f, busy: BUSY.reading } : f));
-        }, 2500);
-
-    try {
-      const result = await AssetMappingService.scanNameplate(target.asset_id, photoUrl, acceptPoorQuality);
-      if (seq !== flowSeq.current) return;
-      if (result.outcome === "poor_quality") {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
-        setFlow({ step: "camera", mode: "nameplate", busy: null, issues: result.issues, photoUrl });
-      } else if (result.outcome === "failed") {
-        replaceAsset(result.asset);
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
-        setFlow({ step: "failed", photoUrl });
-      } else {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-        setFlow({
-          step: "confirm",
-          photoUrl,
-          text: result.text,
-          rawText: result.raw_text,
-          manual: false,
-          saving: false,
-        });
-      }
-    } catch (error) {
-      fail(seq, error, aimFlow("nameplate"));
-    } finally {
-      if (timer) clearTimeout(timer);
-    }
-  };
-
   const onCapture = async (uri: string) => {
     if (!asset || flow?.step !== "camera") return;
     const mode = flow.mode;
@@ -246,29 +286,15 @@ export default function AssetMappingTab() {
     }
 
     const seq = flowSeq.current;
-    setFlow({ step: "camera", mode, busy: mode === "location" ? BUSY.location : BUSY.uploading, issues: null });
-    let photoUrl: string;
+    setFlow({ step: "camera", mode, busy: UPLOADING });
     try {
-      photoUrl = await AssetMappingService.uploadPhoto(asset, mode, uri);
-    } catch (error) {
-      fail(seq, error, aimFlow(mode));
-      return;
-    }
-    if (seq !== flowSeq.current) return;
-
-    if (mode === "nameplate") {
-      await runScan(asset, photoUrl, false);
-      return;
-    }
-
-    try {
-      const updated = await AssetMappingService.saveLocation(asset.asset_id, photoUrl);
+      const updated = await submitPhoto(asset, mode, uri);
       if (seq !== flowSeq.current) return;
       replaceAsset(updated);
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
       closeFlow();
+      uploaded(mode);
     } catch (error) {
-      fail(seq, error, aimFlow("location"));
+      fail(seq, error, { step: "camera", mode, busy: null });
     }
   };
 
@@ -281,7 +307,7 @@ export default function AssetMappingTab() {
       const updated = await AssetMappingService.confirmNameplate(asset.asset_id, {
         photoUrl: f.photoUrl,
         text: f.text,
-        manual: f.manual,
+        manual: true,
       });
       if (seq !== flowSeq.current) return;
       replaceAsset(updated);
@@ -326,10 +352,6 @@ export default function AssetMappingTab() {
       setFlow({ step: "cannot", submitting: false });
       return;
     }
-    if (flow.step === "camera" && flow.issues) {
-      setFlow(aimFlow("nameplate"));
-      return;
-    }
     closeFlow();
   };
 
@@ -346,13 +368,8 @@ export default function AssetMappingTab() {
             topInset={top}
             bottomInset={bottom}
             busy={flow.busy}
-            issues={flow.issues}
             onCapture={onCapture}
             onCancel={onFlowBack}
-            onRetake={() => setFlow(aimFlow("nameplate"))}
-            onUseAnyway={() => {
-              if (flow.photoUrl) void runScan(asset, flow.photoUrl, true);
-            }}
           />
         );
       case "confirm":
@@ -361,35 +378,14 @@ export default function AssetMappingTab() {
             topInset={top}
             bottomInset={bottom}
             assetName={asset.asset_name}
-            manual={flow.manual}
+            manual
             text={flow.text}
             rawText={flow.rawText}
             saving={flow.saving}
             onChangeText={(text) => setFlow({ ...flow, text })}
             onBack={onFlowBack}
-            onRetake={() => setFlow(aimFlow("nameplate"))}
+            onRetake={() => setFlow({ step: "camera", mode: "nameplate", busy: null })}
             onSave={saveConfirm}
-          />
-        );
-      case "failed":
-        return (
-          <ExtractionFailed
-            topInset={top}
-            bottomInset={bottom}
-            assetName={asset.asset_name}
-            onBack={closeFlow}
-            onRetake={() => setFlow(aimFlow("nameplate"))}
-            onEnterManually={() =>
-              setFlow({
-                step: "confirm",
-                photoUrl: flow.photoUrl,
-                text: manualSeedText(typeMeta(asset)),
-                rawText: asset.nameplate_data?.raw_text ?? "",
-                manual: true,
-                saving: false,
-              })
-            }
-            onSavePhotoOnly={closeFlow}
           />
         );
       case "cannot":
@@ -401,7 +397,7 @@ export default function AssetMappingTab() {
             draft={draft}
             submitting={flow.submitting}
             onChange={setDraft}
-            onCaptureProof={() => openCamera("proof")}
+            onCaptureProof={() => setFlow({ step: "camera", mode: "proof", busy: null })}
             onBack={onFlowBack}
             onSubmit={submitCannot}
           />
@@ -410,7 +406,7 @@ export default function AssetMappingTab() {
   };
 
   const closeDetail = () => {
-    if (flow || approvingId) return;
+    if (flow || approvingId || libraryUpload) return;
     setSelectedId(null);
     setScreen("detail");
   };
@@ -463,8 +459,8 @@ export default function AssetMappingTab() {
             asset={asset}
             onBack={closeDetail}
             onViewQr={() => setScreen("qr")}
-            onCaptureNameplate={() => openCamera("nameplate")}
-            onCaptureLocation={() => openCamera("location")}
+            onNameplatePhoto={(source) => startPhoto("nameplate", source)}
+            onLocationPhoto={(source) => startPhoto("location", source)}
             onCannotAccess={() => {
               if (!requireOnline()) return;
               setDraft(EMPTY_DRAFT);
@@ -477,7 +473,6 @@ export default function AssetMappingTab() {
                 photoUrl: asset.nameplate_photo_url,
                 text: manualSeedText(typeMeta(asset)),
                 rawText: asset.nameplate_data?.raw_text ?? "",
-                manual: true,
                 saving: false,
               });
             }}
@@ -487,10 +482,30 @@ export default function AssetMappingTab() {
             onApprove={approve}
           />
         )}
+        {libraryUpload ? (
+          <View style={styles.uploading}>
+            <ActivityIndicator size="large" color="#FFFFFF" />
+            <Text style={styles.uploadingText}>{UPLOADING.title}</Text>
+          </View>
+        ) : null}
         {/* Inside the presented modal so it stacks above the detail on iOS. */}
         <PhotoViewer photo={preview} onClose={() => setPreview(null)} />
       </Modal>
-
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  uploading: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: "rgba(0,0,0,0.55)",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 12,
+  },
+  uploadingText: { color: "#FFFFFF", fontSize: 14, fontWeight: "600" },
+});

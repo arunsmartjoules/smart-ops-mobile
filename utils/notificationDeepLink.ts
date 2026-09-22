@@ -62,6 +62,20 @@ export function navigateFromNotificationData(
     return true;
   }
 
+  // Asset Mapping: nameplate read finished (ok or failed) — open that asset.
+  if (data?.asset_mapping_asset_id) {
+    nav({
+      pathname: "/(tabs)/asset-mapping",
+      params: {
+        assetId: String(data.asset_mapping_asset_id),
+        ...(data.site_code != null && data.site_code !== ""
+          ? { siteCode: String(data.site_code) }
+          : {}),
+      },
+    });
+    return true;
+  }
+
   if (
     data?.screen === "attendance" ||
     String(data?.type || "").includes("attendance")

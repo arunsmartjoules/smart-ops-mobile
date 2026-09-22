@@ -1,10 +1,11 @@
 /**
  * Asset Mapping — API client for the Assets tab.
  *
- * Online-only by design: the nameplate step is the backend reading the photo
- * with Claude (Bedrock) and answering on the spot, so there's nothing useful
- * to queue offline. Photos go to S3 through the usual presigned PUT, then
- * their URLs are posted to the mapping endpoints.
+ * Online-only by design. Photos go to S3 through the usual presigned PUT,
+ * then their URLs are posted to the mapping endpoints. A nameplate upload
+ * returns at once — the backend reads it with Claude (Bedrock) in the
+ * background and pushes the result ("read" or "couldn't be read") to the
+ * uploader.
  *
  * Separate from asset status and every other asset flow — see
  * backend/services/rbac/src/repositories/assetMappingRepository.ts.
@@ -16,12 +17,14 @@ import logger from "@/utils/logger";
 
 /**
  * This flow's own status (not the asset's status):
- *   pending   — waiting for photos / nameplate data
+ *   pending   — waiting for photos / nameplate data (or the nameplate is
+ *               still being read — `nameplate_processing`)
  *   review    — documented, waiting for a manager's approval
  *   completed — approved
+ *   failed    — the AI couldn't read the nameplate; re-upload it
  *   no_access — logged as non-accessible with proof
  */
-export type MappingStatus = "pending" | "review" | "completed" | "no_access";
+export type MappingStatus = "pending" | "review" | "completed" | "failed" | "no_access";
 
 /** Roles that may approve review → completed (superadmins always can). */
 export const MAPPING_APPROVER_ROLES = ["manager", "regional_manager", "admin", "superadmin"];
@@ -29,15 +32,9 @@ export const MAPPING_APPROVER_ROLES = ["manager", "regional_manager", "admin", "
 export const canApproveMapping = (user: { role?: string | null; is_superadmin?: boolean } | null | undefined) =>
   !!user && (!!user.is_superadmin || MAPPING_APPROVER_ROLES.includes(String(user.role ?? "").toLowerCase()));
 
-export type NameplateQualityIssue =
-  | "blurry"
-  | "glare"
-  | "too_dark"
-  | "cropped"
-  | "not_a_nameplate";
-
 export interface NameplateData {
-  state: "ok" | "manual" | "failed";
+  state: "processing" | "ok" | "manual" | "failed";
+  failure_reason?: string;
   text: string;
   raw_text: string;
   fields: { label: string; value: string }[];
@@ -61,7 +58,8 @@ export interface MappedAsset {
   floor: string | null;
   qr_id: string | null;
   mapping_status: MappingStatus;
-  data_pending: boolean;
+  /** The AI is still reading the uploaded nameplate. */
+  nameplate_processing: boolean;
   nameplate_photo_url: string | null;
   nameplate_data: NameplateData | null;
   nameplate_captured_at: string | null;
@@ -80,15 +78,7 @@ export interface MappedAsset {
   mapping_updated_at: string | null;
 }
 
-export type ScanResult =
-  | { outcome: "poor_quality"; issues: NameplateQualityIssue[] }
-  | { outcome: "failed"; asset: MappedAsset }
-  | { outcome: "ok"; text: string; raw_text: string; point_count: number; tag_no: string };
-
 export type PhotoKind = "nameplate" | "location" | "no-access";
-
-/** Upload + Claude read of a phone photo routinely takes 10–30s. */
-const SCAN_TIMEOUT_MS = 90_000;
 
 async function readError(res: Response, fallback: string): Promise<string> {
   try {
@@ -99,13 +89,12 @@ async function readError(res: Response, fallback: string): Promise<string> {
   }
 }
 
-async function post<T>(path: string, body: unknown, fallback: string, timeout?: number): Promise<T> {
+async function post<T>(path: string, body: unknown, fallback: string): Promise<T> {
   let res: Response;
   try {
     res = await apiFetch(
       `${API_URL}${path}`,
       { method: "POST", body: JSON.stringify(body) },
-      timeout,
     );
   } catch (error: any) {
     logger.error("Asset mapping request failed", {
@@ -146,12 +135,12 @@ export const AssetMappingService = {
     return url;
   },
 
-  scanNameplate(assetId: string, photoUrl: string, acceptPoorQuality = false) {
-    return post<ScanResult>(
-      `/asset-mapping/${encodeURIComponent(assetId)}/nameplate/scan`,
-      { photo_url: photoUrl, accept_poor_quality: acceptPoorQuality },
-      "Couldn't read this nameplate. Please try again.",
-      SCAN_TIMEOUT_MS,
+  /** Save the nameplate photo; the read happens in the background. */
+  uploadNameplate(assetId: string, photoUrl: string) {
+    return post<MappedAsset>(
+      `/asset-mapping/${encodeURIComponent(assetId)}/nameplate/upload`,
+      { photo_url: photoUrl },
+      "Couldn't save the nameplate photo.",
     );
   },
 

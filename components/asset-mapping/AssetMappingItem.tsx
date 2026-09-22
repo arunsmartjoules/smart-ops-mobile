@@ -12,7 +12,7 @@ import { soRadius, soShadow } from "@/components/home/SiteOverview";
 import type { MappedAsset } from "@/services/AssetMappingService";
 import {
   criticalityTone,
-  dataPendingTone,
+  processingTone,
   formatAge,
   getMappingStatus,
   lastActivity,
@@ -27,7 +27,7 @@ const AssetMappingItem = React.memo(
     const ds = useDs();
     const status = getMappingStatus(item, ds);
     const meta = typeMeta(item);
-    const pending = item.data_pending ? dataPendingTone(ds) : null;
+    const pending = item.nameplate_processing ? processingTone(ds) : null;
     const critical = criticalityTone(item, ds);
     const typeLine = [item.equipment_type || item.asset_type || "Type not set", sideLabel(item)]
       .filter(Boolean)

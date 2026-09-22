@@ -3,16 +3,14 @@
  * no-access proof).
  *
  * Live viewfinder with a faint grid, flame corner brackets and an animated
- * scan line. The parent drives the state machine and feeds this screen:
- *   busy     → spinner overlay ("Checking image quality…", "Reading text…")
- *   issues   → the "Poor image quality" overlay (4a)
+ * scan line. While the parent uploads the shot it passes `busy`, which shows
+ * a spinner overlay; the nameplate is read later, in the background.
  * The camera stays dark in both themes — it's a viewfinder.
  */
 import React, { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Linking,
-  ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -26,10 +24,8 @@ import Animated, {
   withRepeat,
   withTiming,
 } from "react-native-reanimated";
-import { Camera, ImageOff } from "lucide-react-native";
+import { Camera } from "lucide-react-native";
 import { useDs } from "@/hooks/useDs";
-import type { NameplateQualityIssue } from "@/services/AssetMappingService";
-import { QUALITY_ISSUE_COPY } from "./lib";
 
 export type CaptureMode = "nameplate" | "location" | "proof";
 
@@ -59,11 +55,8 @@ interface Props {
   topInset: number;
   bottomInset: number;
   busy: { title: string; sub: string } | null;
-  issues: NameplateQualityIssue[] | null;
   onCapture: (uri: string) => void;
   onCancel: () => void;
-  onRetake: () => void;
-  onUseAnyway: () => void;
 }
 
 export default function CaptureCamera({
@@ -72,11 +65,8 @@ export default function CaptureCamera({
   topInset,
   bottomInset,
   busy,
-  issues,
   onCapture,
   onCancel,
-  onRetake,
-  onUseAnyway,
 }: Props) {
   const ds = useDs();
   const accent = ds.flame[100];
@@ -211,42 +201,6 @@ export default function CaptureCamera({
         </View>
       ) : null}
 
-      {issues ? (
-        <View style={[StyleSheet.absoluteFill, styles.failOverlay]}>
-          <ScrollView
-            contentContainerStyle={[
-              styles.failContent,
-              { paddingTop: topInset + 30, paddingBottom: bottomInset + 24 },
-            ]}
-          >
-            <View style={[styles.failIcon, { backgroundColor: "rgba(202,54,4,0.18)" }]}>
-              <ImageOff size={26} color={accent} strokeWidth={2} />
-            </View>
-            <Text style={styles.failTitle}>Poor image quality</Text>
-            <Text style={styles.failBody}>We couldn&apos;t get a clear read. Fix these and try again:</Text>
-            <View style={{ gap: 9, marginBottom: 22 }}>
-              {issues.map((key) => (
-                <View key={key} style={styles.issue}>
-                  <Text style={styles.issueTitle}>{QUALITY_ISSUE_COPY[key].title}</Text>
-                  <Text style={styles.issueFix}>{QUALITY_ISSUE_COPY[key].fix}</Text>
-                </View>
-              ))}
-            </View>
-            <TouchableOpacity
-              onPress={onRetake}
-              activeOpacity={0.85}
-              style={[styles.retake, { backgroundColor: accent }]}
-              accessibilityRole="button"
-            >
-              <Camera size={17} color="#FFFFFF" strokeWidth={2.2} />
-              <Text style={styles.retakeText}>Retake Photo</Text>
-            </TouchableOpacity>
-            <TouchableOpacity onPress={onUseAnyway} style={{ padding: 6 }} accessibilityRole="button">
-              <Text style={styles.useAnyway}>Plate is worn — use this photo anyway</Text>
-            </TouchableOpacity>
-          </ScrollView>
-        </View>
-      ) : null}
     </View>
   );
 }
@@ -318,37 +272,4 @@ const styles = StyleSheet.create({
   overlay: { backgroundColor: DIM, alignItems: "center", justifyContent: "center", gap: 14 },
   busyTitle: { fontSize: 14, fontWeight: "600", color: INK },
   busySub: { fontSize: 11.5, fontWeight: "500", color: INK_SUB },
-  failOverlay: { backgroundColor: "rgba(7,33,38,0.97)" },
-  failContent: { paddingHorizontal: 24 },
-  failIcon: {
-    width: 52,
-    height: 52,
-    borderRadius: 14,
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 16,
-  },
-  failTitle: { fontSize: 18, lineHeight: 22, fontWeight: "700", color: INK, marginBottom: 8 },
-  failBody: { fontSize: 12.5, lineHeight: 19, fontWeight: "500", color: INK_SUB, marginBottom: 18 },
-  issue: {
-    backgroundColor: "rgba(255,255,255,0.06)",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.1)",
-    borderRadius: 13,
-    paddingVertical: 12,
-    paddingHorizontal: 13,
-  },
-  issueTitle: { fontSize: 12, fontWeight: "700", color: "#F5A87F", marginBottom: 4 },
-  issueFix: { fontSize: 11.5, lineHeight: 17, fontWeight: "500", color: INK_SUB },
-  retake: {
-    minHeight: 48,
-    borderRadius: 13,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-    marginBottom: 14,
-  },
-  retakeText: { fontSize: 13.5, fontWeight: "600", color: "#FFFFFF" },
-  useAnyway: { fontSize: 12, fontWeight: "600", color: INK_SUB, textAlign: "center" },
 });

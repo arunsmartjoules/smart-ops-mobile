@@ -8,6 +8,7 @@ import React from "react";
 import { Image, ScrollView, Text, TouchableOpacity, View } from "react-native";
 import {
   Ban,
+  Camera,
   CircleAlert,
   CircleCheck,
   ChevronRight,
@@ -16,6 +17,7 @@ import {
   Keyboard,
   Map as MapIcon,
   QrCode,
+  Upload,
 } from "lucide-react-native";
 import type { LucideIcon } from "lucide-react-native";
 import { makeThemedStyles, useDs } from "@/hooks/useDs";
@@ -35,7 +37,9 @@ import {
   soShadow,
 } from "@/components/tickets/TicketDetailUI";
 import type { MappedAsset } from "@/services/AssetMappingService";
-import { dataPendingTone, getMappingStatus, sideLabel, typeMeta } from "./lib";
+import { getMappingStatus, processingTone, sideLabel, typeMeta } from "./lib";
+
+export type PhotoSource = "camera" | "library";
 
 interface Props {
   topInset: number;
@@ -43,10 +47,11 @@ interface Props {
   asset: MappedAsset;
   onBack: () => void;
   onViewQr: () => void;
-  onCaptureNameplate: () => void;
-  onCaptureLocation: () => void;
+  /** Take a photo with the camera, or pick one from the gallery. */
+  onNameplatePhoto: (source: PhotoSource) => void;
+  onLocationPhoto: (source: PhotoSource) => void;
   onCannotAccess: () => void;
-  /** Data pending: type the specs in from the saved nameplate photo. */
+  /** Failed read: type the specs in from the saved nameplate photo. */
   onEnterSpecs: () => void;
   onPreview: (url: string, title: string) => void;
   canApprove: boolean;
@@ -60,8 +65,8 @@ export default function AssetDetailView({
   asset,
   onBack,
   onViewQr,
-  onCaptureNameplate,
-  onCaptureLocation,
+  onNameplatePhoto,
+  onLocationPhoto,
   onCannotAccess,
   onEnterSpecs,
   onPreview,
@@ -78,6 +83,7 @@ export default function AssetDetailView({
   const hasLocation = !!asset.location_photo_url;
   const captured = (hasNameplate ? 1 : 0) + (hasLocation ? 1 : 0);
   const specs = asset.nameplate_data?.fields ?? [];
+  const nameplateFailed = asset.nameplate_data?.state === "failed";
   const showApprove = canApprove && asset.mapping_status === "review";
 
   const photos = [
@@ -139,7 +145,7 @@ export default function AssetDetailView({
           <Text style={styles.title}>{asset.asset_name}</Text>
           <View style={styles.badgeRow}>
             <Badge label={status.label} bg={status.bg} fg={status.fg} />
-            {asset.data_pending ? <Badge {...dataPendingTone(ds)} /> : null}
+            {asset.nameplate_processing ? <Badge {...processingTone(ds)} /> : null}
           </View>
           <View style={styles.metaWrap}>
             <MetaBlock label="Floor" value={asset.floor || "—"} />
@@ -195,14 +201,27 @@ export default function AssetDetailView({
                 ]}
               />
             </View>
-            <DocRow icon={IdCard} title="Nameplate photo" done={hasNameplate} onPress={onCaptureNameplate} />
-            <DocRow icon={MapIcon} title="Location photo" done={hasLocation} onPress={onCaptureLocation} last />
-            {asset.data_pending ? (
+            <DocRow
+              icon={IdCard}
+              title="Nameplate photo"
+              done={hasNameplate}
+              note={
+                asset.nameplate_processing
+                  ? { text: "Uploaded — reading in the background", tone: "info" }
+                  : nameplateFailed
+                    ? { text: "Couldn't be read — upload again", tone: "error" }
+                    : undefined
+              }
+              onSource={onNameplatePhoto}
+            />
+            <DocRow icon={MapIcon} title="Location photo" done={hasLocation} onSource={onLocationPhoto} last />
+            {nameplateFailed ? (
               <>
                 <View style={[styles.inline, { marginTop: 12, marginBottom: 10 }]}>
                   <CircleAlert size={14} color={ds.flame[100]} strokeWidth={2.2} />
                   <Text style={[styles.inlineText, { color: ds.flame[100] }]}>
-                    AI couldn&apos;t read the plate — retake it or enter the specs by hand.
+                    {asset.nameplate_data?.failure_reason ??
+                      "AI couldn't read the plate. Upload a clearer photo."}
                   </Text>
                 </View>
                 <View style={{ flexDirection: "row" }}>
@@ -300,17 +319,27 @@ function DocRow({
   icon: Icon,
   title,
   done,
-  onPress,
+  note,
+  onSource,
   last,
 }: {
   icon: LucideIcon;
   title: string;
   done: boolean;
-  onPress: () => void;
+  /** Overrides the captured / not-captured line (reading, failed). */
+  note?: { text: string; tone: "info" | "error" };
+  onSource: (source: PhotoSource) => void;
   last?: boolean;
 }) {
   const styles = useStyles();
   const ds = useDs();
+  const noteColor = note
+    ? note.tone === "error"
+      ? ds.flame[100]
+      : ds.sky[100]
+    : done
+      ? ds.sky[100]
+      : ds.carbon[400];
   return (
     <View style={[styles.docRow, !last && styles.docDivider]}>
       <View style={[styles.docIcon, { backgroundColor: done ? ds.sky[900] : ds.carbon[1000] }]}>
@@ -318,12 +347,21 @@ function DocRow({
       </View>
       <View style={{ flex: 1, minWidth: 0 }}>
         <Text style={styles.docTitle}>{title}</Text>
-        <Text style={[styles.docNote, done && { color: ds.sky[100] }]}>
-          {done ? "Captured" : "Not captured yet"}
+        <Text style={[styles.docNote, { color: noteColor }]}>
+          {note?.text ?? (done ? "Captured" : "Not captured yet")}
         </Text>
       </View>
       <TouchableOpacity
-        onPress={onPress}
+        onPress={() => onSource("library")}
+        activeOpacity={0.85}
+        style={[styles.docIconButton, { borderColor: ds.carbon[900] }]}
+        accessibilityRole="button"
+        accessibilityLabel={`Upload ${title} from gallery`}
+      >
+        <Upload size={16} color={ds.carbon[200]} strokeWidth={2.1} />
+      </TouchableOpacity>
+      <TouchableOpacity
+        onPress={() => onSource("camera")}
         activeOpacity={0.85}
         style={[
           styles.docButton,
@@ -332,8 +370,9 @@ function DocRow({
             : { backgroundColor: ds.controlOn, borderColor: ds.controlOn },
         ]}
         accessibilityRole="button"
-        accessibilityLabel={`${done ? "Retake" : "Capture"} ${title}`}
+        accessibilityLabel={`${done ? "Retake" : "Capture"} ${title} with the camera`}
       >
+        <Camera size={14} color={done ? ds.carbon[100] : ds.onControl} strokeWidth={2.2} />
         <Text style={[styles.docButtonText, { color: done ? ds.carbon[100] : ds.onControl }]}>
           {done ? "Retake" : "Capture"}
         </Text>
@@ -389,7 +428,7 @@ const useStyles = makeThemedStyles((ds) => ({
     marginBottom: 6,
   },
   progressFill: { height: 5, borderRadius: soRadius.pill },
-  docRow: { flexDirection: "row", alignItems: "center", gap: 11, paddingVertical: 11 },
+  docRow: { flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 11 },
   docDivider: { borderBottomWidth: 1, borderBottomColor: ds.carbon[1000] },
   docIcon: {
     width: 34,
@@ -402,13 +441,24 @@ const useStyles = makeThemedStyles((ds) => ({
   docNote: { fontSize: 10.5, color: ds.carbon[400], marginTop: 1 },
   docButton: {
     minHeight: 34,
-    paddingHorizontal: 14,
+    paddingHorizontal: 12,
     borderRadius: soRadius.pill,
     borderWidth: 1,
+    flexDirection: "row",
+    gap: 5,
     alignItems: "center",
     justifyContent: "center",
   },
   docButtonText: { fontSize: 12, fontWeight: "600" },
+  docIconButton: {
+    width: 34,
+    height: 34,
+    borderRadius: soRadius.pill,
+    borderWidth: 1,
+    backgroundColor: ds.white,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   photos: { flexDirection: "row", gap: 10 },
   photo: { flex: 1, minWidth: 0, maxWidth: "33%" },
   photoImage: {

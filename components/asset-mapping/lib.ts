@@ -4,19 +4,16 @@
  * Presentation follows the other module tabs (Tickets / Incidents): the same
  * list chrome, card, detail header and badge treatment, with this flow's
  * statuses mapped onto the same DS colour roles:
- *   Pending   → flame (work to do, like an Open ticket)
+ *   Pending   → neutral carbon (work to do)
  *   Review    → sky   (in progress, waiting on a manager)
  *   Completed → teal  (same as a completed incident)
+ *   Failed    → flame (needs a re-upload — the one that wants attention)
  *   No access → neutral carbon
  * These statuses are this flow's own — unrelated to the asset's status.
  */
 import type { DsTheme } from "@/hooks/useDs";
 import { QR_CENTER_LOGO } from "@/constants/qrLogo";
-import type {
-  MappedAsset,
-  MappingStatus,
-  NameplateQualityIssue,
-} from "@/services/AssetMappingService";
+import type { MappedAsset, MappingStatus } from "@/services/AssetMappingService";
 
 /* ── Status ────────────────────────────────────────────────────────────── */
 
@@ -27,20 +24,21 @@ export interface Tone {
 }
 
 export const mappingStatusMap = (ds: DsTheme): Record<MappingStatus, Tone> => ({
-  pending: { label: "Pending", bg: ds.flame[1000], fg: ds.flame[100] },
+  pending: { label: "Pending", bg: ds.carbon[1000], fg: ds.carbon[300] },
   review: { label: "Review", bg: ds.sky[1000], fg: ds.sky[100] },
   completed: { label: "Completed", bg: ds.sky[900], fg: ds.sky[100] },
-  no_access: { label: "No access", bg: ds.carbon[1000], fg: ds.carbon[400] },
+  failed: { label: "Failed", bg: ds.flame[1000], fg: ds.flame[100] },
+  no_access: { label: "No access", bg: ds.carbon[1000], fg: ds.carbon[500] },
 });
 
 export const getMappingStatus = (asset: MappedAsset, ds: DsTheme): Tone =>
   mappingStatusMap(ds)[asset.mapping_status] ?? mappingStatusMap(ds).pending;
 
-/** Second badge on a card / detail summary when the AI couldn't read the plate. */
-export const dataPendingTone = (ds: DsTheme): Tone => ({
-  label: "Data pending",
-  bg: ds.flame[1000],
-  fg: ds.flame[100],
+/** Extra badge while the uploaded nameplate is still being read. */
+export const processingTone = (ds: DsTheme): Tone => ({
+  label: "Reading…",
+  bg: ds.sky[1000],
+  fg: ds.sky[100],
 });
 
 /** Criticality badge: Critical reads urgent (flame), anything else neutral. */
@@ -60,7 +58,7 @@ export function sideLabel(asset: MappedAsset): string | null {
   return m ? `${m[1]![0]!.toUpperCase()}${m[1]!.slice(1).toLowerCase()} side` : value;
 }
 
-export type ListFilter = "all" | MappingStatus | "data_pending";
+export type ListFilter = "all" | MappingStatus;
 
 /* ── Asset types ───────────────────────────────────────────────────────── */
 
@@ -193,17 +191,6 @@ export const tagOf = (text: string) =>
   parsePoints(text).find((p) => /tag/i.test(p.label))?.value ?? "";
 
 /* ── Copy ──────────────────────────────────────────────────────────────── */
-
-export const QUALITY_ISSUE_COPY: Record<NameplateQualityIssue, { title: string; fix: string }> = {
-  blurry: { title: "Blurry", fix: "Hold the phone steady and tap to focus." },
-  glare: { title: "Glare on plate", fix: "Reflection is covering text; change your angle." },
-  too_dark: { title: "Too dark", fix: "Move closer or turn on the flash." },
-  cropped: { title: "Plate cut off", fix: "Step back so the whole plate is inside the frame." },
-  not_a_nameplate: {
-    title: "No nameplate found",
-    fix: "Point the camera at the rating plate on the unit.",
-  },
-};
 
 export const NO_ACCESS_REASONS = [
   "Concealed behind false ceiling/panel",
