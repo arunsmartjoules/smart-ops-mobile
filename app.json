@@ -22,7 +22,7 @@
     "android": {
       "googleServicesFile": "./google-services.json",
       "adaptiveIcon": {
-        "backgroundColor": "#4C89B4",
+        "backgroundColor": "#CA3604",
         "backgroundImage": "./assets/images/jouleops-icon-background.png",
         "foregroundImage": "./assets/images/jouleops-icon-foreground.png"
       },
