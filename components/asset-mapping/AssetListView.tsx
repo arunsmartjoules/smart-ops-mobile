@@ -42,9 +42,8 @@ interface FieldFilters {
 }
 const NO_FIELD_FILTERS: FieldFilters = { type: "all", side: "all", criticality: "all", floor: "all" };
 
-const STATUS_KEYS = ["all", "pending", "review", "completed", "failed", "no_access"];
+const STATUS_KEYS = ["pending", "review", "completed", "failed", "no_access"];
 const STATUS_LABELS: Record<string, string> = {
-  all: "All",
   pending: "Open",
   review: "Review",
   completed: "Completed",
@@ -96,7 +95,7 @@ export default function AssetListView({
 }: Props) {
   const ds = useDs();
   const styles = useStyles();
-  const [filter, setFilter] = useState<ListFilter>("all");
+  const [filter, setFilter] = useState<ListFilter>("pending");
   const [search, setSearch] = useState("");
   const [fields, setFields] = useState<FieldFilters>(NO_FIELD_FILTERS);
   const [qrAsset, setQrAsset] = useState<string | null>(null);
@@ -105,7 +104,7 @@ export default function AssetListView({
   // Advanced sheet drafts — applied together on "Apply Filters", like PM.
   const [showFilters, setShowFilters] = useState(false);
   const [tempSearch, setTempSearch] = useState("");
-  const [tempStatus, setTempStatus] = useState<string>("all");
+  const [tempStatus, setTempStatus] = useState<string>("pending");
   const [tempFields, setTempFields] = useState<FieldFilters>(NO_FIELD_FILTERS);
   const [sort, setSort] = useState<Sort>("Name");
   const [slide, setSlide] = useState({ seq: 0, dir: 1 });
@@ -119,7 +118,6 @@ export default function AssetListView({
 
   const chips = useMemo<StatusChip[]>(() => {
     const list: StatusChip[] = [
-      { key: "all", label: "All", count: assets.length || undefined },
       { key: "pending", label: "Open", count: counts.pending },
       { key: "review", label: "Review", count: counts.review },
       { key: "completed", label: "Completed", count: counts.completed },
@@ -187,7 +185,7 @@ export default function AssetListView({
 
   const applyFilters = () => {
     setSearch(tempSearch);
-    selectChip(chips.some((c) => c.key === tempStatus) ? tempStatus : "all");
+    selectChip(chips.some((c) => c.key === tempStatus) ? tempStatus : "pending");
     setFields(tempFields);
     setShowFilters(false);
   };
@@ -219,11 +217,15 @@ export default function AssetListView({
     (assetName: string) => {
       setQrAsset(assetName);
       setSearch("");
-      // One match — open it straight away, the scan's usual intent.
+      // One match — open it straight away, the scan's usual intent. There's
+      // no "All" tab, so move to its status tab or the list would hide it.
       const hits = assets.filter((a) => a.asset_name === assetName);
-      if (hits.length === 1) onOpen(hits[0]!);
+      if (hits.length === 1) {
+        selectChip(hits[0]!.mapping_status);
+        onOpen(hits[0]!);
+      }
     },
-    [assets, onOpen],
+    [assets, onOpen, selectChip],
   );
 
   const renderItem = useCallback(
@@ -347,7 +349,7 @@ export default function AssetListView({
         extraFilters={extraFilters}
         onReset={() => {
           setTempSearch("");
-          setTempStatus("all");
+          setTempStatus("pending");
           setTempFields(NO_FIELD_FILTERS);
         }}
         applyAdvancedFilters={applyFilters}

@@ -669,7 +669,6 @@ export default function PreventiveMaintenance() {
 
   const statusChips = useMemo<StatusChip[]>(
     () => [
-      { key: "All", label: "All", count: stats.total },
       { key: "Pending", label: "Open", count: stats.pending },
       { key: "In-progress", label: "In progress", count: stats.inProgress },
       { key: "Completed", label: "Completed", count: stats.completed },

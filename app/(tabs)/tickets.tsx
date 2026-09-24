@@ -344,7 +344,6 @@ export default function Tickets() {
   const statusChips = useMemo<StatusChip[]>(() => {
     const byStatus = stats?.byStatus as Record<string, number> | undefined;
     return [
-      { key: "All", label: "All", count: stats?.total },
       { key: "Open", label: "Open", count: byStatus?.Open },
       { key: "Inprogress", label: "In progress", count: byStatus?.Inprogress },
       { key: "Hold", label: "Hold", count: byStatus?.Hold },
@@ -1676,7 +1675,8 @@ export default function Tickets() {
             setStatusFilter={setStatusFilter}
             priorityFilter={priorityFilter}
             setPriorityFilter={setPriorityFilter}
-            statusOptions={["All", "Open", "Inprogress", "Resolved", "Hold", "Waiting", "Cancelled"]}
+            statusOptions={["Open", "Inprogress", "Resolved", "Hold", "Waiting", "Cancelled"]}
+            defaultStatus="Open"
             applyAdvancedFilters={applyAdvancedFilters}
           />
         )}

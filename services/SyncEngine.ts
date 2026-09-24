@@ -1079,8 +1079,12 @@ class SyncEngineImpl implements SyncEngine {
       endpoint = `/api/incidents/${payload.id}`;
       method = "PUT";
     } else if (entity_type === "incident_status_update") {
+      // A completion captured offline carries local photo URIs; upload them
+      // first — the backend only accepts uploaded (https) completion photos.
+      await this._uploadLocalIncidentPhotos(payload);
       endpoint = `/api/incidents/${payload.id}/status`;
       method = "PATCH";
+      body = JSON.stringify(payload);
     } else if (entity_type === "incident_rca_status_update") {
       endpoint = `/api/incidents/${payload.id}/rca-status`;
       method = "PATCH";
@@ -1274,6 +1278,46 @@ class SyncEngineImpl implements SyncEngine {
       serverId,
       requiresCheckout: !!requiresCheckout,
     });
+  }
+
+  /**
+   * Replace any still-local (`file:`) URIs in a queued incident status update's
+   * `attachments` with uploaded S3 URLs, in place. Unlike a sign-off signature,
+   * a completion photo is the point of the request — the backend rejects a
+   * completion without one — so a failed upload throws a transient error and
+   * the queue retries the item later instead of sending the PATCH.
+   */
+  private async _uploadLocalIncidentPhotos(
+    payload: Record<string, any>,
+  ): Promise<void> {
+    const photos: unknown = payload.attachments;
+    if (!Array.isArray(photos) || !photos.some((u) => typeof u === "string" && u.startsWith("file:"))) {
+      return;
+    }
+    const { StorageService } =
+      require("./StorageService") as typeof import("./StorageService");
+    const uploaded: string[] = [];
+    for (let i = 0; i < photos.length; i += 1) {
+      const uri = photos[i];
+      if (typeof uri !== "string") continue;
+      if (!uri.startsWith("file:")) {
+        uploaded.push(uri);
+        continue;
+      }
+      const ext = (uri.split("?")[0]?.split(".").pop() || "jpg").toLowerCase();
+      const url = await StorageService.uploadFromLocalUri(
+        "jouleops-attachments",
+        `incidents/${payload.site_code || "unknown"}/incident/${Date.now()}_${i}_${payload.id}.${ext}`,
+        uri,
+      );
+      if (!url) {
+        const err: any = new Error("incident_status_update: completion photo upload failed");
+        err.statusCode = 503;
+        throw err;
+      }
+      uploaded.push(url);
+    }
+    payload.attachments = uploaded;
   }
 
   /**

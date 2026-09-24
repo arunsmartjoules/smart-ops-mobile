@@ -17,8 +17,8 @@ export const incidentStatusMap = (
 });
 
 export const getIncidentStatus = (status: string | undefined, ds: DsTheme) =>
-  incidentStatusMap(ds)[status || "Open"] ?? {
-    label: status || "Open",
+  incidentStatusMap(ds)[status || "Inprogress"] ?? {
+    label: status || "In progress",
     bg: ds.carbon[1000],
     fg: ds.carbon[400],
   };

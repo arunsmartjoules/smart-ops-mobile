@@ -190,8 +190,6 @@ interface IncidentCreateForm {
   attachments: string[];
   incident_created_time: Date;
   assigned_to: string;
-  status: "Open" | "Inprogress";
-  incident_updated_time: Date | null;
   // Stable idempotency key for this form's incident, reused on every submit /
   // offline replay so retries collapse into one incident server-side.
   client_request_id: string;
@@ -229,10 +227,12 @@ export default function IncidentsTab() {
     const t = setTimeout(() => setLoading(false), 6000);
     return () => clearTimeout(t);
   }, []);
+  // No Open tab any more (incidents start In progress); a deep link may still
+  // ask for Resolved.
   const initialStatus =
-    (Array.isArray(params.status) ? params.status[0] : params.status) === "Inprogress"
-      ? "Inprogress"
-      : "Open";
+    (Array.isArray(params.status) ? params.status[0] : params.status) === "Resolved"
+      ? "Resolved"
+      : "Inprogress";
   // Default range = 1st of the current IST month → today (IST).
   const defaultToDate = useMemo(() => istTodayString(), []);
   const defaultFromDate = useMemo(() => {
@@ -275,7 +275,6 @@ export default function IncidentsTab() {
   const [detailRcaChecker, setDetailRcaChecker] = useState("");
   const [siteUserOptions, setSiteUserOptions] = useState<SelectOption[]>([]);
   const [showCreatedTimePicker, setShowCreatedTimePicker] = useState(false);
-  const [showRespondedTimePicker, setShowRespondedTimePicker] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [assetsLoading, setAssetsLoading] = useState(false);
   const [assetOptions, setAssetOptions] = useState<SelectOption[]>([]);
@@ -291,8 +290,6 @@ export default function IncidentsTab() {
     attachments: [],
     incident_created_time: new Date(),
     assigned_to: "",
-    status: "Open",
-    incident_updated_time: null,
     client_request_id: uuidv4(),
   }));
   const currentUserId = user?.user_id || user?.id || "";
@@ -485,8 +482,6 @@ export default function IncidentsTab() {
       attachments: [],
       incident_created_time: new Date(),
       assigned_to: currentUserId,
-      status: "Open",
-      incident_updated_time: null,
       // Fresh key per new draft so distinct incidents don't share one.
       client_request_id: uuidv4(),
     });
@@ -603,42 +598,6 @@ export default function IncidentsTab() {
     setShowCreatedTimePicker(true);
   }, [canEditMeta, form.incident_created_time]);
 
-  const openRespondedTimePicker = useCallback(() => {
-    const base = form.incident_updated_time || new Date();
-    if (Platform.OS === "android") {
-      DateTimePickerAndroid.open({
-        value: base,
-        mode: "date",
-        is24Hour: true,
-        maximumDate: new Date(),
-        onChange: (_event, date) => {
-          if (!date) return;
-          DateTimePickerAndroid.open({
-            value: date,
-            mode: "time",
-            is24Hour: true,
-            onChange: (_event2, date2) => {
-              if (!date2) return;
-              if (date2.getTime() < form.incident_created_time.getTime()) {
-                Alert.alert(
-                  "Invalid time",
-                  "Responded time cannot be earlier than the created time.",
-                );
-                return;
-              }
-              if (date2.getTime() > Date.now()) {
-                Alert.alert("Invalid time", "Responded time cannot be in the future.");
-                return;
-              }
-              setForm((prev) => ({ ...prev, incident_updated_time: date2 }));
-            },
-          });
-        },
-      });
-      return;
-    }
-    setShowRespondedTimePicker(true);
-  }, [form.incident_updated_time, form.incident_created_time]);
 
   const onCreateIncident = async () => {
     if (!form.site_code) return Alert.alert("Required", "Please select site.");
@@ -650,18 +609,6 @@ export default function IncidentsTab() {
     if (form.incident_created_time.getTime() > Date.now()) {
       return Alert.alert("Invalid time", "Incident created time cannot be in the future.");
     }
-    if (form.status === "Inprogress") {
-      const responded = form.incident_updated_time || new Date();
-      if (responded.getTime() < form.incident_created_time.getTime()) {
-        return Alert.alert(
-          "Invalid time",
-          "Responded time cannot be earlier than the created time.",
-        );
-      }
-      if (responded.getTime() > Date.now()) {
-        return Alert.alert("Invalid time", "Responded time cannot be in the future.");
-      }
-    }
 
     setSubmitting(true);
     let uploadedAttachments: string[];
@@ -672,22 +619,19 @@ export default function IncidentsTab() {
       Alert.alert("Upload failed", error?.message || "Could not upload attachments to cloud storage.");
       return;
     }
-    const respondedAtForInprogress =
-      form.status === "Inprogress"
-        ? (form.incident_updated_time || new Date()).toISOString()
-        : undefined;
     const payload = {
       ...form,
       source: "Incident",
       site_code: form.site_code,
       raised_by: user?.user_id || user?.id || "",
       incident_created_time: new Date().toISOString(),
-      status: form.status,
+      // Incidents start In progress — there is no Open step. The backend
+      // stamps the responded time from the created time.
+      status: "Inprogress",
       rca_status: "Open",
       assigned_to: form.assigned_to,
       attachments: uploadedAttachments,
       ...(canEditMeta ? { incident_created_time: form.incident_created_time.toISOString() } : {}),
-      ...(respondedAtForInprogress ? { incident_updated_time: respondedAtForInprogress } : {}),
       // Stable across re-submits / offline replays of this draft.
       client_request_id: form.client_request_id,
     };
@@ -708,7 +652,8 @@ export default function IncidentsTab() {
 
   const openIncidentModal = useCallback((item: IncidentItem) => {
     setSelectedIncident(item);
-    setNextStatus(item.status === "Open" ? "Inprogress" : item.status === "Inprogress" ? "Resolved" : null);
+    // Anything not yet completed (incl. a legacy Open row) can only move to Completed.
+    setNextStatus(item.status === "Resolved" ? null : "Resolved");
     setUpdateRemarks(String(item.remarks || ""));
     setUpdateRcaStatus(item.rca_status);
     setDetailPendingAttachments([]);
@@ -737,6 +682,10 @@ export default function IncidentsTab() {
     if (!selectedIncident) return;
     if (nextStatus === "Resolved" && !updateRemarks.trim()) {
       Alert.alert("Required", "Remarks required to resolve incident.");
+      return;
+    }
+    if (nextStatus === "Resolved" && detailPendingAttachments.length === 0) {
+      Alert.alert("Required", "Attach at least one photo to complete the incident.");
       return;
     }
 
@@ -789,12 +738,33 @@ export default function IncidentsTab() {
 
     setIsUpdatingIncident(true);
     try {
+      // Completing carries its photos in the status PATCH itself (the backend
+      // refuses a completion without one). Offline, the local file:// URIs are
+      // queued and SyncEngine uploads them before replaying the PATCH.
+      let completionPhotos: string[] = [];
+      if (nextStatus === "Resolved") {
+        try {
+          completionPhotos = await uploadUrisToStorage(
+            detailPendingAttachments,
+            selectedIncident.site_code,
+            "incident",
+          );
+        } catch (error: any) {
+          Alert.alert("Upload failed", error?.message || "Could not upload the completion photos.");
+          setIsUpdatingIncident(false);
+          return;
+        }
+      }
+
       if (nextStatus) {
         const statusRes = await IncidentsService.updateStatus(
           selectedIncident.id,
           {
             status: nextStatus,
             remarks: nextStatus === "Resolved" ? updateRemarks.trim() : undefined,
+            ...(nextStatus === "Resolved"
+              ? { attachments: completionPhotos, site_code: selectedIncident.site_code }
+              : {}),
             assigned_to: detailAssignedTo || undefined,
             ...(nextStatus === "Inprogress" && canEditMeta && detailRespondedAt
               ? { incident_updated_time: detailRespondedAt.toISOString() }
@@ -861,7 +831,8 @@ export default function IncidentsTab() {
         }
       }
 
-      if (detailPendingAttachments.length > 0) {
+      // Completion photos already went with the status PATCH above.
+      if (detailPendingAttachments.length > 0 && nextStatus !== "Resolved") {
         const existing = parseIncidentAttachments(selectedIncident.attachments);
         let uploaded: string[] = [];
         try {
@@ -898,6 +869,10 @@ export default function IncidentsTab() {
         if (nextStatus) localUpdate.status = nextStatus;
         if (nextStatus === "Resolved") {
           localUpdate.remarks = updateRemarks.trim();
+          localUpdate.attachments = JSON.stringify([
+            ...parseIncidentAttachments(selectedIncident.attachments),
+            ...completionPhotos,
+          ]);
           localUpdate.incident_resolved_time = detailResolvedAt
             ? detailResolvedAt.getTime()
             : now;
@@ -970,7 +945,6 @@ export default function IncidentsTab() {
       (stats.Open || 0) + (stats.Inprogress || 0) + (stats.Resolved || 0);
     return [
       { key: "All", label: "All", count: total || undefined },
-      { key: "Open", label: "Open", count: stats.Open },
       { key: "Inprogress", label: "In progress", count: stats.Inprogress },
       { key: "Resolved", label: "Completed", count: stats.Resolved },
     ];
@@ -1155,7 +1129,7 @@ export default function IncidentsTab() {
           setStatusFilter={(v: string) => setStatusFilter(v as IncidentStatus)}
           priorityFilter={"All"}
           setPriorityFilter={() => {}}
-          statusOptions={["All", "Open", "Inprogress", "Resolved"]}
+          statusOptions={["All", "Inprogress", "Resolved"]}
           statusOptionLabels={{ Resolved: "Completed" }}
           applyAdvancedFilters={applyAdvancedFilters}
           title="Filter Incidents"
@@ -1267,60 +1241,6 @@ export default function IncidentsTab() {
                     </Text>
                   </TouchableOpacity>
                 </View>
-                <View className="mb-4">
-                  <Text className="text-slate-700 dark:text-slate-300 font-semibold text-sm mb-2">
-                    Status
-                  </Text>
-                  <View className="flex-row gap-2">
-                    {(["Open", "Inprogress"] as const).map((opt) => {
-                      const active = form.status === opt;
-                      return (
-                        <TouchableOpacity
-                          key={opt}
-                          onPress={() =>
-                            setForm((prev) => ({
-                              ...prev,
-                              status: opt,
-                              incident_updated_time:
-                                opt === "Inprogress"
-                                  ? prev.incident_updated_time || new Date()
-                                  : null,
-                            }))
-                          }
-                          className={`px-4 py-2 rounded-xl border ${
-                            active
-                              ? ""
-                              : "bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700"
-                          }`}
-                          style={active ? { backgroundColor: ds.controlOn, borderColor: ds.controlOn } : undefined}
-                        >
-                          <Text
-                            className={`text-xs font-bold ${
-                              active ? "text-white" : "text-slate-700 dark:text-slate-200"
-                            }`}
-                          >
-                            {opt}
-                          </Text>
-                        </TouchableOpacity>
-                      );
-                    })}
-                  </View>
-                </View>
-                {form.status === "Inprogress" ? (
-                  <View className="mb-4">
-                    <Text className="text-slate-700 dark:text-slate-300 font-semibold text-sm mb-2">
-                      Responded Time
-                    </Text>
-                    <TouchableOpacity
-                      onPress={openRespondedTimePicker}
-                      className="border border-slate-300 dark:border-slate-700 rounded-xl px-3 py-3"
-                    >
-                      <Text className="text-slate-900 dark:text-slate-50">
-                        {formatIST(form.incident_updated_time || new Date(), { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: true }, "en-US")}
-                      </Text>
-                    </TouchableOpacity>
-                  </View>
-                ) : null}
                 <FullscreenPicker
                   label="Assigned To"
                   placeholder="Select assignee"
@@ -1421,29 +1341,6 @@ export default function IncidentsTab() {
                     setShowCreatedTimePicker(false);
                     if (!date) return;
                     setForm((prev) => ({ ...prev, incident_created_time: date }));
-                  }}
-                />
-              ) : null}
-              {showRespondedTimePicker && Platform.OS !== "android" ? (
-                <DateTimePicker
-                  value={form.incident_updated_time || new Date()}
-                  mode="datetime"
-                  maximumDate={new Date()}
-                  onChange={(_, date) => {
-                    setShowRespondedTimePicker(false);
-                    if (!date) return;
-                    if (date.getTime() < form.incident_created_time.getTime()) {
-                      Alert.alert(
-                        "Invalid time",
-                        "Responded time cannot be earlier than the created time.",
-                      );
-                      return;
-                    }
-                    if (date.getTime() > Date.now()) {
-                      Alert.alert("Invalid time", "Responded time cannot be in the future.");
-                      return;
-                    }
-                    setForm((prev) => ({ ...prev, incident_updated_time: date }));
                   }}
                 />
               ) : null}

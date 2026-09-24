@@ -111,7 +111,7 @@ export const IncidentsService = {
         attachments: JSON.stringify(i.attachments || []),
         rca_attachments: JSON.stringify(i.rca_attachments || []),
         remarks: i.remarks || null,
-        status: i.status || "Open",
+        status: i.status || "Inprogress",
         rca_status: i.rca_status || "Open",
         assigned_by: i.assigned_by || null,
         assignment_type: i.assignment_type || null,
@@ -235,6 +235,11 @@ export const IncidentsService = {
     incident_updated_time?: string;
     incident_resolved_time?: string;
     assigned_to?: string | string[];
+    /** Completion photos — required by the backend when status is Resolved.
+     *  May hold local file:// URIs when queued offline (uploaded on replay). */
+    attachments?: string[];
+    /** Only used by the offline replay to place uploaded photos; the API ignores it. */
+    site_code?: string;
   }) {
     const queuePayload = { id, ...payload };
     const body = JSON.stringify(payload);

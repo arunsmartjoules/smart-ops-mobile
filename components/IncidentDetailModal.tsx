@@ -269,7 +269,85 @@ export default function IncidentDetailModal({
   const isResolved = incident.status === "Resolved";
   const restrictResolvedEdits = isResolved && !canEditRca;
 
+  // Photo picker (new + existing thumbnails, Camera / Gallery). Rendered in
+  // the completion section while completing — where a photo is mandatory —
+  // and as the general Attachments section otherwise. `completion` lists only
+  // the new photos, so earlier ones can't read as meeting the requirement.
+  const renderPhotoPicker = (title: string, hint: string, completion = false) => {
+    const existing = completion ? [] : existingAttachmentUrls;
+    return (
+      <>
+        <Text style={detailStyles.eyebrow}>{title}</Text>
+        <Text className="text-slate-500 dark:text-slate-400 text-xs mb-2">
+          {hint}
+        </Text>
+        {existing.length > 0 || pendingAttachments.length > 0 ? (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            className="mb-3"
+          >
+            <View className="flex-row gap-2">
+              {existing.map((uri) => (
+                <Image
+                  key={`e-${uri}`}
+                  source={{ uri }}
+                  style={{ width: 72, height: 72, borderRadius: 12 }}
+                />
+              ))}
+              {pendingAttachments.map((uri) => (
+                <View key={`p-${uri}`} className="relative">
+                  <Image
+                    source={{ uri }}
+                    style={{ width: 72, height: 72, borderRadius: 12 }}
+                  />
+                  <TouchableOpacity
+                    onPress={() => removePending(uri)}
+                    className="absolute -top-1 -right-1 w-6 h-6 rounded-full bg-black/70 items-center justify-center"
+                  >
+                    <X size={14} color="#fff" />
+                  </TouchableOpacity>
+                </View>
+              ))}
+            </View>
+          </ScrollView>
+        ) : (
+          <Text className="text-slate-500 dark:text-slate-400 text-xs mb-3">
+            {completion ? "No photo added yet" : "No attachments yet"}
+          </Text>
+        )}
+        <View className="flex-row gap-2">
+          <TouchableOpacity
+            onPress={capturePhoto}
+            className="px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 flex-row items-center"
+          >
+            <Camera size={16} color={iconMuted} />
+            <Text className="ml-2 text-slate-700 dark:text-slate-200 text-xs font-semibold">
+              Camera
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={pickFromGallery}
+            className="px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 flex-row items-center"
+          >
+            <ImageIcon size={16} color={iconMuted} />
+            <Text className="ml-2 text-slate-700 dark:text-slate-200 text-xs font-semibold">
+              Gallery
+            </Text>
+          </TouchableOpacity>
+        </View>
+      </>
+    );
+  };
+
   const statusTone = getIncidentStatus(incident.status, ds);
+  // Completing needs remarks and at least one new photo (backend-enforced too).
+  const completionBlocker =
+    nextStatus === "Resolved" && !remarks.trim()
+      ? "Add remarks to complete the incident"
+      : nextStatus === "Resolved" && pendingAttachments.length === 0
+        ? "Add at least one photo to complete the incident"
+        : null;
   const rcaTone = getIncidentRca(incident.rca_status, ds);
   const raisedMs = incident.incident_created_time
     ? typeof incident.incident_created_time === "number"
@@ -363,35 +441,21 @@ export default function IncidentDetailModal({
                 <>
                   <View style={detailStyles.statusRow}>
                     <Text style={detailStyles.statusLabel}>Status</Text>
-                    {incident.status === "Open" ? (
-                      <StatusChip
-                        label="In progress"
-                        active={nextStatus === "Inprogress"}
-                        onPress={() =>
-                          setNextStatus(
-                            nextStatus === "Inprogress" ? null : "Inprogress",
-                          )
-                        }
-                      />
-                    ) : null}
-                    {incident.status === "Inprogress" ? (
-                      <StatusChip
-                        label="Completed"
-                        active={nextStatus === "Resolved"}
-                        onPress={() =>
-                          setNextStatus(
-                            nextStatus === "Resolved" ? null : "Resolved",
-                          )
-                        }
-                      />
-                    ) : null}
+                    {/* Incidents start In progress (no Open step), so the
+                        only move left is to Completed. A legacy Open row
+                        is treated the same. */}
+                    <StatusChip
+                      label="Completed"
+                      active={nextStatus === "Resolved"}
+                      onPress={() =>
+                        setNextStatus(nextStatus === "Resolved" ? null : "Resolved")
+                      }
+                    />
                   </View>
                   <StatusHint icon={ClockIcon}>
                     {nextStatus === "Resolved"
-                      ? "Needs a resolved time and remarks"
-                      : nextStatus === "Inprogress"
-                        ? "Needs a responded time"
-                        : "Pick the transition to record"}
+                      ? "Needs a resolved time, remarks and at least one photo"
+                      : "Tap Completed to close this incident"}
                   </StatusHint>
                 </>
               ) : null}
@@ -405,27 +469,8 @@ export default function IncidentDetailModal({
                 disabled={!canEditMeta || restrictResolvedEdits}
               />
 
-              {incident.status !== "Resolved" || nextStatus === "Inprogress" ? (
-                <View className="mb-3">
-                  <Text style={detailStyles.eyebrow}>
-                    Incident Responded Time
-                  </Text>
-                  <TouchableOpacity
-                    onPress={() =>
-                      canEditMeta && openDateTimePicker("responded")
-                    }
-                    disabled={!canEditMeta}
-                    className="border border-slate-300 dark:border-slate-700 rounded-xl px-3 py-3"
-                    style={{ opacity: canEditMeta ? 1 : 0.65 }}
-                  >
-                    <Text className="text-slate-900 dark:text-slate-50">
-                      {formatIST(respondedAt || new Date(), IST_PICKED_OPTS, "en-US")}
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-              ) : null}
 
-              {incident.status === "Inprogress" || nextStatus === "Resolved" ? (
+              {!isResolved ? (
                 <View className="mb-3">
                   <Text style={detailStyles.eyebrow}>
                     Incident Resolved Time
@@ -454,6 +499,15 @@ export default function IncidentDetailModal({
                     textAlignVertical="top"
                     className="border border-slate-300 dark:border-slate-700 rounded-xl px-3 py-3 text-slate-900 dark:text-slate-50 min-h-[100px]"
                   />
+                  {nextStatus === "Resolved" ? (
+                    <View className="mt-3">
+                      {renderPhotoPicker(
+                        "Completion Photos *",
+                        "At least one photo is required to mark the incident completed.",
+                        true,
+                      )}
+                    </View>
+                  ) : null}
                 </View>
               ) : null}
 
@@ -474,71 +528,14 @@ export default function IncidentDetailModal({
                 </View>
               ) : null}
 
-              <View className="mb-3">
-                <Text style={detailStyles.eyebrow}>
-                  Attachments
-                </Text>
-                <Text className="text-slate-500 dark:text-slate-400 text-xs mb-2">
-                  New photos are saved to the same incident attachments list
-                  when you tap Update.
-                </Text>
-                {existingAttachmentUrls.length > 0 ||
-                pendingAttachments.length > 0 ? (
-                  <ScrollView
-                    horizontal
-                    showsHorizontalScrollIndicator={false}
-                    className="mb-3"
-                  >
-                    <View className="flex-row gap-2">
-                      {existingAttachmentUrls.map((uri) => (
-                        <Image
-                          key={`e-${uri}`}
-                          source={{ uri }}
-                          style={{ width: 72, height: 72, borderRadius: 12 }}
-                        />
-                      ))}
-                      {pendingAttachments.map((uri) => (
-                        <View key={`p-${uri}`} className="relative">
-                          <Image
-                            source={{ uri }}
-                            style={{ width: 72, height: 72, borderRadius: 12 }}
-                          />
-                          <TouchableOpacity
-                            onPress={() => removePending(uri)}
-                            className="absolute -top-1 -right-1 w-6 h-6 rounded-full bg-black/70 items-center justify-center"
-                          >
-                            <X size={14} color="#fff" />
-                          </TouchableOpacity>
-                        </View>
-                      ))}
-                    </View>
-                  </ScrollView>
-                ) : (
-                  <Text className="text-slate-500 dark:text-slate-400 text-xs mb-3">
-                    No attachments yet
-                  </Text>
-                )}
-                <View className="flex-row gap-2">
-                  <TouchableOpacity
-                    onPress={capturePhoto}
-                    className="px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 flex-row items-center"
-                  >
-                    <Camera size={16} color={iconMuted} />
-                    <Text className="ml-2 text-slate-700 dark:text-slate-200 text-xs font-semibold">
-                      Camera
-                    </Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    onPress={pickFromGallery}
-                    className="px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 flex-row items-center"
-                  >
-                    <ImageIcon size={16} color={iconMuted} />
-                    <Text className="ml-2 text-slate-700 dark:text-slate-200 text-xs font-semibold">
-                      Gallery
-                    </Text>
-                  </TouchableOpacity>
+              {nextStatus !== "Resolved" ? (
+                <View className="mb-3">
+                  {renderPhotoPicker(
+                    "Attachments",
+                    "New photos are saved to the same incident attachments list when you tap Update.",
+                  )}
                 </View>
-              </View>
+              ) : null}
 
               {/* RCA is only relevant once the incident is Completed —
                   hidden entirely while Open / Inprogress. */}
@@ -754,20 +751,8 @@ export default function IncidentDetailModal({
             {(canEditMeta || canEditRca) && (
               <SubmitBar
                 label="Update incident"
-                ready={
-                  !(
-                    (incident.status === "Open" ||
-                      incident.status === "Inprogress") &&
-                    !nextStatus
-                  )
-                }
-                blocked={
-                  (incident.status === "Open" ||
-                    incident.status === "Inprogress") &&
-                  !nextStatus
-                    ? "Choose the status to move this incident to"
-                    : null
-                }
+                ready={!completionBlocker}
+                blocked={completionBlocker}
                 busy={isUpdating}
                 bottomInset={insets.bottom}
                 onPress={onSubmit}

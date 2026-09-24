@@ -102,6 +102,8 @@ interface AdvancedFilterModalProps {
   setStatusFilter?: (status: string) => void;
   statusOptions?: string[];
   statusOptionLabels?: Record<string, string>;
+  /** Status the Reset button restores (default "Pending", the PM value). */
+  defaultStatus?: string;
   priorityFilter?: string;
   setPriorityFilter?: (priority: string) => void;
   title?: string;
@@ -150,6 +152,7 @@ const AdvancedFilterModal = ({
   setStatusFilter,
   statusOptions,
   statusOptionLabels,
+  defaultStatus = "Pending",
   priorityFilter,
   setPriorityFilter,
   title = "Filter Tickets",
@@ -771,7 +774,7 @@ const AdvancedFilterModal = ({
                 setTempSearch("");
                 setTempFromDate(format(new Date(), "yyyy-MM-dd"));
                 setTempToDate?.(format(new Date(), "yyyy-MM-dd"));
-                setStatusFilter?.("Pending");
+                setStatusFilter?.(defaultStatus);
                 setPriorityFilter?.("All");
                 setSelectedDateField?.(dateFieldOptions?.[0]?.value || "");
                 setSelectedQuickRange(null);
