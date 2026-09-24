@@ -39,7 +39,7 @@ import {
   soShadow,
 } from "@/components/tickets/TicketDetailUI";
 import type { MappedAsset } from "@/services/AssetMappingService";
-import { getMappingStatus, processingTone, sideLabel, typeColor, typeMeta } from "./lib";
+import { equipmentTone, getMappingStatus, processingTone, sideLabel, typeColor, typeMeta } from "./lib";
 
 export type PhotoSource = "camera" | "library";
 
@@ -363,15 +363,9 @@ function EquipmentCard({
       <CardHead label="Equipment" hint={items.length ? `${items.length}` : "None yet"} />
       {items.map((item) => {
         const tone = typeColor(item.name.slice(0, 3).toUpperCase(), ds);
-        const state = item.nameplate_data?.state;
-        const note =
-          state === "processing"
-            ? "Reading nameplate…"
-            : state === "failed"
-              ? "Nameplate not read"
-              : item.nameplate_photo_url
-                ? `${item.nameplate_data?.fields?.length ?? 0} details`
-                : "No nameplate yet";
+        const ocr = equipmentTone(item, ds);
+        const details = item.nameplate_data?.fields?.length ?? 0;
+        const note = details > 0 ? `${details} details` : "No details yet";
         return (
           <TouchableOpacity
             key={item.id}
@@ -389,17 +383,14 @@ function EquipmentCard({
               </View>
             )}
             <View style={{ flex: 1, minWidth: 0 }}>
-              <Text style={styles.equipName} numberOfLines={1}>
-                {item.name}
-              </Text>
-              <Text
-                style={[
-                  styles.equipNote,
-                  state === "failed" && { color: ds.flame[100] },
-                  state === "processing" && { color: ds.sky[100] },
-                ]}
-                numberOfLines={1}
-              >
+              <View style={styles.equipTop}>
+                <Text style={styles.equipName} numberOfLines={1}>
+                  {item.name}
+                </Text>
+                {/* OCR state, same colour roles as the asset status badges. */}
+                <Badge label={ocr.label} bg={ocr.bg} fg={ocr.fg} />
+              </View>
+              <Text style={styles.equipNote} numberOfLines={1}>
                 {note}
                 {item.photos.length > 0 ? ` · ${item.photos.length} photo${item.photos.length === 1 ? "" : "s"}` : ""}
               </Text>
@@ -619,7 +610,8 @@ const useStyles = makeThemedStyles((ds) => ({
     borderRadius: soRadius.sm,
     backgroundColor: ds.carbon[1000],
   },
-  equipName: { fontSize: 13, fontWeight: "500", color: ds.carbon[100] },
+  equipTop: { flexDirection: "row", alignItems: "center", gap: 7 },
+  equipName: { flexShrink: 1, fontSize: 13, fontWeight: "500", color: ds.carbon[100] },
   equipNote: { fontSize: 10.5, color: ds.carbon[400], marginTop: 2 },
   addRow: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 12 },
   addInput: {

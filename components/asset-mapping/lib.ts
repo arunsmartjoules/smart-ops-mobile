@@ -13,7 +13,7 @@
  */
 import type { DsTheme } from "@/hooks/useDs";
 import { QR_CENTER_LOGO } from "@/constants/qrLogo";
-import type { MappedAsset, MappingStatus } from "@/services/AssetMappingService";
+import type { MappedAsset, MappingStatus, NameplateData } from "@/services/AssetMappingService";
 
 /* ── Status ────────────────────────────────────────────────────────────── */
 
@@ -56,6 +56,33 @@ export function sideLabel(asset: MappedAsset): string | null {
   if (!value) return null;
   const m = /^(high|low)\s*side$/i.exec(value);
   return m ? `${m[1]![0]!.toUpperCase()}${m[1]!.slice(1).toLowerCase()} side` : value;
+}
+
+/**
+ * The AI read's state for one equipment line item, in the same colour roles
+ * as the asset statuses: none → neutral, reading → sky, read → teal,
+ * not read → flame.
+ */
+export function equipmentTone(
+  equipment: { nameplate_data: NameplateData | null; nameplate_photo_url: string | null },
+  ds: DsTheme,
+): Tone {
+  switch (equipment.nameplate_data?.state) {
+    case "processing":
+      return { label: "Reading…", bg: ds.sky[1000], fg: ds.sky[100] };
+    case "ok":
+      return { label: "Read", bg: ds.sky[900], fg: ds.isDark ? ds.sky[100] : "#1F757D" };
+    case "manual":
+      return { label: "By hand", bg: ds.sky[900], fg: ds.isDark ? ds.sky[100] : "#1F757D" };
+    case "failed":
+      return { label: "Not read", bg: ds.flame[1000], fg: ds.flame[100] };
+    default:
+      return {
+        label: equipment.nameplate_photo_url ? "No data" : "No nameplate",
+        bg: ds.carbon[1000],
+        fg: ds.carbon[400],
+      };
+  }
 }
 
 export type ListFilter = "all" | MappingStatus;

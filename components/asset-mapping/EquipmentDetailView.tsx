@@ -31,7 +31,7 @@ import {
 } from "@/components/tickets/TicketDetailUI";
 import type { MappedAsset, MappingEquipment } from "@/services/AssetMappingService";
 import type { PhotoSource } from "./AssetDetailView";
-import { processingTone } from "./lib";
+import { equipmentTone } from "./lib";
 
 interface Props {
   topInset: number;
@@ -114,7 +114,7 @@ export default function EquipmentDetailView({
             <>
               <View style={styles.nameRow}>
                 <Text style={styles.name}>{equipment.name}</Text>
-                {processing ? <Badge {...processingTone(ds)} /> : null}
+                <Badge {...equipmentTone(equipment, ds)} />
               </View>
               <Text style={styles.added}>
                 Added{equipment.created_by_name ? ` by ${equipment.created_by_name}` : ""} ·{" "}

@@ -32,7 +32,6 @@ import {
   QrCode,
   X,
   Camera,
-  Image as ImageIcon,
 } from "lucide-react-native";
 import { router, useFocusEffect } from "expo-router";
 import Animated from "react-native-reanimated";
@@ -573,60 +572,31 @@ export default function PreventiveMaintenance() {
     });
   }, [canEdit]);
 
-  const pickStartBeforeImage = useCallback(
-    async (source: "camera" | "library") => {
-      try {
-        const options: ImagePicker.ImagePickerOptions = {
-          mediaTypes: ["images"],
-          allowsEditing: true,
-          quality: 0.7,
-        };
-        if (source === "camera") {
-          const perm = await ImagePicker.requestCameraPermissionsAsync();
-          if (!perm.granted) {
-            Alert.alert(
-              "Permission Required",
-              "Camera access is required to capture the before photo.",
-            );
-            return;
-          }
-          const result = await ImagePicker.launchCameraAsync(options);
-          if (!result.canceled && result.assets[0]?.uri) {
-            setStartBeforeImage(result.assets[0].uri);
-          }
-        } else {
-          const perm =
-            await ImagePicker.requestMediaLibraryPermissionsAsync();
-          if (!perm.granted) {
-            Alert.alert(
-              "Permission Required",
-              "Photo library access is required to choose the before photo.",
-            );
-            return;
-          }
-          const result = await ImagePicker.launchImageLibraryAsync(options);
-          if (!result.canceled && result.assets[0]?.uri) {
-            setStartBeforeImage(result.assets[0].uri);
-          }
-        }
-      } catch (err) {
-        logger.error("PM start before-image picker error", { error: err });
-        Alert.alert("Error", "Failed to pick image.");
+  // Before-photo evidence must be shot on site, so it is camera-only — no
+  // gallery option, which let an old or unrelated photo stand in as proof.
+  const captureStartBeforeImage = useCallback(async () => {
+    try {
+      const perm = await ImagePicker.requestCameraPermissionsAsync();
+      if (!perm.granted) {
+        Alert.alert(
+          "Permission Required",
+          "Camera access is required to capture the before photo.",
+        );
+        return;
       }
-    },
-    [],
-  );
-
-  const promptStartBeforeImage = useCallback(() => {
-    Alert.alert("Before photo", "Choose an option", [
-      { text: "Take photo", onPress: () => void pickStartBeforeImage("camera") },
-      {
-        text: "Choose from gallery",
-        onPress: () => void pickStartBeforeImage("library"),
-      },
-      { text: "Cancel", style: "cancel" },
-    ]);
-  }, [pickStartBeforeImage]);
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ["images"],
+        allowsEditing: true,
+        quality: 0.7,
+      });
+      if (!result.canceled && result.assets[0]?.uri) {
+        setStartBeforeImage(result.assets[0].uri);
+      }
+    } catch (err) {
+      logger.error("PM start before-image capture error", { error: err });
+      Alert.alert("Error", "Failed to capture photo.");
+    }
+  }, []);
 
   const closeStartModal = useCallback(() => {
     if (starting) return;
@@ -1002,7 +972,7 @@ export default function PreventiveMaintenance() {
               </Text>
 
               <TouchableOpacity
-                onPress={promptStartBeforeImage}
+                onPress={() => void captureStartBeforeImage()}
                 disabled={starting}
                 style={[
                   styles.startBeforeBox,
@@ -1041,12 +1011,12 @@ export default function PreventiveMaintenance() {
 
               {startBeforeImage ? (
                 <TouchableOpacity
-                  onPress={promptStartBeforeImage}
+                  onPress={() => void captureStartBeforeImage()}
                   disabled={starting}
                   style={styles.startRetakeBtn}
                 >
-                  <ImageIcon size={14} color="#3b82f6" />
-                  <Text style={styles.startRetakeText}>Change photo</Text>
+                  <Camera size={14} color="#3b82f6" />
+                  <Text style={styles.startRetakeText}>Retake photo</Text>
                 </TouchableOpacity>
               ) : (
                 <Text

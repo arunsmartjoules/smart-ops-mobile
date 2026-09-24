@@ -922,70 +922,31 @@ export default function PMExecutionScreen() {
     });
   }, [instanceId]);
 
-  const pickInstanceImage = useCallback(
-    async (
-      type: "before_image" | "after_image",
-      source: "camera" | "library",
-    ) => {
+  // Before/after evidence must be shot on site, so it is camera-only — no
+  // gallery option, which let an old or unrelated photo stand in as proof.
+  const captureInstanceImage = useCallback(
+    async (type: "before_image" | "after_image") => {
       try {
-        if (source === "camera") {
-          const perm = await ImagePicker.requestCameraPermissionsAsync();
-          if (!perm.granted) {
-            Alert.alert(
-              "Permission Required",
-              "Please grant camera access to capture evidence photos.",
-            );
-            return;
-          }
-          const result = await ImagePicker.launchCameraAsync(
-            INSTANCE_IMAGE_PICKER_OPTIONS,
+        const perm = await ImagePicker.requestCameraPermissionsAsync();
+        if (!perm.granted) {
+          Alert.alert(
+            "Permission Required",
+            "Please grant camera access to capture evidence photos.",
           );
-          if (!result.canceled && result.assets[0]?.uri) {
-            await applyInstanceImageFromUri(type, result.assets[0].uri);
-          }
-        } else {
-          const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-          if (!perm.granted) {
-            Alert.alert(
-              "Permission Required",
-              "Please grant photo library access to choose images.",
-            );
-            return;
-          }
-          const result = await ImagePicker.launchImageLibraryAsync(
-            INSTANCE_IMAGE_PICKER_OPTIONS,
-          );
-          if (!result.canceled && result.assets[0]?.uri) {
-            await applyInstanceImageFromUri(type, result.assets[0].uri);
-          }
+          return;
+        }
+        const result = await ImagePicker.launchCameraAsync(
+          INSTANCE_IMAGE_PICKER_OPTIONS,
+        );
+        if (!result.canceled && result.assets[0]?.uri) {
+          await applyInstanceImageFromUri(type, result.assets[0].uri);
         }
       } catch (err) {
-        logger.error("PM instance image picker error", { error: err });
-        Alert.alert("Error", "Failed to pick image.");
+        logger.error("PM instance image capture error", { error: err });
+        Alert.alert("Error", "Failed to capture photo.");
       }
     },
     [applyInstanceImageFromUri],
-  );
-
-  const promptAddInstanceImage = useCallback(
-    (type: "before_image" | "after_image") => {
-      Alert.alert(
-        type === "before_image" ? "Before photo" : "After photo",
-        "Choose an option",
-        [
-          {
-            text: "Take photo",
-            onPress: () => void pickInstanceImage(type, "camera"),
-          },
-          {
-            text: "Choose from gallery",
-            onPress: () => void pickInstanceImage(type, "library"),
-          },
-          { text: "Cancel", style: "cancel" },
-        ],
-      );
-    },
-    [pickInstanceImage],
   );
 
   const promptReplaceInstanceImage = useCallback(
@@ -999,25 +960,14 @@ export default function PMExecutionScreen() {
             onPress: () => setPreviewImageUrl(currentUri),
           },
           {
-            text: "Replace photo",
-            onPress: () =>
-              Alert.alert("Replace photo", "Choose a source", [
-                {
-                  text: "Take photo",
-                  onPress: () => void pickInstanceImage(type, "camera"),
-                },
-                {
-                  text: "Choose from gallery",
-                  onPress: () => void pickInstanceImage(type, "library"),
-                },
-                { text: "Cancel", style: "cancel" },
-              ]),
+            text: "Retake photo",
+            onPress: () => void captureInstanceImage(type),
           },
           { text: "Cancel", style: "cancel" },
         ],
       );
     },
-    [pickInstanceImage],
+    [captureInstanceImage],
   );
 
   const onEvidencePress = useCallback(
@@ -1032,10 +982,10 @@ export default function PMExecutionScreen() {
           promptReplaceInstanceImage(type, current);
         }
       } else if (canEdit && instance?.status !== "Completed") {
-        promptAddInstanceImage(type);
+        void captureInstanceImage(type);
       }
     },
-    [instance, canEdit, promptAddInstanceImage, promptReplaceInstanceImage],
+    [instance, canEdit, captureInstanceImage, promptReplaceInstanceImage],
   );
 
   // ── Response handler ──────────────────────────────────────────────────────
@@ -1137,6 +1087,7 @@ export default function PMExecutionScreen() {
     [checklistItems, responses],
   );
 
+  const afterImage = instance?.after_image as string | null | undefined;
   const missingMandatoryValidation = useMemo(() => {
     const missingResponses: string[] = [];
     const missingReadingsByTask = new Set<string>();
@@ -1181,19 +1132,27 @@ export default function PMExecutionScreen() {
       };
     }
 
+    // The After photo is mandatory evidence (the Before photo stays optional).
+    // Enforced here on the device only — the server can't check it, because
+    // offline the photo is still queued on the phone when the completion
+    // syncs; its URL reaches the server once the upload lands.
+    const missingAfterImage = !String(afterImage || "").trim();
+
     return {
       missingResponses,
       missingReadings: Array.from(missingReadingsByTask),
       missingRemarks: Array.from(missingRemarksByTask),
       missingImages: Array.from(missingImagesByTask),
+      missingAfterImage,
       byItemId,
       hasAny:
         missingResponses.length > 0 ||
         missingReadingsByTask.size > 0 ||
         missingRemarksByTask.size > 0 ||
-        missingImagesByTask.size > 0,
+        missingImagesByTask.size > 0 ||
+        missingAfterImage,
     };
-  }, [checklistItems, responses]);
+  }, [checklistItems, responses, afterImage]);
 
   // Single-line reason shown above the CTA once completion has been attempted.
   const blockedMessage = useMemo(() => {
@@ -1207,7 +1166,9 @@ export default function PMExecutionScreen() {
       return `${plural(v.missingReadings.length, "mandatory reading")} missing`;
     if (v.missingRemarks.length)
       return `${plural(v.missingRemarks.length, "task")} need a remark`;
-    return `${plural(v.missingImages.length, "task")} need a photo`;
+    if (v.missingImages.length)
+      return `${plural(v.missingImages.length, "task")} need a photo`;
+    return "After photo required";
   }, [completionAttempted, missingMandatoryValidation]);
 
   // Scroll the list to the first task that's missing a required field and give
@@ -1223,7 +1184,16 @@ export default function PMExecutionScreen() {
           flags.missingImage)
       );
     });
-    if (index < 0) return false;
+    if (index < 0) {
+      // Every task is done — the only gap left is the After photo, whose
+      // tile sits in the list footer.
+      if (!missingMandatoryValidation.missingAfterImage) return false;
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(
+        () => {},
+      );
+      listRef.current?.scrollToEnd({ animated: true });
+      return true;
+    }
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(
       () => {},
     );
@@ -1233,7 +1203,11 @@ export default function PMExecutionScreen() {
       viewPosition: 0.15,
     });
     return true;
-  }, [checklistItems, missingMandatoryValidation.byItemId]);
+  }, [
+    checklistItems,
+    missingMandatoryValidation.byItemId,
+    missingMandatoryValidation.missingAfterImage,
+  ]);
 
   const showCompletionBlockedPopup = useCallback(() => {
     const lines: string[] = [];
@@ -1254,6 +1228,9 @@ export default function PMExecutionScreen() {
       lines.push(
         `- ${missingMandatoryValidation.missingImages.length} task(s) missing mandatory images`,
       );
+    }
+    if (missingMandatoryValidation.missingAfterImage) {
+      lines.push("- After photo not taken");
     }
     Alert.alert(
       "Cannot complete PM",
@@ -1392,14 +1369,24 @@ export default function PMExecutionScreen() {
     const uri = instance?.[type] as string | undefined;
     // Still on-device: saved, waiting for signal to upload.
     const isQueued = !!uri && !/^https?:/i.test(uri);
+    const isRequired = type === "after_image";
+    const showMissing =
+      isRequired &&
+      !uri &&
+      completionAttempted &&
+      instance?.status !== "Completed";
     return (
       <TouchableOpacity
         key={type}
         onPress={() => onEvidencePress(type)}
         activeOpacity={0.85}
-        style={[styles.evTile, uri ? styles.evTileFilled : null]}
+        style={[
+          styles.evTile,
+          uri ? styles.evTileFilled : null,
+          showMissing && { borderColor: ds.flame[100] },
+        ]}
         accessibilityRole="button"
-        accessibilityLabel={`${label} photo. ${uri ? "Tap to preview or replace" : "Tap to add"}`}
+        accessibilityLabel={`${label} photo${isRequired ? ", required" : ""}. ${uri ? "Tap to preview or retake" : "Tap to take photo"}`}
       >
         {uri ? (
           <Image
@@ -1410,8 +1397,16 @@ export default function PMExecutionScreen() {
           />
         ) : (
           <View style={styles.evEmpty}>
-            <Camera size={26} color={ds.carbon[600]} strokeWidth={1.8} />
-            <Text style={styles.evAdd}>Add photo</Text>
+            <Camera
+              size={26}
+              color={showMissing ? ds.flame[100] : ds.carbon[600]}
+              strokeWidth={1.8}
+            />
+            <Text
+              style={[styles.evAdd, showMissing && { color: ds.flame[100] }]}
+            >
+              {isRequired ? "Take photo · Required" : "Take photo"}
+            </Text>
           </View>
         )}
         <View style={styles.evCaption}>
