@@ -52,6 +52,8 @@ function init() {
           created_by TEXT NOT NULL,
           due_date REAL,
           closed_at REAL,
+          sla TEXT,
+          sla_due_at REAL,
           created_at REAL NOT NULL,
           updated_at REAL NOT NULL
         );
@@ -337,6 +339,8 @@ function init() {
       "ALTER TABLE tickets ADD COLUMN breakdown_type TEXT",
       "ALTER TABLE tickets ADD COLUMN due_date REAL",
       "ALTER TABLE tickets ADD COLUMN closed_at REAL",
+      "ALTER TABLE tickets ADD COLUMN sla TEXT",
+      "ALTER TABLE tickets ADD COLUMN sla_due_at REAL",
       "ALTER TABLE pm_instances ADD COLUMN completed_on REAL",
       "ALTER TABLE pm_instances ADD COLUMN instance_id TEXT",
       "ALTER TABLE pm_instances ADD COLUMN design_cfm REAL",

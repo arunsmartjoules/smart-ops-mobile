@@ -27,6 +27,10 @@ export const tickets = sqliteTable("tickets", {
   closed_at: real("closed_at"),
   before_temp: real("before_temp"),
   after_temp: real("after_temp"),
+  /** Server SLA verdict: "Met" | "Breached" | null (no SLA target applies). */
+  sla: text("sla"),
+  /** Next SLA deadline (epoch ms) while a clock is still running. */
+  sla_due_at: real("sla_due_at"),
   created_at: real("created_at").notNull(),
   updated_at: real("updated_at").notNull(),
 });

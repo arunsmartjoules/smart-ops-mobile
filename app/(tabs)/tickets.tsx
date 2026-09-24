@@ -26,6 +26,7 @@ import { useSites } from "@/hooks/useSites";
 import { db, tickets as ticketsTable, areas } from "@/database";
 import { eq, desc } from "drizzle-orm";
 import logger from "@/utils/logger";
+import { slaDueFromMs } from "@/utils/ticketSla";
 import {
   istTodayString,
   istParts,
@@ -689,6 +690,8 @@ export default function Tickets() {
                   breakdown_type: t.breakdown_type ?? null,
                   before_temp: t.before_temp ?? undefined,
                   after_temp: t.after_temp ?? undefined,
+                  sla: t.sla ?? null,
+                  sla_due_at: slaDueFromMs(t.sla_due_at) ?? null,
                   location: t.area || "",
                   area_asset: t.area || "",
                   internal_remarks: t.description || "",

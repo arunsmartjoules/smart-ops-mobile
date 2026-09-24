@@ -36,6 +36,16 @@ export const getTicketStatus = (status: string | undefined, ds: DsTheme) =>
     fg: ds.carbon[400],
   };
 
+/**
+ * "SLA breached" tag (web tickets grid parity). Solid red so it reads above the
+ * tinted-red Open badge; shown only when utils/ticketSla says breached.
+ */
+export const ticketSlaBreachTone = (ds: DsTheme) => ({
+  label: "SLA breached",
+  bg: ds.flame[100],
+  fg: ds.onAccent,
+});
+
 /** The mock's PRIORITY map. */
 export const ticketPriorityMap = (
   ds: DsTheme,

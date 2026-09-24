@@ -1,6 +1,6 @@
 import React, { useCallback } from "react";
 import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
-import { Clock, MapPin } from "lucide-react-native";
+import { AlertTriangle, Clock, MapPin } from "lucide-react-native";
 import { type Ticket } from "@/services/TicketsService";
 import { getCategoryVisual, getInitials } from "@/utils/ticketVisuals";
 import { makeThemedStyles, useDs } from "@/hooks/useDs";
@@ -8,10 +8,12 @@ import {
   getTicketPriority,
   getTicketStatus,
   getTicketTint,
+  ticketSlaBreachTone,
   soRadius,
   soShadow,
 } from "@/components/tickets/TicketsUI";
 import { formatIST, formatISTTime, istParts } from "@/utils/istDate";
+import { isSlaBreached } from "@/utils/ticketSla";
 
 interface TicketItemProps {
   item: Ticket;
@@ -81,6 +83,7 @@ const TicketItem = React.memo(
     // would only repeat the header. No area → the pin is simply dropped.
     const area = item.area_asset || item.location || "";
     const late = isLate(item);
+    const slaBreach = isSlaBreached(item) ? ticketSlaBreachTone(ds) : null;
     const assignee = (item.assigned_to || "").trim();
     // Open tickets show when they were raised as well as how long ago;
     // everything else keeps the compact age.
@@ -115,6 +118,20 @@ const TicketItem = React.memo(
                   <View style={[styles.badge, { backgroundColor: priority.bg }]}>
                     <Text style={[styles.badgeText, { color: priority.fg }]}>
                       {priority.label}
+                    </Text>
+                  </View>
+                ) : null}
+                {slaBreach ? (
+                  <View
+                    style={[
+                      styles.badge,
+                      styles.slaBadge,
+                      { backgroundColor: slaBreach.bg },
+                    ]}
+                  >
+                    <AlertTriangle size={9} color={slaBreach.fg} strokeWidth={2.4} />
+                    <Text style={[styles.badgeText, { color: slaBreach.fg }]}>
+                      {slaBreach.label}
                     </Text>
                   </View>
                 ) : null}
@@ -207,6 +224,7 @@ const useStyles = makeThemedStyles((ds) => ({
     color: ds.carbon[500],
   },
   badge: { paddingVertical: 2, paddingHorizontal: 6, borderRadius: 4 },
+  slaBadge: { flexDirection: "row", alignItems: "center", gap: 3 },
   badgeText: {
     fontSize: 8.5,
     fontWeight: "600",

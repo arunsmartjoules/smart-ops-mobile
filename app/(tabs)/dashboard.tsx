@@ -613,6 +613,7 @@ export default function Dashboard() {
   const pmPct = s ? pctOf(s.pm.completed, s.pm.planned) : 0;
   const pendingPm = s ? Math.max(0, s.pm.planned - s.pm.completed) : 0;
   const pendingLogs = s ? Math.max(0, s.logs.expected - s.logs.completed) : 0;
+  const ocrPending = s?.assets?.ocrPending ?? null;
 
   const opTiles: TileData[] = [
     {
@@ -654,11 +655,13 @@ export default function Dashboard() {
       onPress: go("/(tabs)/tickets"),
     },
     {
-      label: "SLA BREACHES",
-      value: val(s?.tickets.slaBreached),
-      tone: !s ? "neutral" : s.tickets.slaBreached < 4 ? "good" : s.tickets.slaBreached < 8 ? "warn" : "bad",
-      flag: !!s && s.tickets.slaBreached > 0,
-      onPress: go("/(tabs)/tickets"),
+      // Asset Mapping backlog (live, not period scoped) — replaced the SLA
+      // breach count; breaches still surface via the BreachAlert banner.
+      label: "OCR PENDING",
+      value: ocrPending !== null ? String(ocrPending) : dash,
+      tone: ocrPending === null ? "neutral" : ocrPending > 20 ? "warn" : "neutral",
+      flag: ocrPending !== null && ocrPending > 20,
+      onPress: go("/(tabs)/asset-mapping"),
     },
     {
       label: "INCIDENTS",

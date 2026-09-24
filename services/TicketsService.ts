@@ -13,6 +13,7 @@ import { and, asc, eq } from "drizzle-orm";
 import { StorageService } from "./StorageService";
 import { AttachmentQueueService } from "./AttachmentQueueService";
 import cacheManager from "./CacheManager";
+import { slaDueFromMs, slaDueToMs } from "@/utils/ticketSla";
 
 import { API_BASE_URL } from "../constants/api";
 
@@ -129,6 +130,10 @@ export interface Ticket {
   contact_number?: string;
   before_temp?: number | null;
   after_temp?: number | null;
+  /** SLA verdict from the server: "Met" | "Breached" | null — see utils/ticketSla. */
+  sla?: string | null;
+  /** Next SLA deadline (ISO) while a clock is still running. */
+  sla_due_at?: string | null;
 }
 
 interface AssetsPagination {
@@ -259,6 +264,8 @@ export const TicketsService = {
               created_at: new Date(t.created_at).toISOString(),
               before_temp: t.before_temp,
               after_temp: t.after_temp,
+              sla: t.sla ?? null,
+              sla_due_at: slaDueFromMs(t.sla_due_at) ?? null,
             }))
             .sort((a, b) => {
               const pA = priorityOrder[a.priority || ""] || 4;
@@ -328,6 +335,8 @@ export const TicketsService = {
           created_by: t.created_user || "",
           before_temp: t.before_temp ?? null,
           after_temp: t.after_temp ?? null,
+          sla: t.sla ?? null,
+          sla_due_at: slaDueToMs(t.sla_due_at),
           created_at: t.created_at ? new Date(t.created_at).getTime() : Date.now(),
           updated_at: Date.now(),
         }));

@@ -25,6 +25,7 @@ import logger from "../utils/logger";
 import { getValidAuthToken } from "./AuthTokenManager";
 import { db, attendanceLogs, pmInstances } from "../database";
 import { eq } from "drizzle-orm";
+import { slaDueToMs } from "@/utils/ticketSla";
 
 // ─── Background Fetch Task ────────────────────────────────────────────────────
 
@@ -237,6 +238,8 @@ class SyncEngineImpl implements SyncEngine {
               // omitting these inserts NULL over values the server actually sent.
               before_temp: t.before_temp ?? null,
               after_temp: t.after_temp ?? null,
+              sla: t.sla ?? null,
+              sla_due_at: slaDueToMs(t.sla_due_at),
               area: t.area_asset || t.location || "",
               assigned_to: t.assigned_to || "",
               created_by: t.created_user || "",

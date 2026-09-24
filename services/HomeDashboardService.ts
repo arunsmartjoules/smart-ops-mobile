@@ -33,6 +33,13 @@ export interface HomeSummary {
   logs: { expected: number; completed: number };
   pm: { planned: number; completed: number };
   incidents: { raised: number; open: number };
+  /**
+   * Asset Mapping, live (not period scoped): assets whose nameplate hasn't been
+   * captured / read yet — the Assets tab's "Open" bucket. Optional because
+   * responses cached before this field existed don't carry it; null when the
+   * backend couldn't take the count.
+   */
+  assets?: { ocrPending: number | null };
   attendance: { present: number; onShift: number };
   efficiency: { highSide: EfficiencyReading; lowSide: EfficiencyReading };
 }

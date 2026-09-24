@@ -20,7 +20,9 @@ import {
 import {
   getTicketPriority,
   getTicketStatus,
+  ticketSlaBreachTone,
 } from "@/components/tickets/TicketsUI";
+import { isSlaBreached } from "@/utils/ticketSla";
 import { makeThemedStyles, useDs } from "@/hooks/useDs";
 import { formatIST } from "@/utils/istDate";
 import type { TicketIncidentDraft } from "@/constants/incidentFormOptions";
@@ -192,6 +194,7 @@ const TicketDetailModal = React.memo(
 
     const status = getTicketStatus(ticket.status, ds);
     const priority = getTicketPriority(ticket.priority, ds);
+    const slaBreach = isSlaBreached(ticket) ? ticketSlaBreachTone(ds) : null;
     const ready = isDirty && !blocker;
 
     return (
@@ -224,6 +227,13 @@ const TicketDetailModal = React.memo(
                     label={priority.label}
                     bg={priority.bg}
                     fg={priority.fg}
+                  />
+                ) : null}
+                {slaBreach ? (
+                  <Badge
+                    label={slaBreach.label}
+                    bg={slaBreach.bg}
+                    fg={slaBreach.fg}
                   />
                 ) : null}
               </View>
@@ -311,7 +321,7 @@ const useStyles = makeThemedStyles((ds) => ({
   screen: { flex: 1, backgroundColor: ds.pageBg },
   body: { paddingHorizontal: 20, paddingTop: 16, paddingBottom: 20 },
   summary: { padding: 16, marginBottom: 12 },
-  badgeRow: { flexDirection: "row", gap: 7, marginBottom: 14 },
+  badgeRow: { flexDirection: "row", flexWrap: "wrap", gap: 7, marginBottom: 14 },
   title: {
     fontSize: 16,
     lineHeight: 22,
