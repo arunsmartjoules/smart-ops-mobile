@@ -24,7 +24,7 @@ export interface Tone {
 }
 
 export const mappingStatusMap = (ds: DsTheme): Record<MappingStatus, Tone> => ({
-  pending: { label: "Pending", bg: ds.carbon[1000], fg: ds.carbon[300] },
+  pending: { label: "Open", bg: ds.carbon[1000], fg: ds.carbon[300] },
   review: { label: "Review", bg: ds.sky[1000], fg: ds.sky[100] },
   completed: { label: "Completed", bg: ds.sky[900], fg: ds.sky[100] },
   failed: { label: "Failed", bg: ds.flame[1000], fg: ds.flame[100] },

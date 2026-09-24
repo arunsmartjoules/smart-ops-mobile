@@ -45,7 +45,7 @@ const NO_FIELD_FILTERS: FieldFilters = { type: "all", side: "all", criticality: 
 const STATUS_KEYS = ["all", "pending", "review", "completed", "failed", "no_access"];
 const STATUS_LABELS: Record<string, string> = {
   all: "All",
-  pending: "Pending",
+  pending: "Open",
   review: "Review",
   completed: "Completed",
   failed: "Failed",
@@ -120,7 +120,7 @@ export default function AssetListView({
   const chips = useMemo<StatusChip[]>(() => {
     const list: StatusChip[] = [
       { key: "all", label: "All", count: assets.length || undefined },
-      { key: "pending", label: "Pending", count: counts.pending },
+      { key: "pending", label: "Open", count: counts.pending },
       { key: "review", label: "Review", count: counts.review },
       { key: "completed", label: "Completed", count: counts.completed },
       { key: "failed", label: "Failed", count: counts.failed },

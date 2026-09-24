@@ -894,6 +894,8 @@ export default function PreventiveMaintenance() {
           title="Filter PM Tasks"
           dateMode="date-range"
           statusOptions={STATUS_OPTIONS}
+          // Stored value stays "Pending"; it reads as "Open" everywhere.
+          statusOptionLabels={{ Pending: "Open" }}
           tempSearch={tempSearch}
           setTempSearch={setTempSearch}
           tempFromDate={tempFromDate}

@@ -18,8 +18,9 @@ export const pmStatusMap = (
   ds: DsTheme,
 ): Record<string, { label: string; bg: string; fg: string }> => ({
   Overdue: { label: "Overdue", bg: ds.flame[1000], fg: ds.flame[100] },
+  // Not-started PMs (stored `Pending`) read as "Open" everywhere.
   Due: {
-    label: "Due",
+    label: "Open",
     bg: ds.isDark ? DUE_BG_DARK : DUE_BG_LIGHT,
     fg: ds.isDark ? DUE_FG_DARK : DUE_FG_LIGHT,
   },

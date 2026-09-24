@@ -998,7 +998,7 @@ export const LogEntryModule = ({
                     {editId ? "Log Not Found" : "All Caught Up!"}
                   </Text>
                   <Text className="text-slate-400 dark:text-slate-500 text-sm mt-1 text-center px-10">
-                    {editId ? "The log you are trying to edit could not be found." : `No pending ${type.toLowerCase()} logs found for this ${shift ? "shift" : "day"}.`}
+                    {editId ? "The log you are trying to edit could not be found." : `No open ${type.toLowerCase()} logs found for this ${shift ? "shift" : "day"}.`}
                   </Text>
                 </View>
               )

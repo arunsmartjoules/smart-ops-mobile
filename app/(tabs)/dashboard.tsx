@@ -670,14 +670,14 @@ export default function Dashboard() {
   ];
   const mgrTilesB: TileData[] = [
     {
-      label: "PENDING PM",
+      label: "OPEN PM",
       value: s ? String(pendingPm) : dash,
       tone: pendingPm > 20 ? "bad" : pendingPm > 5 ? "warn" : "neutral",
       flag: pendingPm > 20,
       onPress: go("/(tabs)/preventive-maintenance"),
     },
     {
-      label: "PENDING LOGS",
+      label: "OPEN LOGS",
       value: s ? String(pendingLogs) : dash,
       tone: pendingLogs > 30 ? "warn" : "neutral",
       flag: pendingLogs > 30,

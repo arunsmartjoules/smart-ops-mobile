@@ -214,7 +214,7 @@ export function LogHistoryFilterSheet({
           {(
             [
               { key: "all", label: "All" },
-              { key: "pending", label: "Pending" },
+              { key: "pending", label: "Open" },
               { key: "completed", label: "Completed" },
             ] as const
           ).map((o) => (

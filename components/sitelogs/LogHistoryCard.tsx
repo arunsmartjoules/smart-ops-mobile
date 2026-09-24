@@ -21,7 +21,7 @@ import { soRadius, soShadow } from "@/components/home/SiteOverview";
 const statusMap = (
   ds: DsTheme,
 ): Record<string, { label: string; bg: string; fg: string }> => ({
-  Pending: { label: "Pending", bg: ds.flame[1000], fg: ds.flame[100] },
+  Pending: { label: "Open", bg: ds.flame[1000], fg: ds.flame[100] },
   Inprogress: { label: "In progress", bg: ds.sky[1000], fg: ds.sky[100] },
   Completed: {
     label: "Completed",

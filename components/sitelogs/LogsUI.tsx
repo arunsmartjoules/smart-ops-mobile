@@ -74,7 +74,7 @@ export function LogTypeCard({
         </View>
         <View style={styles.counts}>
           <CountPill
-            text={`${pending} pending`}
+            text={`${pending} open`}
             bg={hasPending ? ds.flame[1000] : ds.carbon[1000]}
             fg={hasPending ? ds.flame[100] : ds.carbon[600]}
           />
@@ -206,7 +206,7 @@ export function ShiftCountStrip({
             style={cellStyle}
             accessibilityRole="button"
             accessibilityState={{ selected: on }}
-            accessibilityLabel={`${sc.label}: ${sc.pending} pending, ${sc.completed} done`}
+            accessibilityLabel={`${sc.label}: ${sc.pending} open, ${sc.completed} done`}
           >
             {body}
           </TouchableOpacity>
@@ -266,7 +266,7 @@ export function HistoryCounters({
   return (
     <View style={styles.counterRow}>
       {tile("all", totalLabel, total, ds.carbon[100])}
-      {tile("pending", "Pending", pending, ds.flame[100])}
+      {tile("pending", "Open", pending, ds.flame[100])}
       {tile("completed", completedLabel, completed, ds.sky[100])}
     </View>
   );

@@ -350,7 +350,7 @@ function ChillerEntryContent() {
             onPress: () => router.back(),
           },
           {
-            text: "Open Pending Log",
+            text: "Open Unfinished Log",
             onPress: () =>
               router.replace({
                 pathname: "/chiller",
