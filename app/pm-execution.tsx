@@ -105,7 +105,8 @@ const TaskRow = React.memo(
     onImageChange,
     onPreview,
     isUploading,
-    isCompleted,
+    answerLocked,
+    textLocked,
     showRequiredErrors,
     missingEvidenceImage,
     missingRemarks,
@@ -122,7 +123,10 @@ const TaskRow = React.memo(
     onImageChange: (itemId: string, action: ChecklistImageAction) => void;
     onPreview: (uri: string) => void;
     isUploading?: boolean;
-    isCompleted?: boolean;
+    /** Checkbox + photo are frozen (PM signed off, or edits gated off). */
+    answerLocked?: boolean;
+    /** Readings + remarks are frozen. A Completed PM leaves these editable. */
+    textLocked?: boolean;
     showRequiredErrors?: boolean;
     missingEvidenceImage?: boolean;
     missingRemarks?: boolean;
@@ -153,9 +157,9 @@ const TaskRow = React.memo(
     const readingsValue = isChoice
       ? response?.readings || ""
       : response?.readings || response?.response_value || "";
-    // Completed instances are preview-only — don't paint them red after the fact.
+    // Read-only rows can't be fixed, so don't paint them red.
     const isReadingsMissing =
-      readingsRequired && !readingsValue.trim() && !isCompleted;
+      readingsRequired && !readingsValue.trim() && !textLocked;
     const hasPhoto = !!response?.image_url;
     const rowHasError = Boolean(
       showRequiredErrors &&
@@ -176,7 +180,7 @@ const TaskRow = React.memo(
         : { backgroundColor: ds.field, borderColor: ds.carbon[800] };
 
     const cycleResponse = () => {
-      if (isCompleted) return;
+      if (answerLocked) return;
       if (isChoice) {
         onResponseChange(item.id, "response_value", CYCLE_NEXT[value ?? ""] ?? null);
       }
@@ -187,7 +191,7 @@ const TaskRow = React.memo(
         <View style={styles.taskRow}>
           <TouchableOpacity
             onPress={cycleResponse}
-            disabled={isCompleted || !isChoice}
+            disabled={answerLocked || !isChoice}
             activeOpacity={0.7}
             accessibilityRole="checkbox"
             accessibilityLabel={`${item.task_name} — ${value || "not answered"}`}
@@ -237,7 +241,7 @@ const TaskRow = React.memo(
                   onChangeText={(val) =>
                     onResponseChange(item.id, isChoice ? "readings" : "value", val)
                   }
-                  editable={!isCompleted}
+                  editable={!textLocked}
                   placeholder={readingsRequired ? "Required" : "Readings"}
                   placeholderTextColor={ds.carbon[700]}
                   keyboardType={
@@ -262,7 +266,7 @@ const TaskRow = React.memo(
                   onChangeText={(val) =>
                     onResponseChange(item.id, "remarks", val || null)
                   }
-                  editable={!isCompleted}
+                  editable={!textLocked}
                   placeholder={
                     item.remarks_mandatory ? "Reason required" : "Remarks…"
                   }
@@ -280,13 +284,13 @@ const TaskRow = React.memo(
                   onPress={() => {
                     // Completed PMs are preview-only — never re-open the
                     // add/replace menu once the instance is signed off.
-                    if (isCompleted) {
+                    if (answerLocked) {
                       if (hasPhoto) onPreview(response!.image_url!);
                       return;
                     }
                     onImageChange(item.id, "MENU");
                   }}
-                  disabled={isCompleted && !hasPhoto}
+                  disabled={answerLocked && !hasPhoto}
                   activeOpacity={0.7}
                   accessibilityLabel="Task photo"
                   style={[
@@ -319,7 +323,7 @@ const TaskRow = React.memo(
                 <Text style={styles.photoCaption} numberOfLines={1}>
                   {photoCaption(response!.image_url!)}
                 </Text>
-                {!isCompleted && (
+                {!answerLocked && (
                   <TouchableOpacity
                     onPress={() => onImageChange(item.id, null)}
                     hitSlop={10}
@@ -342,7 +346,8 @@ const TaskRow = React.memo(
     prev.response?.remarks === next.response?.remarks &&
     prev.response?.image_url === next.response?.image_url &&
     prev.isUploading === next.isUploading &&
-    prev.isCompleted === next.isCompleted &&
+    prev.answerLocked === next.answerLocked &&
+    prev.textLocked === next.textLocked &&
     prev.showRequiredErrors === next.showRequiredErrors &&
     prev.missingResponse === next.missingResponse &&
     prev.missingReadings === next.missingReadings &&
@@ -1032,6 +1037,10 @@ export default function PMExecutionScreen() {
       // Belt-and-suspenders: refuse all writes while the gate forbids editing
       // (locked / read-only). UI also disables the inputs.
       if (!canEdit) return;
+      // A signed-off PM keeps its Done/Not Done answers; only readings and
+      // remarks stay editable after completion.
+      const isSignedOff = instance?.status === "Completed";
+      if (isSignedOff && field === "response_value") return;
       setResponses((prev) => {
         // Number/Text tasks type into a single box that feeds both columns.
         const patch =
@@ -1049,6 +1058,26 @@ export default function PMExecutionScreen() {
         // Auto-save logic
         if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
 
+        // Post-completion edits must not leave the PM failing the rules it
+        // was completed under: while a required reading/remark is blank the
+        // edit stays on screen but isn't saved (the stored value survives
+        // until a replacement is typed).
+        if (isSignedOff) {
+          const item = checklistItems.find((it) => it.id === itemId);
+          const resp = next[itemId];
+          const isChoice =
+            (item?.field_type || "Multiple Choice") === "Multiple Choice";
+          const blankRequired =
+            !!item &&
+            ((isChoice
+              ? Boolean(item.readings_mandatory) &&
+                !String(resp?.readings || "").trim()
+              : !String(resp?.response_value || "").trim()) ||
+              (Boolean(item.remarks_mandatory) &&
+                !String(resp?.remarks || "").trim()));
+          if (blankRequired) return next;
+        }
+
         if (field === "response_value") {
           // Immediate save for the checkbox cycle
           handleSave(true, undefined, next);
@@ -1062,7 +1091,7 @@ export default function PMExecutionScreen() {
         return next;
       });
     },
-    [handleSave, canEdit],
+    [handleSave, canEdit, instance?.status, checklistItems],
   );
 
   // Clean up timer on unmount
@@ -1305,7 +1334,8 @@ export default function PMExecutionScreen() {
         onImageChange={handleImageChange}
         onPreview={setPreviewImageUrl}
         isUploading={uploadingItems[item.id]}
-        isCompleted={instance?.status === "Completed" || !canEdit}
+        answerLocked={instance?.status === "Completed" || !canEdit}
+        textLocked={!canEdit}
         showRequiredErrors={completionAttempted}
         missingEvidenceImage={missingMandatoryValidation.byItemId[item.id]?.missingImage}
         missingRemarks={missingMandatoryValidation.byItemId[item.id]?.missingRemarks}
@@ -1378,8 +1408,9 @@ export default function PMExecutionScreen() {
       <View style={styles.hintRow}>
         <Info size={14} color={ds.carbon[600]} />
         <Text style={styles.hintText}>
-          Tap the box to cycle Done → Not Done → clear. Fields marked Required
-          must be filled before completion.
+          {instance?.status === "Completed"
+            ? "This PM is signed off. Task answers and photos are locked; readings and remarks can still be corrected and save automatically."
+            : "Tap the box to cycle Done → Not Done → clear. Fields marked Required must be filled before completion."}
         </Text>
       </View>
     </View>
@@ -1597,6 +1628,9 @@ export default function PMExecutionScreen() {
           <Text style={styles.completedText}>
             PM Completed{completedAt ? ` · ${completedAt}` : ""}
           </Text>
+          {canEdit && (
+            <Text style={styles.completedSub}>· Readings & remarks editable</Text>
+          )}
         </View>
       )}
 
@@ -2026,6 +2060,12 @@ const useStyles = makeThemedStyles((ds) => ({
     fontWeight: "700",
     letterSpacing: 0.15,
     color: ds.sky[100],
+  },
+  completedSub: {
+    fontSize: 12,
+    fontWeight: "500",
+    color: ds.sky[100],
+    opacity: 0.8,
   },
 
   // ── Signature sheet ──

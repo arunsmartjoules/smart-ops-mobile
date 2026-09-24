@@ -36,6 +36,7 @@ import {
   AssetMappingService,
   canApproveMapping,
   type MappedAsset,
+  type MappingEquipment,
 } from "@/services/AssetMappingService";
 import AssetListView from "@/components/asset-mapping/AssetListView";
 import AssetDetailView, { type PhotoSource } from "@/components/asset-mapping/AssetDetailView";
@@ -45,27 +46,46 @@ import NameplateConfirm from "@/components/asset-mapping/NameplateConfirm";
 import CannotAccessForm, {
   type CannotAccessDraft,
 } from "@/components/asset-mapping/CannotAccessForm";
+import EquipmentDetailView from "@/components/asset-mapping/EquipmentDetailView";
 import PhotoViewer from "@/components/asset-mapping/PhotoViewer";
 import { manualSeedText, typeMeta } from "@/components/asset-mapping/lib";
 
-type Screen = "detail" | "qr";
+type Screen = "detail" | "qr" | "equipment";
 type DocMode = "nameplate" | "location";
+/** What a captured / picked photo is for. */
+type PhotoTarget =
+  | { kind: "asset"; mode: DocMode }
+  | { kind: "equipment-nameplate"; equipmentId: string }
+  | { kind: "equipment-photo"; equipmentId: string };
 
 type Busy = { title: string; sub: string };
 
 type Flow =
-  | { step: "camera"; mode: CaptureMode; busy: Busy | null }
-  | { step: "confirm"; photoUrl: string; text: string; rawText: string; saving: boolean }
+  | { step: "camera"; mode: CaptureMode; target: PhotoTarget | null; busy: Busy | null }
+  /** Editing nameplate text — the asset's, or one line item's. */
+  | {
+      step: "confirm";
+      owner: { kind: "asset"; photoUrl: string } | { kind: "equipment"; equipmentId: string };
+      title: string;
+      text: string;
+      rawText: string;
+      saving: boolean;
+    }
   | { step: "cannot"; submitting: boolean };
 
 const UPLOADING: Busy = { title: "Uploading photo…", sub: "Hold on a moment" };
 
-const UPLOADED_COPY: Record<DocMode, { title: string; body: string }> = {
-  nameplate: {
-    title: "Nameplate uploaded",
-    body: "We're reading the details in the background. You'll get a notification when it's done.",
-  },
+const NAMEPLATE_UPLOADED = {
+  title: "Nameplate uploaded",
+  body: "We're reading the details in the background. You'll get a notification when it's done.",
+};
+
+const UPLOADED_COPY: Record<PhotoTarget["kind"] | DocMode, { title: string; body: string }> = {
+  nameplate: NAMEPLATE_UPLOADED,
+  asset: NAMEPLATE_UPLOADED,
   location: { title: "Location photo uploaded", body: "Saved to this asset." },
+  "equipment-nameplate": NAMEPLATE_UPLOADED,
+  "equipment-photo": { title: "Photo uploaded", body: "Added to this equipment." },
 };
 
 /** Same compression as the camera shot, so a gallery pick fits the 5 MB read limit. */
@@ -156,8 +176,9 @@ export default function AssetMappingTab() {
   const [draft, setDraft] = useState<CannotAccessDraft>(EMPTY_DRAFT);
   const [preview, setPreview] = useState<{ url: string; title: string } | null>(null);
   const [approvingId, setApprovingId] = useState<string | null>(null);
-  // A gallery pick uploads straight from the detail screen.
+  // A gallery pick (or an equipment edit) works straight from the detail screen.
   const [libraryUpload, setLibraryUpload] = useState(false);
+  const [equipmentId, setEquipmentId] = useState<string | null>(null);
   const canApprove = canApproveMapping(user);
 
   // The detail modal is open while an asset is selected (and still listed).
@@ -203,19 +224,36 @@ export default function AssetMappingTab() {
   };
 
   /** Upload a local photo to S3 and attach it — the only step the user waits on. */
-  const submitPhoto = async (target: MappedAsset, mode: DocMode, uri: string) => {
-    const photoUrl = await AssetMappingService.uploadPhoto(target, mode, uri);
-    return mode === "nameplate"
-      ? AssetMappingService.uploadNameplate(target.asset_id, photoUrl)
-      : AssetMappingService.saveLocation(target.asset_id, photoUrl);
+  const submitPhoto = async (target: MappedAsset, to: PhotoTarget, uri: string) => {
+    const kind = to.kind === "asset" ? to.mode : "nameplate";
+    const photoUrl = await AssetMappingService.uploadPhoto(
+      target,
+      to.kind === "equipment-photo" ? "equipment" : kind,
+      uri,
+    );
+    switch (to.kind) {
+      case "asset":
+        return to.mode === "nameplate"
+          ? AssetMappingService.uploadNameplate(target.asset_id, photoUrl)
+          : AssetMappingService.saveLocation(target.asset_id, photoUrl);
+      case "equipment-nameplate":
+        return AssetMappingService.uploadEquipmentNameplate(
+          target.asset_id,
+          to.equipmentId,
+          photoUrl,
+        );
+      case "equipment-photo":
+        return AssetMappingService.addEquipmentPhoto(target.asset_id, to.equipmentId, photoUrl);
+    }
   };
 
-  const uploaded = (mode: DocMode) => {
+  const uploaded = (to: PhotoTarget) => {
+    const copy = UPLOADED_COPY[to.kind === "asset" ? to.mode : to.kind];
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-    Alert.alert(UPLOADED_COPY[mode].title, UPLOADED_COPY[mode].body);
+    Alert.alert(copy.title, copy.body);
   };
 
-  const pickFromLibrary = async (mode: DocMode) => {
+  const pickFromLibrary = async (to: PhotoTarget) => {
     if (!asset) return;
     const target = asset;
     try {
@@ -228,8 +266,8 @@ export default function AssetMappingTab() {
       const uri = result.canceled ? null : result.assets?.[0]?.uri;
       if (!uri) return;
       setLibraryUpload(true);
-      replaceAsset(await submitPhoto(target, mode, uri));
-      uploaded(mode);
+      replaceAsset(await submitPhoto(target, to, uri));
+      uploaded(to);
     } catch (error: any) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
       Alert.alert("Upload failed", error?.message || "Please try again.");
@@ -238,13 +276,17 @@ export default function AssetMappingTab() {
     }
   };
 
-  const startPhoto = (mode: DocMode, source: PhotoSource) => {
+  const cameraModeFor = (to: PhotoTarget): CaptureMode =>
+    to.kind === "asset" ? to.mode : to.kind === "equipment-nameplate" ? "nameplate" : "location";
+
+  const startPhoto = (to: PhotoTarget, source: PhotoSource) => {
     if (!requireOnline()) return;
     const go = () =>
       source === "camera"
-        ? setFlow({ step: "camera", mode, busy: null })
-        : void pickFromLibrary(mode);
-    if (asset?.mapping_status === "completed") {
+        ? setFlow({ step: "camera", mode: cameraModeFor(to), target: to, busy: null })
+        : void pickFromLibrary(to);
+    // Re-documenting an approved asset sends it back for approval.
+    if (asset?.mapping_status === "completed" && to.kind === "asset") {
       Alert.alert(
         "Asset already approved",
         "A new photo sends this asset back to Review for a manager to approve again.",
@@ -256,6 +298,21 @@ export default function AssetMappingTab() {
       return;
     }
     go();
+  };
+
+  /** One-shot equipment call (add / rename / delete / remove photo). */
+  const runEquipment = async (fn: () => Promise<MappedAsset>) => {
+    if (!requireOnline()) return;
+    setLibraryUpload(true);
+    try {
+      replaceAsset(await fn());
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+    } catch (error: any) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
+      Alert.alert("Something went wrong", error?.message || "Please try again.");
+    } finally {
+      setLibraryUpload(false);
+    }
   };
 
   const approve = async () => {
@@ -277,24 +334,25 @@ export default function AssetMappingTab() {
 
   const onCapture = async (uri: string) => {
     if (!asset || flow?.step !== "camera") return;
-    const mode = flow.mode;
 
-    if (mode === "proof") {
+    if (!flow.target) {
+      // Cannot-access proof: kept locally until the form is submitted.
       setDraft((d) => ({ ...d, proofUri: uri }));
       setFlow({ step: "cannot", submitting: false });
       return;
     }
 
+    const to = flow.target;
     const seq = flowSeq.current;
-    setFlow({ step: "camera", mode, busy: UPLOADING });
+    setFlow({ step: "camera", mode: flow.mode, target: to, busy: UPLOADING });
     try {
-      const updated = await submitPhoto(asset, mode, uri);
+      const updated = await submitPhoto(asset, to, uri);
       if (seq !== flowSeq.current) return;
       replaceAsset(updated);
       closeFlow();
-      uploaded(mode);
+      uploaded(to);
     } catch (error) {
-      fail(seq, error, { step: "camera", mode, busy: null });
+      fail(seq, error, { step: "camera", mode: flow.mode, target: to, busy: null });
     }
   };
 
@@ -304,11 +362,17 @@ export default function AssetMappingTab() {
     const seq = flowSeq.current;
     setFlow({ ...f, saving: true });
     try {
-      const updated = await AssetMappingService.confirmNameplate(asset.asset_id, {
-        photoUrl: f.photoUrl,
-        text: f.text,
-        manual: true,
-      });
+      const updated =
+        f.owner.kind === "asset"
+          ? await AssetMappingService.saveNameplateText(asset.asset_id, {
+              photoUrl: f.owner.photoUrl,
+              text: f.text,
+            })
+          : await AssetMappingService.saveEquipmentText(
+              asset.asset_id,
+              f.owner.equipmentId,
+              f.text,
+            );
       if (seq !== flowSeq.current) return;
       replaceAsset(updated);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
@@ -316,6 +380,31 @@ export default function AssetMappingTab() {
     } catch (error) {
       fail(seq, error, { ...f, saving: false });
     }
+  };
+
+  /** Open the text editor for the asset's nameplate, or a line item's. */
+  const editSpecs = (owner: MappingEquipment | null) => {
+    if (!asset || !requireOnline()) return;
+    if (owner) {
+      setFlow({
+        step: "confirm",
+        owner: { kind: "equipment", equipmentId: owner.id },
+        title: owner.name,
+        text: owner.nameplate_data?.text || manualSeedText(typeMeta(asset)),
+        rawText: owner.nameplate_data?.raw_text ?? "",
+        saving: false,
+      });
+      return;
+    }
+    if (!asset.nameplate_photo_url) return;
+    setFlow({
+      step: "confirm",
+      owner: { kind: "asset", photoUrl: asset.nameplate_photo_url },
+      title: asset.asset_name,
+      text: asset.nameplate_data?.text || manualSeedText(typeMeta(asset)),
+      rawText: asset.nameplate_data?.raw_text ?? "",
+      saving: false,
+    });
   };
 
   /* ── cannot access ── */
@@ -348,7 +437,7 @@ export default function AssetMappingTab() {
 
   const onFlowBack = () => {
     if (!flow || flowBusy) return;
-    if (flow.step === "camera" && flow.mode === "proof") {
+    if (flow.step === "camera" && !flow.target) {
       setFlow({ step: "cannot", submitting: false });
       return;
     }
@@ -377,14 +466,21 @@ export default function AssetMappingTab() {
           <NameplateConfirm
             topInset={top}
             bottomInset={bottom}
-            assetName={asset.asset_name}
+            assetName={flow.title}
             manual
             text={flow.text}
             rawText={flow.rawText}
             saving={flow.saving}
             onChangeText={(text) => setFlow({ ...flow, text })}
             onBack={onFlowBack}
-            onRetake={() => setFlow({ step: "camera", mode: "nameplate", busy: null })}
+            onRetake={() =>
+              startPhoto(
+                flow.owner.kind === "asset"
+                  ? { kind: "asset", mode: "nameplate" }
+                  : { kind: "equipment-nameplate", equipmentId: flow.owner.equipmentId },
+                "camera",
+              )
+            }
             onSave={saveConfirm}
           />
         );
@@ -397,7 +493,7 @@ export default function AssetMappingTab() {
             draft={draft}
             submitting={flow.submitting}
             onChange={setDraft}
-            onCaptureProof={() => setFlow({ step: "camera", mode: "proof", busy: null })}
+            onCaptureProof={() => setFlow({ step: "camera", mode: "proof", target: null, busy: null })}
             onBack={onFlowBack}
             onSubmit={submitCannot}
           />
@@ -405,16 +501,22 @@ export default function AssetMappingTab() {
     }
   };
 
+  const selectedEquipment = asset?.equipment?.find((e) => e.id === equipmentId) ?? null;
+
   const closeDetail = () => {
     if (flow || approvingId || libraryUpload) return;
     setSelectedId(null);
+    setEquipmentId(null);
     setScreen("detail");
   };
 
   const onModalBack = () => {
     if (flow) onFlowBack();
     else if (screen === "qr") setScreen("detail");
-    else closeDetail();
+    else if (screen === "equipment") {
+      setEquipmentId(null);
+      setScreen("detail");
+    } else closeDetail();
   };
 
   return (
@@ -450,6 +552,51 @@ export default function AssetMappingTab() {
       >
         {!asset ? null : flow ? (
           renderFlow()
+        ) : screen === "equipment" && selectedEquipment ? (
+          <EquipmentDetailView
+            topInset={insets.top}
+            asset={asset}
+            equipment={selectedEquipment}
+            busy={libraryUpload}
+            onBack={() => {
+              setEquipmentId(null);
+              setScreen("detail");
+            }}
+            onRename={(name) =>
+              void runEquipment(() =>
+                AssetMappingService.renameEquipment(asset.asset_id, selectedEquipment.id, name),
+              )
+            }
+            onDelete={() =>
+              Alert.alert("Remove equipment", `Remove "${selectedEquipment.name}" and its photos?`, [
+                { text: "Cancel", style: "cancel" },
+                {
+                  text: "Remove",
+                  style: "destructive",
+                  onPress: () => {
+                    setEquipmentId(null);
+                    setScreen("detail");
+                    void runEquipment(() =>
+                      AssetMappingService.deleteEquipment(asset.asset_id, selectedEquipment.id),
+                    );
+                  },
+                },
+              ])
+            }
+            onNameplatePhoto={(source) =>
+              startPhoto({ kind: "equipment-nameplate", equipmentId: selectedEquipment.id }, source)
+            }
+            onEditSpecs={() => editSpecs(selectedEquipment)}
+            onAddPhoto={(source) =>
+              startPhoto({ kind: "equipment-photo", equipmentId: selectedEquipment.id }, source)
+            }
+            onRemovePhoto={(url) =>
+              void runEquipment(() =>
+                AssetMappingService.removeEquipmentPhoto(asset.asset_id, selectedEquipment.id, url),
+              )
+            }
+            onPreview={(url, title) => setPreview({ url, title })}
+          />
         ) : screen === "qr" ? (
           <AssetQrView topInset={insets.top} asset={asset} onBack={() => setScreen("detail")} />
         ) : (
@@ -459,22 +606,21 @@ export default function AssetMappingTab() {
             asset={asset}
             onBack={closeDetail}
             onViewQr={() => setScreen("qr")}
-            onNameplatePhoto={(source) => startPhoto("nameplate", source)}
-            onLocationPhoto={(source) => startPhoto("location", source)}
+            onNameplatePhoto={(source) => startPhoto({ kind: "asset", mode: "nameplate" }, source)}
+            onLocationPhoto={(source) => startPhoto({ kind: "asset", mode: "location" }, source)}
             onCannotAccess={() => {
               if (!requireOnline()) return;
               setDraft(EMPTY_DRAFT);
               setFlow({ step: "cannot", submitting: false });
             }}
-            onEnterSpecs={() => {
-              if (!asset.nameplate_photo_url || !requireOnline()) return;
-              setFlow({
-                step: "confirm",
-                photoUrl: asset.nameplate_photo_url,
-                text: manualSeedText(typeMeta(asset)),
-                rawText: asset.nameplate_data?.raw_text ?? "",
-                saving: false,
-              });
+            onEnterSpecs={() => editSpecs(null)}
+            onEditSpecs={() => editSpecs(null)}
+            equipment={{
+              onOpen: (id) => {
+                setEquipmentId(id);
+                setScreen("equipment");
+              },
+              onAdd: (name) => void runEquipment(() => AssetMappingService.addEquipment(asset.asset_id, name)),
             }}
             onPreview={(url, title) => setPreview({ url, title })}
             canApprove={canApprove}

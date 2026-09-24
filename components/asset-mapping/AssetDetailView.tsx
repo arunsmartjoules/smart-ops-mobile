@@ -4,8 +4,8 @@
  * timeline, and the sticky action bar (Approve, for managers and admins while
  * the asset is in Review).
  */
-import React from "react";
-import { Image, ScrollView, Text, TouchableOpacity, View } from "react-native";
+import React, { useState } from "react";
+import { Image, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native";
 import {
   Ban,
   Camera,
@@ -16,6 +16,8 @@ import {
   IdCard,
   Keyboard,
   Map as MapIcon,
+  Pencil,
+  Plus,
   QrCode,
   Upload,
 } from "lucide-react-native";
@@ -37,7 +39,7 @@ import {
   soShadow,
 } from "@/components/tickets/TicketDetailUI";
 import type { MappedAsset } from "@/services/AssetMappingService";
-import { getMappingStatus, processingTone, sideLabel, typeMeta } from "./lib";
+import { getMappingStatus, processingTone, sideLabel, typeColor, typeMeta } from "./lib";
 
 export type PhotoSource = "camera" | "library";
 
@@ -54,6 +56,12 @@ interface Props {
   /** Failed read: type the specs in from the saved nameplate photo. */
   onEnterSpecs: () => void;
   onPreview: (url: string, title: string) => void;
+  /** Edit the extracted nameplate text (a corrected AI read). */
+  onEditSpecs: () => void;
+  equipment: {
+    onOpen: (equipmentId: string) => void;
+    onAdd: (name: string) => void;
+  };
   canApprove: boolean;
   approving: boolean;
   onApprove: () => void;
@@ -70,6 +78,8 @@ export default function AssetDetailView({
   onCannotAccess,
   onEnterSpecs,
   onPreview,
+  onEditSpecs,
+  equipment,
   canApprove,
   approving,
   onApprove,
@@ -271,8 +281,13 @@ export default function AssetDetailView({
                 </View>
               ))}
             </View>
+            <View style={{ flexDirection: "row", marginTop: 12 }}>
+              <AttachButton icon={Pencil} label="Edit details" onPress={onEditSpecs} />
+            </View>
           </DetailCard>
         ) : null}
+
+        <EquipmentCard asset={asset} onOpen={equipment.onOpen} onAdd={equipment.onAdd} />
 
         {!noAccess ? (
           <TouchableOpacity
@@ -312,6 +327,115 @@ export default function AssetDetailView({
         <SubmitBar label="Approve" ready busy={approving} bottomInset={bottomInset} onPress={onApprove} />
       ) : null}
     </View>
+  );
+}
+
+/**
+ * Equipment line items: anything documented under this asset in its own
+ * right (a chiller's units, a plant room's pumps). Each carries its own
+ * nameplate read and extra photos — tap to open it.
+ */
+function EquipmentCard({
+  asset,
+  onOpen,
+  onAdd,
+}: {
+  asset: MappedAsset;
+  onOpen: (equipmentId: string) => void;
+  onAdd: (name: string) => void;
+}) {
+  const styles = useStyles();
+  const ds = useDs();
+  const [adding, setAdding] = useState(false);
+  const [name, setName] = useState("");
+  const items = asset.equipment ?? [];
+
+  const submit = () => {
+    const next = name.trim();
+    if (!next) return;
+    onAdd(next);
+    setName("");
+    setAdding(false);
+  };
+
+  return (
+    <DetailCard>
+      <CardHead label="Equipment" hint={items.length ? `${items.length}` : "None yet"} />
+      {items.map((item) => {
+        const tone = typeColor(item.name.slice(0, 3).toUpperCase(), ds);
+        const state = item.nameplate_data?.state;
+        const note =
+          state === "processing"
+            ? "Reading nameplate…"
+            : state === "failed"
+              ? "Nameplate not read"
+              : item.nameplate_photo_url
+                ? `${item.nameplate_data?.fields?.length ?? 0} details`
+                : "No nameplate yet";
+        return (
+          <TouchableOpacity
+            key={item.id}
+            onPress={() => onOpen(item.id)}
+            activeOpacity={0.85}
+            style={styles.equipRow}
+            accessibilityRole="button"
+            accessibilityLabel={item.name}
+          >
+            {item.nameplate_photo_url ? (
+              <Image source={{ uri: item.nameplate_photo_url }} style={styles.equipThumb} />
+            ) : (
+              <View style={[styles.equipThumb, { backgroundColor: tone.bg, alignItems: "center", justifyContent: "center" }]}>
+                <IdCard size={16} color={tone.fg} strokeWidth={2.1} />
+              </View>
+            )}
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <Text style={styles.equipName} numberOfLines={1}>
+                {item.name}
+              </Text>
+              <Text
+                style={[
+                  styles.equipNote,
+                  state === "failed" && { color: ds.flame[100] },
+                  state === "processing" && { color: ds.sky[100] },
+                ]}
+                numberOfLines={1}
+              >
+                {note}
+                {item.photos.length > 0 ? ` · ${item.photos.length} photo${item.photos.length === 1 ? "" : "s"}` : ""}
+              </Text>
+            </View>
+            <ChevronRight size={18} color={ds.carbon[600]} strokeWidth={2} />
+          </TouchableOpacity>
+        );
+      })}
+
+      {adding ? (
+        <View style={styles.addRow}>
+          <TextInput
+            value={name}
+            onChangeText={setName}
+            placeholder="Equipment name"
+            placeholderTextColor={ds.carbon[700]}
+            style={styles.addInput}
+            autoFocus
+            returnKeyType="done"
+            onSubmitEditing={submit}
+          />
+          <TouchableOpacity
+            onPress={submit}
+            style={[styles.addButton, { backgroundColor: ds.controlOn }]}
+            accessibilityRole="button"
+            accessibilityLabel="Add equipment"
+          >
+            <Text style={[styles.addButtonText, { color: ds.onControl }]}>Add</Text>
+          </TouchableOpacity>
+        </View>
+      ) : (
+        <View style={{ flexDirection: "row", marginTop: items.length ? 12 : 4 }}>
+          <AttachButton icon={Plus} label="Add equipment" onPress={() => setAdding(true)} />
+        </View>
+      )}
+    </DetailCard>
   );
 }
 
@@ -481,6 +605,42 @@ const useStyles = makeThemedStyles((ds) => ({
     alignItems: "center",
     justifyContent: "center",
   },
+  equipRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 11,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: ds.carbon[1000],
+  },
+  equipThumb: {
+    width: 38,
+    height: 38,
+    borderRadius: soRadius.sm,
+    backgroundColor: ds.carbon[1000],
+  },
+  equipName: { fontSize: 13, fontWeight: "500", color: ds.carbon[100] },
+  equipNote: { fontSize: 10.5, color: ds.carbon[400], marginTop: 2 },
+  addRow: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 12 },
+  addInput: {
+    flex: 1,
+    minHeight: 40,
+    backgroundColor: ds.pageBg,
+    borderWidth: 1,
+    borderColor: ds.carbon[900],
+    borderRadius: soRadius.sm,
+    paddingHorizontal: 12,
+    fontSize: 13,
+    color: ds.carbon[100],
+  },
+  addButton: {
+    minHeight: 40,
+    paddingHorizontal: 16,
+    borderRadius: soRadius.sm,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  addButtonText: { fontSize: 13, fontWeight: "600" },
   linkTitle: { fontSize: 13, fontWeight: "500", color: ds.carbon[100] },
   linkSub: { fontSize: 10.5, color: ds.carbon[400], marginTop: 1 },
 }));

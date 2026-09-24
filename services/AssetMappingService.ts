@@ -43,6 +43,19 @@ export interface NameplateData {
   saved_at: string;
 }
 
+/** A piece of equipment documented under an asset. */
+export interface MappingEquipment {
+  id: string;
+  asset_id: string;
+  name: string;
+  nameplate_photo_url: string | null;
+  nameplate_data: NameplateData | null;
+  photos: string[];
+  created_by_name: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface MappedAsset {
   asset_id: string;
   site_code: string;
@@ -76,9 +89,11 @@ export interface MappedAsset {
   approved_by_name: string | null;
   /** Row version — sent back on approve so changed documentation isn't approved unseen. */
   mapping_updated_at: string | null;
+  /** Equipment line items under this asset, oldest first. */
+  equipment: MappingEquipment[];
 }
 
-export type PhotoKind = "nameplate" | "location" | "no-access";
+export type PhotoKind = "nameplate" | "location" | "no-access" | "equipment";
 
 async function readError(res: Response, fallback: string): Promise<string> {
   try {
@@ -89,12 +104,20 @@ async function readError(res: Response, fallback: string): Promise<string> {
   }
 }
 
-async function post<T>(path: string, body: unknown, fallback: string): Promise<T> {
+const equipmentPath = (assetId: string, equipmentId: string) =>
+  `/asset-mapping/${encodeURIComponent(assetId)}/equipment/${encodeURIComponent(equipmentId)}`;
+
+async function send<T>(
+  method: "POST" | "PATCH" | "DELETE",
+  path: string,
+  body: unknown,
+  fallback: string,
+): Promise<T> {
   let res: Response;
   try {
     res = await apiFetch(
       `${API_URL}${path}`,
-      { method: "POST", body: JSON.stringify(body) },
+      { method, body: JSON.stringify(body) },
     );
   } catch (error: any) {
     logger.error("Asset mapping request failed", {
@@ -109,6 +132,9 @@ async function post<T>(path: string, body: unknown, fallback: string): Promise<T
   if (!json?.data) throw new Error(fallback);
   return json.data as T;
 }
+
+const post = <T,>(path: string, body: unknown, fallback: string) =>
+  send<T>("POST", path, body, fallback);
 
 const safe = (s: string) => s.replace(/[^A-Za-z0-9._-]/g, "_");
 
@@ -144,11 +170,74 @@ export const AssetMappingService = {
     );
   },
 
-  confirmNameplate(assetId: string, input: { photoUrl: string; text: string; manual: boolean }) {
+  /** Save edited nameplate text (a corrected AI read, or typed by hand). */
+  saveNameplateText(assetId: string, input: { photoUrl: string; text: string }) {
     return post<MappedAsset>(
       `/asset-mapping/${encodeURIComponent(assetId)}/nameplate/confirm`,
-      { photo_url: input.photoUrl, text: input.text, manual: input.manual },
+      { photo_url: input.photoUrl, text: input.text },
       "Couldn't save the nameplate data.",
+    );
+  },
+
+  /* ── equipment line items ── */
+
+  addEquipment(assetId: string, name: string) {
+    return post<MappedAsset>(
+      `/asset-mapping/${encodeURIComponent(assetId)}/equipment`,
+      { name },
+      "Couldn't add the equipment.",
+    );
+  },
+
+  renameEquipment(assetId: string, equipmentId: string, name: string) {
+    return send<MappedAsset>(
+      "PATCH",
+      `${equipmentPath(assetId, equipmentId)}`,
+      { name },
+      "Couldn't rename the equipment.",
+    );
+  },
+
+  deleteEquipment(assetId: string, equipmentId: string) {
+    return send<MappedAsset>(
+      "DELETE",
+      `${equipmentPath(assetId, equipmentId)}`,
+      {},
+      "Couldn't remove the equipment.",
+    );
+  },
+
+  /** Nameplate photo for a line item; read in the background like the asset's. */
+  uploadEquipmentNameplate(assetId: string, equipmentId: string, photoUrl: string) {
+    return post<MappedAsset>(
+      `${equipmentPath(assetId, equipmentId)}/nameplate/upload`,
+      { photo_url: photoUrl },
+      "Couldn't save the nameplate photo.",
+    );
+  },
+
+  saveEquipmentText(assetId: string, equipmentId: string, text: string) {
+    return post<MappedAsset>(
+      `${equipmentPath(assetId, equipmentId)}/nameplate/specs`,
+      { text },
+      "Couldn't save the nameplate data.",
+    );
+  },
+
+  addEquipmentPhoto(assetId: string, equipmentId: string, photoUrl: string) {
+    return post<MappedAsset>(
+      `${equipmentPath(assetId, equipmentId)}/photos`,
+      { photo_url: photoUrl },
+      "Couldn't add the photo.",
+    );
+  },
+
+  removeEquipmentPhoto(assetId: string, equipmentId: string, photoUrl: string) {
+    return send<MappedAsset>(
+      "DELETE",
+      `${equipmentPath(assetId, equipmentId)}/photos`,
+      { photo_url: photoUrl },
+      "Couldn't remove the photo.",
     );
   },
 
