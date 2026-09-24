@@ -159,6 +159,8 @@ class SyncEngineImpl implements SyncEngine {
 
   // Debounce: in-flight sync promise
   private syncPromise: Promise<void> | null = null;
+  /** In-flight queue flush — shared so two flushes never replay the same items. */
+  private flushPromise: Promise<void> | null = null;
   private forceFullSyncOnce = false;
   private hasAttemptedEmptySitesRecovery = false;
 
@@ -952,7 +954,18 @@ class SyncEngineImpl implements SyncEngine {
 
   // ── Queue flush ───────────────────────────────────────────────────────────
 
-  private async _flushQueue(): Promise<void> {
+  private _flushQueue(): Promise<void> {
+    // Single-flight: screens now kick a flush right after queueing a photo, so
+    // a flush can be requested while a sync's flush is mid-way. Running both
+    // would upload/PUT the same queue items twice.
+    if (this.flushPromise) return this.flushPromise;
+    this.flushPromise = this._flushQueueOnce().finally(() => {
+      this.flushPromise = null;
+    });
+    return this.flushPromise;
+  }
+
+  private async _flushQueueOnce(): Promise<void> {
     const items = await cacheManager.getQueue();
     if (items.length === 0) return;
 

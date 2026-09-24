@@ -51,12 +51,77 @@ const queueAttachmentIfLocal = async (
   });
 };
 
+/**
+ * Resolve a PM instance photo (before/after/signature) for a save.
+ *
+ * Every autosave passes the instance's current photo URIs back in, so a local
+ * URI we've already queued must NOT be queued again — that used to copy and
+ * re-upload the same photo on every keystroke, which on a weak link meant a
+ * pile of competing uploads. Once the queued upload has finished (and deleted
+ * its local copy) the public URL is returned instead of the dead file:// path.
+ */
+const resolveInstanceImage = async (
+  uri: string | null | undefined,
+  folder: string,
+  entityId: string,
+  field: string,
+): Promise<string | null> => {
+  if (!uri) return null;
+  if (!isLocalUri(uri)) return uri;
+  const queued = await AttachmentQueueService.findByLocalUri(uri);
+  if (queued) return queued.uploaded_url || uri;
+  return queueAttachmentIfLocal(uri, folder, "pm_instance", entityId, field);
+};
+
+const INSTANCE_IMAGE_FIELDS = ["before_image", "after_image", "client_sign"] as const;
+
+/**
+ * Start queued photo uploads now instead of on the next sync tick (up to
+ * ~15 min away). Best-effort: offline it does nothing and the queue retries on
+ * reconnect. Lazy require — SyncEngine imports this module.
+ */
+const kickQueueFlush = () => {
+  NetInfo.fetch()
+    .then((state) => {
+      if (!state.isConnected) return;
+      const { syncEngine } = require("./SyncEngine") as typeof import("./SyncEngine");
+      return syncEngine.flushQueue();
+    })
+    .catch(() => {});
+};
+
+/**
+ * Server-bound copy of a pm_instance update. A device-local photo path is
+ * meaningless to the server (and web would render it as a broken image), so it
+ * is left out; the attachment queue re-pushes the public URL once the upload
+ * lands. Nulls are left out too so a save never blanks a photo server-side.
+ */
+const withoutLocalImages = <T extends Record<string, any>>(payload: T): T => {
+  const out: Record<string, any> = { ...payload };
+  for (const field of INSTANCE_IMAGE_FIELDS) {
+    if (field in out && (!out[field] || isLocalUri(out[field]))) {
+      delete out[field];
+    }
+  }
+  return out as T;
+};
+
 type PMInstanceRow = typeof pmInstances.$inferSelect;
 type PMChecklistItemRow = typeof pmChecklistItems.$inferSelect;
 type PMResponseRow = typeof pmResponses.$inferSelect;
 
 const PMService = {
-  async prunePendingInstanceUpdates(instanceId: string): Promise<void> {
+  /**
+   * Remove this PM's still-pending pm_instance_update items and return their
+   * payloads merged oldest→newest, so the caller can fold them under its own
+   * update. Dropping them outright lost whatever hadn't reached the server
+   * yet — offline, the first autosave discarded the queued start
+   * (status/start_datetime/assignee), and an edit after completion discarded
+   * the queued "Completed" itself.
+   */
+  async prunePendingInstanceUpdates(
+    instanceId: string,
+  ): Promise<Record<string, any>> {
     const pending = await db
       .select({ id: offlineQueue.id, payload: offlineQueue.payload })
       .from(offlineQueue)
@@ -67,20 +132,19 @@ const PMService = {
         ),
       );
 
-    const staleIds = pending
-      .filter((row) => {
-        try {
-          const parsed = JSON.parse(row.payload);
-          return parsed?.id === instanceId;
-        } catch {
-          return false;
-        }
-      })
-      .map((row) => row.id);
-
-    for (const id of staleIds) {
-      await db.delete(offlineQueue).where(eq(offlineQueue.id, id));
+    let merged: Record<string, any> = {};
+    for (const row of pending) {
+      let parsed: any;
+      try {
+        parsed = JSON.parse(row.payload);
+      } catch {
+        continue;
+      }
+      if (parsed?.id !== instanceId) continue;
+      merged = { ...merged, ...parsed };
+      await db.delete(offlineQueue).where(eq(offlineQueue.id, row.id));
     }
+    return merged;
   },
 
   /**
@@ -784,34 +848,35 @@ const PMService = {
       updateData.completed_on = options.completed_on;
     }
 
-    if (options?.beforeImage !== undefined) {
-      updateData.before_image = await queueAttachmentIfLocal(
-        options.beforeImage, "pm-completion", "pm_instance", instanceServerId, "before_image"
-      );
-    }
-    
-    if (options?.afterImage !== undefined) {
-      updateData.after_image = await queueAttachmentIfLocal(
-        options.afterImage, "pm-completion", "pm_instance", instanceServerId, "after_image"
-      );
-    }
-    
-    if (options?.clientSign !== undefined) {
-      updateData.client_sign = await queueAttachmentIfLocal(
-        options.clientSign, "pm-signatures", "pm_instance", instanceServerId, "client_sign"
-      );
-    }
+    // A missing photo is never written as null — nothing on this screen
+    // removes one, so null only means "not loaded here" and must not wipe it.
+    const beforeImage = await resolveInstanceImage(
+      options?.beforeImage, "pm-completion", instanceServerId, "before_image",
+    );
+    if (beforeImage) updateData.before_image = beforeImage;
+
+    const afterImage = await resolveInstanceImage(
+      options?.afterImage, "pm-completion", instanceServerId, "after_image",
+    );
+    if (afterImage) updateData.after_image = afterImage;
+
+    const clientSign = await resolveInstanceImage(
+      options?.clientSign, "pm-signatures", instanceServerId, "client_sign",
+    );
+    if (clientSign) updateData.client_sign = clientSign;
 
     await db.update(pmInstances).set(updateData).where(eq(pmInstances.id, instanceServerId));
 
-    // Enqueue instance metadata update (drop stale pending updates for same PM first)
-    await this.prunePendingInstanceUpdates(instanceServerId);
+    // Enqueue instance metadata update, folding in any still-pending update
+    // for the same PM so an unsent start/completion isn't lost.
+    const unsent = await this.prunePendingInstanceUpdates(instanceServerId);
+    const serverUpdate = withoutLocalImages({ ...unsent, ...updateData });
     const queueItemId = uuidv4();
     await db.insert(offlineQueue).values({
       id: queueItemId,
       entity_type: "pm_instance_update",
       operation: "update",
-      payload: JSON.stringify({ id: instanceServerId, ...updateData }),
+      payload: JSON.stringify({ ...serverUpdate, id: instanceServerId }),
       created_at: Date.now(),
       retry_count: 0,
       last_error: null,
@@ -820,7 +885,8 @@ const PMService = {
 
     // Build API-safe payload: convert completed_on from ms-epoch to ISO string
     // so Postgres timestamp columns accept the value.
-    const apiPayload = { ...updateData };
+    const apiPayload = { ...serverUpdate };
+    delete apiPayload.id;
     if (apiPayload.completed_on && typeof apiPayload.completed_on === "number") {
       apiPayload.completed_on = new Date(apiPayload.completed_on).toISOString();
     }
@@ -953,6 +1019,10 @@ const PMService = {
       }
     };
 
+    // A photo still on-device has an upload waiting in the queue — start it
+    // once this save's own PUT has gone out (not alongside it).
+    const hasQueuedPhoto = [beforeImage, afterImage, clientSign].some(isLocalUri);
+
     if (options?.awaitNetwork === false) {
       // Fire-and-forget. Rejections from PMCompletionBlockedError surface as
       // a non-blocking alert — the user may have already navigated away, so
@@ -973,9 +1043,15 @@ const PMService = {
             : err.message;
           Alert.alert("PM completion rolled back", fullMessage);
         }
+      }).finally(() => {
+        if (hasQueuedPhoto) kickQueueFlush();
       });
     } else {
-      await pushToServer();
+      try {
+        await pushToServer();
+      } finally {
+        if (hasQueuedPhoto) kickQueueFlush();
+      }
     }
   },
 
@@ -1052,10 +1128,9 @@ const PMService = {
       assignedToName?: string;
     },
   ): Promise<void> {
-    const beforeImageValue = await queueAttachmentIfLocal(
+    const beforeImageValue = await resolveInstanceImage(
       options.beforeImage,
       "pm-completion",
-      "pm_instance",
       instanceServerId,
       "before_image",
     );
@@ -1071,7 +1146,7 @@ const PMService = {
     // sync payload (backend pm_instances does have it).
     const localUpdate = {
       status: "In-progress",
-      before_image: beforeImageValue,
+      ...(beforeImageValue ? { before_image: beforeImageValue } : {}),
       updated_at: now,
       ...assignment,
     };
@@ -1080,16 +1155,17 @@ const PMService = {
       .set(localUpdate)
       .where(eq(pmInstances.id, instanceServerId));
 
-    const syncPayload = {
+    const unsent = await this.prunePendingInstanceUpdates(instanceServerId);
+    const syncPayload = withoutLocalImages({
+      ...unsent,
       id: instanceServerId,
       status: "In-progress",
       before_image: beforeImageValue,
       start_datetime: options.startDatetime,
       updated_at: now,
       ...assignment,
-    };
+    });
 
-    await this.prunePendingInstanceUpdates(instanceServerId);
     const queueItemId = uuidv4();
     await db.insert(offlineQueue).values({
       id: queueItemId,
@@ -1102,8 +1178,12 @@ const PMService = {
       status: "pending",
     });
 
-    const netState = await NetInfo.fetch();
-    if (netState.isConnected) {
+    // Not awaited: the start is already saved locally and queued, so the
+    // operator goes straight into the checklist instead of sitting on a
+    // spinner for up to the request timeout on a weak signal.
+    void (async () => {
+      const netState = await NetInfo.fetch();
+      if (!netState.isConnected) return;
       try {
         const response = await apiFetch(
           `/api/pm-instances/${instanceServerId}`,
@@ -1124,7 +1204,8 @@ const PMService = {
           error: err,
         });
       }
-    }
+      if (isLocalUri(beforeImageValue)) kickQueueFlush();
+    })();
   },
 
   async startInstance(instanceServerId: string): Promise<void> {

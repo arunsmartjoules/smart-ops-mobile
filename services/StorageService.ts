@@ -33,6 +33,28 @@ interface PresignResult {
 }
 
 /**
+ * Outcome of an upload attempt. `permanent` marks failures a retry can't fix
+ * (the local file is gone/unreadable, or the server refused the upload
+ * itself); everything else — timeouts, dropped connections, 5xx — is a weak
+ * or missing network and must stay retryable indefinitely.
+ */
+export interface UploadResult {
+  url: string | null;
+  permanent: boolean;
+  error?: string;
+}
+
+/**
+ * Cap on the S3 PUT. fetch() has no timeout of its own, so on a weak link a
+ * stalled upload could hang for minutes and hold up the whole sync queue
+ * behind it. Generous enough for a full-size photo on a slow 2G/3G uplink.
+ */
+const UPLOAD_TIMEOUT_MS = 120_000;
+
+/** 4xx statuses that are about auth/throttling/timing, not the request. */
+const RETRYABLE_4XX = new Set([401, 403, 408, 429]);
+
+/**
  * Ask the backend to mint a presigned S3 PUT URL for `key`. Auth + token
  * refresh are handled by apiFetch. Returns null on any failure (offline,
  * rejected key, server error) so the caller can queue/retry.
@@ -40,7 +62,7 @@ interface PresignResult {
 async function requestPresignedUpload(
   key: string,
   contentType: string,
-): Promise<PresignResult | null> {
+): Promise<PresignResult | { status: number } | null> {
   try {
     const res = await apiFetch(`${API_URL}/uploads/presign`, {
       method: "POST",
@@ -53,7 +75,7 @@ async function requestPresignedUpload(
         status: res.status,
         key,
       });
-      return null;
+      return { status: res.status };
     }
 
     const json = await res.json();
@@ -92,6 +114,18 @@ export const StorageService = {
     filePath: string,
     fileUri: string,
   ): Promise<string | null> {
+    return (await this.uploadFileDetailed(filePath, fileUri)).url;
+  },
+
+  /**
+   * uploadFile, but reporting whether a failure is worth retrying — the
+   * offline attachment queue uses this so a patch of bad network never
+   * exhausts a photo's retries (see UploadResult).
+   */
+  async uploadFileDetailed(
+    filePath: string,
+    fileUri: string,
+  ): Promise<UploadResult> {
     let blob: any = null;
     try {
       appLogger.info(`Uploading file to S3: ${filePath}`, {
@@ -102,36 +136,63 @@ export const StorageService = {
       // environment doesn't support the Blob constructor from ArrayBuffer
       // reliably; fetching the local file as a "blob" response is the standard
       // workaround.
-      blob = await new Promise((resolve, reject) => {
-        const xhr = new XMLHttpRequest();
-        xhr.onload = function () {
-          resolve(xhr.response);
-        };
-        xhr.onerror = function (e) {
-          appLogger.error("Network request failed for local file access", {
-            module: "STORAGE_SERVICE",
-            error: e,
-          });
-          reject(new TypeError("Network request failed"));
-        };
-        xhr.responseType = "blob";
-        xhr.open("GET", fileUri, true);
-        xhr.send(null);
-      });
+      try {
+        blob = await new Promise((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhr.onload = function () {
+            resolve(xhr.response);
+          };
+          xhr.onerror = function (e) {
+            appLogger.error("Network request failed for local file access", {
+              module: "STORAGE_SERVICE",
+              error: e,
+            });
+            reject(new TypeError("Network request failed"));
+          };
+          xhr.responseType = "blob";
+          xhr.open("GET", fileUri, true);
+          xhr.send(null);
+        });
+      } catch {
+        // Reading a local file doesn't touch the network — if it fails the
+        // file is missing or unreadable and no retry will bring it back.
+        return { url: null, permanent: true, error: "Local file unreadable" };
+      }
 
       const contentType = getContentType(filePath || fileUri);
 
       // 2. Get a presigned PUT URL from the backend.
       const presigned = await requestPresignedUpload(filePath, contentType);
-      if (!presigned) return null;
+      if (!presigned) {
+        return { url: null, permanent: false, error: "Presign request failed" };
+      }
+      if ("status" in presigned) {
+        const permanent =
+          presigned.status >= 400 &&
+          presigned.status < 500 &&
+          !RETRYABLE_4XX.has(presigned.status);
+        return {
+          url: null,
+          permanent,
+          error: `Presign HTTP ${presigned.status}`,
+        };
+      }
 
       // 3. Upload the blob directly to S3. The Content-Type header MUST match
       // the one the presigned URL was signed with, or S3 rejects the PUT.
-      const putRes = await fetch(presigned.uploadUrl, {
-        method: "PUT",
-        headers: { "Content-Type": contentType },
-        body: blob,
-      });
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), UPLOAD_TIMEOUT_MS);
+      let putRes: Response;
+      try {
+        putRes = await fetch(presigned.uploadUrl, {
+          method: "PUT",
+          headers: { "Content-Type": contentType },
+          body: blob,
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timer);
+      }
 
       if (!putRes.ok) {
         appLogger.error("S3 PUT failed", {
@@ -139,17 +200,28 @@ export const StorageService = {
           status: putRes.status,
           filePath,
         });
-        return null;
+        // 403 is usually the presigned URL expiring mid-way through a slow
+        // upload — the next attempt mints a fresh one.
+        const permanent =
+          putRes.status >= 400 &&
+          putRes.status < 500 &&
+          !RETRYABLE_4XX.has(putRes.status);
+        return { url: null, permanent, error: `S3 PUT HTTP ${putRes.status}` };
       }
 
       // 4. Return the permanent public URL.
-      return presigned.publicUrl;
+      return { url: presigned.publicUrl, permanent: false };
     } catch (error: any) {
       appLogger.error("S3 upload failed", {
         module: "STORAGE_SERVICE",
         error: error.message,
       });
-      return null;
+      const aborted = error?.name === "AbortError";
+      return {
+        url: null,
+        permanent: false,
+        error: aborted ? "Upload timed out" : error?.message,
+      };
     } finally {
       // 5. Release the blob to prevent memory leaks.
       if (blob && typeof blob.close === "function") {

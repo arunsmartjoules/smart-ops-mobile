@@ -37,7 +37,6 @@ import Skeleton from "@/components/Skeleton";
 import { StorageService } from "@/services/StorageService";
 import { dsRadius, dsCardShadow } from "@/constants/ds";
 import { makeThemedStyles, useDs } from "@/hooks/useDs";
-import NetInfo from "@react-native-community/netinfo";
 
 // Drizzle row type inferred from the schema
 type PMChecklistItemRow = typeof pmChecklistItems.$inferSelect;
@@ -864,41 +863,64 @@ export default function PMExecutionScreen() {
     (instance?.before_image ? 1 : 0) +
     (instance?.after_image ? 1 : 0);
 
+  // Latest instance for the async photo handlers — the camera/gallery can sit
+  // open for a while, so a closure copy may be stale when it returns.
+  const instanceRef = useRef<any>(null);
+  useEffect(() => {
+    instanceRef.current = instance;
+  }, [instance]);
+
   const applyInstanceImageFromUri = useCallback(
     async (type: "before_image" | "after_image", pickedUri: string) => {
-      let finalUri = pickedUri;
-      const netState = await NetInfo.fetch();
-      const isActuallyOnline = netState.isConnected === true;
+      // No inline upload. The photo shows at once and is saved locally;
+      // PMService queues it and the attachment queue uploads it in the
+      // background — retrying through dead spots — then swaps in the public
+      // URL. Uploading here first meant a weak signal left the tile blank
+      // until the upload finished or timed out, and leaving the screen in the
+      // meantime dropped the photo altogether.
+      const nextInstance = { ...(instanceRef.current || {}), [type]: pickedUri };
+      setInstance(nextInstance);
+      const saved = await handleSave(true, undefined, undefined, nextInstance);
+      if (!saved) return;
 
-      if (isActuallyOnline) {
-        try {
-          const fileName = `pm-completion/${instanceId}_${type}_${Date.now()}.jpg`;
-          const publicUrl = await StorageService.uploadFile(
-            "jouleops-attachments",
-            fileName,
-            pickedUri,
-          );
-          if (publicUrl) finalUri = publicUrl;
-        } catch (err) {
-          logger.warn(`Failed to upload ${type} immediately`, { error: err });
-        }
-      }
-
-      let computedNextInstance: any = null;
-      setInstance((prev: any) => {
-        const nextInstance = {
-          ...(prev || {}),
-          [type]: finalUri,
-        };
-        computedNextInstance = nextInstance;
-        return nextInstance;
-      });
-      if (computedNextInstance) {
-        handleSave(true, undefined, undefined, computedNextInstance);
+      // The picker's file sits in a cache the OS may purge — point the tile
+      // at the persisted copy the upload queue owns.
+      const persisted = await PMService.getInstanceByServerId(
+        instanceId as string,
+      );
+      const persistedUri = persisted?.[type];
+      if (persistedUri && persistedUri !== pickedUri) {
+        setInstance((prev: any) =>
+          prev?.[type] === pickedUri ? { ...prev, [type]: persistedUri } : prev,
+        );
       }
     },
     [instanceId, handleSave],
   );
+
+  /**
+   * Re-read the before/after photos from the local DB. A queued photo's local
+   * copy is deleted once its upload lands (the DB then holds the public URL),
+   * so a tile still pointing at the old path fails to load — this repoints it.
+   */
+  const refreshInstanceImages = useCallback(async () => {
+    const persisted = await PMService.getInstanceByServerId(
+      instanceId as string,
+    );
+    if (!persisted) return;
+    setInstance((prev: any) => {
+      if (!prev) return prev;
+      let changed = false;
+      const next = { ...prev };
+      for (const field of ["before_image", "after_image"] as const) {
+        if (persisted[field] && persisted[field] !== prev[field]) {
+          next[field] = persisted[field];
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [instanceId]);
 
   const pickInstanceImage = useCallback(
     async (
@@ -1368,6 +1390,8 @@ export default function PMExecutionScreen() {
     label: string,
   ) => {
     const uri = instance?.[type] as string | undefined;
+    // Still on-device: saved, waiting for signal to upload.
+    const isQueued = !!uri && !/^https?:/i.test(uri);
     return (
       <TouchableOpacity
         key={type}
@@ -1378,7 +1402,12 @@ export default function PMExecutionScreen() {
         accessibilityLabel={`${label} photo. ${uri ? "Tap to preview or replace" : "Tap to add"}`}
       >
         {uri ? (
-          <Image source={{ uri }} style={styles.evImage} resizeMode="cover" />
+          <Image
+            source={{ uri }}
+            style={styles.evImage}
+            resizeMode="cover"
+            onError={() => void refreshInstanceImages()}
+          />
         ) : (
           <View style={styles.evEmpty}>
             <Camera size={26} color={ds.carbon[600]} strokeWidth={1.8} />
@@ -1387,7 +1416,11 @@ export default function PMExecutionScreen() {
         )}
         <View style={styles.evCaption}>
           <Text style={styles.evLabel}>{label}</Text>
-          {uri ? <Check size={13} color={ds.sky[100]} strokeWidth={2.6} /> : null}
+          {isQueued ? (
+            <Text style={styles.evQueued}>Queued</Text>
+          ) : uri ? (
+            <Check size={13} color={ds.sky[100]} strokeWidth={2.6} />
+          ) : null}
         </View>
       </TouchableOpacity>
     );
@@ -1867,6 +1900,12 @@ const useStyles = makeThemedStyles((ds) => ({
     letterSpacing: 0.55,
     textTransform: "uppercase",
     color: "#F1F4F4",
+  },
+  evQueued: {
+    fontSize: 10,
+    fontWeight: "600",
+    color: "#F1F4F4",
+    opacity: 0.75,
   },
 
 

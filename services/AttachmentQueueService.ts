@@ -138,6 +138,29 @@ export const AttachmentQueueService = {
   },
 
   /**
+   * The queue row that owns a persisted local copy, if any. Lets callers that
+   * re-save the same photo (PM autosaves) reuse the existing upload instead of
+   * queueing a duplicate, and swap in the public URL once it has landed.
+   */
+  async findByLocalUri(
+    localUri: string,
+  ): Promise<{ status: string; uploaded_url: string | null } | null> {
+    try {
+      const [row] = await db
+        .select({
+          status: attachmentQueue.status,
+          uploaded_url: attachmentQueue.uploaded_url,
+        })
+        .from(attachmentQueue)
+        .where(eq(attachmentQueue.local_uri, localUri))
+        .limit(1);
+      return row ?? null;
+    } catch {
+      return null;
+    }
+  },
+
+  /**
    * Process a single attachment upload.
    * Called by SyncEngine when processing the offline_queue.
    *
@@ -177,22 +200,36 @@ export const AttachmentQueueService = {
     // SyncEngine classifies as transient (statusCode 0) — so it never
     // increments the offline_queue retry_count and would re-attempt this upload
     // on EVERY sync cycle forever (a corrupt/deleted file wedges every flush).
-    // The attachment_queue.retry_count IS bumped on each failure below, so gate
-    // on it here: past the cap, give up and return normally so the offline_queue
-    // item is dequeued instead of looping.
+    // attachment_queue.retry_count is bumped below ONLY for permanent failures
+    // (unreadable file, upload refused) — never for a weak or absent network,
+    // which previously dead-lettered photos taken in a basement after a
+    // handful of sync ticks. Past the cap, give up and return normally so the
+    // offline_queue item is dequeued instead of looping.
     const ATTACHMENT_MAX_RETRIES = 5;
-    if ((item.retry_count ?? 0) > ATTACHMENT_MAX_RETRIES) {
+    const deadLetter = async (reason: string) => {
       await db
         .update(attachmentQueue)
-        .set({ status: "dead_letter", updated_at: Date.now() })
+        .set({ status: "dead_letter", last_error: reason, updated_at: Date.now() })
         .where(eq(attachmentQueue.id, queueItemId))
         .catch(() => {});
-      logger.warn("AttachmentQueueService: upload exceeded retry cap, dead-lettered", {
+      logger.warn("AttachmentQueueService: upload dead-lettered", {
         module: "ATTACHMENT_QUEUE",
         queueItemId,
+        reason,
         retryCount: item.retry_count,
-        lastError: item.last_error,
       });
+    };
+    if ((item.retry_count ?? 0) > ATTACHMENT_MAX_RETRIES) {
+      await deadLetter(item.last_error || "Exceeded retry cap");
+      return;
+    }
+
+    // Nothing left to upload — no retry can fix a deleted local copy.
+    const fileInfo = await FileSystem.getInfoAsync(item.local_uri).catch(
+      () => null,
+    );
+    if (fileInfo && !fileInfo.exists) {
+      await deadLetter("Local file missing");
       return;
     }
 
@@ -203,25 +240,28 @@ export const AttachmentQueueService = {
       .where(eq(attachmentQueue.id, queueItemId));
 
     // Upload
-    const uploadedUrl = await StorageService.uploadFile(
-      item.bucket_name,
+    const result = await StorageService.uploadFileDetailed(
       item.remote_path,
       item.local_uri,
     );
+    const uploadedUrl = result.url;
 
     if (!uploadedUrl) {
-      // Upload failed — mark as failed and increment retry
+      // Upload failed. Only a permanent failure counts toward the cap; a
+      // network failure stays retryable for as long as the device is offline.
       await db
         .update(attachmentQueue)
         .set({
           status: "failed",
-          retry_count: sql`${attachmentQueue.retry_count} + 1`,
-          last_error: "Upload returned null",
+          ...(result.permanent
+            ? { retry_count: sql`${attachmentQueue.retry_count} + 1` }
+            : {}),
+          last_error: result.error || "Upload failed",
           updated_at: Date.now(),
         })
         .where(eq(attachmentQueue.id, queueItemId));
 
-      throw new Error("Attachment upload failed");
+      throw new Error(`Attachment upload failed: ${result.error || "unknown"}`);
     }
 
     // Update the related record's field with the remote URL

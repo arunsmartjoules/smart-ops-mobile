@@ -21,6 +21,7 @@
     },
     "production": {
       "autoIncrement": true,
+      "channel": "production",
       "node": "22.11.0",
       "env": {
         "EXPO_PUBLIC_BACKEND_URL": "https://api-jouleops.smartjoules.org",
