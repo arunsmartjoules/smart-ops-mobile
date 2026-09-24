@@ -22,6 +22,8 @@ export interface HomeSummary {
   site: { siteCode: string; name: string | null };
   period: { from: string; to: string };
   tickets: { raised: number; resolved: number; open: number; slaBreached: number };
+  /** Tickets raised in the period by category, biggest first, tail as "Other". */
+  ticketCategories: { category: string; count: number }[];
   breachAlert: {
     breached: number;
     atRisk: number;

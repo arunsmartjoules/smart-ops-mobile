@@ -33,7 +33,7 @@ function TabsContent({ hideTabBar = false }: { hideTabBar?: boolean }) {
         options={{ title: "PM" }}
       />
       <Tabs.Screen name="asset-mapping" options={{ title: "Assets" }} />
-      {/* Profile is reached from the Site Overview header avatar, not the bar. */}
+      {/* Profile is reached from the Home header avatar, not the bar. */}
       <Tabs.Screen name="profile" options={{ title: "Profile" }} />
     </Tabs>
   );

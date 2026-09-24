@@ -33,6 +33,7 @@ import { addDays, format } from "date-fns";
 import { useAuth } from "@/contexts/AuthContext";
 import { useAttendanceGate } from "@/contexts/AttendanceGateContext";
 import { useAutoSync } from "@/hooks/useAutoSync";
+import { isWfhUser, useSitePresence } from "@/hooks/useSitePresence";
 import AttendanceService, {
   type AttendanceLog,
   getISTDateString,
@@ -60,9 +61,12 @@ import {
   type Jo,
   useJo,
   Footnote,
-  ProgressList,
   PunchButton,
   SectionLabel,
+  CategoryChart,
+  type ChartMode,
+  ChartModeToggle,
+  type DonutSlice,
   SiteCard,
   SlaCard,
   type TileData,
@@ -164,14 +168,6 @@ function pctTone(pct: number): Tone {
 }
 const pctOf = (a: number, b: number) => (b > 0 ? Math.round((a / b) * 100) : 0);
 
-function progressBar(label: string, done: number, total: number): BarData {
-  if (total <= 0) {
-    return { label, detail: "None scheduled", pct: 0, tone: "neutral" };
-  }
-  const pct = pctOf(done, total);
-  return { label, detail: `${done}/${total} · ${pct}%`, pct, tone: pctTone(pct) };
-}
-
 function plural(n: number, word: string) {
   return `${n} ${word}${n === 1 ? "" : "s"}`;
 }
@@ -222,10 +218,11 @@ export default function Dashboard() {
   // Period filter (operational tiles) and SLA month — independent by design.
   const todayIso = getISTDateString(currentTime);
   const monthKeys = useMemo(() => recentMonthKeys(todayIso), [todayIso]);
-  const [period, setPeriod] = useState<PeriodKey>("today");
+  const [period, setPeriod] = useState<PeriodKey>("month");
+  const [chartMode, setChartMode] = useState<ChartMode>("donut");
   const [customRange, setCustomRange] = useState({ from: todayIso, to: todayIso });
   const [slaMonth, setSlaMonth] = useState<string>(() => todayIso.slice(0, 7));
-  const [sheet, setSheet] = useState<null | "period" | "custom" | "month" | "site">(null);
+  const [sheet, setSheet] = useState<null | "filters" | "custom" | "month">(null);
   const [draftRange, setDraftRange] = useState({ from: todayIso, to: todayIso });
   const [pickerFor, setPickerFor] = useState<null | "from" | "to">(null);
 
@@ -574,13 +571,28 @@ export default function Dashboard() {
     return Number.isNaN(d.getTime()) ? "--:--" : format(d, "HH:mm");
   };
 
-  const shiftLine = useMemo(() => {
-    if (!punchedIn || !todayAttendance?.check_in_time) return null;
-    const start = new Date(todayAttendance.check_in_time).getTime();
+  /** Ticks with `currentTime` while on shift; frozen at check-out. */
+  const shiftMinutes = useMemo(() => {
+    const inIso = todayAttendance?.check_in_time;
+    if (!inIso) return null;
+    const start = new Date(inIso).getTime();
     if (Number.isNaN(start)) return null;
-    const mins = Math.max(0, Math.floor((currentTime.getTime() - start) / 60000));
-    return `In ${clock(todayAttendance.check_in_time)} · ${Math.floor(mins / 60)}h ${String(mins % 60).padStart(2, "0")}m so far`;
-  }, [punchedIn, todayAttendance, currentTime]);
+    const outIso = todayAttendance?.check_out_time;
+    const end = outIso ? new Date(outIso).getTime() : currentTime.getTime();
+    if (Number.isNaN(end)) return null;
+    return Math.max(0, Math.floor((end - start) / 60000));
+  }, [todayAttendance, currentTime]);
+
+  const punchInLabel = todayAttendance?.check_in_time
+    ? clock(todayAttendance.check_in_time)
+    : null;
+  const punchOutLabel = todayAttendance?.check_out_time
+    ? clock(todayAttendance.check_out_time)
+    : null;
+  const durationLabel =
+    shiftMinutes == null
+      ? null
+      : `${Math.floor(shiftMinutes / 60)}h ${String(shiftMinutes % 60).padStart(2, "0")}m`;
 
   const cta = punchedIn
     ? { label: "End Day", icon: LogOut, variant: "secondary" as const, onPress: handleQuickCheckOut }
@@ -595,6 +607,18 @@ export default function Dashboard() {
   const avatarInitial = (displayName.trim()[0] || "J").toUpperCase();
   const siteName = activeSite?.name || summary?.site.name || activeSiteCode || "No site assigned";
   const canSwitchSite = !isLocked && sites.length > 1;
+  const attendanceDateLabel = useMemo(() => {
+    const iso = todayAttendance?.date;
+    const d = iso ? isoToDate(iso) : currentTime;
+    return format(Number.isNaN(d.getTime()) ? currentTime : d, "EEE, dd MMM yyyy");
+  }, [todayAttendance, currentTime]);
+
+  const presence = useSitePresence({
+    isWfh: isWfhUser(user?.work_location_type),
+    sites,
+    siteCode: todayAttendance?.site_code || null,
+    refreshKey: refreshTick,
+  });
 
   const periodLabel =
     period === "today" ? "Today"
@@ -646,7 +670,11 @@ export default function Dashboard() {
     },
   ];
 
-  const mgrTilesA: TileData[] = [
+  /**
+   * One ordered list, split into rows of three below — OCR Pending sits last
+   * because it is the only tile that is not period scoped.
+   */
+  const mgrTiles: TileData[] = [
     {
       label: "OPEN TICKETS",
       value: val(s?.tickets.open),
@@ -655,23 +683,12 @@ export default function Dashboard() {
       onPress: go("/(tabs)/tickets"),
     },
     {
-      // Asset Mapping backlog (live, not period scoped) — replaced the SLA
-      // breach count; breaches still surface via the BreachAlert banner.
-      label: "OCR PENDING",
-      value: ocrPending !== null ? String(ocrPending) : dash,
-      tone: ocrPending === null ? "neutral" : ocrPending > 20 ? "warn" : "neutral",
-      flag: ocrPending !== null && ocrPending > 20,
-      onPress: go("/(tabs)/asset-mapping"),
-    },
-    {
       label: "INCIDENTS",
       value: val(s?.incidents.raised),
       tone: s && s.incidents.raised > 2 ? "warn" : "neutral",
       flag: !!s && s.incidents.raised > 0,
       onPress: go("/(tabs)/incidents"),
     },
-  ];
-  const mgrTilesB: TileData[] = [
     {
       label: "OPEN PM",
       value: s ? String(pendingPm) : dash,
@@ -692,17 +709,23 @@ export default function Dashboard() {
       tone: "neutral",
       onPress: go("/attendance"),
     },
+    {
+      // Asset Mapping backlog (live, not period scoped) — replaced the SLA
+      // breach count; breaches still surface via the BreachAlert banner.
+      label: "OCR PENDING",
+      value: ocrPending !== null ? String(ocrPending) : dash,
+      tone: ocrPending === null ? "neutral" : ocrPending > 20 ? "warn" : "neutral",
+      flag: ocrPending !== null && ocrPending > 20,
+      onPress: go("/(tabs)/asset-mapping"),
+    },
   ];
+  const mgrTilesA = mgrTiles.slice(0, 3);
+  const mgrTilesB = mgrTiles.slice(3);
 
-  const opBars = s
-    ? [progressBar("Site logs", s.logs.completed, s.logs.expected), progressBar("PM tasks", s.pm.completed, s.pm.planned)]
-    : [];
-  const mgrBars = s
-    ? [
-        progressBar("Preventive maintenance", s.pm.completed, s.pm.planned),
-        progressBar("Tickets resolved", s.tickets.resolved, s.tickets.raised),
-      ]
-    : [];
+  const ticketCategorySlices: DonutSlice[] = (s?.ticketCategories ?? []).map((c) => ({
+    label: c.category,
+    value: c.count,
+  }));
 
   const alert = s?.breachAlert ?? null;
   const alertView = alert
@@ -834,9 +857,10 @@ export default function Dashboard() {
     <View style={styles.screen}>
       <DashHeader
         topInset={insets.top}
-        title={isOperator ? "My Site Today" : "Site Overview"}
-        periodLabel={periodLabel}
-        onPeriod={() => setSheet("period")}
+        title={isOperator ? "My Site Today" : undefined}
+        dateLabel={format(currentTime, "EEE, dd MMM yyyy")}
+        onFilter={() => setSheet("filters")}
+        filterDot={period !== "month" || (canSwitchSite && activeSiteCode !== sites[0]?.site_code)}
         bellIcon={isLocked ? FileText : Bell}
         bellLabel={isLocked ? "Reports" : "Notifications"}
         bellDot={!isLocked && unread > 0}
@@ -855,28 +879,22 @@ export default function Dashboard() {
         }
       >
         <SiteCard
-          siteName={siteName}
-          onPressSite={canSwitchSite ? () => setSheet("site") : undefined}
-          dateLabel={format(currentTime, "EEE, dd MMM yyyy")}
-          shiftLine={shiftLine}
-          slaScore={slaScoreText}
-          slaTone={slaTone(slaScoreNum)}
-          slaMonth={monthLabel(slaMonth, true)}
-          onPressSla={() => setSheet("month")}
+          userName={displayName}
+          userEmail={user?.email}
+          dateLabel={attendanceDateLabel}
+          presence={presence}
+          punchIn={punchInLabel}
+          punchOut={punchOutLabel}
+          duration={durationLabel}
+          onShift={punchedIn}
+          // Managers read the score off the SLA card below, so no chip here.
+          slaScore={isOperator ? slaScoreText : undefined}
+          slaTone={isOperator ? slaTone(slaScoreNum) : undefined}
+          slaMonth={isOperator ? monthLabel(slaMonth, true) : undefined}
+          onPressSla={isOperator ? () => setSheet("month") : undefined}
           onPress={navigateToAttendance}
           accessibilityLabel="Attendance. Open attendance"
         >
-          {!isOperator ? (
-            <View style={{ marginTop: 12 }}>
-              <TileRow
-                size="att"
-                tiles={[
-                  { label: "PRESENT", value: val(s?.attendance.present) },
-                  { label: "ON SHIFT", value: val(s?.attendance.onShift) },
-                ]}
-              />
-            </View>
-          ) : null}
           <PunchButton
             label={cta.label}
             icon={cta.icon}
@@ -894,24 +912,17 @@ export default function Dashboard() {
         ) : null}
 
         {isOperator ? (
-          <>
-            <View>
-              <SectionLabel>NEEDS YOU NOW · {periodLabel}</SectionLabel>
-              {alertView ? (
-                <BreachAlert
-                  title={alertView.title}
-                  subtitle={alertView.subtitle}
-                  onPress={go("/(tabs)/tickets")}
-                />
-              ) : null}
-              <TileRow tiles={opTiles} size="op" onPage />
-            </View>
-
-            <DashCard>
-              <SectionLabel style={{ marginBottom: 12 }}>PROGRESS · {periodLabel}</SectionLabel>
-              {s ? <ProgressList bars={opBars} /> : <Skeleton width="100%" height={60} borderRadius={8} style={{ backgroundColor: JO.tile }} />}
-            </DashCard>
-          </>
+          <View>
+            <SectionLabel>NEEDS YOU NOW · {periodLabel}</SectionLabel>
+            {alertView ? (
+              <BreachAlert
+                title={alertView.title}
+                subtitle={alertView.subtitle}
+                onPress={go("/(tabs)/tickets")}
+              />
+            ) : null}
+            <TileRow tiles={opTiles} size="op" onPage />
+          </View>
         ) : (
           <>
             <SlaCard
@@ -942,22 +953,37 @@ export default function Dashboard() {
               <Footnote>Tiles follow the period filter · SLA follows its own month.</Footnote>
             </View>
 
-            <DashCard>
-              <SectionLabel style={{ marginBottom: 12 }}>PLANNED VS COMPLETED · {periodLabel}</SectionLabel>
-              {s ? <ProgressList bars={mgrBars} /> : <Skeleton width="100%" height={60} borderRadius={8} style={{ backgroundColor: JO.tile }} />}
-            </DashCard>
           </>
         )}
+
+            <DashCard>
+              <View style={styles.chartHead}>
+                <SectionLabel style={{ marginBottom: 0, flexShrink: 1 }}>
+                  TICKETS BY CATEGORY · {periodLabel}
+                </SectionLabel>
+                <ChartModeToggle mode={chartMode} onChange={setChartMode} />
+              </View>
+              {s ? (
+                <CategoryChart slices={ticketCategorySlices} mode={chartMode} />
+              ) : (
+                <Skeleton width="100%" height={118} borderRadius={8} style={{ backgroundColor: JO.tile }} />
+              )}
+            </DashCard>
 
         <EfficiencyCard items={effItems} note={effNote} />
       </ScrollView>
 
       <DashSheet
-        visible={sheet === "period"}
-        title="Period"
+        visible={sheet === "filters"}
+        title="Filters"
         subtitle="Scopes operational metrics · SLA keeps its own month."
         onClose={closeSheet}
-        options={periodOptions}
+        groups={[
+          { key: "period", label: "PERIOD", options: periodOptions },
+          ...(canSwitchSite
+            ? [{ key: "site", label: "SITE", options: siteOptions }]
+            : []),
+        ]}
         bottomInset={insets.bottom}
       />
 
@@ -967,14 +993,6 @@ export default function Dashboard() {
         subtitle="Contract score is monthly — independent of the period filter."
         onClose={closeSheet}
         options={monthOptions}
-        bottomInset={insets.bottom}
-      />
-
-      <DashSheet
-        visible={sheet === "site"}
-        title="Switch site"
-        onClose={closeSheet}
-        options={siteOptions}
         bottomInset={insets.bottom}
       />
 
@@ -1037,6 +1055,15 @@ const makeStyles = (JO: Jo) =>
   screen: { flex: 1, backgroundColor: JO.page },
   body: { paddingHorizontal: 16, paddingTop: 2, paddingBottom: 20, gap: 14 },
   offline: { fontSize: 11, color: JO.muted, marginTop: -4 },
+
+  chartHead: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+    marginBottom: 12,
+  },
+
 
   rangeRow: { flexDirection: "row", gap: 8, marginTop: 14 },
   rangeField: {
