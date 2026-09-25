@@ -266,7 +266,11 @@ export default function IncidentDetailModal({
   };
 
   if (!visible || !incident) return null;
-  const isResolved = incident.status === "Resolved";
+  // Closed = the work is done, whether or not the RCA has been filed. Filing
+  // the RCA moves the status on to "RCA Submitted", so testing for "Resolved"
+  // alone would put a filed incident back into the "Tap Resolved" state.
+  const isResolved =
+    incident.status === "Resolved" || incident.status === "RCA Submitted";
   const restrictResolvedEdits = isResolved && !canEditRca;
 
   // Photo picker (new + existing thumbnails, Camera / Gallery). Rendered in
@@ -442,10 +446,10 @@ export default function IncidentDetailModal({
                   <View style={detailStyles.statusRow}>
                     <Text style={detailStyles.statusLabel}>Status</Text>
                     {/* Incidents start In progress (no Open step), so the
-                        only move left is to Completed. A legacy Open row
+                        only move left is to Resolved. A legacy Open row
                         is treated the same. */}
                     <StatusChip
-                      label="Completed"
+                      label="Resolved"
                       active={nextStatus === "Resolved"}
                       onPress={() =>
                         setNextStatus(nextStatus === "Resolved" ? null : "Resolved")
@@ -455,7 +459,7 @@ export default function IncidentDetailModal({
                   <StatusHint icon={ClockIcon}>
                     {nextStatus === "Resolved"
                       ? "Needs a resolved time, remarks and at least one photo"
-                      : "Tap Completed to close this incident"}
+                      : "Tap Resolved to close this incident"}
                   </StatusHint>
                 </>
               ) : null}
@@ -537,8 +541,9 @@ export default function IncidentDetailModal({
                 </View>
               ) : null}
 
-              {/* RCA is only relevant once the incident is Completed —
-                  hidden entirely while Open / Inprogress. */}
+              {/* RCA is only relevant once the incident is Resolved —
+                  hidden entirely while Open / Inprogress. It stays visible
+                  after filing so a submission can be corrected. */}
               {isResolved ? (
               <View className="mb-2">
                 <Text style={detailStyles.eyebrow}>

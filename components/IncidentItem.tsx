@@ -5,7 +5,6 @@ import { getInitials } from "@/utils/ticketVisuals";
 import { makeThemedStyles, useDs } from "@/hooks/useDs";
 import { soRadius, soShadow } from "@/components/home/SiteOverview";
 import {
-  getIncidentRca,
   getIncidentStatus,
   getIncidentTint,
 } from "@/components/incidents/IncidentsUI";
@@ -51,11 +50,10 @@ const IncidentItem = React.memo(
     const styles = useStyles();
     const ds = useDs();
     const status = getIncidentStatus(item.status, ds);
-    const rca = getIncidentRca(item.rca_status, ds);
     const tone = getIncidentTint(item.status, ds);
     const area = item.asset_location || item.site_code || "—";
-    // An incident that isn't closed and has no RCA filed yet reads as urgent.
-    const overdue = item.status !== "Resolved" && item.rca_status === "Open";
+    // Still being worked reads as urgent; Resolved and RCA Submitted do not.
+    const overdue = item.status === "Inprogress" || item.status === "Open";
 
     return (
       <TouchableOpacity
@@ -78,13 +76,6 @@ const IncidentItem = React.memo(
                   {status.label}
                 </Text>
               </View>
-              {rca ? (
-                <View style={[styles.badge, { backgroundColor: rca.bg }]}>
-                  <Text style={[styles.badgeText, { color: rca.fg }]}>
-                    {rca.label}
-                  </Text>
-                </View>
-              ) : null}
             </View>
 
             <Text style={styles.title} numberOfLines={2}>

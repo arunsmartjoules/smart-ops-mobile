@@ -7,13 +7,18 @@ import type { DsTheme } from "@/hooks/useDs";
 
 export { soRadius, soShadow } from "@/components/home/SiteOverview";
 
-/** Incidents use their own three-state vocabulary; "Resolved" reads as Completed. */
+/**
+ * The full lifecycle in one vocabulary: In progress → Resolved → RCA
+ * Submitted. RCA used to ride in a second badge; it is a status of its own now
+ * (2026-09-25), so a row carries exactly one chip.
+ */
 export const incidentStatusMap = (
   ds: DsTheme,
 ): Record<string, { label: string; bg: string; fg: string }> => ({
   Open: { label: "Open", bg: ds.flame[1000], fg: ds.flame[100] },
   Inprogress: { label: "In progress", bg: ds.sky[1000], fg: ds.sky[100] },
-  Resolved: { label: "Completed", bg: ds.sky[900], fg: ds.sky[100] },
+  Resolved: { label: "Resolved", bg: ds.sky[900], fg: ds.sky[100] },
+  "RCA Submitted": { label: "RCA Submitted", bg: ds.thunder[1000], fg: ds.thunder[100] },
 });
 
 export const getIncidentStatus = (status: string | undefined, ds: DsTheme) =>
@@ -47,6 +52,8 @@ export const getIncidentTint = (status: string | undefined, ds: DsTheme) => {
       return { tint: ds.sky[1000], icon: ds.sky[100] };
     case "Resolved":
       return { tint: ds.sky[900], icon: ds.sky[100] };
+    case "RCA Submitted":
+      return { tint: ds.thunder[1000], icon: ds.thunder[100] };
     default:
       return { tint: ds.flame[1000], icon: ds.flame[100] };
   }

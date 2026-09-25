@@ -27,7 +27,6 @@ import { useNetworkStatus } from "@/hooks/useNetworkStatus";
 import { useAutoSync } from "@/hooks/useAutoSync";
 import AdvancedFilterModal from "@/components/AdvancedFilterModal";
 import TicketSkeleton from "@/components/TicketSkeleton";
-import IncidentTopFilters from "@/components/IncidentTopFilters";
 import IncidentDetailModal from "@/components/IncidentDetailModal";
 import IncidentCard from "@/components/IncidentItem";
 import Animated from "react-native-reanimated";
@@ -59,7 +58,7 @@ import {
 } from "@/constants/incidentFormOptions";
 import { v4 as uuidv4 } from "uuid";
 
-type IncidentStatus = "All" | "Open" | "Inprogress" | "Resolved";
+type IncidentStatus = "All" | "Open" | "Inprogress" | "Resolved" | "RCA Submitted";
 
 const DMY: Intl.DateTimeFormatOptions = {
   day: "numeric",
@@ -240,7 +239,6 @@ export default function IncidentsTab() {
     return `${year}-${String(month).padStart(2, "0")}-01`;
   }, []);
   const [statusFilter, setStatusFilter] = useState<IncidentStatus>(initialStatus as IncidentStatus);
-  const [rcaFilter, setRcaFilter] = useState("All");
   const [searchInput, setSearchInput] = useState("");
   const [sortMode, setSortMode] = useState<"Newest" | "Oldest" | "Status">(
     "Newest",
@@ -354,7 +352,6 @@ export default function IncidentsTab() {
 
       const needle = search?.trim().toLowerCase();
       const filtered = localRows.filter((r) => {
-        if (rcaFilter && rcaFilter !== "All" && r.rca_status !== rcaFilter) return false;
         if (!needle) return true;
         const hay = `${r.incident_id} ${r.fault_symptom} ${r.asset_location || ""}`.toLowerCase();
         return hay.includes(needle);
@@ -381,7 +378,6 @@ export default function IncidentsTab() {
       const [listRes, statsRes] = await Promise.all([
         IncidentsService.getIncidents(selectedSiteCode, {
           status: statusFilter === "All" ? undefined : statusFilter,
-          rca_status: rcaFilter === "All" ? undefined : rcaFilter,
           search,
           fromDate,
           toDate,
@@ -404,7 +400,7 @@ export default function IncidentsTab() {
       setIsSwitchingFilters(false);
       setRefreshing(false);
     }
-  }, [selectedSiteCode, statusFilter, rcaFilter, search, fromDate, toDate]);
+  }, [selectedSiteCode, statusFilter, search, fromDate, toDate]);
 
   const uploadUrisToStorage = useCallback(
     async (uris: string[], siteCode: string, folder: "incident" | "rca") => {
@@ -424,15 +420,6 @@ export default function IncidentsTab() {
     },
     [isConnected],
   );
-
-  // RCA quick-filters only apply to Completed incidents; drop any active RCA
-  // filter when the status filter moves away from "Resolved" so the list
-  // isn't left filtered by a chip the user can no longer toggle.
-  useEffect(() => {
-    if (statusFilter !== "Resolved" && rcaFilter !== "All") {
-      setRcaFilter("All");
-    }
-  }, [statusFilter, rcaFilter]);
 
   useEffect(() => {
     void fetchData("filter");
@@ -652,7 +639,7 @@ export default function IncidentsTab() {
 
   const openIncidentModal = useCallback((item: IncidentItem) => {
     setSelectedIncident(item);
-    // Anything not yet completed (incl. a legacy Open row) can only move to Completed.
+    // Anything not yet resolved (incl. a legacy Open row) can only move to Resolved.
     setNextStatus(item.status === "Resolved" ? null : "Resolved");
     setUpdateRemarks(String(item.remarks || ""));
     setUpdateRcaStatus(item.rca_status);
@@ -714,9 +701,13 @@ export default function IncidentsTab() {
       return;
     }
 
-    // RCA is only manageable once the incident is Completed (status "Resolved");
-    // role permission (canEditRca) still applies on top of that.
-    const canManageRca = canEditRca && selectedIncident.status === "Resolved";
+    // RCA is manageable from Resolved onward — including after it has been
+    // filed, so a submission can still be corrected or withdrawn. Role
+    // permission (canEditRca) still applies on top of that.
+    const canManageRca =
+      canEditRca &&
+      (selectedIncident.status === "Resolved" ||
+        selectedIncident.status === "RCA Submitted");
     const hasStatusChange = Boolean(nextStatus);
     const hasRcaStatusChange = canManageRca && updateRcaStatus !== selectedIncident.rca_status;
     const hasRcaCheckerChange = canManageRca && detailRcaChecker !== String(selectedIncident.rca_checker || "");
@@ -942,11 +933,15 @@ export default function IncidentsTab() {
 
   const statusChips = useMemo<StatusChip[]>(() => {
     const total =
-      (stats.Open || 0) + (stats.Inprogress || 0) + (stats.Resolved || 0);
+      (stats.Open || 0) +
+      (stats.Inprogress || 0) +
+      (stats.Resolved || 0) +
+      (stats["RCA Submitted"] || 0);
     return [
       { key: "All", label: "All", count: total || undefined },
       { key: "Inprogress", label: "In progress", count: stats.Inprogress },
-      { key: "Resolved", label: "Completed", count: stats.Resolved },
+      { key: "Resolved", label: "Resolved", count: stats.Resolved },
+      { key: "RCA Submitted", label: "RCA Submitted", count: stats["RCA Submitted"] },
     ];
   }, [stats]);
 
@@ -954,6 +949,7 @@ export default function IncidentsTab() {
     Open: 1,
     Inprogress: 2,
     Resolved: 3,
+    "RCA Submitted": 4,
   };
 
   const sortedIncidents = useMemo(() => {
@@ -979,20 +975,21 @@ export default function IncidentsTab() {
 
   // The list is server-filtered and page-capped, so the stat count is the
   // better number for the active tab — but never let it claim rows the list
-  // isn't showing: an empty list must read as 0, and the RCA chips subfilter
-  // the list without being reflected in the stats (the backend strips
-  // status/rca_status from the counters by design).
+  // isn't showing: an empty list must read as 0.
   const visibleCount = useMemo(() => {
-    if (rcaFilter !== "All" || sortedIncidents.length === 0) {
+    if (sortedIncidents.length === 0) {
       return sortedIncidents.length;
     }
     if (statusFilter === "All") {
       const total =
-        (stats.Open || 0) + (stats.Inprogress || 0) + (stats.Resolved || 0);
+        (stats.Open || 0) +
+        (stats.Inprogress || 0) +
+        (stats.Resolved || 0) +
+        (stats["RCA Submitted"] || 0);
       return total || sortedIncidents.length;
     }
     return stats[statusFilter] ?? sortedIncidents.length;
-  }, [stats, statusFilter, rcaFilter, sortedIncidents.length]);
+  }, [stats, statusFilter, sortedIncidents.length]);
 
   const countLabel = useMemo(() => {
     if (isSwitchingFilters) return "updating…";
@@ -1047,16 +1044,6 @@ export default function IncidentsTab() {
         sortLabel={sortMode}
         onSort={cycleSort}
       />
-
-      {/* RCA quick-filters apply only to Completed incidents — hidden
-          entirely under All / Open / In progress. */}
-      {statusFilter === "Resolved" ? (
-        <IncidentTopFilters
-          selected={rcaFilter}
-          onChange={setRcaFilter}
-          canEdit={canEditRca}
-        />
-      ) : null}
 
       <Animated.View style={[{ flex: 1 }, listSlideStyle]}>
         <FlashList
@@ -1129,8 +1116,8 @@ export default function IncidentsTab() {
           setStatusFilter={(v: string) => setStatusFilter(v as IncidentStatus)}
           priorityFilter={"All"}
           setPriorityFilter={() => {}}
-          statusOptions={["All", "Inprogress", "Resolved"]}
-          statusOptionLabels={{ Resolved: "Completed" }}
+          statusOptions={["All", "Inprogress", "Resolved", "RCA Submitted"]}
+          statusOptionLabels={{ Inprogress: "In progress" }}
           applyAdvancedFilters={applyAdvancedFilters}
           title="Filter Incidents"
         />
