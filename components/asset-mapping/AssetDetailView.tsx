@@ -183,7 +183,7 @@ export default function AssetDetailView({
 
         {asset.mapping_status === "completed" ? (
           <DetailCard>
-            <CardHead label="Approval" hint="Completed" />
+            <CardHead label="Approval" hint="Approved" />
             <View style={styles.inline}>
               <CircleCheck size={16} color={ds.sky[100]} strokeWidth={2.2} />
               <Text style={styles.inlineText}>

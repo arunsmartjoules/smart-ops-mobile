@@ -6,7 +6,7 @@
  * statuses mapped onto the same DS colour roles:
  *   Pending   → neutral carbon (work to do)
  *   Review    → sky   (in progress, waiting on a manager)
- *   Completed → teal  (same as a completed incident)
+ *   Approved  → teal  (key `completed`; same tone as a completed incident)
  *   Failed    → flame (needs a re-upload — the one that wants attention)
  *   No access → neutral carbon
  * These statuses are this flow's own — unrelated to the asset's status.
@@ -26,7 +26,7 @@ export interface Tone {
 export const mappingStatusMap = (ds: DsTheme): Record<MappingStatus, Tone> => ({
   pending: { label: "Open", bg: ds.carbon[1000], fg: ds.carbon[300] },
   review: { label: "Review", bg: ds.sky[1000], fg: ds.sky[100] },
-  completed: { label: "Completed", bg: ds.sky[900], fg: ds.sky[100] },
+  completed: { label: "Approved", bg: ds.sky[900], fg: ds.sky[100] },
   failed: { label: "Failed", bg: ds.flame[1000], fg: ds.flame[100] },
   no_access: { label: "No access", bg: ds.carbon[1000], fg: ds.carbon[500] },
 });

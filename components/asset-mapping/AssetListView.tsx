@@ -46,7 +46,7 @@ const STATUS_KEYS = ["pending", "review", "completed", "failed", "no_access"];
 const STATUS_LABELS: Record<string, string> = {
   pending: "Open",
   review: "Review",
-  completed: "Completed",
+  completed: "Approved",
   failed: "Failed",
   no_access: "No access",
 };
@@ -120,7 +120,7 @@ export default function AssetListView({
     const list: StatusChip[] = [
       { key: "pending", label: "Open", count: counts.pending },
       { key: "review", label: "Review", count: counts.review },
-      { key: "completed", label: "Completed", count: counts.completed },
+      { key: "completed", label: "Approved", count: counts.completed },
       { key: "failed", label: "Failed", count: counts.failed },
       { key: "no_access", label: "No access", count: counts.no_access },
     ];
