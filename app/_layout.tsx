@@ -79,9 +79,13 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (isLoading || !navigatorReady) return;
 
+    // Every screen a signed-out user may open. A route missing here bounces to
+    // /sign-in the moment it's pushed — which is how the sign-up code step
+    // (/signup-verify) silently dumped users back on sign-in.
     const isAuthRelated =
       segments[0] === "sign-in" ||
       segments[0] === "sign-up" ||
+      segments[0] === "signup-verify" ||
       segments[0] === "verify-email" ||
       segments[0] === "forgot-password" ||
       segments[0] === "reset-password";
