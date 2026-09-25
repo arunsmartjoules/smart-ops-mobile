@@ -17,17 +17,8 @@ import DateTimePicker, {
 } from "@react-native-community/datetimepicker";
 import { router } from "expo-router";
 import { format } from "date-fns";
-import {
-  Building2,
-  CalendarDays,
-  MailCheck,
-  Map as MapIcon,
-} from "lucide-react-native";
-import {
-  useAuth,
-  type ApprovingAuthority,
-  type SignupSite,
-} from "@/contexts/AuthContext";
+import { Building2, CalendarDays, MailCheck } from "lucide-react-native";
+import { useAuth, type SignupSite } from "@/contexts/AuthContext";
 import { showAlert } from "@/utils/alert";
 import logger from "@/utils/logger";
 import { useDs } from "@/hooks/useDs";
@@ -41,7 +32,6 @@ import {
   SignupSheet,
   SignupStrength,
   fieldLine,
-  initialsOf,
   strengthOf,
   type SheetOption,
 } from "@/components/auth/SignupUI";
@@ -51,12 +41,11 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 /** Same shape the backend's create handler accepts. */
 const PHONE_RE = /^[0-9+()\s-]{6,20}$/;
 
-type SheetKind = "manager" | "sites" | null;
+type SheetKind = "sites" | null;
 
 export default function SignUp() {
   const ds = useDs();
-  const { fetchApprovingAuthorities, fetchSignupSites, sendVerificationCode } =
-    useAuth();
+  const { fetchSignupSites, sendVerificationCode } = useAuth();
 
   const [name, setName] = useState("");
   const [employeeCode, setEmployeeCode] = useState("");
@@ -64,7 +53,6 @@ export default function SignUp() {
   const [phone, setPhone] = useState("");
   const [designation, setDesignation] = useState("");
   const [dateOfJoining, setDateOfJoining] = useState("");
-  const [manager, setManager] = useState("");
   const [siteCodes, setSiteCodes] = useState<string[]>([]);
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -75,42 +63,21 @@ export default function SignUp() {
   const [attempted, setAttempted] = useState(false);
   const [busy, setBusy] = useState(false);
 
-  const [authorities, setAuthorities] = useState<ApprovingAuthority[]>([]);
-  const [authoritiesLoading, setAuthoritiesLoading] = useState(true);
   const [sites, setSites] = useState<SignupSite[]>([]);
   const [sitesLoading, setSitesLoading] = useState(true);
 
   useEffect(() => {
     let alive = true;
     (async () => {
-      const [people, siteRows] = await Promise.all([
-        fetchApprovingAuthorities(),
-        fetchSignupSites(),
-      ]);
+      const siteRows = await fetchSignupSites();
       if (!alive) return;
-      setAuthorities(people);
-      setAuthoritiesLoading(false);
       setSites(siteRows);
       setSitesLoading(false);
     })();
     return () => {
       alive = false;
     };
-  }, [fetchApprovingAuthorities, fetchSignupSites]);
-
-  const managerOptions = useMemo<SheetOption[]>(
-    () =>
-      authorities.map((a) => ({
-        label: a.name,
-        sub: a.designation ?? undefined,
-        initials: initialsOf(a.name),
-      })),
-    [authorities],
-  );
-  const managerSub = useMemo(
-    () => authorities.find((a) => a.name === manager)?.designation ?? undefined,
-    [authorities, manager],
-  );
+  }, [fetchSignupSites]);
 
   const siteOptions = useMemo<SheetOption[]>(
     () =>
@@ -143,29 +110,23 @@ export default function SignUp() {
   const nameOk = name.trim().length >= 2;
   const codeOk = employeeCode.trim().length > 0;
   const emailOk = EMAIL_RE.test(trimmedEmail);
-  const phoneOk = PHONE_RE.test(phone.trim());
+  // Phone, designation and date of joining are optional; a phone number is
+  // still format-checked when one is entered.
+  const phoneEntered = phone.trim().length > 0;
+  const phoneOk = !phoneEntered || PHONE_RE.test(phone.trim());
   const designationOk = designation.trim().length > 0;
   const dateOk = !!dateOfJoining;
-  const managerOk = !!manager;
   const sitesOk = siteCodes.length > 0;
   const passOk = password.length >= MIN_PASSWORD_LENGTH && strengthOf(password) >= 2;
   const matched = confirm.length > 0 && confirm === password;
   const mismatch = confirm.length > 0 && confirm !== password;
 
-  const checks = [
-    nameOk,
-    codeOk,
-    emailOk,
-    phoneOk,
-    designationOk,
-    dateOk,
-    managerOk,
-    sitesOk,
-    passOk,
-    matched,
-  ];
+  // Required details only drive the progress bar. A blank optional phone is
+  // "valid", so it stays out of the count and only gates submit when it's
+  // filled in wrongly.
+  const checks = [nameOk, codeOk, emailOk, sitesOk, passOk, matched];
   const done = checks.filter(Boolean).length;
-  const ready = checks.every(Boolean);
+  const ready = checks.every(Boolean) && phoneOk;
 
   const blocked = !attempted || ready
     ? null
@@ -176,18 +137,12 @@ export default function SignUp() {
         : !emailOk
           ? "Enter a valid work email"
           : !phoneOk
-            ? "Enter a valid phone number"
-            : !designationOk
-              ? "Enter your designation"
-              : !dateOk
-                ? "Pick your date of joining"
-                : !managerOk
-                  ? "Choose your approving authority"
-                  : !sitesOk
-                    ? "Select at least one site you work at"
-                    : !passOk
-                      ? `Password needs ${MIN_PASSWORD_LENGTH}+ characters`
-                      : "Passwords don't match";
+            ? "Enter a valid phone number, or leave it blank"
+            : !sitesOk
+              ? "Select at least one site you work at"
+              : !passOk
+                ? `Password needs ${MIN_PASSWORD_LENGTH}+ characters`
+                : "Passwords don't match";
 
   /* ── Date of joining ───────────────────────────────────────────────────── */
 
@@ -244,7 +199,6 @@ export default function SignUp() {
           designation: designation.trim(),
           phone: phone.trim(),
           date_of_joining: dateOfJoining,
-          approving_authority: manager,
           // expo-router params are strings; the verify screen splits this back
           // into an array, and the backend accepts either shape anyway.
           site_codes: siteCodes.join(","),
@@ -317,11 +271,11 @@ export default function SignUp() {
         />
 
         <SignupField
-          label="Phone number"
+          label="Phone number (optional)"
           placeholder="98765 43210"
           value={phone}
           onChangeText={setPhone}
-          line={fieldLine(false, phoneOk, ds)}
+          line={fieldLine(phoneEntered && !phoneOk, phoneEntered && phoneOk, ds)}
           prefix="+91"
           keyboardType="phone-pad"
           editable={!busy}
@@ -330,7 +284,7 @@ export default function SignUp() {
         <SectionEyebrow>Work</SectionEyebrow>
 
         <SignupField
-          label="Designation"
+          label="Designation (optional)"
           placeholder="Site Technician"
           value={designation}
           onChangeText={setDesignation}
@@ -340,7 +294,7 @@ export default function SignUp() {
         />
 
         <SignupPickerField
-          label="Date of joining"
+          label="Date of joining (optional)"
           placeholder="Select a date"
           value={
             dateOfJoining
@@ -350,17 +304,6 @@ export default function SignUp() {
           line={fieldLine(false, dateOk, ds)}
           leading={CalendarDays}
           onPress={openDatePicker}
-        />
-
-        <SignupPickerField
-          label="Approving authority"
-          placeholder="Select from directory"
-          value={manager || undefined}
-          sub={managerSub}
-          initials={manager ? initialsOf(manager) : undefined}
-          line={fieldLine(false, managerOk, ds)}
-          leading={MapIcon}
-          onPress={() => setSheet("manager")}
         />
 
         <SignupPickerField
@@ -421,20 +364,6 @@ export default function SignUp() {
         prompt="Already have an account?"
         action="Sign in"
         onAction={() => router.replace("/sign-in")}
-      />
-
-      <SignupSheet
-        visible={sheet === "manager"}
-        title="Approving authority"
-        options={managerOptions}
-        selected={manager}
-        loading={authoritiesLoading}
-        emptyLabel="No approving authority is available right now"
-        onSelect={(v) => {
-          setManager(v);
-          setSheet(null);
-        }}
-        onClose={() => setSheet(null)}
       />
 
       <SignupSheet

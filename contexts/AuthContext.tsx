@@ -63,18 +63,12 @@ export interface SignupRequestPayload {
   phone: string;
   /** Calendar date, YYYY-MM-DD. */
   date_of_joining: string;
-  approving_authority: string;
   password: string;
   /**
    * Sites the applicant works at. A REQUEST, not a grant — it prefills the
    * approver's dialog on web, where the final site access is decided.
    */
   site_codes: string[];
-}
-
-export interface ApprovingAuthority {
-  name: string;
-  designation: string | null;
 }
 
 export interface SignupSite {
@@ -115,8 +109,6 @@ interface AuthContextType {
   submitSignupRequest: (
     payload: SignupRequestPayload,
   ) => Promise<{ error: any }>;
-  /** Public directory of admins/managers who can approve a request. */
-  fetchApprovingAuthorities: () => Promise<ApprovingAuthority[]>;
   fetchSignupSites: () => Promise<SignupSite[]>;
   resendVerificationEmail: () => Promise<{ error: any }>;
   isEmailVerified: boolean;
@@ -140,7 +132,6 @@ const AuthContext = createContext<AuthContextType>({
   sendVerificationCode: async () => ({ error: null }),
   verifySignupCode: async () => ({ error: null }),
   submitSignupRequest: async () => ({ error: null }),
-  fetchApprovingAuthorities: async () => [],
   fetchSignupSites: async () => [],
   resendVerificationEmail: async () => ({ error: null }),
   isEmailVerified: false,
@@ -869,32 +860,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     [],
   );
 
-  const fetchApprovingAuthorities = useCallback(async (): Promise<
-    ApprovingAuthority[]
-  > => {
-    try {
-      const res = await fetchWithTimeout(
-        `${BACKEND_URL}/api/signup-requests/approving-authorities`,
-        { method: "GET" },
-      );
-      const result = await res.json().catch(() => ({}));
-      if (!res.ok || !result?.success) return [];
-      // `sendSuccess` nests the payload under `data`, so the list is at
-      // `data.authorities` — reading `data` itself yielded the wrapper object
-      // and silently emptied the picker.
-      const rows = (result.data?.authorities ??
-        result.data ??
-        result.authorities ??
-        []) as unknown;
-      return Array.isArray(rows) ? (rows as ApprovingAuthority[]) : [];
-    } catch (e: any) {
-      logger.warn("Could not load approving authorities", {
-        module: "AUTH_CONTEXT",
-        error: e?.message,
-      });
-      return [];
-    }
-  }, []);
 
   /**
    * The sites a new joiner can name on the sign-up form. Public and
@@ -957,7 +922,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       sendVerificationCode,
       verifySignupCode,
       submitSignupRequest,
-      fetchApprovingAuthorities,
       fetchSignupSites,
       resendVerificationEmail,
       isEmailVerified,
@@ -980,7 +944,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       sendVerificationCode,
       verifySignupCode,
       submitSignupRequest,
-      fetchApprovingAuthorities,
       fetchSignupSites,
       resendVerificationEmail,
       isEmailVerified,

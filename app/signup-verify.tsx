@@ -23,6 +23,22 @@ import {
 } from "@/components/auth/SignupUI";
 
 const CODE_LENGTH = 6;
+
+/** The "what happens next" list on the submitted screen. */
+const NEXT_STEPS = [
+  {
+    title: "Request submitted",
+    body: "Your email is verified and a confirmation is on its way to {email}.",
+  },
+  {
+    title: "Administrator approval",
+    body: "An administrator reviews your details and the sites you picked.",
+  },
+  {
+    title: "Sign in",
+    body: "Once approved you'll get an email — then sign in with your email and the password you just chose.",
+  },
+];
 /** Matches the backend's own resend throttle expectations closely enough. */
 const RESEND_SECONDS = 45;
 
@@ -74,7 +90,6 @@ export default function SignupVerify() {
         designation: String(params.designation ?? ""),
         phone: String(params.phone ?? ""),
         date_of_joining: String(params.date_of_joining ?? ""),
-        approving_authority: String(params.approving_authority ?? ""),
         // Carried across the router as CSV — params are strings.
         site_codes: String(params.site_codes ?? "")
           .split(",")
@@ -143,8 +158,8 @@ export default function SignupVerify() {
     return (
       <View style={{ flex: 1, backgroundColor: ds.pageBg }}>
         <SignupHeader
-          title="Request sent"
-          subtitle="Awaiting admin approval"
+          title="Request submitted"
+          subtitle="Awaiting administrator approval"
           progress={1}
         />
         <ScrollView
@@ -156,12 +171,40 @@ export default function SignupVerify() {
             <View style={styles.doneIcon}>
               <CircleCheck size={26} color={ds.sky[100]} strokeWidth={2} />
             </View>
-            <Text style={styles.doneTitle}>Your request is with an admin</Text>
-            <Text style={styles.doneBody}>
-              We’ve emailed your details to the JouleOps administrators. Once
-              someone approves your request, your account is created and you can
-              sign in with the password you just chose.
+            <Text style={styles.doneTitle}>
+              Your signup request is submitted
             </Text>
+            <Text style={styles.doneBody}>
+              An administrator will review and approve your request shortly.
+            </Text>
+
+            {/* What happens next — the backend emails the applicant both a
+                "request received" note now and the decision later. */}
+            <View style={styles.steps}>
+              {NEXT_STEPS.map((step, i) => (
+                <View key={step.title} style={styles.stepRow}>
+                  <View
+                    style={[
+                      styles.stepDot,
+                      i === 0 && { backgroundColor: ds.sky[100] },
+                    ]}
+                  >
+                    {i === 0 ? (
+                      <CircleCheck size={13} color={ds.onAccent} strokeWidth={2.4} />
+                    ) : (
+                      <Text style={styles.stepNum}>{i + 1}</Text>
+                    )}
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.stepTitle}>{step.title}</Text>
+                    <Text style={styles.stepBody}>
+                      {step.body.replace("{email}", email)}
+                    </Text>
+                  </View>
+                </View>
+              ))}
+            </View>
+
             <View style={styles.doneMetaRow}>
               <ShieldCheck size={14} color={ds.carbon[600]} strokeWidth={2} />
               <Text style={styles.doneMeta}>
@@ -297,4 +340,19 @@ const useStyles = makeThemedStyles((ds) => ({
     justifyContent: "center",
   },
   doneMeta: { flexShrink: 1, fontSize: 11.5, color: ds.carbon[600] },
+
+  steps: { alignSelf: "stretch", gap: 12, marginTop: 8 },
+  stepRow: { flexDirection: "row", alignItems: "flex-start", gap: 10 },
+  stepDot: {
+    width: 22,
+    height: 22,
+    borderRadius: soRadius.pill,
+    backgroundColor: ds.carbon[1000],
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 1,
+  },
+  stepNum: { fontSize: 11, fontWeight: "700", color: ds.carbon[400] },
+  stepTitle: { fontSize: 13, fontWeight: "600", color: ds.carbon[100] },
+  stepBody: { fontSize: 12, lineHeight: 17, color: ds.carbon[400], marginTop: 1 },
 }));
