@@ -926,9 +926,11 @@ export default function IncidentsTab() {
         item={item as any}
         assignee={parseAssignedTo(item.assigned_to).display}
         onPress={() => openIncidentModal(item)}
+        // Only the mixed All list needs it — see the prop's note.
+        showRcaPending={statusFilter === "All"}
       />
     ),
-    [openIncidentModal],
+    [openIncidentModal, statusFilter],
   );
 
   const statusChips = useMemo<StatusChip[]>(() => {

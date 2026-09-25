@@ -41,16 +41,28 @@ interface IncidentItemProps {
   item: IncidentRow;
   assignee: string;
   onPress: (item: IncidentRow) => void;
+  /**
+   * Flag resolved incidents that still owe an RCA. Only the All tab asks for
+   * it: under Resolved every row would carry the tag (a filed RCA moves the
+   * incident to its own tab), and under In progress the RCA is not due yet.
+   */
+  showRcaPending?: boolean;
 }
 
 const IncidentItem = React.memo(
-  ({ item, assignee, onPress }: IncidentItemProps) => {
+  ({ item, assignee, onPress, showRcaPending }: IncidentItemProps) => {
     const handlePress = useCallback(() => onPress(item), [item, onPress]);
 
     const styles = useStyles();
     const ds = useDs();
     const status = getIncidentStatus(item.status, ds);
     const tone = getIncidentTint(item.status, ds);
+    // The work is done but the RCA has not been filed — the one gap the
+    // status chip cannot show, since such a row still reads "Resolved".
+    const rcaPending =
+      !!showRcaPending &&
+      item.status === "Resolved" &&
+      item.rca_status !== "RCA Submitted";
     const area = item.asset_location || item.site_code || "—";
     // Still being worked reads as urgent; Resolved and RCA Submitted do not.
     const overdue = item.status === "Inprogress" || item.status === "Open";
@@ -76,6 +88,13 @@ const IncidentItem = React.memo(
                   {status.label}
                 </Text>
               </View>
+              {rcaPending ? (
+                <View style={[styles.badge, { backgroundColor: ds.flame[1000] }]}>
+                  <Text style={[styles.badgeText, { color: ds.flame[100] }]}>
+                    RCA Pending
+                  </Text>
+                </View>
+              ) : null}
             </View>
 
             <Text style={styles.title} numberOfLines={2}>
