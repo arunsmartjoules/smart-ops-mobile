@@ -16,7 +16,8 @@
       "env": {
         "EXPO_PUBLIC_BACKEND_URL": "https://api-jouleops.smartjoules.org",
         "EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID": "49892025677-tpksn3kmpfbus35aolbiivlims28hgi7.apps.googleusercontent.com",
-        "EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID": "49892025677-6vlpck0q8b0toouhc1o9ucr57us8g50l.apps.googleusercontent.com"
+        "EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID": "49892025677-6vlpck0q8b0toouhc1o9ucr57us8g50l.apps.googleusercontent.com",
+        "EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID": "49892025677-e3vkv88p8tjqnsvtkqkqkfldi6tfmp8o.apps.googleusercontent.com"
       }
     },
     "production": {
@@ -26,7 +27,8 @@
       "env": {
         "EXPO_PUBLIC_BACKEND_URL": "https://api-jouleops.smartjoules.org",
         "EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID": "49892025677-tpksn3kmpfbus35aolbiivlims28hgi7.apps.googleusercontent.com",
-        "EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID": "49892025677-6vlpck0q8b0toouhc1o9ucr57us8g50l.apps.googleusercontent.com"
+        "EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID": "49892025677-6vlpck0q8b0toouhc1o9ucr57us8g50l.apps.googleusercontent.com",
+        "EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID": "49892025677-e3vkv88p8tjqnsvtkqkqkfldi6tfmp8o.apps.googleusercontent.com"
       }
     }
   },
