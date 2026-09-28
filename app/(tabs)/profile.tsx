@@ -22,6 +22,7 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as ImagePicker from "expo-image-picker";
+import * as WebBrowser from "expo-web-browser";
 import { router } from "expo-router";
 import { format } from "date-fns";
 import {
@@ -33,6 +34,7 @@ import {
   ChevronLeft,
   ChevronRight,
   CloudUpload,
+  FileText,
   Info,
   LogOut,
   Mail,
@@ -40,6 +42,7 @@ import {
   Monitor,
   Moon,
   Pencil,
+  ScrollText,
   Shield,
   Sun,
 } from "lucide-react-native";
@@ -53,6 +56,7 @@ import { StorageService } from "@/services/StorageService";
 import { apiFetch } from "@/utils/apiHelper";
 import { API_BASE_URL } from "@/constants/api";
 import { APP_VERSION_DISPLAY } from "@/constants/version";
+import { PRIVACY_POLICY_URL, TERMS_URL } from "@/constants/legal";
 import { makeThemedStyles, useDs, type DsTheme } from "@/hooks/useDs";
 
 /** Corner scale read off the artboard. */
@@ -388,7 +392,7 @@ export default function Profile() {
     // Two-step confirmation: deletion is irreversible from the app's side.
     Alert.alert(
       "Delete My Account?",
-      "Your JouleOps account will be deactivated and you'll be signed out on this device. You won't be able to sign in again.",
+      "Your JouleOps account and personal details will be permanently deleted and you'll be signed out on this device. You won't be able to sign in again.",
       [
         { text: "Cancel", style: "cancel" },
         {
@@ -397,7 +401,7 @@ export default function Profile() {
           onPress: () =>
             Alert.alert(
               "This can't be undone",
-              "Are you sure you want to permanently delete your JouleOps account?",
+              "Are you sure you want to permanently delete your JouleOps account? Your name, email and other personal details will be removed.",
               [
                 { text: "Keep My Account", style: "cancel" },
                 {
@@ -469,6 +473,14 @@ export default function Profile() {
       );
     } finally {
       setIsCheckingUpdates(false);
+    }
+  }, []);
+
+  const openLink = useCallback(async (url: string) => {
+    try {
+      await WebBrowser.openBrowserAsync(url);
+    } catch {
+      Alert.alert("Couldn't open link", "Please try again.");
     }
   }, []);
 
@@ -635,6 +647,21 @@ export default function Profile() {
             icon={Info}
             label="App Version"
             value={APP_VERSION_DISPLAY}
+            last
+          />
+        </View>
+
+        <Text style={styles.groupLabel}>Legal</Text>
+        <View style={styles.card}>
+          <MenuRow
+            icon={FileText}
+            label="Privacy Policy"
+            onPress={() => openLink(PRIVACY_POLICY_URL)}
+          />
+          <MenuRow
+            icon={ScrollText}
+            label="Terms of Service"
+            onPress={() => openLink(TERMS_URL)}
             last
           />
         </View>
