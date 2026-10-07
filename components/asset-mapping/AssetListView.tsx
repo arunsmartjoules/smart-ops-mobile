@@ -12,7 +12,6 @@
 import React, { useCallback, useMemo, useRef, useState } from "react";
 import { RefreshControl, Text, TouchableOpacity, View } from "react-native";
 import { FlashList } from "@shopify/flash-list";
-import Animated from "react-native-reanimated";
 import { ClipboardCheck, QrCode, X } from "lucide-react-native";
 import { makeThemedStyles, useDs } from "@/hooks/useDs";
 import TicketSkeleton from "@/components/TicketSkeleton";
@@ -25,6 +24,7 @@ import {
   ModuleListHeader,
   useListSlide,
   type StatusChip,
+  SwipeTabsView,
 } from "@/components/shared/ListChrome";
 import type { MappedAsset } from "@/services/AssetMappingService";
 import AssetMappingItem from "./AssetMappingItem";
@@ -291,7 +291,12 @@ export default function AssetListView({
         </TouchableOpacity>
       </View>
 
-      <Animated.View style={[{ flex: 1 }, slideStyle]}>
+      <SwipeTabsView
+        chips={chips}
+        activeChip={activeFilter}
+        onSelectChip={selectChip}
+        style={[{ flex: 1 }, slideStyle]}
+      >
         <FlashList
           // FlashList 2.0.2 can keep showing recycled cells from the unfiltered
           // list after the data shrinks (the count updated, the rows didn't).
@@ -323,7 +328,7 @@ export default function AssetListView({
           showsVerticalScrollIndicator={false}
           contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: 24 }}
         />
-      </Animated.View>
+      </SwipeTabsView>
 
       <AdvancedFilterModal
         visible={showFilters}

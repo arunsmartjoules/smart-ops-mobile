@@ -34,7 +34,6 @@ import {
   Camera,
 } from "lucide-react-native";
 import { router, useFocusEffect } from "expo-router";
-import Animated from "react-native-reanimated";
 import PMItem from "@/components/PMItem";
 import { getPmStatus } from "@/components/pm/PMUI";
 import { makeThemedStyles, useDs } from "@/hooks/useDs";
@@ -44,6 +43,7 @@ import {
   ModuleListHeader,
   useListSlide,
   type StatusChip,
+  SwipeTabsView,
 } from "@/components/shared/ListChrome";
 import { useAuth } from "@/contexts/AuthContext";
 import { useNetworkStatus } from "@/hooks/useNetworkStatus";
@@ -606,6 +606,17 @@ export default function PreventiveMaintenance() {
 
   const handleConfirmStart = useCallback(async () => {
     if (!startModalInstance || starting) return;
+    // The Before photo is mandatory to start. Enforced on the device only, like
+    // the After photo on completion — offline it is still queued on the phone
+    // when the start syncs, so the server can't check it. The execution screen
+    // only allows retaking it, never removing it, so this one gate holds.
+    if (!startBeforeImage) {
+      Alert.alert(
+        "Before photo required",
+        "Capture a before photo of the asset to start this PM.",
+      );
+      return;
+    }
     setStarting(true);
     try {
       // The operator who starts the PM becomes its assignee. This is the
@@ -859,7 +870,12 @@ export default function PreventiveMaintenance() {
       {loading && allInstances.length === 0 ? (
         <PMSkeleton />
       ) : (
-        <Animated.View style={[{ flex: 1 }, listSlideStyle]}>
+        <SwipeTabsView
+          chips={statusChips}
+          activeChip={statusFilter}
+          onSelectChip={selectStatusChip}
+          style={[{ flex: 1 }, listSlideStyle]}
+        >
           <FlashList
             data={sortedInstances}
             renderItem={renderItem}
@@ -884,7 +900,7 @@ export default function PreventiveMaintenance() {
             contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: 24 }}
             showsVerticalScrollIndicator={false}
           />
-        </Animated.View>
+        </SwipeTabsView>
       )}
 
         <AdvancedFilterModal
@@ -969,7 +985,7 @@ export default function PreventiveMaintenance() {
                   { color: isDark ? "#cbd5e1" : "#475569" },
                 ]}
               >
-                Before Photo
+                Before Photo <Text style={{ color: "#ef4444" }}>*</Text>
               </Text>
 
               <TouchableOpacity
@@ -1027,7 +1043,7 @@ export default function PreventiveMaintenance() {
                     marginTop: 6,
                   }}
                 >
-                  Optional — you can add a before photo now or skip and start the PM.
+                  Required — capture a before photo to start the PM.
                 </Text>
               )}
 
@@ -1055,11 +1071,12 @@ export default function PreventiveMaintenance() {
                 </TouchableOpacity>
                 <TouchableOpacity
                   onPress={handleConfirmStart}
-                  disabled={starting}
+                  disabled={starting || !startBeforeImage}
                   style={[
                     styles.startBtn,
                     {
-                      backgroundColor: starting ? "#93c5fd" : "#2563eb",
+                      backgroundColor:
+                        starting || !startBeforeImage ? "#93c5fd" : "#2563eb",
                     },
                   ]}
                 >

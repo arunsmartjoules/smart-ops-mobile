@@ -178,49 +178,81 @@ const TaskRow = React.memo(
         ? { backgroundColor: ds.flame[1000], borderColor: ds.flame[100] }
         : { backgroundColor: ds.field, borderColor: ds.carbon[800] };
 
+    // Set when the operator tried to tick the task with its required reading
+    // still blank — shows the hint until a reading is typed.
+    const [readingNudge, setReadingNudge] = useState(false);
+    const readingsInputRef = useRef<TextInput>(null);
+
     const cycleResponse = () => {
-      if (answerLocked) return;
-      if (isChoice) {
-        onResponseChange(item.id, "response_value", CYCLE_NEXT[value ?? ""] ?? null);
+      if (answerLocked || !isChoice) return;
+      const nextValue = CYCLE_NEXT[value ?? ""] ?? null;
+      // A task with a mandatory reading can't be ticked Done until the reading
+      // is entered — take the operator straight to the field instead.
+      if (nextValue === "Done" && readingsRequired && !readingsValue.trim()) {
+        Haptics.notificationAsync(
+          Haptics.NotificationFeedbackType.Warning,
+        ).catch(() => {});
+        setReadingNudge(true);
+        if (!textLocked) readingsInputRef.current?.focus();
+        return;
       }
+      onResponseChange(item.id, "response_value", nextValue);
     };
+    const showReadingNudge =
+      readingNudge && readingsRequired && !readingsValue.trim();
 
     return (
       <View style={[styles.taskCard, rowHasError && styles.taskCardError]}>
         <View style={styles.taskRow}>
+          {/* The touch target is the whole left column (full row height),
+              not just the 26px box — the box alone was too small to hit
+              reliably with gloves or on the move. */}
           <TouchableOpacity
             onPress={cycleResponse}
             disabled={answerLocked || !isChoice}
             activeOpacity={0.7}
+            hitSlop={{ top: 9, bottom: 9, left: 12 }}
             accessibilityRole="checkbox"
             accessibilityLabel={`${item.task_name} — ${value || "not answered"}`}
-            style={[
-              styles.taskBox,
-              boxStyle,
-              showRequiredErrors &&
-                missingResponse && { borderColor: ds.flame[100] },
-            ]}
+            style={styles.taskBoxHit}
           >
-            {isNotDone ? (
-              <X size={17} color={ds.flame[100]} strokeWidth={2.4} />
-            ) : (
-              <Check
-                size={17}
-                color={isDone ? ds.onControl : "transparent"}
-                strokeWidth={2.6}
-              />
-            )}
+            <View
+              style={[
+                styles.taskBox,
+                boxStyle,
+                showRequiredErrors &&
+                  missingResponse && { borderColor: ds.flame[100] },
+              ]}
+            >
+              {isNotDone ? (
+                <X size={17} color={ds.flame[100]} strokeWidth={2.4} />
+              ) : (
+                <Check
+                  size={17}
+                  color={isDone ? ds.onControl : "transparent"}
+                  strokeWidth={2.6}
+                />
+              )}
+            </View>
           </TouchableOpacity>
 
           <View style={styles.taskBody}>
-            <Text
-              style={[
-                styles.taskName,
-                { color: isDone ? ds.carbon[500] : ds.carbon[100] },
-              ]}
+            {/* Tapping the task name ticks it too — a far bigger target. */}
+            <TouchableOpacity
+              onPress={cycleResponse}
+              disabled={answerLocked || !isChoice}
+              activeOpacity={0.6}
+              accessible={false}
             >
-              {item.task_name}
-            </Text>
+              <Text
+                style={[
+                  styles.taskName,
+                  { color: isDone ? ds.carbon[500] : ds.carbon[100] },
+                ]}
+              >
+                {item.task_name}
+              </Text>
+            </TouchableOpacity>
 
             <View style={styles.inlineRow}>
               {/* Readings — the single value box for Number/Text tasks. A
@@ -236,6 +268,7 @@ const TaskRow = React.memo(
                 ]}
               >
                 <TextInput
+                  ref={readingsInputRef}
                   value={readingsValue}
                   onChangeText={(val) =>
                     onResponseChange(item.id, isChoice ? "readings" : "value", val)
@@ -306,6 +339,12 @@ const TaskRow = React.memo(
                 </TouchableOpacity>
               )}
             </View>
+
+            {showReadingNudge && (
+              <Text style={[styles.readingNudge, { color: ds.flame[100] }]}>
+                Enter the reading before ticking this task.
+              </Text>
+            )}
 
             {hasPhoto && (
               <View style={styles.photoRow}>
@@ -1107,11 +1146,23 @@ export default function PMExecutionScreen() {
       const response = responses[item.id];
       const taskName = item.task_name || "Unnamed task";
       const missingResponse = !response?.response_value;
-      const missingReadings =
-        ENFORCE_READINGS_MANDATORY &&
-        isMeasureTask(item.task_name) &&
-        !!response?.response_value &&
+      const isChoice =
+        (item.field_type || "Multiple Choice") === "Multiple Choice";
+      // A task ticked Done while its checklist-mandatory reading is blank —
+      // the checkbox refuses that, but the reading can be cleared afterwards.
+      // Enforced regardless of ENFORCE_READINGS_MANDATORY, which only governs
+      // the older "measure"-in-the-name heuristic below.
+      const missingRequiredReading =
+        isChoice &&
+        Boolean(item.readings_mandatory) &&
+        response?.response_value === "Done" &&
         !String(response?.readings || "").trim();
+      const missingReadings =
+        missingRequiredReading ||
+        (ENFORCE_READINGS_MANDATORY &&
+          isMeasureTask(item.task_name) &&
+          !!response?.response_value &&
+          !String(response?.readings || "").trim());
       const missingRemarks =
         Boolean((item as any).remarks_mandatory) &&
         !String(response?.remarks || "").trim();
@@ -1922,6 +1973,11 @@ const useStyles = makeThemedStyles((ds) => ({
     flexDirection: "row",
     alignItems: "flex-start",
   },
+  taskBoxHit: {
+    alignSelf: "stretch",
+    paddingTop: 1,
+    paddingRight: 11,
+  },
   taskBox: {
     width: 26,
     height: 26,
@@ -1929,8 +1985,11 @@ const useStyles = makeThemedStyles((ds) => ({
     borderWidth: 1.5,
     alignItems: "center",
     justifyContent: "center",
-    marginTop: 1,
-    marginRight: 11,
+  },
+  readingNudge: {
+    fontSize: 11,
+    fontWeight: "600",
+    marginTop: 6,
   },
   taskBody: { flex: 1, minWidth: 0 },
   taskName: {

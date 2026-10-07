@@ -55,13 +55,13 @@ import TicketSkeleton, {
   TicketSkeletonItem,
 } from "@/components/TicketSkeleton";
 import { useDs } from "@/hooks/useDs";
-import Animated from "react-native-reanimated";
 import {
   ListCountLine,
   ListEmptyCard,
   ModuleListHeader,
   useListSlide,
   type StatusChip,
+  SwipeTabsView,
 } from "@/components/shared/ListChrome";
 
 const parseCreatedAtMs = (value: unknown) => {
@@ -1569,7 +1569,12 @@ export default function Tickets() {
         onSort={cycleSort}
       />
 
-      <Animated.View style={[{ flex: 1 }, listSlideStyle]}>
+      <SwipeTabsView
+        chips={statusChips}
+        activeChip={statusFilter}
+        onSelectChip={selectStatusChip}
+        style={[{ flex: 1 }, listSlideStyle]}
+      >
         <FlashList
           data={sortedTickets}
           renderItem={renderTicketItem}
@@ -1604,7 +1609,7 @@ export default function Tickets() {
           showsVerticalScrollIndicator={false}
           contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: 24 }}
         />
-      </Animated.View>
+      </SwipeTabsView>
 
         {canEdit && (
           <PressableScale

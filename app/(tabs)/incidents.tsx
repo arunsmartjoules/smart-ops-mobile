@@ -29,7 +29,6 @@ import AdvancedFilterModal from "@/components/AdvancedFilterModal";
 import TicketSkeleton from "@/components/TicketSkeleton";
 import IncidentDetailModal from "@/components/IncidentDetailModal";
 import IncidentCard from "@/components/IncidentItem";
-import Animated from "react-native-reanimated";
 import { makeThemedStyles, useDs } from "@/hooks/useDs";
 import {
   ListCountLine,
@@ -37,6 +36,7 @@ import {
   ModuleListHeader,
   useListSlide,
   type StatusChip,
+  SwipeTabsView,
 } from "@/components/shared/ListChrome";
 import { IncidentsService } from "@/services/IncidentsService";
 import { db, incidents as incidentsTable } from "@/database";
@@ -1047,7 +1047,12 @@ export default function IncidentsTab() {
         onSort={cycleSort}
       />
 
-      <Animated.View style={[{ flex: 1 }, listSlideStyle]}>
+      <SwipeTabsView
+        chips={statusChips}
+        activeChip={statusFilter}
+        onSelectChip={selectStatusChip}
+        style={[{ flex: 1 }, listSlideStyle]}
+      >
         <FlashList
           data={sortedIncidents}
           renderItem={renderCard}
@@ -1078,7 +1083,7 @@ export default function IncidentsTab() {
           showsVerticalScrollIndicator={false}
           contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: 24 }}
         />
-      </Animated.View>
+      </SwipeTabsView>
 
 
         {canEdit && (

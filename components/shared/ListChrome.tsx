@@ -7,7 +7,7 @@
  * One implementation, used by every module list — the per-module colour maps
  * live next to their screens.
  */
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ScrollView,
   Text,
@@ -21,6 +21,8 @@ import Animated, {
   useSharedValue,
   withTiming,
 } from "react-native-reanimated";
+import { Gesture, GestureDetector } from "react-native-gesture-handler";
+import * as Haptics from "expo-haptics";
 import {
   ArrowUpDown,
   Calendar,
@@ -66,6 +68,71 @@ export function useListSlide(seq: number, direction: number) {
     transform: [{ translateX: offset.value }],
     opacity: 1 - Math.min(Math.abs(offset.value) / SLIDE_DISTANCE, 1),
   }));
+}
+
+/** Horizontal travel (px) before a drag counts as a swipe rather than a scroll. */
+const SWIPE_ACTIVATE_X = 24;
+/** Vertical travel (px) that hands the touch back to the list's own scroll. */
+const SWIPE_FAIL_Y = 14;
+/** Distance or flick speed that commits the swipe on release. */
+const SWIPE_COMMIT_X = 60;
+const SWIPE_COMMIT_VX = 500;
+
+/**
+ * Wraps a module list so a horizontal swipe moves to the next / previous status
+ * tab — left for the next tab (Open → In progress), right for the previous.
+ * Goes through the same `onSelectChip` as tapping a tab, so the slide
+ * animation, refetch and indicator all behave identically.
+ *
+ * Vertical-first drags fail the pan, so scrolling and pull-to-refresh are
+ * untouched; it stops at the first and last tab rather than wrapping.
+ */
+export function SwipeTabsView({
+  chips,
+  activeChip,
+  onSelectChip,
+  style,
+  children,
+}: {
+  chips: StatusChip[];
+  activeChip: string;
+  onSelectChip: (key: string) => void;
+  /** Usually the list slide style from `useListSlide`, so it accepts animated styles. */
+  style?: React.ComponentProps<typeof Animated.View>["style"];
+  children: React.ReactNode;
+}) {
+  // Rebuilt when the tabs or the selection change; GestureDetector swaps the
+  // handler config in place.
+  const pan = useMemo(
+    () =>
+      Gesture.Pan()
+        .runOnJS(true)
+        .activeOffsetX([-SWIPE_ACTIVATE_X, SWIPE_ACTIVATE_X])
+        .failOffsetY([-SWIPE_FAIL_Y, SWIPE_FAIL_Y])
+        .onEnd((e) => {
+          const committed =
+            Math.abs(e.translationX) >= SWIPE_COMMIT_X ||
+            Math.abs(e.velocityX) >= SWIPE_COMMIT_VX;
+          if (!committed || Math.abs(e.translationX) < Math.abs(e.translationY)) {
+            return;
+          }
+          const idx = chips.findIndex((c) => c.key === activeChip);
+          if (idx < 0) return;
+          const next = chips[idx + (e.translationX < 0 ? 1 : -1)];
+          if (!next) return;
+          Haptics.selectionAsync().catch(() => {});
+          onSelectChip(next.key);
+        }),
+    [chips, activeChip, onSelectChip],
+  );
+
+  return (
+    <GestureDetector gesture={pan}>
+      <Animated.View style={style} collapsable={false}>
+        {children}
+      </Animated.View>
+    </GestureDetector>
+  );
 }
 
 /* ── Status tabs ─────────────────────────────────────────────────────────
@@ -161,6 +228,18 @@ export function UnderlineTabs({
   );
   const left = useSharedValue(0);
   const width = useSharedValue(0);
+  // Keep the active tab in view — swiping can select one that's off-screen.
+  const scrollRef = useRef<ScrollView>(null);
+  const [viewportW, setViewportW] = useState(0);
+  const [contentW, setContentW] = useState(0);
+
+  useEffect(() => {
+    const target = layouts[activeChip];
+    if (!target || !viewportW || contentW <= viewportW) return;
+    const centred = target.x + target.w / 2 - viewportW / 2;
+    const x = Math.max(0, Math.min(centred, contentW - viewportW));
+    scrollRef.current?.scrollTo({ x, animated: true });
+  }, [activeChip, layouts, viewportW, contentW]);
 
   useEffect(() => {
     const target = layouts[activeChip];
@@ -182,8 +261,11 @@ export function UnderlineTabs({
 
   return (
     <ScrollView
+      ref={scrollRef}
       horizontal
       showsHorizontalScrollIndicator={false}
+      onLayout={(e) => setViewportW(e.nativeEvent.layout.width)}
+      onContentSizeChange={(w) => setContentW(w)}
       contentContainerStyle={[styles.tabScroll, contentContainerStyle]}
     >
       <View>
