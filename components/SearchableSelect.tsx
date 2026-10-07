@@ -11,6 +11,7 @@ import {
   KeyboardAvoidingView,
 } from "react-native";
 import { Search, X, Check, ChevronDown } from "lucide-react-native";
+import RequiredMark from "./RequiredMark";
 
 export interface SelectOption {
   value: string;
@@ -156,7 +157,7 @@ export default function SearchableSelect({
       <View className="mb-4">
         {!hideLabel && (
           <Text className="text-slate-700 font-semibold text-sm mb-2">
-            {label}
+            <RequiredMark label={label} />
           </Text>
         )}
         <TouchableOpacity
@@ -216,7 +217,7 @@ export default function SearchableSelect({
             >
               {/* Header */}
               <View className="flex-row items-center justify-between px-5 py-4 border-b border-slate-100">
-                <Text className="text-slate-900 font-bold text-lg">{label}</Text>
+                <Text className="text-slate-900 font-bold text-lg"><RequiredMark label={label} /></Text>
                 <TouchableOpacity
                   onPress={handleClose}
                   className="w-8 h-8 rounded-full bg-slate-100 items-center justify-center"

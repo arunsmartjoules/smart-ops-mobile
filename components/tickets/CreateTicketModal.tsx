@@ -10,6 +10,7 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import { Check, X } from "lucide-react-native";
 import FullscreenPicker from "@/components/FullscreenPicker";
 import { type SelectOption } from "@/components/SearchableSelect";
@@ -135,7 +136,7 @@ export default function CreateTicketModal({
   };
 
   return (
-    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
+    <Modal visible={visible} animationType="slide" onRequestClose={onClose} statusBarTranslucent navigationBarTranslucent>
       <View className="flex-1 bg-slate-50 dark:bg-slate-950">
         <SafeAreaView className="flex-1">
           <View className="px-5 py-4 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
@@ -150,6 +151,7 @@ export default function CreateTicketModal({
             </View>
           </View>
 
+          <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
           <ScrollView
             showsVerticalScrollIndicator={false}
             className="flex-1"
@@ -275,6 +277,7 @@ export default function CreateTicketModal({
               </TouchableOpacity>
             </View>
           </View>
+          </KeyboardAvoidingView>
         </SafeAreaView>
       </View>
     </Modal>

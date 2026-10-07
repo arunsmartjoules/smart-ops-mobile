@@ -18,6 +18,7 @@ import { ArrowLeft, Check, CircleAlert, MoreVertical } from "lucide-react-native
 import type { LucideIcon } from "lucide-react-native";
 import { makeThemedStyles, useDs } from "@/hooks/useDs";
 import { soRadius, soShadow } from "@/components/home/SiteOverview";
+import RequiredMark from "@/components/RequiredMark";
 
 export { soRadius, soShadow };
 
@@ -250,7 +251,11 @@ export function Field({
   const ds = useDs();
   return (
     <View style={containerStyle}>
-      {label ? <Text style={styles.fieldLabel}>{label}</Text> : null}
+      {label ? (
+        <Text style={styles.fieldLabel}>
+          <RequiredMark label={label} />
+        </Text>
+      ) : null}
       <View
         style={[
           styles.fieldBox,
@@ -365,11 +370,14 @@ export function ActivityRow({
   meta,
   dot,
   line,
+  children,
 }: {
   title: string;
   meta: string;
   dot: string;
   line: boolean;
+  /** Extra content under the meta line — remarks, thumbnails. */
+  children?: React.ReactNode;
 }) {
   const styles = useStyles();
   return (
@@ -381,6 +389,7 @@ export function ActivityRow({
       <View style={{ flex: 1, minWidth: 0 }}>
         <Text style={styles.activityTitle}>{title}</Text>
         <Text style={styles.activityMeta}>{meta}</Text>
+        {children}
       </View>
     </View>
   );

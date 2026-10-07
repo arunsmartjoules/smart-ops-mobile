@@ -7,10 +7,9 @@ import {
   ActivityIndicator,
   RefreshControl,
   Alert,
-  KeyboardAvoidingView,
-  Platform,
   Modal,
 } from "react-native";
+import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import { getSelectedSiteCode, setSelectedSiteCode } from "@/services/SiteSelection";
 import { SafeAreaView } from "react-native-safe-area-context";
 // No expo-router hooks here on purpose — they throw "Couldn't find a
@@ -832,7 +831,7 @@ export const LogEntryModule = ({
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: ds.pageBg }} edges={["top"]}>
-      <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} className="flex-1">
+      <KeyboardAvoidingView behavior="padding" className="flex-1">
         {/* Header Section */}
         <View style={entryStyles.header}>
           <View style={entryStyles.headerRow}>

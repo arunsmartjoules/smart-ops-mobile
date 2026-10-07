@@ -213,6 +213,9 @@ export function getTicketUpdateBlocker({
     if (!incidentDraft.operating_condition) {
       return "Select an operating condition for the incident";
     }
+    if (!incidentDraft.immediate_action_taken.trim()) {
+      return "Describe the immediate action taken for the incident";
+    }
   }
 
   return null;
@@ -371,7 +374,7 @@ const TicketDetailStatusUpdate = ({
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ["images"],
-        allowsEditing: true,
+        allowsEditing: false,
         quality: 0.6,
       });
 
@@ -396,7 +399,7 @@ const TicketDetailStatusUpdate = ({
 
       const result = await ImagePicker.launchCameraAsync({
         mediaTypes: ["images"],
-        allowsEditing: true,
+        allowsEditing: false,
         quality: 0.6,
       });
 
@@ -442,7 +445,7 @@ const TicketDetailStatusUpdate = ({
       }
       const result = await ImagePicker.launchCameraAsync({
         mediaTypes: ["images"],
-        allowsEditing: true,
+        allowsEditing: false,
         quality: 0.7,
       });
       if (!result.canceled && result.assets?.[0]?.uri) {
@@ -714,8 +717,8 @@ const TicketDetailStatusUpdate = ({
           />
 
           <Field
-            label="Immediate action taken"
-            placeholder="Optional if ticket remarks cover it"
+            label="Immediate action taken *"
+            placeholder="Describe the immediate action taken"
             value={incidentDraft.immediate_action_taken}
             onChangeText={(v) =>
               setIncidentDraft((prev) => ({
@@ -726,6 +729,7 @@ const TicketDetailStatusUpdate = ({
             multiline
             textAlignVertical="top"
             minHeight={72}
+            invalid={attempted && !incidentDraft.immediate_action_taken.trim()}
             containerStyle={{ marginBottom: 12 }}
           />
 

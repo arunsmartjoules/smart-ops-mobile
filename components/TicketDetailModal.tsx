@@ -1,5 +1,7 @@
 import React from "react";
 import { Modal, ScrollView, Text, View } from "react-native";
+// Lifts the Update bar above the keyboard — RN's KAV can't on edge-to-edge Android.
+import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { type Ticket } from "@/services/TicketsService";
 import { type SelectOption } from "./SearchableSelect";
@@ -203,6 +205,8 @@ const TicketDetailModal = React.memo(
         animationType="slide"
         presentationStyle="fullScreen"
         onRequestClose={onClose}
+        statusBarTranslucent
+        navigationBarTranslucent
       >
         <View style={styles.screen}>
           <DetailHeader
@@ -212,6 +216,7 @@ const TicketDetailModal = React.memo(
             onBack={onClose}
           />
 
+          <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
           <ScrollView
             style={{ flex: 1 }}
             contentContainerStyle={styles.body}
@@ -309,6 +314,7 @@ const TicketDetailModal = React.memo(
               }}
             />
           ) : null}
+          </KeyboardAvoidingView>
         </View>
       </Modal>
     );

@@ -83,7 +83,7 @@ type ResponseField = "response_value" | "remarks" | "readings" | "value";
 
 const INSTANCE_IMAGE_PICKER_OPTIONS = {
   mediaTypes: ["images"] as ImagePicker.MediaType[],
-  allowsEditing: true,
+  allowsEditing: false,
   quality: 0.7,
 };
 

@@ -1317,6 +1317,10 @@ export default function Tickets() {
         Alert.alert("Required", "Please select operating condition for the incident.");
         return;
       }
+      if (!incidentDraft.immediate_action_taken.trim()) {
+        Alert.alert("Required", "Please describe the immediate action taken for the incident.");
+        return;
+      }
     }
 
     const effectiveArea = updateArea || selectedTicket.area_asset;

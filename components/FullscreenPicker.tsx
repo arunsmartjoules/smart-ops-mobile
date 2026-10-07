@@ -12,6 +12,7 @@ import {
 } from "react-native";
 import { Check, ChevronRight, Search, X } from "lucide-react-native";
 import { type SelectOption } from "./SearchableSelect";
+import RequiredMark from "./RequiredMark";
 
 interface FullscreenPickerProps {
   label: string;
@@ -100,7 +101,7 @@ export default function FullscreenPicker({
     <>
       <View className="mb-4">
         <Text className="text-slate-700 dark:text-slate-300 font-semibold text-sm mb-2">
-          {label}
+          <RequiredMark label={label} />
         </Text>
         <TouchableOpacity
           onPress={() => {
@@ -152,7 +153,7 @@ export default function FullscreenPicker({
           <View className="px-5 pt-14 pb-4 border-b border-slate-200 dark:border-slate-800">
             <View className="flex-row items-center justify-between mb-4">
               <Text className="text-slate-900 dark:text-slate-50 font-bold text-xl">
-                {label}
+                <RequiredMark label={label} />
               </Text>
               <TouchableOpacity
                 onPress={handleClose}

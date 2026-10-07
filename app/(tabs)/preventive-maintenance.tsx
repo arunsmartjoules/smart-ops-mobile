@@ -586,7 +586,7 @@ export default function PreventiveMaintenance() {
       }
       const result = await ImagePicker.launchCameraAsync({
         mediaTypes: ["images"],
-        allowsEditing: true,
+        allowsEditing: false,
         quality: 0.7,
       });
       if (!result.canceled && result.assets[0]?.uri) {

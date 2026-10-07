@@ -43,6 +43,9 @@ import { db, incidents as incidentsTable } from "@/database";
 import { eq, and, gte, lte, desc } from "drizzle-orm";
 import { StorageService } from "@/services/StorageService";
 import FullscreenPicker from "@/components/FullscreenPicker";
+import AttachmentField from "@/components/AttachmentField";
+import RequiredMark from "@/components/RequiredMark";
+import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import { type SelectOption } from "@/components/SearchableSelect";
 import { TicketsService } from "@/services/TicketsService";
 import {
@@ -262,7 +265,6 @@ export default function IncidentsTab() {
   const [incidentModalVisible, setIncidentModalVisible] = useState(false);
   const [nextStatus, setNextStatus] = useState<"Inprogress" | "Resolved" | null>(null);
   const [updateRemarks, setUpdateRemarks] = useState("");
-  const [updateRcaStatus, setUpdateRcaStatus] = useState<"Open" | "RCA Under Review" | "RCA Submitted">("Open");
   const [isUpdatingIncident, setIsUpdatingIncident] = useState(false);
   const [detailPendingAttachments, setDetailPendingAttachments] = useState<string[]>([]);
   const [detailPendingRcaAttachments, setDetailPendingRcaAttachments] = useState<string[]>([]);
@@ -270,7 +272,6 @@ export default function IncidentsTab() {
   const [detailCreatedAt, setDetailCreatedAt] = useState<Date | null>(null);
   const [detailResolvedAt, setDetailResolvedAt] = useState<Date | null>(null);
   const [detailAssignedTo, setDetailAssignedTo] = useState("");
-  const [detailRcaChecker, setDetailRcaChecker] = useState("");
   const [siteUserOptions, setSiteUserOptions] = useState<SelectOption[]>([]);
   const [showCreatedTimePicker, setShowCreatedTimePicker] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -524,41 +525,15 @@ export default function IncidentsTab() {
     }
   }, [creating, canEditMeta, currentUserId, form.assigned_to]);
 
-  const pickFromGallery = useCallback(async () => {
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ["images"],
-      allowsMultipleSelection: true,
-      quality: 0.7,
-      selectionLimit: 8,
-    });
-    if (!result.canceled) {
-      const uris = result.assets.map((asset) => asset.uri).filter(Boolean);
-      setForm((prev) => ({ ...prev, attachments: [...prev.attachments, ...uris] }));
-    }
-  }, []);
-
-  const capturePhoto = useCallback(async () => {
-    const permission = await ImagePicker.requestCameraPermissionsAsync();
-    if (permission.status !== "granted") {
-      Alert.alert("Permission required", "Camera permission is required.");
-      return;
-    }
-    const result = await ImagePicker.launchCameraAsync({
-      mediaTypes: ["images"],
-      allowsEditing: true,
-      quality: 0.7,
-    });
-    if (!result.canceled && result.assets?.[0]?.uri) {
-      setForm((prev) => ({ ...prev, attachments: [...prev.attachments, result.assets[0].uri] }));
-    }
-  }, []);
-
-  const removeAttachment = useCallback((uri: string) => {
-    setForm((prev) => ({
-      ...prev,
-      attachments: prev.attachments.filter((item) => item !== uri),
-    }));
-  }, []);
+  /** `AttachmentField` drives `form.attachments` through a plain state setter. */
+  const setFormAttachments = useCallback<React.Dispatch<React.SetStateAction<string[]>>>(
+    (update) =>
+      setForm((prev) => ({
+        ...prev,
+        attachments: typeof update === "function" ? update(prev.attachments) : update,
+      })),
+    [],
+  );
 
   const openCreatedTimePicker = useCallback(() => {
     if (!canEditMeta) return;
@@ -593,6 +568,9 @@ export default function IncidentsTab() {
     if (!form.fault_type) return Alert.alert("Required", "Please select fault type.");
     if (!form.severity) return Alert.alert("Required", "Please select severity.");
     if (!form.operating_condition) return Alert.alert("Required", "Please select operating condition.");
+    if (!form.immediate_action_taken.trim()) {
+      return Alert.alert("Required", "Please describe the immediate action taken.");
+    }
     if (form.incident_created_time.getTime() > Date.now()) {
       return Alert.alert("Invalid time", "Incident created time cannot be in the future.");
     }
@@ -642,14 +620,12 @@ export default function IncidentsTab() {
     // Anything not yet resolved (incl. a legacy Open row) can only move to Resolved.
     setNextStatus(item.status === "Resolved" ? null : "Resolved");
     setUpdateRemarks(String(item.remarks || ""));
-    setUpdateRcaStatus(item.rca_status);
     setDetailPendingAttachments([]);
     setDetailPendingRcaAttachments([]);
     setDetailCreatedAt(item.incident_created_time ? new Date(item.incident_created_time as any) : new Date());
     setDetailRespondedAt(item.incident_updated_time ? new Date(item.incident_updated_time as any) : new Date());
     setDetailResolvedAt(item.incident_resolved_time ? new Date(item.incident_resolved_time as any) : new Date());
     setDetailAssignedTo(parseAssignedTo(item.assigned_to).firstValue);
-    setDetailRcaChecker(String(item.rca_checker || ""));
     void loadSiteUsers(item.site_code);
     setIncidentModalVisible(true);
   }, [loadSiteUsers]);
@@ -668,7 +644,7 @@ export default function IncidentsTab() {
   const handleIncidentUpdate = useCallback(async () => {
     if (!selectedIncident) return;
     if (nextStatus === "Resolved" && !updateRemarks.trim()) {
-      Alert.alert("Required", "Remarks required to resolve incident.");
+      Alert.alert("Required", "Resolution remarks are required to resolve the incident.");
       return;
     }
     if (nextStatus === "Resolved" && detailPendingAttachments.length === 0) {
@@ -709,10 +685,9 @@ export default function IncidentsTab() {
       (selectedIncident.status === "Resolved" ||
         selectedIncident.status === "RCA Submitted");
     const hasStatusChange = Boolean(nextStatus);
-    const hasRcaStatusChange = canManageRca && updateRcaStatus !== selectedIncident.rca_status;
-    const hasRcaCheckerChange = canManageRca && detailRcaChecker !== String(selectedIncident.rca_checker || "");
-    const hasNewRcaAttachments = canManageRca && detailPendingRcaAttachments.length > 0;
-    const hasRcaChange = hasRcaStatusChange || hasRcaCheckerChange || hasNewRcaAttachments;
+    // The RCA is now just an attachment list: there is no status or checker to
+    // edit, so the only RCA change is new files.
+    const hasRcaChange = canManageRca && detailPendingRcaAttachments.length > 0;
     const hasNewAttachments = detailPendingAttachments.length > 0;
     const hasRemarkChange = updateRemarks.trim() !== String(selectedIncident.remarks || "").trim();
     const prevCreatedMs = selectedIncident.incident_created_time
@@ -796,7 +771,6 @@ export default function IncidentsTab() {
       }
 
       if (canManageRca && hasRcaChange) {
-        const existingRca = parseIncidentAttachments(selectedIncident.rca_attachments);
         let uploadedRca: string[] = [];
         try {
           uploadedRca = await uploadUrisToStorage(
@@ -809,11 +783,12 @@ export default function IncidentsTab() {
           setIsUpdatingIncident(false);
           return;
         }
-        const mergedRca = [...existingRca, ...uploadedRca];
+        // Send ONLY the new urls: the server appends to `rca_attachments`, so the
+        // merged list this used to send duplicated every file already filed.
+        // Attaching the RCA is what files it, so the status moves to submitted.
         const rcaRes = await IncidentsService.updateRcaStatus(selectedIncident.id, {
-          rca_status: updateRcaStatus,
-          rca_checker: detailRcaChecker || undefined,
-          rca_attachments: mergedRca,
+          rca_status: "RCA Submitted",
+          rca_attachments: uploadedRca,
         });
         if (!rcaRes?.success && !rcaRes?.queued) {
           Alert.alert("Error", rcaRes?.error || "Failed to update RCA status");
@@ -900,14 +875,12 @@ export default function IncidentsTab() {
     nextStatus,
     updateRemarks,
     canEditRca,
-    updateRcaStatus,
     detailPendingAttachments,
     detailPendingRcaAttachments,
     detailCreatedAt,
     detailAssignedTo,
     detailRespondedAt,
     detailResolvedAt,
-    detailRcaChecker,
     canEditMeta,
     statusFilter,
     fetchData,
@@ -1132,6 +1105,8 @@ export default function IncidentsTab() {
         <Modal
           visible={creating}
           animationType="slide"
+          statusBarTranslucent
+          navigationBarTranslucent
           onRequestClose={() => {
             setCreating(false);
             resetCreateForm();
@@ -1154,8 +1129,13 @@ export default function IncidentsTab() {
                 </View>
               </View>
 
+              {/* keyboard-controller's KAV, not RN's: see IncidentDetailModal. The
+                  create footer had no keyboard handling at all, so Create
+                  Incident sat behind the keyboard while typing. */}
+              <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
               <ScrollView
                 showsVerticalScrollIndicator={false}
+                keyboardShouldPersistTaps="handled"
                 className="flex-1"
                 contentContainerStyle={{ padding: 20, paddingBottom: 120 }}
               >
@@ -1187,7 +1167,7 @@ export default function IncidentsTab() {
                 />
                 <View className="mb-4">
                   <Text className="text-slate-700 dark:text-slate-300 font-semibold text-sm mb-2">
-                    Incident Name *
+                    <RequiredMark label="Incident Name *" />
                   </Text>
                   <TextInput
                     placeholder="Enter incident name"
@@ -1245,7 +1225,7 @@ export default function IncidentsTab() {
                 />
                 <View className="mb-4">
                   <Text className="text-slate-700 dark:text-slate-300 font-semibold text-sm mb-2">
-                    Immediate Action Taken
+                    <RequiredMark label="Immediate Action Taken *" />
                   </Text>
                   <TextInput
                     placeholder="Describe immediate action taken"
@@ -1259,49 +1239,14 @@ export default function IncidentsTab() {
                   />
                 </View>
 
-                <View className="mb-4">
-                  <Text className="text-slate-700 dark:text-slate-300 font-semibold text-sm mb-2">
-                    Attachments
-                  </Text>
-                  <View className="flex-row gap-2 mb-3">
-                    <TouchableOpacity
-                      onPress={capturePhoto}
-                      className="px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 flex-row items-center"
-                    >
-                      <Camera size={16} color={isDark ? "#cbd5e1" : "#334155"} />
-                      <Text className="ml-2 text-slate-700 dark:text-slate-200 text-xs font-semibold">Camera</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      onPress={pickFromGallery}
-                      className="px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 flex-row items-center"
-                    >
-                      <ImageIcon size={16} color={isDark ? "#cbd5e1" : "#334155"} />
-                      <Text className="ml-2 text-slate-700 dark:text-slate-200 text-xs font-semibold">Gallery</Text>
-                    </TouchableOpacity>
-                  </View>
-                  {form.attachments.length > 0 ? (
-                    <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                      <View className="flex-row gap-2">
-                        {form.attachments.map((uri) => (
-                          <View key={uri} className="relative">
-                            <Image
-                              source={{ uri }}
-                              style={{ width: 84, height: 84, borderRadius: 12 }}
-                            />
-                            <TouchableOpacity
-                              onPress={() => removeAttachment(uri)}
-                              className="absolute -top-1 -right-1 w-6 h-6 rounded-full bg-black/70 items-center justify-center"
-                            >
-                              <X size={14} color="#fff" />
-                            </TouchableOpacity>
-                          </View>
-                        ))}
-                      </View>
-                    </ScrollView>
-                  ) : (
-                    <Text className="text-slate-500 dark:text-slate-400 text-xs">No attachments selected</Text>
-                  )}
-                </View>
+                {/* One button for camera / photo library / any file, with tap-to-
+                    preview on everything picked. */}
+                <AttachmentField
+                  title="Attachments"
+                  pending={form.attachments}
+                  onChangePending={setFormAttachments}
+                  emptyText="No attachments selected"
+                />
               </ScrollView>
 
               <View className="px-5 py-3 border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
@@ -1327,6 +1272,7 @@ export default function IncidentsTab() {
                   </TouchableOpacity>
                 </View>
               </View>
+              </KeyboardAvoidingView>
               {showCreatedTimePicker && Platform.OS !== "android" ? (
                 <DateTimePicker
                   value={form.incident_created_time}
@@ -1361,16 +1307,15 @@ export default function IncidentsTab() {
           setCreatedAt={setDetailCreatedAt}
           resolvedAt={detailResolvedAt}
           setResolvedAt={setDetailResolvedAt}
-          rcaChecker={detailRcaChecker}
-          setRcaChecker={setDetailRcaChecker}
-          rcaCheckerOptions={siteUserOptions}
-          canEditRca={canEditRca && selectedIncident?.status === "Resolved"}
+          canEditRca={
+            canEditRca &&
+            (selectedIncident?.status === "Resolved" ||
+              selectedIncident?.status === "RCA Submitted")
+          }
           nextStatus={nextStatus}
           setNextStatus={setNextStatus}
           remarks={updateRemarks}
           setRemarks={setUpdateRemarks}
-          rcaStatus={updateRcaStatus}
-          setRcaStatus={setUpdateRcaStatus}
           isUpdating={isUpdatingIncident}
           onSubmit={handleIncidentUpdate}
           existingAttachmentUrls={selectedIncident ? parseIncidentAttachments(selectedIncident.attachments) : []}

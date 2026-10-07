@@ -8,9 +8,8 @@ import {
   ActivityIndicator,
   Image,
   Modal,
-  KeyboardAvoidingView,
-  Platform,
 } from "react-native";
+import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import {
   SafeAreaView,
   useSafeAreaInsets,
@@ -363,7 +362,7 @@ function ChemicalEntryContent() {
         </View>
 
         <KeyboardAvoidingView
-          behavior={Platform.OS === "ios" ? "padding" : "height"}
+          behavior="padding"
           style={{ flex: 1 }}
         >
         <ScrollView

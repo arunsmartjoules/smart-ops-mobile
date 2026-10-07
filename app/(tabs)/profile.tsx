@@ -232,14 +232,12 @@ export default function Profile() {
           source === "camera"
             ? await ImagePicker.launchCameraAsync({
                 mediaTypes: "images",
-                allowsEditing: true,
-                aspect: [1, 1],
+                allowsEditing: false,
                 quality: 0.6,
               })
             : await ImagePicker.launchImageLibraryAsync({
                 mediaTypes: "images",
-                allowsEditing: true,
-                aspect: [1, 1],
+                allowsEditing: false,
                 quality: 0.6,
               });
 
