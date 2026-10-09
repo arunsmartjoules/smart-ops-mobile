@@ -2,10 +2,11 @@
  * Asset Mapping — screen 4, camera capture (nameplate, location or
  * no-access proof).
  *
- * Live viewfinder with a faint grid, flame corner brackets and an animated
- * scan line. While the parent uploads the shot it passes `busy`, which shows
- * a spinner overlay; the nameplate is read later, in the background.
- * The camera stays dark in both themes — it's a viewfinder.
+ * Plain full-screen viewfinder — no guide frame; the whole sensor image is
+ * what gets saved. A flash toggle drives the torch so dark plant rooms are lit
+ * both in the preview and in the shot. While the parent uploads the shot it
+ * passes `busy`, which shows a spinner overlay; the nameplate is read later,
+ * in the background. The camera chrome stays dark in both themes.
  */
 import React, { useEffect, useRef, useState } from "react";
 import {
@@ -17,14 +18,7 @@ import {
   View,
 } from "react-native";
 import { CameraView, useCameraPermissions } from "expo-camera";
-import Animated, {
-  Easing,
-  useAnimatedStyle,
-  useSharedValue,
-  withRepeat,
-  withTiming,
-} from "react-native-reanimated";
-import { Camera } from "lucide-react-native";
+import { Camera, Zap, ZapOff } from "lucide-react-native";
 import { useDs } from "@/hooks/useDs";
 
 export type CaptureMode = "nameplate" | "location" | "proof";
@@ -48,6 +42,8 @@ const COPY: Record<CaptureMode, { title: string; hint: string }> = {
 const INK = "#F1F4F4";
 const INK_SUB = "#9FB0B3";
 const DIM = "rgba(7,33,38,0.9)";
+// Scrim behind the top/bottom chrome so text stays legible over a bright shot.
+const SCRIM = "rgba(4,20,23,0.55)";
 
 interface Props {
   mode: CaptureMode;
@@ -74,6 +70,7 @@ export default function CaptureCamera({
   const cameraRef = useRef<CameraView>(null);
   const [ready, setReady] = useState(false);
   const [shooting, setShooting] = useState(false);
+  const [torch, setTorch] = useState(false);
   const copy = COPY[mode];
 
   useEffect(() => {
@@ -81,20 +78,6 @@ export default function CaptureCamera({
       void requestPermission();
     }
   }, [permission, requestPermission]);
-
-  // Scan line sweeps the guide frame top → bottom → top.
-  const sweep = useSharedValue(0);
-  useEffect(() => {
-    sweep.value = withRepeat(
-      withTiming(1, { duration: 1300, easing: Easing.inOut(Easing.ease) }),
-      -1,
-      true,
-    );
-  }, [sweep]);
-  const frameH = useSharedValue(0);
-  const lineStyle = useAnimatedStyle(() => ({
-    top: frameH.value * (0.06 + sweep.value * 0.86),
-  }));
 
   const shoot = async () => {
     if (!cameraRef.current || !ready || shooting || busy) return;
@@ -116,18 +99,10 @@ export default function CaptureCamera({
           ref={cameraRef}
           style={StyleSheet.absoluteFill}
           facing="back"
+          enableTorch={torch}
           onCameraReady={() => setReady(true)}
         />
       ) : null}
-      <View style={[StyleSheet.absoluteFill, styles.shade]} pointerEvents="none" />
-      <View style={[StyleSheet.absoluteFill, styles.grid]} pointerEvents="none">
-        {Array.from({ length: 3 }).map((_, i) => (
-          <View key={`v${i}`} style={[styles.gridV, { left: `${(i + 1) * 25}%` }]} />
-        ))}
-        {Array.from({ length: 5 }).map((_, i) => (
-          <View key={`h${i}`} style={[styles.gridH, { top: `${(i + 1) * 16.6}%` }]} />
-        ))}
-      </View>
 
       {/* Top bar */}
       <View style={[styles.topBar, { paddingTop: topInset + 10 }]}>
@@ -137,23 +112,9 @@ export default function CaptureCamera({
         </TouchableOpacity>
       </View>
 
-      {/* Guide frame */}
-      <View style={styles.frameWrap}>
-        {!permission ? null : granted ? (
-          <View style={styles.frame} onLayout={(e) => { frameH.value = e.nativeEvent.layout.height; }}>
-            <Corner pos="tl" color={accent} />
-            <Corner pos="tr" color={accent} />
-            <Corner pos="bl" color={accent} />
-            <Corner pos="br" color={accent} />
-            <Animated.View
-              style={[
-                styles.scanLine,
-                { backgroundColor: accent, shadowColor: accent },
-                lineStyle,
-              ]}
-            />
-          </View>
-        ) : (
+      {/* Viewfinder — open, full frame */}
+      <View style={styles.middle}>
+        {!permission || granted ? null : (
           <View style={styles.permission}>
             <Camera size={28} color={INK_SUB} strokeWidth={2} />
             <Text style={styles.permissionTitle}>Camera access needed</Text>
@@ -181,16 +142,38 @@ export default function CaptureCamera({
           {assetName}
         </Text>
         <Text style={styles.hint}>{copy.hint}</Text>
-        <TouchableOpacity
-          onPress={shoot}
-          disabled={!granted || !ready || shooting || !!busy}
-          activeOpacity={0.8}
-          style={[styles.shutter, (!granted || !ready) && { opacity: 0.4 }]}
-          accessibilityRole="button"
-          accessibilityLabel="Take photo"
-        >
-          <View style={[styles.shutterInner, { backgroundColor: accent }]} />
-        </TouchableOpacity>
+        <View style={styles.controls}>
+          <TouchableOpacity
+            onPress={() => setTorch((on) => !on)}
+            disabled={!granted || !ready}
+            style={[
+              styles.sideButton,
+              torch && { backgroundColor: accent },
+              (!granted || !ready) && { opacity: 0.4 },
+            ]}
+            accessibilityRole="switch"
+            accessibilityState={{ checked: torch }}
+            accessibilityLabel="Flash"
+          >
+            {torch ? (
+              <Zap size={22} color="#FFFFFF" strokeWidth={2.2} />
+            ) : (
+              <ZapOff size={22} color={INK} strokeWidth={2.2} />
+            )}
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={shoot}
+            disabled={!granted || !ready || shooting || !!busy}
+            activeOpacity={0.8}
+            style={[styles.shutter, (!granted || !ready) && { opacity: 0.4 }]}
+            accessibilityRole="button"
+            accessibilityLabel="Take photo"
+          >
+            <View style={[styles.shutterInner, { backgroundColor: accent }]} />
+          </TouchableOpacity>
+          {/* Mirrors the flash button so the shutter stays centred. */}
+          <View style={styles.sideSpacer} />
+        </View>
       </View>
 
       {busy ? (
@@ -205,58 +188,40 @@ export default function CaptureCamera({
   );
 }
 
-function Corner({ pos, color }: { pos: "tl" | "tr" | "bl" | "br"; color: string }) {
-  const top = pos[0] === "t";
-  const left = pos[1] === "l";
-  return (
-    <View
-      style={{
-        position: "absolute",
-        width: 34,
-        height: 34,
-        borderColor: color,
-        [top ? "top" : "bottom"]: 0,
-        [left ? "left" : "right"]: 0,
-        [top ? "borderTopWidth" : "borderBottomWidth"]: 3,
-        [left ? "borderLeftWidth" : "borderRightWidth"]: 3,
-        [`border${top ? "Top" : "Bottom"}${left ? "Left" : "Right"}Radius`]: 8,
-      }}
-    />
-  );
-}
-
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: "#041417" },
-  shade: { backgroundColor: "rgba(5,8,15,0.28)" },
-  grid: { opacity: 0.35 },
-  gridV: { position: "absolute", top: 0, bottom: 0, width: 1, backgroundColor: "rgba(200,220,255,0.12)" },
-  gridH: { position: "absolute", left: 0, right: 0, height: 1, backgroundColor: "rgba(200,220,255,0.12)" },
   topBar: {
     flexDirection: "row",
     alignItems: "center",
     paddingHorizontal: 20,
     paddingBottom: 10,
+    backgroundColor: SCRIM,
   },
   topTitle: { flex: 1, fontSize: 13, fontWeight: "600", color: INK },
   cancel: { fontSize: 13, fontWeight: "600", color: INK_SUB },
-  frameWrap: { flex: 1, alignItems: "center", justifyContent: "center", paddingHorizontal: 34 },
-  frame: { width: "100%", aspectRatio: 4 / 3 },
-  scanLine: {
-    position: "absolute",
-    left: "8%",
-    right: "8%",
-    height: 2,
-    shadowOpacity: 0.8,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 0 },
-    elevation: 4,
-  },
+  middle: { flex: 1, alignItems: "center", justifyContent: "center", paddingHorizontal: 34 },
   permission: { alignItems: "center", gap: 8, paddingHorizontal: 20 },
   permissionTitle: { fontSize: 15, fontWeight: "700", color: INK, marginTop: 6 },
   permissionBody: { fontSize: 12.5, color: INK_SUB, textAlign: "center" },
   permissionButton: { marginTop: 10, borderRadius: 12, paddingVertical: 11, paddingHorizontal: 20 },
   permissionButtonText: { fontSize: 13, fontWeight: "600", color: "#FFFFFF" },
-  bottom: { paddingHorizontal: 20, alignItems: "center" },
+  bottom: { paddingHorizontal: 20, paddingTop: 14, alignItems: "center", backgroundColor: SCRIM },
+  controls: {
+    alignSelf: "stretch",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 24,
+  },
+  sideButton: {
+    width: 48,
+    height: 48,
+    borderRadius: 99,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(238,242,255,0.16)",
+  },
+  sideSpacer: { width: 48, height: 48 },
   assetName: { fontSize: 12.5, fontWeight: "600", color: INK, marginBottom: 6 },
   hint: { fontSize: 11.5, lineHeight: 17, color: INK_SUB, textAlign: "center", marginBottom: 18 },
   shutter: {
