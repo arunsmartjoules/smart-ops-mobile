@@ -69,8 +69,8 @@ Not applicable. The app records building-equipment maintenance data. It is not a
 financial, gambling or other regulated service, and it contains no licensed third-party
 content.
 
-Privacy policy: [[privacy policy URL]]
-Support contact: [[name, email, phone]]
+Privacy policy: https://smartjoules.org/jouleops/privacy
+Support contact: support@smartjoules.in
 
 Regards,
 [[name]], Smart Joules Pvt. Ltd.
