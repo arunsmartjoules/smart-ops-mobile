@@ -4,21 +4,32 @@
  *
  * Plain full-screen viewfinder — no guide frame; the whole sensor image is
  * what gets saved. A flash toggle drives the torch so dark plant rooms are lit
- * both in the preview and in the shot. While the parent uploads the shot it
- * passes `busy`, which shows a spinner overlay; the nameplate is read later,
- * in the background. The camera chrome stays dark in both themes.
+ * both in the preview and in the shot.
+ *
+ * Focus: tapping the viewfinder drops a focus ring and asks the camera to
+ * focus there and hold it, which is what a close-up nameplate needs — the
+ * continuous autofocus otherwise hunts between the plate and the wall behind
+ * it. "Auto" hands focus back to the camera. The lock is iOS-only (expo-camera
+ * exposes no focus control on Android, where the camera focuses continuously);
+ * the ring still confirms the tap on both.
+ *
+ * While the parent uploads the shot it passes `busy`, which shows a spinner
+ * overlay; the nameplate is read later, in the background. The camera chrome
+ * stays dark in both themes.
  */
 import React, { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Animated,
   Linking,
+  Pressable,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from "react-native";
-import { CameraView, useCameraPermissions } from "expo-camera";
-import { Camera, Zap, ZapOff } from "lucide-react-native";
+import { CameraView, useCameraPermissions, type FocusMode } from "expo-camera";
+import { Camera, Focus, Zap, ZapOff } from "lucide-react-native";
 import { useDs } from "@/hooks/useDs";
 
 export type CaptureMode = "nameplate" | "location" | "proof";
@@ -71,7 +82,49 @@ export default function CaptureCamera({
   const [ready, setReady] = useState(false);
   const [shooting, setShooting] = useState(false);
   const [torch, setTorch] = useState(false);
+  // "off" = the camera keeps focusing on its own; "on" = focus once and hold,
+  // which is what a tap asks for.
+  const [autofocus, setAutofocus] = useState<FocusMode>("off");
+  const [ring, setRing] = useState<{ x: number; y: number } | null>(null);
+  // Viewfinder size, so the focus button can aim at its centre.
+  const [viewfinder, setViewfinder] = useState({ width: 0, height: 0 });
+  // State, not a ref: the value is read while rendering the ring.
+  const [ringAnim] = useState(() => new Animated.Value(0));
+  const refocusTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const copy = COPY[mode];
+
+  useEffect(
+    () => () => {
+      if (refocusTimer.current) clearTimeout(refocusTimer.current);
+    },
+    [],
+  );
+
+  /** Tap the viewfinder: show the ring there and re-run focus, then hold it. */
+  const focusAt = (x: number, y: number) => {
+    if (!granted || !ready || busy) return;
+    setRing({ x, y });
+    ringAnim.setValue(0);
+    Animated.sequence([
+      Animated.timing(ringAnim, { toValue: 1, duration: 140, useNativeDriver: true }),
+      Animated.delay(900),
+      Animated.timing(ringAnim, { toValue: 0, duration: 220, useNativeDriver: true }),
+    ]).start(({ finished }) => {
+      if (finished) setRing(null);
+    });
+
+    // A focus pass only restarts when the prop changes, so drop the lock for a
+    // frame before asking for it again.
+    setAutofocus("off");
+    if (refocusTimer.current) clearTimeout(refocusTimer.current);
+    refocusTimer.current = setTimeout(() => setAutofocus("on"), 60);
+  };
+
+  const clearFocus = () => {
+    if (refocusTimer.current) clearTimeout(refocusTimer.current);
+    setRing(null);
+    setAutofocus("off");
+  };
 
   useEffect(() => {
     if (permission && !permission.granted && permission.canAskAgain) {
@@ -100,6 +153,7 @@ export default function CaptureCamera({
           style={StyleSheet.absoluteFill}
           facing="back"
           enableTorch={torch}
+          autofocus={autofocus}
           onCameraReady={() => setReady(true)}
         />
       ) : null}
@@ -112,8 +166,36 @@ export default function CaptureCamera({
         </TouchableOpacity>
       </View>
 
-      {/* Viewfinder — open, full frame */}
-      <View style={styles.middle}>
+      {/* Viewfinder — open, full frame. Tapping it focuses there. */}
+      <Pressable
+        style={styles.middle}
+        onLayout={(e) =>
+          setViewfinder({
+            width: e.nativeEvent.layout.width,
+            height: e.nativeEvent.layout.height,
+          })
+        }
+        onPress={(e) => focusAt(e.nativeEvent.locationX, e.nativeEvent.locationY)}
+        accessibilityRole="button"
+        accessibilityLabel="Tap to focus"
+      >
+        {ring ? (
+          <Animated.View
+            pointerEvents="none"
+            style={[
+              styles.focusRing,
+              {
+                borderColor: accent,
+                left: ring.x - FOCUS_RING / 2,
+                top: ring.y - FOCUS_RING / 2,
+                opacity: ringAnim,
+                transform: [
+                  { scale: ringAnim.interpolate({ inputRange: [0, 1], outputRange: [1.4, 1] }) },
+                ],
+              },
+            ]}
+          />
+        ) : null}
         {!permission || granted ? null : (
           <View style={styles.permission}>
             <Camera size={28} color={INK_SUB} strokeWidth={2} />
@@ -134,14 +216,16 @@ export default function CaptureCamera({
             </TouchableOpacity>
           </View>
         )}
-      </View>
+      </Pressable>
 
       {/* Bottom */}
       <View style={[styles.bottom, { paddingBottom: bottomInset + 22 }]}>
         <Text style={styles.assetName} numberOfLines={1}>
           {assetName}
         </Text>
-        <Text style={styles.hint}>{copy.hint}</Text>
+        <Text style={styles.hint}>
+          {autofocus === "on" ? "Focus locked — tap the view to move it, or Auto to release." : copy.hint}
+        </Text>
         <View style={styles.controls}>
           <TouchableOpacity
             onPress={() => setTorch((on) => !on)}
@@ -171,8 +255,24 @@ export default function CaptureCamera({
           >
             <View style={[styles.shutterInner, { backgroundColor: accent }]} />
           </TouchableOpacity>
-          {/* Mirrors the flash button so the shutter stays centred. */}
-          <View style={styles.sideSpacer} />
+          {/* Focus: released by default, locked where the operator tapped. */}
+          <TouchableOpacity
+            onPress={
+              autofocus === "on"
+                ? clearFocus
+                : () => focusAt(viewfinder.width / 2, viewfinder.height / 2)
+            }
+            disabled={!granted || !ready}
+            style={[
+              styles.sideButton,
+              autofocus === "on" && { backgroundColor: accent },
+              (!granted || !ready) && { opacity: 0.4 },
+            ]}
+            accessibilityRole="button"
+            accessibilityLabel={autofocus === "on" ? "Release focus" : "Focus on the centre"}
+          >
+            <Focus size={22} color={autofocus === "on" ? "#FFFFFF" : INK} strokeWidth={2.2} />
+          </TouchableOpacity>
         </View>
       </View>
 
@@ -188,8 +288,17 @@ export default function CaptureCamera({
   );
 }
 
+const FOCUS_RING = 72;
+
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: "#041417" },
+  focusRing: {
+    position: "absolute",
+    width: FOCUS_RING,
+    height: FOCUS_RING,
+    borderRadius: FOCUS_RING / 2,
+    borderWidth: 2,
+  },
   topBar: {
     flexDirection: "row",
     alignItems: "center",
@@ -221,7 +330,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     backgroundColor: "rgba(238,242,255,0.16)",
   },
-  sideSpacer: { width: 48, height: 48 },
   assetName: { fontSize: 12.5, fontWeight: "600", color: INK, marginBottom: 6 },
   hint: { fontSize: 11.5, lineHeight: 17, color: INK_SUB, textAlign: "center", marginBottom: 18 },
   shutter: {
