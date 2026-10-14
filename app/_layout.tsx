@@ -33,7 +33,7 @@ import { syncManager } from "@/services/SyncManager";
 import { initDatabase } from "@/database";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import UpdateService from "@/services/UpdateService";
-import UpdateBanner from "@/components/UpdateBanner";
+import StoreUpdateService from "@/services/StoreUpdateService";
 import VersionGateService from "@/services/VersionGateService";
 import { presenceService } from "@/services/PresenceService";
 import UpdateRequiredScreen from "@/components/UpdateRequiredScreen";
@@ -198,7 +198,10 @@ export default function RootLayout() {
         syncManager.initialize();
         await setupAndroidChannels();
         await registerBackgroundSyncAsync();
+        // Mandatory updates: an OTA downloads and blocks until restart; a newer
+        // store build blocks until installed (see UpdateRequiredScreen).
         UpdateService.checkForUpdate();
+        StoreUpdateService.check(true);
         // Force-update gate: verify this build is still allowed by the backend.
         VersionGateService.check();
       } catch (e) {
@@ -207,9 +210,13 @@ export default function RootLayout() {
     };
     init();
 
-    // Re-check the version gate whenever the app returns to the foreground.
+    // Re-check the version gate (and, throttled, OTA + store updates)
+    // whenever the app returns to the foreground.
     const appStateSub = AppState.addEventListener("change", (next) => {
-      if (next === "active") VersionGateService.check();
+      if (next !== "active") return;
+      VersionGateService.check();
+      UpdateService.checkOnForeground();
+      StoreUpdateService.check();
     });
 
     const handleNotificationResponse = (
@@ -238,7 +245,6 @@ export default function RootLayout() {
           <AttendanceGateProvider>
             <AuthGuard>
               <ThemeProvider>
-                <UpdateBanner />
                 <ServerStatusOverlay />
                 <NotificationGate />
                 <UpdateRequiredScreen />

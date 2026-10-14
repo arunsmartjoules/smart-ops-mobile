@@ -23,6 +23,12 @@ class UpdateService {
   private updateAvailable = false;
   private listeners: Set<UpdateListener> = new Set();
   private currentState: UpdateState = { status: 'idle' };
+  private lastCheckedAt = 0;
+  private static readonly FOREGROUND_RECHECK_MS = 15 * 60 * 1000;
+
+  get state(): UpdateState {
+    return this.currentState;
+  }
 
   subscribe(listener: UpdateListener) {
     this.listeners.add(listener);
@@ -42,13 +48,19 @@ class UpdateService {
   /**
    * Check for an OTA update.
    *
-   * `automatic` (launch): downloads silently and surfaces "Restart" via the
-   * banner. Manual checks (profile screen) emit nothing to the banner — the
-   * caller drives its own UI from the returned UpdateCheckResult.
+   * `automatic` (launch / foreground): downloads it right away, emitting
+   * `downloading` → `ready` (or `error`) so the mandatory update popup can
+   * block the app until the user restarts onto it. A failed *check* (offline)
+   * emits nothing — only a found-but-failed download surfaces. Manual checks
+   * (profile screen) emit nothing; the caller decides from the returned
+   * UpdateCheckResult.
    */
   async checkForUpdate(automatic = true): Promise<UpdateCheckResult> {
+    // Already downloaded and waiting on a restart — nothing more to fetch.
+    if (this.currentState.status === 'ready') return { status: 'available' };
     if (this.isChecking) return { status: 'up-to-date' };
     this.isChecking = true;
+    this.lastCheckedAt = Date.now();
 
     try {
       if (!Updates.isEnabled) {
@@ -56,28 +68,38 @@ class UpdateService {
         return { status: 'unsupported' };
       }
 
-      const result = await Updates.checkForUpdateAsync();
+      let result: Updates.UpdateCheckResult;
+      try {
+        result = await Updates.checkForUpdateAsync();
+      } catch (e: any) {
+        logger.warn('Update check failed', { module: 'UPDATE_SERVICE', error: e?.message });
+        return { status: 'error', error: e?.message || 'Unknown error' };
+      }
       logger.info('Update check result', { module: 'UPDATE_SERVICE', available: result.isAvailable });
 
-      if (result.isAvailable) {
-        this.updateAvailable = true;
-        if (automatic) {
-          logger.info('Background downloading update...', { module: 'UPDATE_SERVICE' });
-          await Updates.fetchUpdateAsync();
-          logger.info('Background update downloaded.', { module: 'UPDATE_SERVICE' });
-          this.emit({ status: 'ready', restart: () => this.reloadApp() });
-        }
-        return { status: 'available' };
+      if (!result.isAvailable) {
+        this.updateAvailable = false;
+        return { status: 'up-to-date' };
       }
 
-      this.updateAvailable = false;
-      return { status: 'up-to-date' };
-    } catch (e: any) {
-      logger.warn('Update check failed', { module: 'UPDATE_SERVICE', error: e?.message });
-      return { status: 'error', error: e?.message || 'Unknown error' };
+      this.updateAvailable = true;
+      if (automatic) {
+        logger.info('Downloading update...', { module: 'UPDATE_SERVICE' });
+        await this.download();
+      }
+      return { status: 'available' };
     } finally {
       this.isChecking = false;
     }
+  }
+
+  /**
+   * Foreground re-check, throttled so flipping between apps doesn't hammer the
+   * update server. Keeps long-lived sessions from running stale JS for days.
+   */
+  checkOnForeground(): void {
+    if (Date.now() - this.lastCheckedAt < UpdateService.FOREGROUND_RECHECK_MS) return;
+    void this.checkForUpdate(true);
   }
 
   /**
@@ -87,7 +109,7 @@ class UpdateService {
    * before falling back to the app store.
    */
   async checkAndPrepare(): Promise<void> {
-    if (this.isChecking) return;
+    if (this.isChecking || this.currentState.status === 'ready') return;
     this.isChecking = true;
     try {
       if (!Updates.isEnabled) {
@@ -116,9 +138,14 @@ class UpdateService {
     }
   }
 
+  /** Download the pending OTA update — also the popup's "Retry" action. */
   async fetchUpdate() {
+    if (!Updates.isEnabled) return { success: false, error: 'Updates not enabled' };
+    return this.download();
+  }
+
+  private async download(): Promise<{ success: boolean; error?: string }> {
     try {
-      if (!Updates.isEnabled) return { success: false, error: 'Updates not enabled' };
       this.emit({ status: 'downloading' });
       await Updates.fetchUpdateAsync();
       this.updateAvailable = true;

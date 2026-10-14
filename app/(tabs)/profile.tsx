@@ -52,6 +52,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useTheme } from "@/contexts/ThemeContext";
 import { useSyncStatus } from "@/hooks/useSyncStatus";
 import UpdateService from "@/services/UpdateService";
+import StoreUpdateService from "@/services/StoreUpdateService";
 import { StorageService } from "@/services/StorageService";
 import { apiFetch } from "@/utils/apiHelper";
 import { API_BASE_URL } from "@/constants/api";
@@ -419,35 +420,19 @@ export default function Profile() {
     try {
       const result = await UpdateService.checkForUpdate(false);
 
+      // Either kind of update is mandatory — the update popup
+      // (UpdateRequiredScreen) takes over from here.
       if (result.status === "available") {
         setUpdateAvailable(true);
-        Alert.alert(
-          "Update Available",
-          "A new version is available. Download and install it now?",
-          [
-            { text: "Later", style: "cancel" },
-            {
-              text: "Download & Install",
-              onPress: async () => {
-                const fetchRes = await UpdateService.fetchUpdate();
-                if (fetchRes.success) {
-                  Alert.alert(
-                    "Success",
-                    "Update installed. The app will now restart.",
-                    [{ text: "Restart", onPress: () => UpdateService.reloadApp() }],
-                  );
-                } else {
-                  Alert.alert(
-                    "Download Failed",
-                    fetchRes.error ||
-                      "Could not download the update. Please try again.",
-                  );
-                }
-              },
-            },
-          ],
-        );
-      } else if (result.status === "up-to-date") {
+        UpdateService.fetchUpdate();
+        return;
+      }
+      if (await StoreUpdateService.check(true)) {
+        setUpdateAvailable(true);
+        return;
+      }
+
+      if (result.status === "up-to-date") {
         Alert.alert(
           "Up to Date",
           "You are using the latest version of JouleOps.",

@@ -5,34 +5,52 @@ import {
   Text,
   TouchableOpacity,
   ActivityIndicator,
-  StyleSheet,
+  Platform,
 } from "react-native";
+import { Download } from "lucide-react-native";
 import VersionGateService, {
   type VersionGateState,
 } from "@/services/VersionGateService";
 import UpdateService, { type UpdateState } from "@/services/UpdateService";
+import StoreUpdateService, {
+  type StoreUpdateState,
+} from "@/services/StoreUpdateService";
+import { dsRadius } from "@/constants/ds";
+import { makeThemedStyles, useDs } from "@/hooks/useDs";
 
 /**
- * Full-screen, non-dismissible "update required" gate.
+ * Mandatory update popup — non-dismissible, covers the whole app. Mounted once
+ * near the root (see app/_layout.tsx). Three triggers, highest first:
  *
- * Renders nothing until the backend version gate blocks this build, then
- * covers the entire app. The primary action looks for an OTA update and, if
- * found, applies it in place ("Update & Restart") — no app-store trip needed.
- * "Retry" re-checks the gate, so if the rule is changed on the server the
- * block lifts itself. The app store is the last-resort fallback for old native
- * builds an OTA can't fix. Mounted once near the root (see app/_layout.tsx).
+ *  1. "required" — the backend version gate blocked this build (admin rule in
+ *     Settings › Mobile app › Versions & Maintenance, or a 426). Tries an OTA
+ *     first; when none exists the app store is the way out.
+ *  2. "ota" — an OTA update was found. It downloads straight away and the
+ *     user must restart onto it. Only a failed download can be put off ("Not
+ *     now"), so a technician who loses signal mid-download isn't locked out;
+ *     the next launch / foreground check brings the popup back.
+ *  3. "store" — a newer native build is live in the Play Store / App Store
+ *     (StoreUpdateService). Android runs Play's in-app update flow.
+ *
+ * Offline is never a block: every check that fails to reach its server leaves
+ * the app usable.
  */
 export default function UpdateRequiredScreen() {
   const [gate, setGate] = useState<VersionGateState>({ blocked: false });
   const [update, setUpdate] = useState<UpdateState>({ status: "idle" });
-  const [retrying, setRetrying] = useState(false);
+  const [store, setStore] = useState<StoreUpdateState>({ available: false });
+  const [busy, setBusy] = useState(false);
+  const styles = useStyles();
+  const d = useDs();
 
   useEffect(() => {
     const unsubGate = VersionGateService.subscribe(setGate);
     const unsubUpdate = UpdateService.subscribe(setUpdate);
+    const unsubStore = StoreUpdateService.subscribe(setStore);
     return () => {
       unsubGate();
       unsubUpdate();
+      unsubStore();
     };
   }, []);
 
@@ -43,147 +61,191 @@ export default function UpdateRequiredScreen() {
     }
   }, [gate.blocked]);
 
-  if (!gate.blocked) return null;
-
-  const otaReady = update.status === "ready";
   const otaBusy =
     update.status === "checking" || update.status === "downloading";
-  const noOta = update.status === "up-to-date";
+  const otaReady = update.status === "ready";
+  const otaActive =
+    update.status === "downloading" || otaReady || update.status === "error";
 
-  const handleRetry = async () => {
-    setRetrying(true);
+  const mode = gate.blocked
+    ? "required"
+    : otaActive
+      ? "ota"
+      : store.available
+        ? "store"
+        : null;
+  if (!mode) return null;
+
+  const storeName = Platform.OS === "ios" ? "App Store" : "Play Store";
+
+  const run = async (action: () => Promise<unknown>) => {
+    setBusy(true);
     try {
-      await VersionGateService.check();
+      await action();
     } finally {
-      setRetrying(false);
+      setBusy(false);
     }
   };
+
+  const openStore = () => run(() => StoreUpdateService.startUpdate());
+
+  let title: string;
+  let message: string;
+  let primary: { label: string; onPress: () => void } | null = null;
+  let secondary: { label: string; onPress: () => void } | null = null;
+  let progress: string | null = null;
+
+  if (otaBusy && mode !== "store") {
+    progress =
+      update.status === "downloading"
+        ? "Downloading update…"
+        : "Checking for update…";
+  }
+
+  if (mode === "required") {
+    title = "Update Required";
+    message = otaReady
+      ? "An update is ready to install. Restart now to continue."
+      : gate.message ||
+        "A newer version of JouleOps is required to continue.";
+    if (otaReady) {
+      primary = { label: "Restart Now", onPress: () => UpdateService.reloadApp() };
+    } else if (!otaBusy) {
+      primary = { label: `Update from ${storeName}`, onPress: openStore };
+      // Picks up rule changes on the server and OTAs published since.
+      secondary = {
+        label: "Check Again",
+        onPress: () =>
+          run(async () => {
+            await VersionGateService.check();
+            await UpdateService.checkAndPrepare();
+          }),
+      };
+    }
+  } else if (mode === "ota") {
+    title = "Update Available";
+    if (update.status === "error") {
+      message =
+        "The update couldn't be downloaded. Check your connection and try again.";
+      primary = { label: "Try Again", onPress: () => run(() => UpdateService.fetchUpdate()) };
+      secondary = { label: "Not now", onPress: () => UpdateService.dismiss() };
+    } else if (otaReady) {
+      message =
+        "A new version of JouleOps is ready. Restart the app to finish updating.";
+      primary = { label: "Restart Now", onPress: () => UpdateService.reloadApp() };
+    } else {
+      message =
+        "A new version of JouleOps is downloading. You can continue once it's installed.";
+    }
+  } else {
+    title = "New Version Available";
+    message =
+      `A new version of JouleOps${store.storeVersion ? ` (${store.storeVersion})` : ""} ` +
+      `is available on the ${storeName}. Update now to keep using the app.`;
+    primary = { label: "Update Now", onPress: openStore };
+  }
 
   return (
     <Modal
       visible
+      transparent
       animationType="fade"
-      presentationStyle="fullScreen"
+      statusBarTranslucent
       onRequestClose={() => {
-        /* Hard block — back button must not dismiss. */
+        /* Mandatory — the back button must not dismiss. */
       }}
     >
-      <View style={styles.container}>
-        <View style={styles.iconCircle}>
-          <Text style={styles.iconText}>↑</Text>
-        </View>
-
-        <Text style={styles.title}>Update Required</Text>
-
-        <Text style={styles.message}>
-          {otaReady
-            ? "An update is ready to install. Restart now to continue."
-            : gate.message ||
-              "A newer version of JouleOps is required to continue."}
-        </Text>
-
-        {/* Primary action — fetch & apply an OTA update. */}
-        {otaBusy ? (
-          <View style={styles.busyRow}>
-            <ActivityIndicator color="white" />
-            <Text style={styles.busyText}>
-              {update.status === "downloading"
-                ? "Downloading update…"
-                : "Checking for update…"}
-            </Text>
+      <View style={styles.backdrop}>
+        <View style={styles.card}>
+          <View style={styles.iconCircle}>
+            <Download size={28} color={d.flame[100]} strokeWidth={2.4} />
           </View>
-        ) : otaReady ? (
-          <TouchableOpacity
-            style={styles.primaryButton}
-            onPress={() => {
-              if (update.status === "ready") update.restart();
-            }}
-            activeOpacity={0.85}
-          >
-            <Text style={styles.primaryButtonText}>Update &amp; Restart</Text>
-          </TouchableOpacity>
-        ) : (
-          <TouchableOpacity
-            style={styles.primaryButton}
-            onPress={() => UpdateService.checkAndPrepare()}
-            activeOpacity={0.85}
-          >
-            <Text style={styles.primaryButtonText}>Check for Update</Text>
-          </TouchableOpacity>
-        )}
 
-        {noOta && (
-          <Text style={styles.hint}>
-            No new update found yet — try again in a moment.
+          <Text style={styles.title}>{title}</Text>
+          <Text style={styles.message}>{message}</Text>
+
+          {progress ? (
+            <View style={styles.busyRow}>
+              <ActivityIndicator color={d.flame[100]} />
+              <Text style={styles.busyText}>{progress}</Text>
+            </View>
+          ) : null}
+
+          {primary ? (
+            <TouchableOpacity
+              style={[styles.primaryButton, busy && styles.disabled]}
+              onPress={primary.onPress}
+              disabled={busy}
+              activeOpacity={0.85}
+            >
+              {busy ? (
+                <ActivityIndicator color={d.onAccent} />
+              ) : (
+                <Text style={styles.primaryButtonText}>{primary.label}</Text>
+              )}
+            </TouchableOpacity>
+          ) : null}
+
+          {secondary ? (
+            <TouchableOpacity
+              style={styles.secondaryButton}
+              onPress={secondary.onPress}
+              disabled={busy}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.secondaryButtonText}>{secondary.label}</Text>
+            </TouchableOpacity>
+          ) : null}
+
+          <Text style={styles.version}>
+            Installed version {VersionGateService.appVersion}
           </Text>
-        )}
-
-        {/* Retry the gate — picks up rule changes made on the server. */}
-        <TouchableOpacity
-          style={styles.secondaryButton}
-          onPress={handleRetry}
-          disabled={retrying}
-          activeOpacity={0.8}
-        >
-          {retrying ? (
-            <ActivityIndicator color="white" size="small" />
-          ) : (
-            <Text style={styles.secondaryButtonText}>Retry</Text>
-          )}
-        </TouchableOpacity>
-
-        {/* Last-resort fallback for old native builds an OTA can't fix. */}
-        <TouchableOpacity
-          onPress={() => VersionGateService.openStore()}
-          activeOpacity={0.7}
-        >
-          <Text style={styles.storeLink}>Open the app store instead</Text>
-        </TouchableOpacity>
-
-        <Text style={styles.version}>
-          Installed version {VersionGateService.appVersion}
-        </Text>
+        </View>
       </View>
     </Modal>
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
+const useStyles = makeThemedStyles((d) => ({
+  backdrop: {
     flex: 1,
-    backgroundColor: "#b91c1c",
+    backgroundColor: "rgba(6,12,26,0.72)",
     alignItems: "center",
     justifyContent: "center",
-    paddingHorizontal: 32,
+    paddingHorizontal: 24,
+  },
+  card: {
+    width: "100%",
+    maxWidth: 380,
+    backgroundColor: d.white,
+    borderRadius: dsRadius.sheet,
+    paddingHorizontal: 24,
+    paddingTop: 28,
+    paddingBottom: 20,
+    alignItems: "center",
   },
   iconCircle: {
-    width: 88,
-    height: 88,
-    borderRadius: 44,
-    backgroundColor: "rgba(255,255,255,0.15)",
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: d.flame[900],
     alignItems: "center",
     justifyContent: "center",
-    marginBottom: 28,
-  },
-  iconText: {
-    color: "white",
-    fontSize: 44,
-    fontWeight: "900",
-    lineHeight: 48,
+    marginBottom: 18,
   },
   title: {
-    color: "white",
-    fontSize: 26,
+    color: d.carbon[100],
+    fontSize: 20,
     fontWeight: "800",
-    marginBottom: 12,
+    marginBottom: 8,
     textAlign: "center",
   },
   message: {
-    color: "rgba(255,255,255,0.9)",
-    fontSize: 15,
-    lineHeight: 22,
+    color: d.carbon[400],
+    fontSize: 14,
+    lineHeight: 21,
     textAlign: "center",
-    marginBottom: 28,
+    marginBottom: 22,
   },
   busyRow: {
     flexDirection: "row",
@@ -192,57 +254,42 @@ const styles = StyleSheet.create({
     height: 48,
   },
   busyText: {
-    color: "white",
-    fontSize: 15,
+    color: d.carbon[100],
+    fontSize: 14,
     fontWeight: "700",
   },
   primaryButton: {
-    backgroundColor: "white",
-    paddingHorizontal: 40,
+    alignSelf: "stretch",
+    backgroundColor: d.flame[100],
     height: 48,
-    borderRadius: 14,
+    borderRadius: dsRadius.base,
     alignItems: "center",
     justifyContent: "center",
+  },
+  disabled: {
+    opacity: 0.7,
   },
   primaryButtonText: {
-    color: "#b91c1c",
-    fontSize: 16,
-    fontWeight: "800",
-  },
-  hint: {
-    color: "rgba(255,255,255,0.75)",
-    fontSize: 12,
-    fontWeight: "600",
-    marginTop: 12,
-    textAlign: "center",
-  },
-  secondaryButton: {
-    marginTop: 14,
-    paddingHorizontal: 36,
-    height: 44,
-    borderRadius: 12,
-    borderWidth: 1.5,
-    borderColor: "rgba(255,255,255,0.6)",
-    alignItems: "center",
-    justifyContent: "center",
-    minWidth: 140,
-  },
-  secondaryButtonText: {
-    color: "white",
+    color: d.onAccent,
     fontSize: 15,
     fontWeight: "800",
   },
-  storeLink: {
-    color: "rgba(255,255,255,0.75)",
-    fontSize: 13,
-    fontWeight: "600",
-    textDecorationLine: "underline",
-    marginTop: 18,
+  secondaryButton: {
+    alignSelf: "stretch",
+    height: 44,
+    marginTop: 8,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  secondaryButtonText: {
+    color: d.carbon[300],
+    fontSize: 14,
+    fontWeight: "700",
   },
   version: {
-    color: "rgba(255,255,255,0.55)",
+    color: d.carbon[600],
     fontSize: 12,
     fontWeight: "600",
-    marginTop: 18,
+    marginTop: 12,
   },
-});
+}));
