@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   Alert,
   Image,
+  InteractionManager,
   Modal,
   Platform,
   RefreshControl,
@@ -19,7 +20,7 @@ import PressableScale from "@/components/PressableScale";
 import { useAttendanceGate } from "@/contexts/AttendanceGateContext";
 import * as ImagePicker from "expo-image-picker";
 import { Plus, Camera, Image as ImageIcon, X } from "lucide-react-native";
-import { useLocalSearchParams } from "expo-router";
+import { useFocusEffect, useLocalSearchParams } from "expo-router";
 import DateTimePicker, { DateTimePickerAndroid } from "@react-native-community/datetimepicker";
 import { useAuth } from "@/contexts/AuthContext";
 import { useSites } from "@/hooks/useSites";
@@ -29,6 +30,8 @@ import AdvancedFilterModal from "@/components/AdvancedFilterModal";
 import TicketSkeleton from "@/components/TicketSkeleton";
 import IncidentDetailModal from "@/components/IncidentDetailModal";
 import IncidentCard from "@/components/IncidentItem";
+import RaiseIncidentChooser, { type RaiseChoice } from "@/components/incidents/RaiseIncidentChooser";
+import RcaImportModal from "@/components/incidents/RcaImportModal";
 import { makeThemedStyles, useDs } from "@/hooks/useDs";
 import {
   ListCountLine,
@@ -39,6 +42,12 @@ import {
   SwipeTabsView,
 } from "@/components/shared/ListChrome";
 import { IncidentsService } from "@/services/IncidentsService";
+import cacheManager from "@/services/CacheManager";
+import {
+  incidentsRealtimeService,
+  makeEventDeduper,
+  type ChangeFeedEvent,
+} from "@/services/RealtimeStreamClient";
 import { db, incidents as incidentsTable } from "@/database";
 import { eq, and, gte, lte, desc } from "drizzle-orm";
 import { StorageService } from "@/services/StorageService";
@@ -52,6 +61,7 @@ import {
   istTodayString,
   istParts,
   istDayStartMsFromYmd,
+  istDayEndMsFromYmd,
   formatIST,
 } from "@/utils/istDate";
 import {
@@ -179,6 +189,14 @@ interface IncidentItem {
   assigned_by?: string | null;
   rca_checker?: string | null;
   rca_maker?: string | null;
+  /** user_id of whoever logged it (server-stamped). */
+  created_by?: string | null;
+  /** Free text — who reported it; legacy rows may hold a user_id. */
+  raised_by?: string | null;
+  // RCA findings — filled by the RCA upload flow (read-only on mobile).
+  root_cause?: string | null;
+  corrective_action?: string | null;
+  preventive_action?: string | null;
 }
 
 interface IncidentCreateForm {
@@ -191,6 +209,9 @@ interface IncidentCreateForm {
   immediate_action_taken: string;
   attachments: string[];
   incident_created_time: Date;
+  /** Free text — who reported it ("Sister Mary, ICU"). Not a user id. */
+  raised_by: string;
+  /** Required; starts empty so the person has to choose. */
   assigned_to: string;
   // Stable idempotency key for this form's incident, reused on every submit /
   // offline replay so retries collapse into one incident server-side.
@@ -261,6 +282,11 @@ export default function IncidentsTab() {
   const [tempFromDate, setTempFromDate] = useState<string | null>(defaultFromDate);
   const [tempToDate, setTempToDate] = useState<string | null>(defaultToDate);
   const [creating, setCreating] = useState(false);
+  // The Raise FAB first asks: fill in manually, or upload the RCA report.
+  const [chooserOpen, setChooserOpen] = useState(false);
+  const [rcaImportOpen, setRcaImportOpen] = useState(false);
+  // New key per open → the import screen always starts fresh.
+  const [rcaImportSession, setRcaImportSession] = useState(0);
   const [selectedIncident, setSelectedIncident] = useState<IncidentItem | null>(null);
   const [incidentModalVisible, setIncidentModalVisible] = useState(false);
   const [nextStatus, setNextStatus] = useState<"Inprogress" | "Resolved" | null>(null);
@@ -288,10 +314,10 @@ export default function IncidentsTab() {
     immediate_action_taken: "",
     attachments: [],
     incident_created_time: new Date(),
+    raised_by: "",
     assigned_to: "",
     client_request_id: uuidv4(),
   }));
-  const currentUserId = user?.user_id || user?.id || "";
 
   const siteOptions = useMemo<SelectOption[]>(
     () =>
@@ -313,6 +339,14 @@ export default function IncidentsTab() {
   );
 
   const fetchGenRef = useRef(0);
+  const detailBaselineRef = useRef<{
+    nextStatus: "Inprogress" | "Resolved" | null;
+    remarks: string;
+    created: number;
+    responded: number;
+    resolved: number;
+    assigned: string;
+  } | null>(null);
   const incidentsCountRef = useRef(0);
 
   useEffect(() => {
@@ -469,12 +503,14 @@ export default function IncidentsTab() {
       immediate_action_taken: "",
       attachments: [],
       incident_created_time: new Date(),
-      assigned_to: currentUserId,
+      raised_by: "",
+      // Everyone picks the assignee — no default, so it's a deliberate choice.
+      assigned_to: "",
       // Fresh key per new draft so distinct incidents don't share one.
       client_request_id: uuidv4(),
     });
     setAssetSearchQuery("");
-  }, [currentUserId, selectedSiteCode]);
+  }, [selectedSiteCode]);
 
   const loadAssets = useCallback(
     async (siteCode: string) => {
@@ -517,14 +553,6 @@ export default function IncidentsTab() {
     }
   }, [creating, form.site_code, selectedSiteCode, loadAssets, loadSiteUsers]);
 
-  useEffect(() => {
-    if (!creating || canEditMeta) return;
-    if (!currentUserId) return;
-    if (form.assigned_to !== currentUserId) {
-      setForm((prev) => ({ ...prev, assigned_to: currentUserId }));
-    }
-  }, [creating, canEditMeta, currentUserId, form.assigned_to]);
-
   /** `AttachmentField` drives `form.attachments` through a plain state setter. */
   const setFormAttachments = useCallback<React.Dispatch<React.SetStateAction<string[]>>>(
     (update) =>
@@ -565,6 +593,9 @@ export default function IncidentsTab() {
     if (!form.site_code) return Alert.alert("Required", "Please select site.");
     if (!form.asset_location) return Alert.alert("Required", "Please select asset.");
     if (!form.fault_symptom.trim()) return Alert.alert("Required", "Incident name is required.");
+    if (!form.assigned_to) {
+      return Alert.alert("Required", "Please choose who the incident is assigned to.");
+    }
     if (!form.fault_type) return Alert.alert("Required", "Please select fault type.");
     if (!form.severity) return Alert.alert("Required", "Please select severity.");
     if (!form.operating_condition) return Alert.alert("Required", "Please select operating condition.");
@@ -588,7 +619,8 @@ export default function IncidentsTab() {
       ...form,
       source: "Incident",
       site_code: form.site_code,
-      raised_by: user?.user_id || user?.id || "",
+      // Free text now; created_by is stamped server-side from the token.
+      raised_by: form.raised_by.trim(),
       incident_created_time: new Date().toISOString(),
       // Incidents start In progress — there is no Open step. The backend
       // stamps the responded time from the created time.
@@ -615,17 +647,50 @@ export default function IncidentsTab() {
     Alert.alert("Error", result?.error || "Failed to create incident");
   };
 
+  const onPickRaise = useCallback(
+    (choice: RaiseChoice) => {
+      setChooserOpen(false);
+      // Wait for the sheet to fade out before the full-screen modal slides in
+      // (two modals presenting at once drops the second on iOS).
+      setTimeout(() => {
+        if (choice === "manual") {
+          resetCreateForm();
+          setCreating(true);
+        } else {
+          setRcaImportSession((n) => n + 1);
+          setRcaImportOpen(true);
+        }
+      }, 250);
+    },
+    [resetCreateForm],
+  );
+
   const openIncidentModal = useCallback((item: IncidentItem) => {
+    const nextStatusInit = item.status === "Resolved" ? null : "Resolved";
+    const createdInit = item.incident_created_time ? new Date(item.incident_created_time as any) : new Date();
+    const respondedInit = item.incident_updated_time ? new Date(item.incident_updated_time as any) : new Date();
+    const resolvedInit = item.incident_resolved_time ? new Date(item.incident_resolved_time as any) : new Date();
+    const assignedInit = parseAssignedTo(item.assigned_to).firstValue;
+    // What the form started from — a live update only refreshes the open
+    // detail while nothing differs from this (no unsaved edits).
+    detailBaselineRef.current = {
+      nextStatus: nextStatusInit,
+      remarks: String(item.remarks || ""),
+      created: createdInit.getTime(),
+      responded: respondedInit.getTime(),
+      resolved: resolvedInit.getTime(),
+      assigned: assignedInit,
+    };
     setSelectedIncident(item);
     // Anything not yet resolved (incl. a legacy Open row) can only move to Resolved.
-    setNextStatus(item.status === "Resolved" ? null : "Resolved");
+    setNextStatus(nextStatusInit);
     setUpdateRemarks(String(item.remarks || ""));
     setDetailPendingAttachments([]);
     setDetailPendingRcaAttachments([]);
-    setDetailCreatedAt(item.incident_created_time ? new Date(item.incident_created_time as any) : new Date());
-    setDetailRespondedAt(item.incident_updated_time ? new Date(item.incident_updated_time as any) : new Date());
-    setDetailResolvedAt(item.incident_resolved_time ? new Date(item.incident_resolved_time as any) : new Date());
-    setDetailAssignedTo(parseAssignedTo(item.assigned_to).firstValue);
+    setDetailCreatedAt(createdInit);
+    setDetailRespondedAt(respondedInit);
+    setDetailResolvedAt(resolvedInit);
+    setDetailAssignedTo(assignedInit);
     void loadSiteUsers(item.site_code);
     setIncidentModalVisible(true);
   }, [loadSiteUsers]);
@@ -887,6 +952,229 @@ export default function IncidentsTab() {
     uploadUrisToStorage,
   ]);
 
+  /* ── Live updates (incidents_changed) ──────────────────────────────────
+     Same pattern as the Tickets tab: connect while this tab is focused,
+     de-dupe by event id, leave rows with queued offline edits alone,
+     re-fetch changed rows and merge them filter-aware. A bulk event (or a
+     reconnect after a drop) silently reloads the list + stats. */
+  const liveFiltersRef = useRef({
+    siteCode: selectedSiteCode,
+    status: statusFilter,
+    search,
+    fromDate,
+    toDate,
+  });
+  useEffect(() => {
+    liveFiltersRef.current = { siteCode: selectedSiteCode, status: statusFilter, search, fromDate, toDate };
+  }, [selectedSiteCode, statusFilter, search, fromDate, toDate]);
+
+  const liveDetailRef = useRef({
+    visible: false,
+    incident: null as IncidentItem | null,
+    dirty: false,
+  });
+  useEffect(() => {
+    const base = detailBaselineRef.current;
+    const dirty =
+      isUpdatingIncident ||
+      detailPendingAttachments.length > 0 ||
+      detailPendingRcaAttachments.length > 0 ||
+      !base ||
+      base.nextStatus !== nextStatus ||
+      base.remarks !== updateRemarks ||
+      base.assigned !== detailAssignedTo ||
+      base.created !== (detailCreatedAt?.getTime() ?? base.created) ||
+      base.responded !== (detailRespondedAt?.getTime() ?? base.responded) ||
+      base.resolved !== (detailResolvedAt?.getTime() ?? base.resolved);
+    liveDetailRef.current = { visible: incidentModalVisible, incident: selectedIncident, dirty };
+  }, [
+    incidentModalVisible,
+    selectedIncident,
+    isUpdatingIncident,
+    detailPendingAttachments,
+    detailPendingRcaAttachments,
+    nextStatus,
+    updateRemarks,
+    detailAssignedTo,
+    detailCreatedAt,
+    detailRespondedAt,
+    detailResolvedAt,
+  ]);
+
+  const liveDedupeRef = useRef(makeEventDeduper());
+  const liveStatsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const liveBulkTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (liveStatsTimerRef.current) clearTimeout(liveStatsTimerRef.current);
+      if (liveBulkTimerRef.current) clearTimeout(liveBulkTimerRef.current);
+    },
+    [],
+  );
+
+  const matchesLiveFilters = useCallback((i: IncidentItem) => {
+    const f = liveFiltersRef.current;
+    if (i.site_code !== f.siteCode) return false;
+    if (f.status !== "All" && i.status !== f.status) return false;
+    const raw = i.incident_created_time;
+    const at = raw == null ? NaN : typeof raw === "number" ? raw : Date.parse(String(raw));
+    if (!Number.isNaN(at)) {
+      const fromMs = istDayStartMsFromYmd(f.fromDate);
+      const toMs = istDayEndMsFromYmd(f.toDate);
+      if (fromMs != null && at < fromMs) return false;
+      if (toMs != null && at > toMs) return false;
+    }
+    const needle = f.search.trim().toLowerCase();
+    if (needle) {
+      const hay = `${i.incident_id} ${i.fault_symptom} ${i.asset_location || ""}`.toLowerCase();
+      if (!hay.includes(needle)) return false;
+    }
+    return true;
+  }, []);
+
+  const mergeLiveIncident = useCallback(
+    (incoming: IncidentItem) => {
+      setIncidents((prev) => {
+        const idx = prev.findIndex((i) => i.id === incoming.id);
+        const show = matchesLiveFilters(incoming);
+        if (idx === -1) return show ? [incoming, ...prev] : prev;
+        if (!show) return [...prev.slice(0, idx), ...prev.slice(idx + 1)];
+        const existing = prev[idx]!;
+        const was = Date.parse(String((existing as any).updated_at ?? ""));
+        const now = Date.parse(String((incoming as any).updated_at ?? ""));
+        if (!Number.isNaN(was) && !Number.isNaN(now) && now < was) return prev;
+        const next = [...prev];
+        next[idx] = { ...existing, ...incoming };
+        return next;
+      });
+    },
+    [matchesLiveFilters],
+  );
+
+  const refreshStatsSoon = useCallback(() => {
+    if (liveStatsTimerRef.current) clearTimeout(liveStatsTimerRef.current);
+    liveStatsTimerRef.current = setTimeout(async () => {
+      const f = liveFiltersRef.current;
+      if (!f.siteCode) return;
+      const res = await IncidentsService.getStats(f.siteCode, {
+        search: f.search,
+        fromDate: f.fromDate,
+        toDate: f.toDate,
+      }).catch(() => null);
+      const cur = liveFiltersRef.current;
+      if (res?.success && cur.siteCode === f.siteCode && cur.search === f.search) {
+        setStats(res.data?.byStatus || res.data || {});
+      }
+    }, 300);
+  }, []);
+
+  /** Bulk change / missed events: reload list + stats without a skeleton. */
+  const silentRefreshSoon = useCallback(() => {
+    if (liveBulkTimerRef.current) clearTimeout(liveBulkTimerRef.current);
+    liveBulkTimerRef.current = setTimeout(async () => {
+      const f = liveFiltersRef.current;
+      if (!f.siteCode) return;
+      // A filter change meanwhile starts its own fetch — this one then loses.
+      const gen = fetchGenRef.current;
+      try {
+        const [listRes, statsRes] = await Promise.all([
+          IncidentsService.getIncidents(f.siteCode, {
+            status: f.status === "All" ? undefined : f.status,
+            search: f.search,
+            fromDate: f.fromDate,
+            toDate: f.toDate,
+          }),
+          IncidentsService.getStats(f.siteCode, {
+            search: f.search,
+            fromDate: f.fromDate,
+            toDate: f.toDate,
+          }),
+        ]);
+        if (gen !== fetchGenRef.current) return;
+        if (listRes?.success) setIncidents((listRes.data || []) as IncidentItem[]);
+        if (statsRes?.success) setStats(statsRes.data?.byStatus || statsRes.data || {});
+      } catch {
+        // best-effort
+      }
+    }, 800);
+  }, []);
+
+  const handleLiveIncidentEvent = useCallback(
+    async (event: ChangeFeedEvent) => {
+      const f = liveFiltersRef.current;
+      if (!f.siteCode) return;
+      if (event.site_code !== "*" && event.site_code !== f.siteCode) return;
+      if (!liveDedupeRef.current(event.event_id)) return;
+
+      if (event.bulk || event.ids.length === 0) {
+        silentRefreshSoon();
+        return;
+      }
+
+      // Rows with queued offline edits keep their optimistic local state.
+      const pendingTypes = [
+        "incident_update",
+        "incident_status_update",
+        "incident_rca_status_update",
+        "incident_attachment_add",
+      ] as const;
+      const pendingIds = new Set<string>();
+      for (const type of pendingTypes) {
+        const rows = await cacheManager.getPendingQueueItemsByType(type);
+        rows.forEach((row) => {
+          const id = String(row.payload?.id || "");
+          if (id) pendingIds.add(id);
+        });
+      }
+
+      for (const id of event.ids) {
+        if (pendingIds.has(id)) continue;
+        const res = await IncidentsService.refreshIncidentFromServer(id);
+        const detail = liveDetailRef.current;
+        const detailOnThis = detail.visible && detail.incident?.id === id && !detail.dirty;
+        if (res.status === "deleted") {
+          setIncidents((prev) => prev.filter((i) => i.id !== id));
+          if (detailOnThis) {
+            setIncidentModalVisible(false);
+            setSelectedIncident(null);
+          }
+        } else if (res.status === "ok") {
+          const fresh = res.data as IncidentItem;
+          mergeLiveIncident(fresh);
+          // Refresh the open detail only while it holds no unsaved edits.
+          if (detailOnThis) openIncidentModal(fresh);
+        }
+      }
+      refreshStatsSoon();
+    },
+    [mergeLiveIncident, openIncidentModal, refreshStatsSoon, silentRefreshSoon],
+  );
+
+  const liveHandlerRef = useRef(handleLiveIncidentEvent);
+  useEffect(() => {
+    liveHandlerRef.current = handleLiveIncidentEvent;
+  }, [handleLiveIncidentEvent]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!selectedSiteCode || !incidentsRealtimeService.isEnabled()) {
+        return () => {};
+      }
+      // Defer the stream setup past the tab-switch transition (as Tickets does).
+      const handle = InteractionManager.runAfterInteractions(() => {
+        void incidentsRealtimeService.connect({
+          siteCode: selectedSiteCode,
+          onEvent: (e) => liveHandlerRef.current(e),
+          onResync: silentRefreshSoon,
+        });
+      });
+      return () => {
+        handle.cancel?.();
+        incidentsRealtimeService.disconnect();
+      };
+    }, [selectedSiteCode, silentRefreshSoon]),
+  );
+
   // Debounce the header search into the fetch key.
   useEffect(() => {
     const t = setTimeout(() => setSearch(searchInput.trim()), 350);
@@ -1063,8 +1351,7 @@ export default function IncidentsTab() {
           <PressableScale
             onPress={() => {
               Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
-              resetCreateForm();
-              setCreating(true);
+              setChooserOpen(true);
             }}
             style={styles.fab}
             accessibilityRole="button"
@@ -1074,6 +1361,30 @@ export default function IncidentsTab() {
             <Text style={styles.fabLabel}>Raise</Text>
           </PressableScale>
         )}
+
+        <RaiseIncidentChooser
+          visible={chooserOpen}
+          offline={isConnected === false}
+          onClose={() => setChooserOpen(false)}
+          onPick={onPickRaise}
+        />
+
+        <RcaImportModal
+          key={rcaImportSession}
+          visible={rcaImportOpen}
+          defaultSiteCode={selectedSiteCode}
+          siteOptions={siteOptions}
+          isConnected={isConnected}
+          onClose={() => setRcaImportOpen(false)}
+          onCreated={() => {
+            void fetchData("refresh");
+          }}
+          onViewIncident={(incident) => {
+            // Let the import screen finish closing first — iOS drops a modal
+            // presented while another is still dismissing.
+            setTimeout(() => openIncidentModal(incident as IncidentItem), 450);
+          }}
+        />
 
         <AdvancedFilterModal
           visible={showFilter}
@@ -1215,13 +1526,25 @@ export default function IncidentsTab() {
                     </Text>
                   </TouchableOpacity>
                 </View>
+                <View className="mb-4">
+                  <Text className="text-slate-700 dark:text-slate-300 font-semibold text-sm mb-2">
+                    Raised By
+                  </Text>
+                  <TextInput
+                    placeholder="Who reported it? e.g. Sister Mary, ICU"
+                    value={form.raised_by}
+                    onChangeText={(v) => setForm((prev) => ({ ...prev, raised_by: v }))}
+                    maxLength={200}
+                    className="border border-slate-300 dark:border-slate-700 rounded-xl px-3 py-3 text-slate-900 dark:text-slate-50"
+                    placeholderTextColor={ds.carbon[600]}
+                  />
+                </View>
                 <FullscreenPicker
-                  label="Assigned To"
-                  placeholder="Select assignee"
+                  label="Assigned To *"
+                  placeholder="Choose who handles this incident"
                   options={siteUserOptions}
                   value={form.assigned_to}
                   onChange={(value) => setForm((prev) => ({ ...prev, assigned_to: value }))}
-                  disabled={!canEditMeta}
                 />
                 <View className="mb-4">
                   <Text className="text-slate-700 dark:text-slate-300 font-semibold text-sm mb-2">

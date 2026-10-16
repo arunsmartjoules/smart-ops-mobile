@@ -43,6 +43,7 @@ export const incidents = sqliteTable("incidents", {
   site_code: text("site_code").notNull(),
   asset_location: text("asset_location"),
   raised_by: text("raised_by"),
+  created_by: text("created_by"),
   incident_created_time: real("incident_created_time").notNull(),
   incident_updated_time: real("incident_updated_time"),
   incident_resolved_time: real("incident_resolved_time"),
@@ -62,6 +63,9 @@ export const incidents = sqliteTable("incidents", {
   rca_maker: text("rca_maker"),
   rca_checker: text("rca_checker"),
   assigned_to: text("assigned_to"),
+  root_cause: text("root_cause"),
+  corrective_action: text("corrective_action"),
+  preventive_action: text("preventive_action"),
   created_at: real("created_at").notNull(),
   updated_at: real("updated_at").notNull(),
 });

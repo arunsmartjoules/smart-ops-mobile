@@ -65,6 +65,7 @@ function init() {
           site_code TEXT NOT NULL,
           asset_location TEXT,
           raised_by TEXT,
+          created_by TEXT,
           incident_created_time REAL NOT NULL,
           incident_updated_time REAL,
           incident_resolved_time REAL,
@@ -84,6 +85,9 @@ function init() {
           rca_maker TEXT,
           rca_checker TEXT,
           assigned_to TEXT,
+          root_cause TEXT,
+          corrective_action TEXT,
+          preventive_action TEXT,
           created_at REAL NOT NULL,
           updated_at REAL NOT NULL
         );
@@ -345,6 +349,10 @@ function init() {
       "ALTER TABLE pm_instances ADD COLUMN instance_id TEXT",
       "ALTER TABLE pm_instances ADD COLUMN design_cfm REAL",
       "ALTER TABLE incidents ADD COLUMN rca_attachments TEXT",
+      "ALTER TABLE incidents ADD COLUMN root_cause TEXT",
+      "ALTER TABLE incidents ADD COLUMN corrective_action TEXT",
+      "ALTER TABLE incidents ADD COLUMN preventive_action TEXT",
+      "ALTER TABLE incidents ADD COLUMN created_by TEXT",
       "ALTER TABLE areas ADD COLUMN asset_id TEXT",
       "ALTER TABLE areas ADD COLUMN equipment_type TEXT",
       "ALTER TABLE pm_checklist_items ADD COLUMN readings_mandatory INTEGER",

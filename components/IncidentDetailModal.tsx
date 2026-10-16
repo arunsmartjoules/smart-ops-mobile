@@ -47,9 +47,19 @@ const IST_PICKED_OPTS: Intl.DateTimeFormatOptions = {
   hour12: true,
 };
 
+/** The fields this screen reads beyond the list row's own shape. */
+export interface IncidentDetailRecord {
+  created_by?: string | null;
+  raised_by?: string | null;
+  root_cause?: string | null;
+  corrective_action?: string | null;
+  preventive_action?: string | null;
+  [key: string]: any;
+}
+
 interface IncidentDetailModalProps {
   visible: boolean;
-  incident: any | null;
+  incident: IncidentDetailRecord | null;
   onClose: () => void;
   canEditRca: boolean;
   nextStatus: "Inprogress" | "Resolved" | null;
@@ -192,6 +202,15 @@ export default function IncidentDetailModal({
       : Date.parse(String(incident.incident_resolved_time))
     : NaN;
   const assigneeLabel = assignedTo ? nameOf(assignedTo) : "Unassigned";
+  const rcaFindings = (
+    [
+      { label: "Root cause", value: incident.root_cause },
+      { label: "Corrective action", value: incident.corrective_action },
+      { label: "Preventive action", value: incident.preventive_action },
+    ] as { label: string; value: string | null | undefined }[]
+  )
+    .map((f) => ({ label: f.label, value: String(f.value ?? "").trim() }))
+    .filter((f) => f.value);
 
   const metaItems: { label: string; value: string; full?: boolean }[] = [
     { label: "Asset", value: incident.asset_location || "—", full: true },
@@ -200,9 +219,17 @@ export default function IncidentDetailModal({
     { label: "Fault type", value: incident.fault_type || "—" },
     { label: "Severity", value: incident.severity || "—" },
     { label: "Operating condition", value: incident.operating_condition || "—" },
+    // Created by = who logged it (user_id → name). Raised by = free text of
+    // who reported it; legacy rows hold a user_id, which nameOf resolves too.
+    {
+      label: "Created by",
+      value: incident.created_by ? nameOf(String(incident.created_by)) : "—",
+    },
     {
       label: "Raised by",
-      value: incident.raised_by ? nameOf(String(incident.raised_by)) : "—",
+      value: String(incident.raised_by ?? "").trim()
+        ? nameOf(String(incident.raised_by).trim())
+        : "—",
     },
     ...(isResolved && !Number.isNaN(resolvedMs)
       ? [{ label: "Resolved", value: formatIST(resolvedMs, IST_PICKED_OPTS, "en-US") }]
@@ -281,6 +308,21 @@ export default function IncidentDetailModal({
               </View>
             </DetailCard>
 
+            {/* RCA findings (root cause / corrective / preventive) — filled by
+                the RCA upload flow or an admin edit. Read-only here, and only
+                shown when at least one was recorded. */}
+            {rcaFindings.length > 0 ? (
+              <DetailCard style={{ padding: 16, marginBottom: 12 }}>
+                <CardHead label="RCA findings" />
+                {rcaFindings.map((f, i) => (
+                  <View key={f.label} style={i > 0 ? { marginTop: 12 } : undefined}>
+                    <Text style={detailStyles.eyebrow}>{f.label}</Text>
+                    <Text style={detailStyles.bodyText}>{f.value}</Text>
+                  </View>
+                ))}
+              </DetailCard>
+            ) : null}
+
             {!isResolved ? (
               <>
                 <View style={detailStyles.statusRow}>
@@ -305,7 +347,7 @@ export default function IncidentDetailModal({
             <DetailCard>
               <CardHead label="Details" />
               <FullscreenPicker
-                label="Assigned To"
+                label="Assigned To *"
                 placeholder="Select site user"
                 options={assigneeOptions}
                 value={assignedTo}

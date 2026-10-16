@@ -1,7 +1,8 @@
 import NetInfo from "@react-native-community/netinfo";
 import { db, incidents as incidentsTable } from "@/database";
-import { and, desc, eq, gte, lte } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, lte } from "drizzle-orm";
 import CacheManager from "./CacheManager";
+import { hasUnsyncedLocalChanges, unsyncedIds } from "./localChangeGuard";
 import { apiFetch as centralApiFetch } from "../utils/apiHelper";
 import { API_BASE_URL } from "../constants/api";
 
@@ -42,9 +43,81 @@ function normalizeMutationSuccess(data: any, ok: boolean): boolean {
   return true;
 }
 
+/** Server incident row → the local SQLite `incidents` record. */
+export function toLocalIncidentRecord(i: any, siteCode?: string) {
+  return {
+    id: i.id,
+    incident_id: i.incident_id,
+    source: i.source || "Incident",
+    ticket_id: i.ticket_id || null,
+    site_code: i.site_code || siteCode || "",
+    asset_location: i.asset_location || null,
+    raised_by: i.raised_by || null,
+    created_by: i.created_by || null,
+    incident_created_time: i.incident_created_time ? new Date(i.incident_created_time).getTime() : Date.now(),
+    incident_updated_time: i.incident_updated_time ? new Date(i.incident_updated_time).getTime() : null,
+    incident_resolved_time: i.incident_resolved_time ? new Date(i.incident_resolved_time).getTime() : null,
+    fault_symptom: i.fault_symptom || "",
+    fault_type: i.fault_type || "Others",
+    severity: i.severity || "Moderate",
+    operating_condition: i.operating_condition || null,
+    immediate_action_taken: i.immediate_action_taken || null,
+    attachments: JSON.stringify(i.attachments || []),
+    rca_attachments: JSON.stringify(i.rca_attachments || []),
+    remarks: i.remarks || null,
+    status: i.status || "Inprogress",
+    rca_status: i.rca_status || "Open",
+    assigned_by: i.assigned_by || null,
+    assignment_type: i.assignment_type || null,
+    vendor_tagged: i.vendor_tagged || null,
+    rca_maker: i.rca_maker || null,
+    rca_checker: i.rca_checker || null,
+    root_cause: i.root_cause || null,
+    corrective_action: i.corrective_action || null,
+    preventive_action: i.preventive_action || null,
+    assigned_to: JSON.stringify(i.assigned_to || []),
+    created_at: i.created_at ? new Date(i.created_at).getTime() : Date.now(),
+    updated_at: i.updated_at ? new Date(i.updated_at).getTime() : Date.now(),
+  };
+}
+
 export const IncidentsService = {
   async getSiteUsers(siteCode: string) {
     return apiFetchJson(`/api/site-users/site/${encodeURIComponent(siteCode)}`);
+  },
+
+  /**
+   * Re-read ONE incident for a live-update event and keep the local cache in
+   * step. "deleted" = the server no longer has it (404) — the local row is
+   * removed too. "failed" = network/other; the caller just leaves it be.
+   */
+  async refreshIncidentFromServer(
+    id: string,
+  ): Promise<
+    { status: "ok"; data: any } | { status: "deleted" } | { status: "failed" } | { status: "skipped" }
+  > {
+    try {
+      // Queued offline edits win over the server copy until they've synced;
+      // re-checked after the fetch in case one was made while it was in flight.
+      if (await hasUnsyncedLocalChanges("incident", id)) return { status: "skipped" };
+      const response = await centralApiFetch(
+        `${API_BASE_URL}/api/incidents/${encodeURIComponent(id)}`,
+      );
+      if (response.status === 404) {
+        if (await hasUnsyncedLocalChanges("incident", id)) return { status: "skipped" };
+        await db.delete(incidentsTable).where(eq(incidentsTable.id, id)).catch(() => {});
+        return { status: "deleted" };
+      }
+      const body = await response.json().catch(() => null);
+      if (!response.ok || !body?.success || !body.data) return { status: "failed" };
+      if (await hasUnsyncedLocalChanges("incident", id)) return { status: "skipped" };
+      await CacheManager.write("incidents", [toLocalIncidentRecord(body.data)], {
+        stampSync: false,
+      }).catch(() => {});
+      return { status: "ok", data: body.data };
+    } catch {
+      return { status: "failed" };
+    }
   },
 
   async getIncidents(siteCode: string, options: any = {}) {
@@ -92,37 +165,27 @@ export const IncidentsService = {
     if (toDate) params.append("toDate", toDate);
     const result = await apiFetchJson(`/api/incidents?${params.toString()}`);
     if (result?.success && Array.isArray(result.data)) {
-      const records = result.data.map((i: any) => ({
-        id: i.id,
-        incident_id: i.incident_id,
-        source: i.source || "Incident",
-        ticket_id: i.ticket_id || null,
-        site_code: i.site_code || siteCode,
-        asset_location: i.asset_location || null,
-        raised_by: i.raised_by || null,
-        incident_created_time: i.incident_created_time ? new Date(i.incident_created_time).getTime() : Date.now(),
-        incident_updated_time: i.incident_updated_time ? new Date(i.incident_updated_time).getTime() : null,
-        incident_resolved_time: i.incident_resolved_time ? new Date(i.incident_resolved_time).getTime() : null,
-        fault_symptom: i.fault_symptom || "",
-        fault_type: i.fault_type || "Others",
-        severity: i.severity || "Moderate",
-        operating_condition: i.operating_condition || null,
-        immediate_action_taken: i.immediate_action_taken || null,
-        attachments: JSON.stringify(i.attachments || []),
-        rca_attachments: JSON.stringify(i.rca_attachments || []),
-        remarks: i.remarks || null,
-        status: i.status || "Inprogress",
-        rca_status: i.rca_status || "Open",
-        assigned_by: i.assigned_by || null,
-        assignment_type: i.assignment_type || null,
-        vendor_tagged: i.vendor_tagged || null,
-        rca_maker: i.rca_maker || null,
-        rca_checker: i.rca_checker || null,
-        assigned_to: JSON.stringify(i.assigned_to || []),
-        created_at: i.created_at ? new Date(i.created_at).getTime() : Date.now(),
-        updated_at: i.updated_at ? new Date(i.updated_at).getTime() : Date.now(),
-      }));
+      // Incidents edited offline and not yet synced keep their local copy —
+      // on screen and in the cache — until the queue drains. Otherwise every
+      // refresh (pull-to-refresh, focus, a live update) would show the
+      // server's older version and make the technician's change disappear.
+      const busy = await unsyncedIds("incident");
+      const local = new Map<string, any>();
+      if (busy.size > 0) {
+        const rows = await db
+          .select()
+          .from(incidentsTable)
+          .where(inArray(incidentsTable.id, [...busy]))
+          .catch(() => [] as any[]);
+        rows.forEach((r: any) => local.set(String(r.id), r));
+      }
+      const records = result.data
+        .filter((i: any) => !local.has(String(i.id)))
+        .map((i: any) => toLocalIncidentRecord(i, siteCode));
       await CacheManager.write("incidents", records);
+      if (local.size > 0) {
+        result.data = result.data.map((i: any) => local.get(String(i.id)) ?? i);
+      }
     }
     return result;
   },

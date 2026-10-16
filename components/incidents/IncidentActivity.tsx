@@ -69,7 +69,10 @@ export default function IncidentActivity({
         key: "raised",
         at: created,
         title: "Incident raised",
-        meta: [when(created), who(incident.raised_by)].filter(Boolean).join(" · "),
+        // Who logged it; legacy rows without created_by fall back to raised_by.
+        meta: [when(created), who(incident.created_by || incident.raised_by)]
+          .filter(Boolean)
+          .join(" · "),
         dot: ds.flame[100],
       });
     }

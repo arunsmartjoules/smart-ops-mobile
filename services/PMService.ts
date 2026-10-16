@@ -4,6 +4,7 @@ import { v4 as uuidv4 } from "uuid";
 import cacheManager from "./CacheManager";
 import { fetchWithTimeout, apiFetch as centralApiFetch } from "../utils/apiHelper";
 import { AttachmentQueueService } from "./AttachmentQueueService";
+import { hasUnsyncedLocalChanges } from "./localChangeGuard";
 import logger from "../utils/logger";
 import { API_BASE_URL } from "../constants/api";
 import NetInfo from "@react-native-community/netinfo";
@@ -15,6 +16,40 @@ const BACKEND_URL = API_BASE_URL;
 const apiFetch = async (endpoint: string, options: RequestInit = {}, customTimeout?: number) => {
   return centralApiFetch(`${BACKEND_URL}${endpoint}`, options, customTimeout);
 };
+
+/** Server pm_instances row → the local SQLite record. */
+function toLocalPmRecord(inst: any) {
+  return {
+    id: inst.id,
+    instance_id: inst.instance_id || null,
+    site_code: inst.site_code?.trim().toUpperCase() || "",
+    title: inst.title || "",
+    asset_id: inst.asset_id || null,
+    asset_type: inst.asset_type || "",
+    location: inst.location || "",
+    frequency: inst.frequency || "",
+    status: inst.status || "",
+    progress: inst.progress || "0/0",
+    assigned_to_name: inst.assigned_to_name || null,
+    start_due_date: toIstDayMs(inst.start_due_date),
+    maintenance_id: inst.maintenance_id || inst.checklist_id || null,
+    client_sign: inst.client_sign || null,
+    before_image: inst.before_image || null,
+    after_image: inst.after_image || null,
+    completed_on: (() => {
+      const d = new Date(inst.completed_on);
+      return isNaN(d.getTime()) ? null : d.getTime();
+    })(),
+    // Server sends it as a numeric string; keep null rather than NaN so
+    // the execution screen can simply test for presence.
+    design_cfm: (() => {
+      const n = Number(inst.design_cfm);
+      return inst.design_cfm == null || Number.isNaN(n) ? null : n;
+    })(),
+    created_at: inst.created_at ? new Date(inst.created_at).getTime() : Date.now(),
+    updated_at: Date.now(),
+  };
+}
 
 export interface PMResponseData {
   checklist_item_id: string;
@@ -439,36 +474,7 @@ const PMService = {
       const data = await response.json();
       if (data.success && data.data) {
         const inst = data.data;
-        const record = {
-          id: inst.id,
-          instance_id: inst.instance_id || null,
-          site_code: inst.site_code?.trim().toUpperCase() || "",
-          title: inst.title || "",
-          asset_id: inst.asset_id || null,
-          asset_type: inst.asset_type || "",
-          location: inst.location || "",
-          frequency: inst.frequency || "",
-          status: inst.status || "",
-          progress: inst.progress || "0/0",
-          assigned_to_name: inst.assigned_to_name || null,
-          start_due_date: toIstDayMs(inst.start_due_date),
-          maintenance_id: inst.maintenance_id || inst.checklist_id || null,
-          client_sign: inst.client_sign || null,
-          before_image: inst.before_image || null,
-          after_image: inst.after_image || null,
-          completed_on: (() => {
-            const d = new Date(inst.completed_on);
-            return isNaN(d.getTime()) ? null : d.getTime();
-          })(),
-          // Server sends it as a numeric string; keep null rather than NaN so
-          // the execution screen can simply test for presence.
-          design_cfm: (() => {
-            const n = Number(inst.design_cfm);
-            return inst.design_cfm == null || Number.isNaN(n) ? null : n;
-          })(),
-          created_at: inst.created_at ? new Date(inst.created_at).getTime() : Date.now(),
-          updated_at: Date.now(),
-        };
+        const record = toLocalPmRecord(inst);
         // Avoid overwriting if this specific instance has a pending local change
         const pendingIds = await this.getPendingInstanceIds();
         if (!pendingIds.includes(record.id)) {
@@ -484,6 +490,38 @@ const PMService = {
     } catch (error) {
       logger.error("Failed to fetch single PM instance", { module: "PM_SERVICE", instanceId, error });
       return null;
+    }
+  },
+
+  /**
+   * Re-read ONE instance for a live-update event and keep the local cache in
+   * step. Instances with unsynced local work (a queued status/completion
+   * update or checklist responses) are left alone — the technician's changes
+   * win until they sync. 404 = gone server-side: the local row is dropped.
+   */
+  async refreshInstanceFromServer(
+    instanceId: string,
+  ): Promise<"updated" | "deleted" | "skipped" | "failed"> {
+    try {
+      // Unsynced local work (queued edits, photos still uploading) wins over
+      // the server copy until it has synced — checked again after the fetch,
+      // in case the technician acted while it was in flight.
+      if (await hasUnsyncedLocalChanges("pm_instance", instanceId)) return "skipped";
+
+      const response = await apiFetch(`/api/pm-instances/${encodeURIComponent(instanceId)}`);
+      if (response.status === 404) {
+        if (await hasUnsyncedLocalChanges("pm_instance", instanceId)) return "skipped";
+        await db.delete(pmInstances).where(eq(pmInstances.id, instanceId));
+        return "deleted";
+      }
+      const data = await response.json().catch(() => null);
+      if (!response.ok || !data?.success || !data.data) return "failed";
+      if (await hasUnsyncedLocalChanges("pm_instance", instanceId)) return "skipped";
+      await cacheManager.write("pm_instances", [toLocalPmRecord(data.data)], { stampSync: false });
+      return "updated";
+    } catch (error) {
+      logger.warn("Realtime PM refresh failed", { module: "PM_SERVICE", instanceId, error });
+      return "failed";
     }
   },
 

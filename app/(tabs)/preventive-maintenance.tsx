@@ -17,6 +17,7 @@ import {
   Modal,
   Image,
   Alert,
+  InteractionManager,
 } from "react-native";
 import { FlashList, type ListRenderItem } from "@shopify/flash-list";
 import * as Haptics from "expo-haptics";
@@ -49,6 +50,11 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useNetworkStatus } from "@/hooks/useNetworkStatus";
 import NetInfo from "@react-native-community/netinfo";
 import PMService from "@/services/PMService";
+import {
+  makeEventDeduper,
+  pmRealtimeService,
+  type ChangeFeedEvent,
+} from "@/services/RealtimeStreamClient";
 import { useAutoSync } from "@/hooks/useAutoSync";
 import { AttendanceService, type Site } from "@/services/AttendanceService";
 import { useSites } from "@/hooks/useSites";
@@ -371,6 +377,102 @@ export default function PreventiveMaintenance() {
     // PAGE_SIZE is a stable in-component const (200); allInstances.length is
     // tracked via allInstancesRef so it doesn't churn the callback identity.
     [siteCode, currentDate, toDate, isConnected],
+  );
+
+  /* ── Live updates (pm_changed) ─────────────────────────────────────────
+     Connect while this tab is focused (the checklist screen sits on top of
+     it, so a PM being filled in is never touched from here). Changed rows
+     are re-read into SQLite — PMService skips any instance with queued
+     offline work — and the list re-renders from the cache with pending
+     updates overlaid, exactly as loadPMData does. Bulk → silent reload. */
+  const liveSiteRef = useRef({ siteCode, currentDate, toDate });
+  useEffect(() => {
+    liveSiteRef.current = { siteCode, currentDate, toDate };
+  }, [siteCode, currentDate, toDate]);
+  const loadPMDataRef = useRef(loadPMData);
+  useEffect(() => {
+    loadPMDataRef.current = loadPMData;
+  }, [loadPMData]);
+
+  const liveDedupeRef = useRef(makeEventDeduper());
+  const liveStatsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const liveBulkTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (liveStatsTimerRef.current) clearTimeout(liveStatsTimerRef.current);
+      if (liveBulkTimerRef.current) clearTimeout(liveBulkTimerRef.current);
+    },
+    [],
+  );
+
+  const silentReloadSoon = useCallback(() => {
+    if (liveBulkTimerRef.current) clearTimeout(liveBulkTimerRef.current);
+    liveBulkTimerRef.current = setTimeout(() => {
+      if (liveSiteRef.current.siteCode) void loadPMDataRef.current(true, 0, false);
+    }, 800);
+  }, []);
+
+  const handleLivePmEvent = useCallback(
+    async (event: ChangeFeedEvent) => {
+      const site = liveSiteRef.current.siteCode;
+      if (!site) return;
+      const eventSite = event.site_code.trim().toUpperCase();
+      if (eventSite !== "*" && eventSite !== site.trim().toUpperCase()) return;
+      if (!liveDedupeRef.current(event.event_id)) return;
+
+      if (event.bulk || event.ids.length === 0) {
+        silentReloadSoon();
+        return;
+      }
+
+      let changed = false;
+      for (const id of event.ids) {
+        const outcome = await PMService.refreshInstanceFromServer(id);
+        if (outcome === "updated" || outcome === "deleted") changed = true;
+      }
+      if (!changed || liveSiteRef.current.siteCode !== site) return;
+
+      let local = await PMService.getLocalInstances(site);
+      const pending = await PMService.getPendingUpdatesMap();
+      if (Object.keys(pending).length > 0) {
+        local = local.map((inst) => {
+          const upd = pending[inst.id];
+          return upd ? { ...inst, ...upd } : inst;
+        });
+      }
+      if (liveSiteRef.current.siteCode === site) setAllInstances(local);
+
+      if (liveStatsTimerRef.current) clearTimeout(liveStatsTimerRef.current);
+      liveStatsTimerRef.current = setTimeout(() => {
+        const f = liveSiteRef.current;
+        if (!f.siteCode) return;
+        PMService.getStats(f.siteCode, f.currentDate, f.toDate)
+          .then((data) => {
+            if (data && liveSiteRef.current.siteCode === f.siteCode) setServerStats(data);
+          })
+          .catch(() => {});
+      }, 300);
+    },
+    [silentReloadSoon],
+  );
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!siteCode || siteCode === "all" || !pmRealtimeService.isEnabled()) {
+        return () => {};
+      }
+      const handle = InteractionManager.runAfterInteractions(() => {
+        void pmRealtimeService.connect({
+          siteCode,
+          onEvent: handleLivePmEvent,
+          onResync: silentReloadSoon,
+        });
+      });
+      return () => {
+        handle.cancel?.();
+        pmRealtimeService.disconnect();
+      };
+    }, [siteCode, handleLivePmEvent, silentReloadSoon]),
   );
 
   const handleLoadMore = useCallback(() => {

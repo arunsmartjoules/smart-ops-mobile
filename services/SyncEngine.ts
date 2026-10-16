@@ -305,6 +305,7 @@ class SyncEngineImpl implements SyncEngine {
               site_code: i.site_code || siteCode,
               asset_location: i.asset_location || null,
               raised_by: i.raised_by || null,
+              created_by: i.created_by || null,
               incident_created_time: i.incident_created_time
                 ? new Date(i.incident_created_time).getTime()
                 : Date.now(),
