@@ -15,7 +15,13 @@ import {
 import { v4 as uuidv4 } from "uuid";
 import NetInfo from "@react-native-community/netinfo";
 import { startOfDay, endOfDay, addDays } from "date-fns";
-import { db, siteLogs, chillerReadings, logMaster } from "../database";
+import {
+  db,
+  siteLogs,
+  chillerReadings,
+  logMaster,
+  offlineQueue,
+} from "../database";
 import logger from "../utils/logger";
 import { authEvents } from "../utils/authEvents";
 import { apiFetch as centralApiFetch } from "../utils/apiHelper";
@@ -338,6 +344,127 @@ const _fetchLogs = async (
 // auto-completing genuinely-pending rooms (which then vanish from the operator's
 // list while staying Open on the server — a known false-completion cause).
 const PULL_SITE_LOGS_LIMIT = 2000;
+
+/**
+ * A chiller-reading PUT got 404: the server has no row with this id yet.
+ * The local row (already updated by the caller) is the source of truth, so
+ * make sure the server ends up with it instead of surfacing an error.
+ *
+ * Usual cause: the create-on-select POST failed on a flaky network and is
+ * still sitting in offline_queue, and the operator hit Complete before the
+ * queue flushed (2026-10-19, KIMS Mumbai: create landed ~2 min after the
+ * 404). Rarer cause: the create was dropped entirely (4xx) — re-POST it.
+ *
+ * The create endpoint honors the client id and is idempotent
+ * (ON CONFLICT (id) DO NOTHING + duplicate probe), so re-sending is safe.
+ * Throws only when the server actively rejects the row (4xx on create).
+ */
+async function recoverMissingChillerRow(
+  id: string,
+  updateFields: Record<string, any>,
+): Promise<void> {
+  const [localRow] = await db
+    .select()
+    .from(chillerReadings)
+    .where(eq(chillerReadings.id, id))
+    .limit(1);
+  if (!localRow) {
+    logger.warn("recoverMissingChillerRow: no local row either; nothing to recover", {
+      module: "SITE_LOG_SERVICE",
+      id,
+    });
+    return;
+  }
+
+  const pendingCreates = (
+    await cacheManager.getPendingQueueItemsByType("chiller_reading_create")
+  ).filter((item) => item.payload?.id === id);
+
+  if (pendingCreates.length > 0) {
+    // Fold the latest local state into the queued create so it lands with
+    // the final values (e.g. status=Completed) even if the follow-up update
+    // below ends up dead-lettered by 404s while the create keeps 5xx-ing.
+    for (const item of pendingCreates) {
+      await db
+        .update(offlineQueue)
+        .set({ payload: JSON.stringify(localRow) })
+        .where(eq(offlineQueue.id, item.id));
+    }
+    // Also queue the update itself (FIFO → runs after the create). Covers a
+    // flush already in flight that read the create's old payload.
+    await cacheManager.enqueue({
+      entity_type: "chiller_reading_update",
+      operation: "update",
+      payload: { id, ...updateFields },
+    });
+    logger.info("recoverMissingChillerRow: create still queued; update deferred behind it", {
+      module: "SITE_LOG_SERVICE",
+      id,
+    });
+    return;
+  }
+
+  // No queued create → the server never got this row. Re-create it now
+  // with the full current local state.
+  let response: Response;
+  try {
+    response = await apiFetch("/api/chiller-readings", {
+      method: "POST",
+      body: JSON.stringify(localRow),
+    });
+  } catch (err: any) {
+    await cacheManager.enqueue({
+      entity_type: "chiller_reading_create",
+      operation: "create",
+      payload: localRow,
+    });
+    logger.debug("recoverMissingChillerRow: network error, re-create queued", {
+      module: "SITE_LOG_SERVICE",
+      id,
+      error: err?.message,
+    });
+    return;
+  }
+
+  if (response.ok) {
+    // The server's duplicate probe may hand back an existing row with a
+    // different id — adopt it so later PUTs target the row it knows.
+    const body = await response.json().catch(() => null);
+    const returnedId = body?.data?.id ?? body?.id;
+    if (returnedId && returnedId !== id) {
+      await db
+        .update(chillerReadings)
+        .set({ id: returnedId, updated_at: Date.now() })
+        .where(eq(chillerReadings.id, id));
+    }
+    logger.info("recoverMissingChillerRow: re-created missing server row", {
+      module: "SITE_LOG_SERVICE",
+      id,
+      serverId: returnedId,
+    });
+    return;
+  }
+
+  if (response.status >= 500) {
+    await cacheManager.enqueue({
+      entity_type: "chiller_reading_create",
+      operation: "create",
+      payload: localRow,
+    });
+    return;
+  }
+
+  const text = await response.text().catch(() => "");
+  logger.error("recoverMissingChillerRow: server rejected re-create", {
+    module: "SITE_LOG_SERVICE",
+    id,
+    status: response.status,
+    body: text.slice(0, 200),
+  });
+  throw new Error(
+    "This reading is saved on your device but the server rejected it. Please contact support.",
+  );
+}
 
 export const SiteLogService: ISiteLogService = {
   /**
@@ -1081,6 +1208,7 @@ export const SiteLogService: ISiteLogService = {
     // saved locally but the server row never changed, leaving the reading
     // stuck Inprogress when reopened from server-pulled history.
     let shouldRetryFromQueue = false;
+    let serverRowMissing = false;
     try {
       const response = await apiFetch(`/api/chiller-readings/${id}`, {
         method: "PUT",
@@ -1088,18 +1216,16 @@ export const SiteLogService: ISiteLogService = {
       });
       if (!response.ok) {
         if (response.status === 404) {
-          // The server has no row with this id — almost certainly an
-          // orphan from before the id-reconciliation fix. Retrying with
-          // the same payload will keep 404'ing, so don't enqueue. Surface
-          // it so the caller can decide (typically: recreate the row).
+          // The server has no row with this id yet — typically its create
+          // is still in offline_queue. Recovered below; never shown to the
+          // operator, whose reading is already saved locally.
           const text = await response.text().catch(() => "");
           logger.warn(
-            `updateChillerReading: 404 — server has no row ${id}; not enqueueing retry`,
+            `updateChillerReading: 404 — server has no row ${id}; recovering`,
             { module: "SITE_LOG_SERVICE", body: text.slice(0, 200) },
           );
-          throw new Error(`Chiller reading ${id} not found on server (404)`);
-        }
-        if (response.status >= 500) {
+          serverRowMissing = true;
+        } else if (response.status >= 500) {
           shouldRetryFromQueue = true;
         } else {
           const text = await response.text().catch(() => "");
@@ -1110,18 +1236,16 @@ export const SiteLogService: ISiteLogService = {
         }
       }
     } catch (err: any) {
-      // Only treat true network errors as retryable. The 404 throw above
-      // intentionally falls through here, but we re-throw it instead of
-      // enqueueing so the caller surfaces it to the user.
-      if (err?.message?.includes("not found on server (404)")) {
-        throw err;
-      }
       shouldRetryFromQueue = true;
       logger.debug("updateChillerReading: network error, queuing for retry", {
         module: "SITE_LOG_SERVICE",
         id,
         error: err?.message,
       });
+    }
+
+    if (serverRowMissing) {
+      await recoverMissingChillerRow(id, updateFields);
     }
 
     if (shouldRetryFromQueue) {
