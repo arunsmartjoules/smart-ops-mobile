@@ -93,10 +93,12 @@ export default ds;
 /**
  * Dark palette.
  *
- * Values are the navy/red scheme from Claude Design "JouleOps Role Dashboard
- * v2.dc.html": page #060C1A, card #0F1828, tile #152038, ink #EEF2FF, muted
- * #7A91BB, faint #3E506A, accent red #D43535, info blue #4A91EA. Ramp steps the
- * artboard doesn't state are interpolated between those.
+ * Values are the carbon scheme from Claude Design "JouleOps App.dc.html":
+ * page #0A0A0C, card #141418, raised #1C1C22, track #26262E, ink #F4F4F6,
+ * muted #8A8A96, faint #5A5A66, alert coral #FF6B57. Ramp steps the artboard
+ * doesn't state are interpolated between those. (Screens rebuilt on that
+ * artboard use constants/jo.ts directly; this keeps the older screens on the
+ * same canvas.)
  *
  * Deliberately keyed to the SAME token names as the light set, because the
  * screens use the brand scales semantically rather than literally: carbon 100
@@ -106,75 +108,77 @@ export default ds;
  */
 export const dsDark: DsTheme = {
   isDark: true,
-  tabBar: "#0B1220",
-  cardBorder: "rgba(230,240,255,0.10)",
-  field: "#152038",
-  fieldBorder: "rgba(230,240,255,0.10)",
-  // Selected/primary controls = the web app's primary. Web's Thunder #072B31
-  // vanishes on navy, so dark takes the web's on-dark accent, SJ Sky.
-  controlOn: "#28939D",
+  tabBar: "#141418",
+  cardBorder: "rgba(255,255,255,0.06)",
+  field: "#1C1C22",
+  fieldBorder: "rgba(255,255,255,0.08)",
+  // Selected/primary controls follow the user's accent (Appearance › Accent):
+  // useDs() swaps in the accent's deep step (constants/jo.ts `ink`). These
+  // older screens put white text/ticks on controls — often hard-coded — and
+  // the bright fills (lime especially) can't carry white, the deep step can.
+  controlOn: "#D9531C",
   onControl: "#FFFFFF",
   onAccent: "#FFFFFF",
-  onChrome: "#EEF2FF",
+  onChrome: "#F4F4F6",
 
   // Chrome — header/tab surfaces stepping up from the page.
   thunder: {
-    100: "#0B1220",
-    200: "#0F1828",
-    300: "#121C2F",
-    400: "#152038",
-    500: "#1A2742",
-    600: "#25344F",
-    700: "#7A91BB",
-    800: "#93A6C8",
-    900: "#B4C2DB",
-    1000: "#EEF2FF",
+    100: "#0A0A0C",
+    200: "#141418",
+    300: "#17171C",
+    400: "#1C1C22",
+    500: "#1F1F26",
+    600: "#26262E",
+    700: "#8A8A96",
+    800: "#A9A9B3",
+    900: "#C9C9D1",
+    1000: "#F4F4F6",
   },
-  // Secondary accent → the artboard's info blue.
+  // Secondary accent → info blue.
   sky: {
     100: "#4A91EA",
     200: "#3A7FD6",
     300: "#336FBD",
     400: "#2C60A3",
-    500: "#7FB4F2",
+    500: "#9EC5FF",
     600: "#1F4A80",
     700: "#1A3D69",
     800: "#153152",
     900: "#10243D",
     1000: "#10243D",
   },
-  // Primary accent → the artboard's red; #F2A7A7 is its on-dark text weight.
+  // Danger / alert red, nudged to the artboard's coral #FF6B57 family.
   flame: {
-    100: "#D43535",
-    200: "#DB4E4E",
-    300: "#E16767",
-    400: "#E78080",
-    500: "#F2A7A7",
-    600: "#B03A3A",
-    700: "#862E2E",
-    800: "#5E2323",
-    900: "#3A1616",
-    1000: "#3A1616",
+    100: "#E5483A",
+    200: "#EC5A49",
+    300: "#FF6B57",
+    400: "#FF8A7A",
+    500: "#FFB3A8",
+    600: "#B23A2E",
+    700: "#862E26",
+    800: "#5E231D",
+    900: "#3A1714",
+    1000: "#2A1210",
   },
   // Neutral ramp inverted: 100 = ink → 1000 = faintest fill.
   carbon: {
-    100: "#EEF2FF",
-    200: "#D6DEEF",
-    300: "#BCC8E0",
-    400: "#93A6C8",
-    500: "#7A91BB",
-    600: "#5D7196",
-    700: "#4B5E80",
-    800: "#3E506A",
-    900: "rgba(230,240,255,0.10)",
-    1000: "#152038",
+    100: "#F4F4F6",
+    200: "#E2E2E7",
+    300: "#C9C9D1",
+    400: "#A9A9B3",
+    500: "#8A8A96",
+    600: "#6E6E7A",
+    700: "#5A5A66",
+    800: "#3A3A44",
+    900: "rgba(255,255,255,0.08)",
+    1000: "#1C1C22",
   },
 
   // Card surface — what every `ds.white` fill becomes on dark.
-  white: "#0F1828",
+  white: "#141418",
   black: "#000000",
 
-  pageBg: "#060C1A",
+  pageBg: "#0A0A0C",
 };
 
 /** The shape both palettes share, so a screen can take either. */
@@ -236,8 +240,8 @@ export const dsLight: DsTheme = {
   cardBorder: "#D6DDE9",
   field: "#F1F4FA",
   fieldBorder: "#CFD7E4",
-  // Selected/primary controls = the web app's primary, SJ Thunder.
-  controlOn: "#072B31",
+  // Selected/primary controls follow the user's accent (see dsDark / useDs()).
+  controlOn: "#D9531C",
   onControl: "#FFFFFF",
   onAccent: "#FFFFFF",
   onChrome: "#FFFFFF",
@@ -295,5 +299,5 @@ export const dsLight: DsTheme = {
   white: "#FFFFFF",
   black: "#000000",
 
-  pageBg: "#F4F6FB",
+  pageBg: "#F4F4F6",
 };

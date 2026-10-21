@@ -10,6 +10,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useColorScheme as useSystemColorScheme, Platform } from "react-native";
 import { useColorScheme as useNativeWindColorScheme } from "nativewind";
 import logger from "@/utils/logger";
+import { ACCENTS, DEFAULT_ACCENT, type AccentKey } from "@/constants/jo";
 
 type Theme = "light" | "dark" | "system";
 
@@ -17,25 +18,33 @@ interface ThemeContextType {
   theme: Theme;
   setTheme: (theme: Theme) => void;
   isDark: boolean;
+  /** The user's accent colour (Appearance › Accent). */
+  accent: AccentKey;
+  setAccent: (accent: AccentKey) => void;
 }
 
 const ThemeContext = createContext<ThemeContextType>({
   theme: "system",
   setTheme: () => {},
   isDark: false,
+  accent: DEFAULT_ACCENT,
+  setAccent: () => {},
 });
 
 export const useTheme = () => useContext(ThemeContext);
+
+const ACCENT_KEY = "user-accent";
+
+function isAccentKey(v: unknown): v is AccentKey {
+  return ACCENTS.some((a) => a.key === v);
+}
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const systemColorScheme = useSystemColorScheme();
   const { setColorScheme } = useNativeWindColorScheme();
   const [theme, setThemeState] = useState<Theme>("system");
+  const [accent, setAccentState] = useState<AccentKey>(DEFAULT_ACCENT);
   const [isReady, setIsReady] = useState(false);
-
-  useEffect(() => {
-    loadTheme();
-  }, []);
 
   // Apply theme to both Web (DOM) and Native (NativeWind)
   useEffect(() => {
@@ -70,24 +79,37 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     return () => clearTimeout(timer);
   }, [theme, systemColorScheme, isReady, setColorScheme]);
 
-  const loadTheme = useCallback(async () => {
-    try {
-      const savedTheme = await AsyncStorage.getItem("user-theme");
-      if (
-        savedTheme === "light" ||
-        savedTheme === "dark" ||
-        savedTheme === "system"
-      ) {
-        setThemeState(savedTheme as Theme);
-      }
-    } catch (error: any) {
-      logger.error("Failed to load theme preference", {
-        module: "THEME_CONTEXT",
-        error: error.message,
+  // Restore the saved mode + accent once. The reads resolve asynchronously,
+  // so state is only set from the promise callbacks.
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([
+      AsyncStorage.getItem("user-theme"),
+      AsyncStorage.getItem(ACCENT_KEY),
+    ])
+      .then(([savedTheme, savedAccent]) => {
+        if (cancelled) return;
+        if (
+          savedTheme === "light" ||
+          savedTheme === "dark" ||
+          savedTheme === "system"
+        ) {
+          setThemeState(savedTheme as Theme);
+        }
+        if (isAccentKey(savedAccent)) setAccentState(savedAccent);
+      })
+      .catch((error: any) => {
+        logger.error("Failed to load theme preference", {
+          module: "THEME_CONTEXT",
+          error: error?.message,
+        });
+      })
+      .finally(() => {
+        if (!cancelled) setIsReady(true);
       });
-    } finally {
-      setIsReady(true);
-    }
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const setTheme = useCallback(async (newTheme: Theme) => {
@@ -103,6 +125,19 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
+  const setAccent = useCallback(async (next: AccentKey) => {
+    setAccentState(next);
+    try {
+      await AsyncStorage.setItem(ACCENT_KEY, next);
+    } catch (error: any) {
+      logger.error("Failed to save accent preference", {
+        module: "THEME_CONTEXT",
+        error: error.message,
+        accent: next,
+      });
+    }
+  }, []);
+
   const isDark =
     theme === "dark" || (theme === "system" && systemColorScheme === "dark");
 
@@ -111,8 +146,10 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
       theme,
       setTheme,
       isDark,
+      accent,
+      setAccent,
     }),
-    [theme, setTheme, isDark]
+    [theme, setTheme, isDark, accent, setAccent]
   );
 
   return (

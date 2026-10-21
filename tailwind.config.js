@@ -7,10 +7,10 @@ module.exports = {
   theme: {
     extend: {
       colors: {
-        // App-wide navy/red palette (Claude Design "JouleOps Role Dashboard
-        // v2"). The app is dark-only, so `red-*` is the red accent and
-        // `slate-*` is the navy ramp every `dark:bg-slate-*` / `text-slate-*`
-        // class lands on: 950 page, 900 card, 800 tile, 400 muted, 100 ink.
+        // App-wide carbon palette (Claude Design "JouleOps App"). `slate-*`
+        // is the neutral ramp every `dark:bg-slate-*` / `text-slate-*` class
+        // lands on: 950 page, 900 card, 800 raised, 700 track, 400 muted,
+        // 100 ink. `red-*` stays the alert red.
         red: {
           50: "#FDF0F0",
           100: "#FADADA",
@@ -25,17 +25,17 @@ module.exports = {
           950: "#2A1010",
         },
         slate: {
-          50: "#F5F7FF",
-          100: "#E9EEF7",
-          200: "#D3DBE9",
-          300: "#BCC8E0",
-          400: "#7A91BB",
-          500: "#5D7196",
-          600: "#3E506A",
-          700: "#25344F",
-          800: "#152038",
-          900: "#0F1828",
-          950: "#060C1A",
+          50: "#F7F7F8",
+          100: "#F4F4F6",
+          200: "#E2E2E7",
+          300: "#C9C9D1",
+          400: "#8A8A96",
+          500: "#6E6E7A",
+          600: "#5A5A66",
+          700: "#26262E",
+          800: "#1C1C22",
+          900: "#141418",
+          950: "#0A0A0C",
         },
         // SmartJoules direct palette — usable as `bg-sj-thunder`, `text-sj-flame`, …
         sj: {

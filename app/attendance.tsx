@@ -276,6 +276,7 @@ export default function AttendancePage() {
   const insets = useSafeAreaInsets();
   const { user, refreshProfile } = useAuth();
   const {
+    isPrivileged,
     refresh: refreshAttendanceGate,
     markPunchedIn: markGatePunchedIn,
     markPunchedOut: markGatePunchedOut,
@@ -1102,55 +1103,58 @@ export default function AttendancePage() {
         </View>
       </View>
 
-      {/* ── Punch ── */}
-      <View style={styles.punchWrap}>
-        <PressableScale
-          onPress={punchedIn ? handleCheckOutPress : handleCheckInPress}
-          disabled={validatingLocation}
-          style={[
-            styles.punch,
-            {
-              backgroundColor: punchedIn ? ds.controlOn : ds.flame[100],
-              opacity: validatingLocation ? 0.7 : 1,
-            },
-          ]}
-          accessibilityRole="button"
-          accessibilityLabel={punchedIn ? "End day" : "Start day"}
-        >
-          {validatingLocation ? (
-            <ActivityIndicator size="small" color={ds.onControl} />
-          ) : (
-            <>
-              {punchedIn ? (
-                <LogOut size={19} color={ds.onControl} strokeWidth={2.2} />
-              ) : (
-                <LogIn size={19} color={ds.onControl} strokeWidth={2.2} />
-              )}
-              <Text style={styles.punchLabel}>
-                {punchedIn ? "End day" : "Start day"}
-              </Text>
-            </>
-          )}
-        </PressableScale>
-
-        <View style={styles.geoRow}>
-          {locationError ? (
-            <AlertTriangle size={14} color={ds.flame[100]} strokeWidth={2} />
-          ) : (
-            <MapPin size={14} color={ds.sky[100]} strokeWidth={2} />
-          )}
-          <Text
+      {/* ── Punch ── Managers, regional managers and admins never punch in;
+          they keep the history below. */}
+      {!isPrivileged ? (
+        <View style={styles.punchWrap}>
+          <PressableScale
+            onPress={punchedIn ? handleCheckOutPress : handleCheckInPress}
+            disabled={validatingLocation}
             style={[
-              styles.geoNote,
-              locationError ? { color: ds.flame[100] } : null,
+              styles.punch,
+              {
+                backgroundColor: ds.controlOn,
+                opacity: validatingLocation ? 0.7 : 1,
+              },
             ]}
-            numberOfLines={2}
+            accessibilityRole="button"
+            accessibilityLabel={punchedIn ? "End day" : "Start day"}
           >
-            {geoNote}
-          </Text>
-        </View>
+            {validatingLocation ? (
+              <ActivityIndicator size="small" color={ds.onControl} />
+            ) : (
+              <>
+                {punchedIn ? (
+                  <LogOut size={19} color={ds.onControl} strokeWidth={2.2} />
+                ) : (
+                  <LogIn size={19} color={ds.onControl} strokeWidth={2.2} />
+                )}
+                <Text style={styles.punchLabel}>
+                  {punchedIn ? "End day" : "Start day"}
+                </Text>
+              </>
+            )}
+          </PressableScale>
 
-      </View>
+          <View style={styles.geoRow}>
+            {locationError ? (
+              <AlertTriangle size={14} color={ds.flame[100]} strokeWidth={2} />
+            ) : (
+              <MapPin size={14} color={ds.sky[100]} strokeWidth={2} />
+            )}
+            <Text
+              style={[
+                styles.geoNote,
+                locationError ? { color: ds.flame[100] } : null,
+              ]}
+              numberOfLines={2}
+            >
+              {geoNote}
+            </Text>
+          </View>
+
+        </View>
+      ) : null}
 
       {/* ── History ── */}
       <ScrollView

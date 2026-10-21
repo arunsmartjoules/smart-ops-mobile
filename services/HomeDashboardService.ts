@@ -100,7 +100,37 @@ async function load<T>(path: string, cacheKey: string): Promise<Loaded<T>> {
   return { success: false, error: "Unable to load dashboard" };
 }
 
+/** One attendance row from `GET /api/attendance` (joined user + site). */
+export interface TeamAttendanceRow {
+  id: string;
+  user_id: string;
+  site_code: string | null;
+  date: string;
+  check_in_time: string | null;
+  check_out_time: string | null;
+  status: string;
+  users: { name: string | null; employee_code: string | null } | null;
+  sites: { name: string | null; site_code: string | null } | null;
+}
+
 const HomeDashboardService = {
+  /**
+   * Today's attendance rows for a site — the manager Home's "Team on site".
+   * The endpoint is site-scoped server-side; 200 rows covers any site's day.
+   */
+  getTeamToday(userId: string, siteCode: string, dateIso: string) {
+    const qs = new URLSearchParams({
+      site_code: siteCode,
+      date_from: dateIso,
+      date_to: dateIso,
+      limit: "200",
+    });
+    return load<TeamAttendanceRow[]>(
+      `/api/attendance?${qs.toString()}`,
+      `${userId}:${siteCode}:team:${dateIso}`,
+    );
+  },
+
   getSummary(userId: string, siteCode: string, from: string, to: string) {
     const qs = new URLSearchParams({ site_code: siteCode, from, to });
     return load<HomeSummary>(

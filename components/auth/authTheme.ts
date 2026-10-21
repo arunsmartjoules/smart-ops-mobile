@@ -73,42 +73,42 @@ export interface AuthPalette {
 }
 
 /**
- * Navy/red — the app-wide palette from "JouleOps Role Dashboard v2".
+ * Dark: the carbon canvas of Claude Design "JouleOps App" with the red CTA.
  */
 const dark: AuthPalette = {
   isDark: true,
-  bg: "#060C1A",
-  text: "#EEF2FF",
-  body: "#7A91BB",
-  labelIdle: "#5D7196",
+  bg: "#0A0A0C",
+  text: "#F4F4F6",
+  body: "#8A8A96",
+  labelIdle: "#6E6E7A",
   accent: "#F2A7A7",
-  line: "rgba(230,240,255,0.22)",
-  placeholder: "#5D7196",
+  line: "rgba(255,255,255,0.18)",
+  placeholder: "#5A5A66",
   valid: "#20BF6B",
-  eye: "#7A91BB",
-  backIcon: "#7A91BB",
+  eye: "#8A8A96",
+  backIcon: "#8A8A96",
 
   ctaBg: "#D43535",
   ctaBgPressed: "#B32828",
-  ctaOffBg: "#152038",
-  ctaOffFg: "#5D7196",
+  ctaOffBg: "#1C1C22",
+  ctaOffFg: "#6E6E7A",
 
-  dividerLine: "rgba(230,240,255,0.14)",
-  dividerLabel: "#5D7196",
+  dividerLine: "rgba(255,255,255,0.08)",
+  dividerLabel: "#5A5A66",
 
   googleBg: "transparent",
-  googleBorder: "rgba(230,240,255,0.22)",
-  googleFg: "#EEF2FF",
+  googleBorder: "rgba(255,255,255,0.12)",
+  googleFg: "#F4F4F6",
 
-  cellOn: "#152038",
-  hint: "#5D7196",
+  cellOn: "#1C1C22",
+  hint: "#5A5A66",
 
-  footText: "#7A91BB",
-  footLink: "#EEF2FF",
+  footText: "#8A8A96",
+  footLink: "#F4F4F6",
 
   pwStrong: "#20BF6B",
   pwWeak: "#F2A7A7",
-  pwEmpty: "rgba(230,240,255,0.14)",
+  pwEmpty: "rgba(255,255,255,0.08)",
 
   bubbleLockBg: "rgba(212,53,53,0.14)",
   bubbleLockFg: "#F2A7A7",

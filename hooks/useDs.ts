@@ -24,13 +24,28 @@ import { useMemo } from "react";
 import { StyleSheet } from "react-native";
 import { useTheme } from "@/contexts/ThemeContext";
 import { dsDark, dsLight, type DsTheme } from "@/constants/ds";
+import { accentDef, type AccentKey } from "@/constants/jo";
 
 export type { DsTheme };
 
-/** The palette for the active theme. */
+const PALETTES = new Map<string, DsTheme>();
+
+/** One object per (mode, accent) — `makeThemedStyles` caches on identity. */
+function palette(isDark: boolean, accent: AccentKey): DsTheme {
+  const id = `${isDark ? "d" : "l"}:${accent}`;
+  const hit = PALETTES.get(id);
+  if (hit) return hit;
+  const base = isDark ? dsDark : dsLight;
+  // The accent's deep step: white text on it stays readable for every accent.
+  const built: DsTheme = { ...base, controlOn: accentDef(accent).ink };
+  PALETTES.set(id, built);
+  return built;
+}
+
+/** The palette for the active theme, with the user's accent (deep step) as the primary control colour. */
 export function useDs(): DsTheme {
-  const { isDark } = useTheme();
-  return isDark ? dsDark : dsLight;
+  const { isDark, accent } = useTheme();
+  return palette(isDark, accent);
 }
 
 /** True when the dark palette is active — for the rare either/or branch. */

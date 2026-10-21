@@ -14,26 +14,17 @@ import {
   AppState,
   Alert,
   Platform,
-  StyleSheet,
 } from "react-native";
 import { useSelectedSiteCode } from "@/services/SiteSelection";
 import NetInfo from "@react-native-community/netinfo";
 import * as Location from "expo-location";
 import DateTimePicker from "@expo/ui/community/datetime-picker";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
-import {
-  Bell,
-  CalendarCheck,
-  FileText,
-  LogIn,
-  LogOut,
-} from "lucide-react-native";
+import { FileText } from "lucide-react-native";
 import { router } from "expo-router";
 import { addDays, format } from "date-fns";
 import { useAuth } from "@/contexts/AuthContext";
 import { useAttendanceGate } from "@/contexts/AttendanceGateContext";
 import { useAutoSync } from "@/hooks/useAutoSync";
-import { isWfhUser, useSitePresence } from "@/hooks/useSitePresence";
 import AttendanceService, {
   type AttendanceLog,
   getISTDateString,
@@ -43,8 +34,8 @@ import HomeDashboardService, {
   type EfficiencyReading,
   type HomeSla,
   type HomeSummary,
+  type TeamAttendanceRow,
 } from "@/services/HomeDashboardService";
-import Skeleton from "@/components/Skeleton";
 import SiteLogService from "@/services/SiteLogService";
 import logger from "@/utils/logger";
 import { db, userSites } from "@/database";
@@ -52,28 +43,33 @@ import { eq } from "drizzle-orm";
 import { ReportPickerModal } from "@/components/ReportPickerModal";
 import { fetchNotificationFeed } from "@/services/NotificationService";
 import {
-  type BarData,
-  BreachAlert,
-  DashCard,
-  DashHeader,
-  DashSheet,
+  DateButton,
+  JoPage,
+  JoSheet,
+  PrimaryButton,
+  SectionHead,
+  SheetOption,
+  Shimmer,
+  f,
+} from "@/components/jo/ui";
+import {
+  BreachBanner,
   EfficiencyCard,
-  type Jo,
-  useJo,
-  Footnote,
-  PunchButton,
-  SectionLabel,
-  CategoryChart,
-  type ChartMode,
-  ChartModeToggle,
-  type DonutSlice,
-  SiteCard,
-  SlaCard,
-  type TileData,
-  TileRow,
-  type Tone,
-  toneColor,
-} from "@/components/home/RoleDashboardUI";
+  HomeHeader,
+  OpsHero,
+  PlannedCards,
+  ProgressCard,
+  ShiftHero,
+  SlaScoreCard,
+  TeamCard,
+  TechTiles,
+  type EffItem,
+  type PlannedBar,
+  type SlaKpiView,
+  type TeamRow,
+  type TechTile,
+} from "@/components/home/HomeUI";
+import { makeJoStyles, useJoTheme, type JoTheme } from "@/hooks/useJoTheme";
 
 function formatLocationFailureMessage(
   message: string,
@@ -154,55 +150,79 @@ function periodRange(
   return { from: format(monday, "yyyy-MM-dd"), to: todayIso };
 }
 
-// ── Colour rules ──────────────────────────────────────────────────────────
+/** "Good morning / afternoon / evening" on the IST clock. */
+function greetingFor(now: Date) {
+  const h = Number(
+    new Intl.DateTimeFormat("en-GB", { hour: "numeric", hour12: false, timeZone: "Asia/Kolkata" }).format(now),
+  );
+  return h < 12 ? "Good morning" : h < 17 ? "Good afternoon" : "Good evening";
+}
+
+// ── Colour rules (artboard: cSla / cPct) ──────────────────────────────────
 
 /** Plant SEC target, kW/TR — same value the web Efficiency page flags against. */
 const SEC_TARGET = 0.85;
+/** Rows shown in "Team on site" before "View all" (artboard listLimit default). */
+const TEAM_LIMIT = 4;
+/** A full shift, for the team-row progress bar (artboard: mins / 480). */
+const SHIFT_MINUTES = 480;
 
-function slaTone(score: number | null): Tone {
-  if (score == null) return "neutral";
-  return score >= 4.6 ? "good" : score >= 4.4 ? "warn" : "bad";
+function slaColor(t: JoTheme, v: number | null) {
+  if (v == null) return t.muted;
+  return v >= 4.6 ? t.ok : v >= 4.4 ? t.warn : t.bad;
 }
-function pctTone(pct: number): Tone {
-  return pct >= 80 ? "good" : pct >= 50 ? "warn" : "bad";
+function slaStatus(t: JoTheme, v: number | null) {
+  if (v == null) return { label: null, bg: t.muteTint };
+  if (v >= 4.6) return { label: "On target", bg: t.okTint };
+  if (v >= 4.4) return { label: "Watch", bg: t.warnTint };
+  return { label: "Below target", bg: t.badTint };
+}
+function pctColor(t: JoTheme, p: number) {
+  return p >= 80 ? t.ok : p >= 50 ? t.warn : t.bad;
 }
 const pctOf = (a: number, b: number) => (b > 0 ? Math.round((a / b) * 100) : 0);
 
-function plural(n: number, word: string) {
-  return `${n} ${word}${n === 1 ? "" : "s"}`;
+function plural(n: number, word: string, pluralWord = `${word}s`) {
+  return `${n} ${n === 1 ? word : pluralWord}`;
+}
+
+function clock(iso?: string | null) {
+  if (!iso) return "--:--";
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? "--:--" : format(d, "HH:mm");
+}
+
+function durationLabel(mins: number) {
+  return `${Math.floor(mins / 60)}h ${String(mins % 60).padStart(2, "0")}m`;
 }
 
 // --- Memoized Skeleton Component ---
-const DashboardSkeleton = React.memo(() => {
-  const insets = useSafeAreaInsets();
-  const JO = useJo();
-  return (
-    <View style={{ flex: 1, backgroundColor: JO.page, paddingTop: insets.top + 12, paddingHorizontal: 16 }}>
-      <Skeleton width={160} height={48} borderRadius={8} style={{ marginBottom: 16, backgroundColor: JO.tile }} />
-      <Skeleton width="100%" height={170} borderRadius={16} style={{ marginBottom: 14, backgroundColor: JO.tile }} />
-      <Skeleton width="100%" height={80} borderRadius={12} style={{ marginBottom: 14, backgroundColor: JO.tile }} />
-      <Skeleton width="100%" height={120} borderRadius={16} style={{ marginBottom: 14, backgroundColor: JO.tile }} />
-      <Skeleton width="100%" height={110} borderRadius={16} style={{ backgroundColor: JO.tile }} />
+const DashboardSkeleton = React.memo(() => (
+  <JoPage>
+    <View style={{ paddingHorizontal: 16, paddingTop: 16, gap: 12 }}>
+      <Shimmer height={64} radius={20} style={{ width: "70%" }} />
+      <Shimmer height={36} radius={18} style={{ width: 170 }} />
+      <Shimmer height={120} radius={24} />
+      <Shimmer height={220} radius={30} />
+      <Shimmer height={180} radius={30} />
     </View>
-  );
-});
+  </JoPage>
+));
 
 DashboardSkeleton.displayName = "DashboardSkeleton";
 
 export default function Dashboard() {
-  const insets = useSafeAreaInsets();
-  const JO = useJo();
+  const t = useJoTheme();
   const styles = useStyles();
   const { user, signOut } = useAuth();
   const {
     isPrivileged,
     isPunchedIn,
     markPunchedIn: markGatePunchedIn,
-    markPunchedOut: markGatePunchedOut,
   } = useAttendanceGate();
   const isLocked = !isPrivileged && !isPunchedIn;
   /** Technicians get the operator view; every other role gets the manager view. */
-  const isOperator = String(user?.role || "").toLowerCase() === "technician";
+  const isOperator = !isPrivileged;
   const userId = user?.user_id || user?.id || "";
 
   const [refreshing, setRefreshing] = useState(false);
@@ -215,16 +235,16 @@ export default function Dashboard() {
   // App-wide selection — switching site here moves every other tab too.
   const [selectedSiteCode, setSelectedSiteCode] = useSelectedSiteCode(userId);
 
-  // Period filter (operational tiles) and SLA month — independent by design.
+  // Period filter (operational metrics) and SLA month — independent by design.
   const todayIso = getISTDateString(currentTime);
   const monthKeys = useMemo(() => recentMonthKeys(todayIso), [todayIso]);
-  const [period, setPeriod] = useState<PeriodKey>("month");
-  const [chartMode, setChartMode] = useState<ChartMode>("donut");
+  const [period, setPeriod] = useState<PeriodKey>("today");
   const [customRange, setCustomRange] = useState({ from: todayIso, to: todayIso });
   const [slaMonth, setSlaMonth] = useState<string>(() => todayIso.slice(0, 7));
-  const [sheet, setSheet] = useState<null | "filters" | "custom" | "month">(null);
+  const [sheet, setSheet] = useState<null | "period" | "custom" | "month" | "site">(null);
   const [draftRange, setDraftRange] = useState({ from: todayIso, to: todayIso });
   const [pickerFor, setPickerFor] = useState<null | "from" | "to">(null);
+  const [teamOpen, setTeamOpen] = useState(false);
 
   // Each result remembers the request it answers, so a site/period/month
   // switch never shows the previous scope's numbers under the new label, and
@@ -238,6 +258,10 @@ export default function Dashboard() {
   const [slaHistoryState, setSlaHistoryState] = useState<{
     site: string;
     months: HomeSla["months"];
+  } | null>(null);
+  const [teamState, setTeamState] = useState<{
+    key: string;
+    rows: TeamAttendanceRow[] | null;
   } | null>(null);
   const [unread, setUnread] = useState(0);
   /** Bumped by every data refresh so the metric loaders re-run. */
@@ -259,6 +283,7 @@ export default function Dashboard() {
 
   const summaryKey = activeSiteCode ? `${activeSiteCode}|${range.from}|${range.to}` : null;
   const slaKey = activeSiteCode ? `${activeSiteCode}|${slaMonth}` : null;
+  const teamKey = activeSiteCode && !isOperator ? `${activeSiteCode}|${todayIso}` : null;
   const summary = summaryState && summaryState.key === summaryKey ? summaryState.data : null;
   const summaryFromCache = !!summary && !!summaryState?.fromCache;
   const summaryLoading = !!summaryKey && summaryState?.key !== summaryKey;
@@ -266,6 +291,8 @@ export default function Dashboard() {
   const slaLoading = !!slaKey && slaState?.key !== slaKey;
   const slaHistory =
     slaHistoryState && slaHistoryState.site === activeSiteCode ? slaHistoryState.months : [];
+  const teamRowsRaw = teamState && teamState.key === teamKey ? teamState.rows : null;
+  const teamLoading = !!teamKey && teamState?.key !== teamKey;
 
   useEffect(() => {
     // Periodic local DB maintenance — the Home tab is the app's front door.
@@ -280,12 +307,11 @@ export default function Dashboard() {
     };
   }, []);
 
-  // Live timer for the on-shift duration.
+  // Minute clock: drives the on-shift timer and the team's durations.
   useEffect(() => {
     let interval: ReturnType<typeof setInterval> | null = null;
-    const onShift = !!todayAttendance && !todayAttendance.check_out_time;
     const start = () => {
-      if (interval || !onShift) return;
+      if (interval) return;
       setCurrentTime(new Date());
       interval = setInterval(() => setCurrentTime(new Date()), 60000);
     };
@@ -301,7 +327,7 @@ export default function Dashboard() {
       sub.remove();
       stop();
     };
-  }, [todayAttendance]);
+  }, []);
 
   // ── Attendance + sites ────────────────────────────────────────────────
   const fetchData = useCallback(async () => {
@@ -339,7 +365,7 @@ export default function Dashboard() {
       logger.error("Dashboard fetchData failed", { error });
     } finally {
       setLoadingAttendance(false);
-      setRefreshTick((t) => t + 1);
+      setRefreshTick((n) => n + 1);
     }
   }, [userId]);
 
@@ -363,6 +389,19 @@ export default function Dashboard() {
       cancelled = true;
     };
   }, [userId, activeSiteCode, summaryKey, range.from, range.to, refreshTick]);
+
+  // ── Team on site (managers; today, live) ──────────────────────────────
+  useEffect(() => {
+    if (!userId || !activeSiteCode || !teamKey) return;
+    let cancelled = false;
+    HomeDashboardService.getTeamToday(userId, activeSiteCode, todayIso).then((res) => {
+      if (cancelled) return;
+      setTeamState({ key: teamKey, rows: res.success ? res.data : null });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [userId, activeSiteCode, teamKey, todayIso, refreshTick]);
 
   // Bell dot — any unread item in the notification feed.
   useEffect(() => {
@@ -401,7 +440,7 @@ export default function Dashboard() {
     refreshTimeoutRef.current = setTimeout(() => setRefreshing(false), 800);
   }, [fetchData]);
 
-  // ── Punch in / out ────────────────────────────────────────────────────
+  // ── Punch in / out (technicians only) ─────────────────────────────────
   const navigateToAttendance = useCallback(() => router.push("/attendance"), []);
 
   const handleQuickCheckIn = async () => {
@@ -488,71 +527,18 @@ export default function Dashboard() {
     }
   };
 
-  const handleQuickCheckOut = async () => {
+  const handleQuickCheckOut = () => {
     if (!todayAttendance?.id) return;
-
     // Technicians must complete the mandatory shift sign-off before punching
     // out — the sign-off screen performs the check-out itself.
-    if (isOperator) {
-      router.push({
-        pathname: "/shift-signoff",
-        params: {
-          attendanceId: todayAttendance.id,
-          siteCode: todayAttendance.site_code || "",
-          checkInTime: todayAttendance.check_in_time || "",
-        },
-      });
-      return;
-    }
-
-    setValidatingLocation(true);
-
-    const performCheckOut = async (remarks?: string) => {
-      try {
-        const accuracy =
-          Platform.OS === "android"
-            ? Location.Accuracy.High
-            : Location.Accuracy.BestForNavigation;
-        const loc = await Location.getCurrentPositionAsync({ accuracy });
-        const res = await AttendanceService.checkOut(
-          todayAttendance.id,
-          loc.coords.latitude,
-          loc.coords.longitude,
-          undefined,
-          remarks,
-        );
-
-        if (res.success) {
-          Alert.alert(
-            res.queued ? "Saved" : "Success",
-            res.queued
-              ? "Checked out. It will sync automatically when your connection is stable."
-              : "Checked out successfully!",
-          );
-          fetchData();
-          markGatePunchedOut();
-        } else if (res.error?.includes("Early checkout")) {
-          // Backend requires a reason; supply a default so the check-out can
-          // finish from Home.
-          await performCheckOut("Checked out from dashboard");
-        } else {
-          Alert.alert(
-            "Check-out Failed",
-            res.error || "Unable to check out. Please check your connection.",
-            [
-              { text: "OK", style: "cancel" },
-              { text: "Go to Attendance", onPress: () => router.push("/attendance") },
-            ],
-          );
-        }
-      } catch (e: any) {
-        Alert.alert("Error", e.message);
-      } finally {
-        setValidatingLocation(false);
-      }
-    };
-
-    await performCheckOut();
+    router.push({
+      pathname: "/shift-signoff",
+      params: {
+        attendanceId: todayAttendance.id,
+        siteCode: todayAttendance.site_code || "",
+        checkInTime: todayAttendance.check_in_time || "",
+      },
+    });
   };
 
   const confirmSignOut = () =>
@@ -564,12 +550,6 @@ export default function Dashboard() {
   // ── Derived view data ─────────────────────────────────────────────────
   const punchedIn = !!todayAttendance && !todayAttendance.check_out_time;
   const shiftComplete = !!todayAttendance?.check_out_time;
-
-  const clock = (iso?: string | null) => {
-    if (!iso) return "--:--";
-    const d = new Date(iso);
-    return Number.isNaN(d.getTime()) ? "--:--" : format(d, "HH:mm");
-  };
 
   /** Ticks with `currentTime` while on shift; frozen at check-out. */
   const shiftMinutes = useMemo(() => {
@@ -583,151 +563,35 @@ export default function Dashboard() {
     return Math.max(0, Math.floor((end - start) / 60000));
   }, [todayAttendance, currentTime]);
 
-  const punchInLabel = todayAttendance?.check_in_time
-    ? clock(todayAttendance.check_in_time)
-    : null;
-  const punchOutLabel = todayAttendance?.check_out_time
-    ? clock(todayAttendance.check_out_time)
-    : null;
-  const durationLabel =
-    shiftMinutes == null
-      ? null
-      : `${Math.floor(shiftMinutes / 60)}h ${String(shiftMinutes % 60).padStart(2, "0")}m`;
-
-  const cta = punchedIn
-    ? { label: "End Day", icon: LogOut, variant: "secondary" as const, onPress: handleQuickCheckOut }
-    : shiftComplete
-      ? { label: "Shift complete", icon: CalendarCheck, variant: "secondary" as const, onPress: navigateToAttendance }
-      : { label: "Start Day", icon: LogIn, variant: "primary" as const, onPress: handleQuickCheckIn };
-  const punchStatus = shiftComplete
-    ? `Day ended · ${clock(todayAttendance?.check_in_time)}–${clock(todayAttendance?.check_out_time)}`
-    : null;
-
   const displayName = user?.full_name || user?.name || "JouleOps user";
-  const avatarInitial = (displayName.trim()[0] || "J").toUpperCase();
+  const firstName = displayName.trim().split(/\s+/)[0] || displayName;
   const siteName = activeSite?.name || summary?.site.name || activeSiteCode || "No site assigned";
   const canSwitchSite = !isLocked && sites.length > 1;
-  const attendanceDateLabel = useMemo(() => {
-    const iso = todayAttendance?.date;
-    const d = iso ? isoToDate(iso) : currentTime;
-    return format(Number.isNaN(d.getTime()) ? currentTime : d, "EEE, dd MMM yyyy");
-  }, [todayAttendance, currentTime]);
-
-  const presence = useSitePresence({
-    isWfh: isWfhUser(user?.work_location_type),
-    sites,
-    siteCode: todayAttendance?.site_code || null,
-    refreshKey: refreshTick,
-  });
 
   const periodLabel =
     period === "today" ? "Today"
-      : period === "week" ? "This Week"
-        : period === "month" ? "This Month"
-          : rangeLabel(range.from, range.to);
+      : period === "week" ? "This week"
+        : period === "month" ? "This month"
+          : "Custom";
+  const periodMeta =
+    period === "month" ? monthLabel(todayIso.slice(0, 7)) : rangeLabel(range.from, range.to);
 
   // Navigation out of Home is blocked while locked (tab bar hidden).
   const go = (path: string) => (isLocked ? undefined : () => router.push(path as any));
 
   const s = summary;
   const dash = "—";
-  const val = (n: number | undefined) => (s && n !== undefined ? String(n) : dash);
+  const num = (n: number | undefined) => (s && n !== undefined ? String(n) : dash);
 
   const logsPct = s ? pctOf(s.logs.completed, s.logs.expected) : 0;
   const pmPct = s ? pctOf(s.pm.completed, s.pm.planned) : 0;
   const pendingPm = s ? Math.max(0, s.pm.planned - s.pm.completed) : 0;
   const pendingLogs = s ? Math.max(0, s.logs.expected - s.logs.completed) : 0;
-  const ocrPending = s?.assets?.ocrPending ?? null;
 
-  const opTiles: TileData[] = [
-    {
-      label: "OPEN TKTS",
-      value: val(s?.tickets.open),
-      tone: s && s.tickets.open > 2 ? "warn" : "neutral",
-      flag: !!s?.breachAlert,
-      onPress: go("/(tabs)/tickets"),
-    },
-    {
-      label: "LOGS",
-      value: s ? `${s.logs.completed}/${s.logs.expected}` : dash,
-      tone: s && s.logs.expected > 0 ? pctTone(logsPct) : "neutral",
-      flag: !!s && s.logs.expected > 0 && logsPct < 50,
-      onPress: go("/(tabs)/site-logs"),
-    },
-    {
-      label: "PM DUE",
-      value: s ? String(pendingPm) : dash,
-      tone: s && s.pm.planned > 0 ? pctTone(pmPct) : "neutral",
-      flag: !!s && s.pm.planned > 0 && pmPct < 50,
-      onPress: go("/(tabs)/preventive-maintenance"),
-    },
-    {
-      label: "INCIDENTS",
-      value: val(s?.incidents.raised),
-      tone: s && s.incidents.raised > 2 ? "warn" : "neutral",
-      flag: !!s && s.incidents.raised > 0,
-      onPress: go("/(tabs)/incidents"),
-    },
-  ];
-
-  /**
-   * One ordered list, split into rows of three below — OCR Pending sits last
-   * because it is the only tile that is not period scoped.
-   */
-  const mgrTiles: TileData[] = [
-    {
-      label: "OPEN TICKETS",
-      value: val(s?.tickets.open),
-      tone: s && s.tickets.open > 2 ? "warn" : "neutral",
-      flag: !!s && s.tickets.open > 2,
-      onPress: go("/(tabs)/tickets"),
-    },
-    {
-      label: "INCIDENTS",
-      value: val(s?.incidents.raised),
-      tone: s && s.incidents.raised > 2 ? "warn" : "neutral",
-      flag: !!s && s.incidents.raised > 0,
-      onPress: go("/(tabs)/incidents"),
-    },
-    {
-      label: "OPEN PM",
-      value: s ? String(pendingPm) : dash,
-      tone: pendingPm > 20 ? "bad" : pendingPm > 5 ? "warn" : "neutral",
-      flag: pendingPm > 20,
-      onPress: go("/(tabs)/preventive-maintenance"),
-    },
-    {
-      label: "OPEN LOGS",
-      value: s ? String(pendingLogs) : dash,
-      tone: pendingLogs > 30 ? "warn" : "neutral",
-      flag: pendingLogs > 30,
-      onPress: go("/(tabs)/site-logs"),
-    },
-    {
-      label: "ON SITE NOW",
-      value: val(s?.attendance.onShift),
-      tone: "neutral",
-      onPress: go("/attendance"),
-    },
-    {
-      // Asset Mapping backlog (live, not period scoped) — replaced the SLA
-      // breach count; breaches still surface via the BreachAlert banner.
-      label: "OCR PENDING",
-      value: ocrPending !== null ? String(ocrPending) : dash,
-      tone: ocrPending === null ? "neutral" : ocrPending > 20 ? "warn" : "neutral",
-      flag: ocrPending !== null && ocrPending > 20,
-      onPress: go("/(tabs)/asset-mapping"),
-    },
-  ];
-  const mgrTilesA = mgrTiles.slice(0, 3);
-  const mgrTilesB = mgrTiles.slice(3);
-
-  const ticketCategorySlices: DonutSlice[] = (s?.ticketCategories ?? []).map((c) => ({
-    label: c.category,
-    value: c.count,
-  }));
-
+  // Breach line — both homes.
   const alert = s?.breachAlert ?? null;
+  const breaches = s ? s.tickets.slaBreached : 0;
+  const breachTag = breaches > 0 ? plural(breaches, "SLA breach", "SLA breaches") : null;
   const alertView = alert
     ? alert.breached > 0
       ? {
@@ -743,37 +607,62 @@ export default function Dashboard() {
         }
     : null;
 
-  // SLA chip/card
+  // SLA
   const slaScoreNum = sla?.score ?? null;
   const slaScoreText = slaScoreNum != null ? slaScoreNum.toFixed(2) : dash;
-  const kpis: BarData[] = (sla?.kpis ?? []).map((k) => {
+  const slaCol = slaColor(t, slaScoreNum);
+  const slaStat = slaStatus(t, slaScoreNum);
+  const kpis: SlaKpiView[] = (sla?.kpis ?? []).map((k) => {
     const weak = k.score < 4.0;
     return {
       label: k.label,
-      detail: `${weak ? "⚠ " : ""}${k.score.toFixed(2)}`,
-      pct: k.target > 0 ? Math.round((k.score / k.target) * 100) : 0,
-      tone: weak ? "warn" : k.score >= 4.6 ? "good" : "info",
+      text: k.score.toFixed(2),
+      weak,
+      pct: Math.round((k.score / 5) * 100),
+      color: weak ? t.warn : slaColor(t, k.score),
     };
   });
   const monthIdx = Math.max(0, monthKeys.indexOf(slaMonth));
 
-  const effItem = (label: string, r: EfficiencyReading | undefined, target: number | null) => {
+  // Efficiency
+  const effItem = (label: string, r: EfficiencyReading | undefined, target: number | null): EffItem => {
     const v = r?.value ?? null;
-    const tone: Tone = v == null || target == null ? "neutral" : v <= target ? "good" : "bad";
+    const color = v == null ? t.muted : target == null ? t.ok : v <= target ? t.ok : t.warn;
     const trend =
       !isOperator && v != null && r?.previous != null && r.previous !== v
         ? v < r.previous ? ("down" as const) : ("up" as const)
         : null;
-    return { label, value: v != null ? v.toFixed(2) : dash, tone, trend };
+    return { label, value: v != null ? v.toFixed(2) : dash, color, trend };
   };
   const effItems = [
-    effItem("HIGH SIDE", s?.efficiency.highSide, SEC_TARGET),
-    effItem("LOW SIDE", s?.efficiency.lowSide, null),
+    effItem("High side", s?.efficiency.highSide, SEC_TARGET),
+    effItem("Low side", s?.efficiency.lowSide, null),
   ];
   const asOf = s?.efficiency.highSide.asOf || s?.efficiency.lowSide.asOf;
-  const effNote = asOf
-    ? `Lower is better · latest reading ${dayMonth(asOf)} (none in period yet).`
-    : "Lower is better.";
+  const effNote = asOf ? `Latest reading ${dayMonth(asOf)} · none in period yet.` : null;
+
+  // Team on site (open sessions today, earliest punch first).
+  const team: TeamRow[] = useMemo(() => {
+    const rows = (teamRowsRaw ?? []).filter((r) => r.check_in_time && !r.check_out_time);
+    return rows
+      .slice()
+      .sort((a, b) => String(a.check_in_time).localeCompare(String(b.check_in_time)))
+      .map((r) => {
+        const start = new Date(String(r.check_in_time)).getTime();
+        const mins = Number.isNaN(start) ? 0 : Math.max(0, Math.floor((currentTime.getTime() - start) / 60000));
+        const inAt = clock(r.check_in_time);
+        const code = r.users?.employee_code;
+        return {
+          key: r.id,
+          name: r.users?.name || code || "Technician",
+          sub: [code, `in ${inAt}`].filter(Boolean).join(" · "),
+          inAt,
+          dur: `${Math.floor(mins / 60)}h ${String(mins % 60).padStart(2, "0")}`,
+          pct: Math.min(100, Math.round((mins / SHIFT_MINUTES) * 100)),
+        };
+      });
+  }, [teamRowsRaw, currentTime]);
+  const teamShown = teamOpen ? team : team.slice(0, TEAM_LIMIT);
 
   // ── Sheets ────────────────────────────────────────────────────────────
   const closeSheet = () => {
@@ -783,49 +672,20 @@ export default function Dashboard() {
   const thisWeek = periodRange("week", todayIso, customRange);
   const periodOptions = [
     { key: "today", label: "Today", meta: format(isoToDate(todayIso), "dd MMM yyyy") },
-    { key: "week", label: "This Week", meta: rangeLabel(thisWeek.from, thisWeek.to) },
-    { key: "month", label: "This Month", meta: monthLabel(todayIso.slice(0, 7)) },
+    { key: "week", label: "This week", meta: rangeLabel(thisWeek.from, thisWeek.to) },
+    { key: "month", label: "This month", meta: monthLabel(todayIso.slice(0, 7)) },
     { key: "custom", label: "Custom range", meta: period === "custom" ? rangeLabel(range.from, range.to) : "Pick dates" },
-  ].map((o) => ({
-    ...o,
-    selected: period === o.key,
-    onPress: () => {
-      if (o.key === "custom") {
-        setDraftRange(period === "custom" ? customRange : { from: range.from, to: range.to });
-        setSheet("custom");
-      } else {
-        setPeriod(o.key as PeriodKey);
-        closeSheet();
-      }
-    },
-  }));
+  ] as const;
 
-  const monthOptions = monthKeys.map((k) => {
-    const h = slaHistory.find((m) => m.month === k);
-    const score = h?.score ?? null;
-    return {
-      key: k,
-      label: monthLabel(k),
-      meta: score != null ? score.toFixed(2) : dash,
-      metaColor: score != null ? toneColor(slaTone(score), JO) : undefined,
-      selected: slaMonth === k,
-      onPress: () => {
-        setSlaMonth(k);
-        closeSheet();
-      },
-    };
-  });
-
-  const siteOptions = sites.map((site) => ({
-    key: site.site_code,
-    label: site.name || site.site_code,
-    meta: site.site_code,
-    selected: site.site_code === activeSiteCode,
-    onPress: () => {
-      setSelectedSiteCode(site.site_code);
-      closeSheet();
-    },
-  }));
+  const pickPeriod = (key: PeriodKey) => {
+    if (key === "custom") {
+      setDraftRange(period === "custom" ? customRange : { from: range.from, to: range.to });
+      setSheet("custom");
+      return;
+    }
+    setPeriod(key);
+    closeSheet();
+  };
 
   const onPickDate = (_event: any, date?: Date) => {
     const which = pickerFor;
@@ -853,171 +713,236 @@ export default function Dashboard() {
     return <DashboardSkeleton />;
   }
 
-  return (
-    <View style={styles.screen}>
-      <DashHeader
-        topInset={insets.top}
-        title={isOperator ? "My Site Today" : undefined}
-        dateLabel={format(currentTime, "EEE, dd MMM yyyy")}
-        onFilter={() => setSheet("filters")}
-        filterDot={period !== "month" || (canSwitchSite && activeSiteCode !== sites[0]?.site_code)}
-        bellIcon={isLocked ? FileText : Bell}
-        bellLabel={isLocked ? "Reports" : "Notifications"}
-        bellDot={!isLocked && unread > 0}
-        onBell={() => (isLocked ? setReportPickerOpen(true) : router.push("/notifications"))}
-        avatarInitial={avatarInitial}
-        avatarUri={user?.profile_photo_url}
-        avatarLabel={isLocked ? "Sign out" : "Profile"}
-        onAvatar={() => (isLocked ? confirmSignOut() : router.push("/(tabs)/profile"))}
-      />
+  const header = (
+    <HomeHeader
+      greeting={`${greetingFor(currentTime)}, ${firstName}`}
+      siteName={siteName}
+      onSitePress={canSwitchSite ? () => setSheet("site") : undefined}
+      bellIcon={isLocked ? FileText : undefined}
+      bellLabel={isLocked ? "Reports" : "Notifications"}
+      bellDot={!isLocked && unread > 0}
+      onBell={() => (isLocked ? setReportPickerOpen(true) : router.push("/notifications"))}
+      userName={displayName}
+      avatarLabel={isLocked ? "Sign out" : "Profile"}
+      onAvatar={() => (isLocked ? confirmSignOut() : router.push("/(tabs)/profile"))}
+    />
+  );
 
+  const dataNote = summaryFromCache ? (
+    <Text style={styles.note}>Offline · showing the last numbers synced for this period.</Text>
+  ) : !s && !summaryLoading && activeSiteCode ? (
+    <Text style={styles.note}>Couldn&apos;t load site metrics. Pull down to retry.</Text>
+  ) : null;
+
+  // ── Technician view ───────────────────────────────────────────────────
+  const techHero = (() => {
+    const slaTag =
+      slaScoreNum != null ? `SLA ${slaScoreText} · ${monthLabel(slaMonth, true)}` : null;
+    if (punchedIn) {
+      return {
+        label: `On shift · since ${clock(todayAttendance?.check_in_time)}`,
+        big: shiftMinutes != null ? durationLabel(shiftMinutes) : dash,
+        sub: `In ${clock(todayAttendance?.check_in_time)} · ${format(currentTime, "EEE, dd MMM yyyy")}`,
+        slaTag,
+        cta: { label: "End Day", icon: "out" as const, onPress: handleQuickCheckOut },
+      };
+    }
+    if (shiftComplete) {
+      return {
+        label: "Day ended",
+        big: shiftMinutes != null ? durationLabel(shiftMinutes) : dash,
+        sub: `${clock(todayAttendance?.check_in_time)}–${clock(todayAttendance?.check_out_time)} · ${format(currentTime, "EEE, dd MMM yyyy")}`,
+        slaTag,
+        cta: { label: "Attendance", icon: "done" as const, onPress: navigateToAttendance },
+      };
+    }
+    return {
+      label: "Not punched in",
+      big: dash,
+      sub: format(currentTime, "EEE, dd MMM yyyy"),
+      slaTag,
+      cta: {
+        label: "Start Day",
+        icon: "in" as const,
+        onPress: handleQuickCheckIn,
+        busy: validatingLocation,
+      },
+    };
+  })();
+
+  const techTiles: TechTile[] = [
+    {
+      label: "Open tkts",
+      value: num(s?.tickets.open),
+      color: s && s.tickets.open > 0 ? t.warn : t.ink,
+      onPress: go("/(tabs)/tickets"),
+    },
+    {
+      label: "Logs",
+      value: s ? `${s.logs.completed}/${s.logs.expected}` : dash,
+      color: s && s.logs.expected > 0 ? pctColor(t, logsPct) : t.ink,
+      onPress: go("/(tabs)/site-logs"),
+    },
+    {
+      label: "PM due",
+      value: s ? String(pendingPm) : dash,
+      color: s && s.pm.planned > 0 && pendingPm > 0 ? pctColor(t, pmPct) : t.ink,
+      onPress: go("/(tabs)/preventive-maintenance"),
+    },
+    {
+      label: "Incidents",
+      value: num(s?.incidents.raised),
+      color: t.ink,
+      onPress: go("/(tabs)/incidents"),
+    },
+  ];
+
+  const techBars = [
+    { label: "Site logs", done: s?.logs.completed ?? 0, total: s?.logs.expected ?? 0 },
+    { label: "PM tasks", done: s?.pm.completed ?? 0, total: s?.pm.planned ?? 0 },
+  ].map((b) => {
+    const pct = pctOf(b.done, b.total);
+    return { ...b, pct, color: pctColor(t, pct) };
+  });
+
+  // ── Manager view ──────────────────────────────────────────────────────
+  const heroStats = [
+    { label: "Incidents", value: num(s?.incidents.raised) },
+    { label: "Pend. PM", value: s ? String(pendingPm) : dash },
+    { label: "Pend. logs", value: s ? String(pendingLogs) : dash },
+  ];
+
+  const plannedBars: PlannedBar[] = [
+    { label: "Preventive maint.", icon: "pm" as const, done: s?.pm.completed ?? 0, total: s?.pm.planned ?? 0 },
+    { label: "Tickets resolved", icon: "tickets" as const, done: s?.tickets.resolved ?? 0, total: s?.tickets.raised ?? 0 },
+  ].map((b) => {
+    const pct = pctOf(b.done, b.total);
+    return { ...b, pct, color: pctColor(t, pct) };
+  });
+
+  return (
+    <JoPage>
       <ScrollView
         contentContainerStyle={styles.body}
         showsVerticalScrollIndicator={false}
         refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={JO.muted} />
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={t.muted} />
         }
       >
-        <SiteCard
-          userName={displayName}
-          userEmail={user?.email}
-          dateLabel={attendanceDateLabel}
-          presence={presence}
-          punchIn={punchInLabel}
-          punchOut={punchOutLabel}
-          duration={durationLabel}
-          onShift={punchedIn}
-          // Managers read the score off the SLA card below, so no chip here.
-          slaScore={isOperator ? slaScoreText : undefined}
-          slaTone={isOperator ? slaTone(slaScoreNum) : undefined}
-          slaMonth={isOperator ? monthLabel(slaMonth, true) : undefined}
-          onPressSla={isOperator ? () => setSheet("month") : undefined}
-          onPress={navigateToAttendance}
-          accessibilityLabel="Attendance. Open attendance"
-        >
-          <PunchButton
-            label={cta.label}
-            icon={cta.icon}
-            variant={cta.variant}
-            busy={validatingLocation}
-            onPress={cta.onPress}
-            status={punchStatus}
-          />
-        </SiteCard>
+        {header}
 
-        {summaryFromCache ? (
-          <Text style={styles.offline}>Offline · showing the last numbers synced for this period.</Text>
-        ) : !s && !summaryLoading && activeSiteCode ? (
-          <Text style={styles.offline}>Couldn&apos;t load site metrics. Pull down to retry.</Text>
-        ) : null}
+        <DateButton
+          label={periodLabel}
+          meta={periodMeta}
+          onPress={isLocked ? undefined : () => setSheet("period")}
+          style={{ marginTop: 14, marginLeft: 4 }}
+        />
 
         {isOperator ? (
-          <View>
-            <SectionLabel>NEEDS YOU NOW · {periodLabel}</SectionLabel>
+          <>
+            <ShiftHero
+              label={techHero.label}
+              big={techHero.big}
+              sub={techHero.sub}
+              slaTag={techHero.slaTag}
+              slaTagColor={slaCol}
+              onSla={isLocked ? undefined : () => setSheet("month")}
+              cta={techHero.cta}
+            />
+            {dataNote}
             {alertView ? (
-              <BreachAlert
+              <BreachBanner
                 title={alertView.title}
                 subtitle={alertView.subtitle}
                 onPress={go("/(tabs)/tickets")}
               />
             ) : null}
-            <TileRow tiles={opTiles} size="op" onPage />
-          </View>
+            <TechTiles tiles={techTiles} />
+            <ProgressCard meta={periodLabel} bars={techBars} />
+          </>
         ) : (
           <>
-            <SlaCard
+            <OpsHero
+              openTickets={num(s?.tickets.open)}
+              breachLabel={breachTag}
+              stats={heroStats}
+              onPress={go("/(tabs)/tickets")}
+            />
+            {dataNote}
+            <TeamCard
+              count={teamRowsRaw ? team.length : null}
+              rows={teamShown}
+              hasMore={team.length > TEAM_LIMIT}
+              expanded={teamOpen}
+              onToggle={() => setTeamOpen((o) => !o)}
+              loading={teamLoading}
+              note={!teamLoading && !teamRowsRaw ? "Couldn't load today's attendance." : null}
+            />
+            <SlaScoreCard
               monthLabel={monthLabel(slaMonth)}
               canPrev={monthIdx < monthKeys.length - 1}
               canNext={monthIdx > 0}
               onPrev={() => setSlaMonth(monthKeys[Math.min(monthKeys.length - 1, monthIdx + 1)]!)}
               onNext={() => setSlaMonth(monthKeys[Math.max(0, monthIdx - 1)]!)}
-              onPressMonth={() => setSheet("month")}
+              onMonth={() => setSheet("month")}
+              onTitle={() => router.push("/(tabs)/sla")}
               score={slaScoreText}
-              tone={slaTone(slaScoreNum)}
-              siteName={siteName}
-              pctText={
-                sla?.pct != null
-                  ? `${sla.pct.toFixed(1)}% of commitment`
-                  : slaLoading ? "Loading…" : "No SLA report for this month"
+              color={slaCol}
+              status={slaStat.label}
+              statusBg={slaStat.bg}
+              pctText={sla?.pct != null ? `${sla.pct.toFixed(1)}%` : dash}
+              emptyNote={
+                sla?.pct != null ? null : slaLoading ? "Loading…" : "No SLA report for this month"
               }
+              ringPct={slaScoreNum != null ? slaScoreNum / 5 : 0}
               kpis={kpis}
               loading={slaLoading && !sla}
             />
-
-            <View>
-              <SectionLabel>OPERATIONAL STATUS · {periodLabel}</SectionLabel>
-              <View style={{ gap: 8 }}>
-                <TileRow tiles={mgrTilesA} onPage />
-                <TileRow tiles={mgrTilesB} onPage />
-              </View>
-              <Footnote>Tiles follow the period filter · SLA follows its own month.</Footnote>
-            </View>
-
+            <SectionHead title="Planned vs completed" meta={periodLabel} />
+            <PlannedCards
+              bars={plannedBars}
+              onPress={(b) =>
+                router.push(b.icon === "pm" ? "/(tabs)/preventive-maintenance" : "/(tabs)/tickets")
+              }
+            />
           </>
         )}
-
-            <DashCard>
-              <View style={styles.chartHead}>
-                <SectionLabel style={{ marginBottom: 0, flexShrink: 1 }}>
-                  TICKETS BY CATEGORY · {periodLabel}
-                </SectionLabel>
-                <ChartModeToggle mode={chartMode} onChange={setChartMode} />
-              </View>
-              {s ? (
-                <CategoryChart slices={ticketCategorySlices} mode={chartMode} />
-              ) : (
-                <Skeleton width="100%" height={118} borderRadius={8} style={{ backgroundColor: JO.tile }} />
-              )}
-            </DashCard>
 
         <EfficiencyCard items={effItems} note={effNote} />
       </ScrollView>
 
-      <DashSheet
-        visible={sheet === "filters"}
-        title="Filters"
-        subtitle="Scopes operational metrics · SLA keeps its own month."
+      <JoSheet
+        visible={sheet === "period"}
         onClose={closeSheet}
-        groups={[
-          { key: "period", label: "PERIOD", options: periodOptions },
-          ...(canSwitchSite
-            ? [{ key: "site", label: "SITE", options: siteOptions }]
-            : []),
-        ]}
-        bottomInset={insets.bottom}
-      />
-
-      <DashSheet
-        visible={sheet === "month"}
-        title="SLA month"
-        subtitle="Contract score is monthly — independent of the period filter."
-        onClose={closeSheet}
-        options={monthOptions}
-        bottomInset={insets.bottom}
-      />
-
-      <DashSheet
-        visible={sheet === "custom"}
-        title="Custom range"
-        subtitle="Scopes operational metrics only."
-        onClose={closeSheet}
-        bottomInset={insets.bottom}
+        title="Period"
+        subtitle="Scopes operational metrics. SLA keeps its own month."
       >
+        <View style={styles.options}>
+          {periodOptions.map((o) => (
+            <SheetOption
+              key={o.key}
+              label={o.label}
+              meta={o.meta}
+              selected={period === o.key}
+              onPress={() => pickPeriod(o.key)}
+            />
+          ))}
+        </View>
+      </JoSheet>
+
+      <JoSheet visible={sheet === "custom"} onClose={closeSheet} title="Custom range">
         <View style={styles.rangeRow}>
           {(["from", "to"] as const).map((which) => (
             <TouchableOpacity
               key={which}
-              style={[
-                styles.rangeField,
-                pickerFor === which && { borderColor: JO.lineStrong },
-              ]}
+              style={[styles.rangeField, pickerFor === which && { borderColor: t.accent }]}
               activeOpacity={0.8}
               onPress={() => setPickerFor(pickerFor === which ? null : which)}
               accessibilityRole="button"
               accessibilityLabel={`${which === "from" ? "From" : "To"} date`}
             >
-              <Text style={styles.rangeCap}>{which === "from" ? "FROM" : "TO"}</Text>
-              <Text style={styles.rangeValue}>
+              <Text style={[f.t(11), { color: t.muted }]}>{which === "from" ? "From" : "To"}</Text>
+              <Text style={[f.t(14.5, 600), { color: t.ink, marginTop: 4 }]}>
                 {format(isoToDate(draftRange[which]), "dd MMM yyyy")}
               </Text>
             </TouchableOpacity>
@@ -1032,72 +957,75 @@ export default function Dashboard() {
             onChange={onPickDate}
           />
         ) : null}
-        <TouchableOpacity
-          style={styles.applyBtn}
-          activeOpacity={0.85}
-          onPress={applyRange}
-          accessibilityRole="button"
-        >
-          <Text style={styles.applyText}>Apply range</Text>
-        </TouchableOpacity>
-      </DashSheet>
+        <PrimaryButton label="Apply range" onPress={applyRange} style={{ marginTop: 14 }} />
+      </JoSheet>
+
+      <JoSheet
+        visible={sheet === "month"}
+        onClose={closeSheet}
+        title="SLA month"
+        subtitle="Contract score is monthly, independent of the period filter."
+      >
+        <View style={styles.options}>
+          {monthKeys.map((k) => {
+            const h = slaHistory.find((m) => m.month === k);
+            const score = h?.score ?? null;
+            return (
+              <SheetOption
+                key={k}
+                label={monthLabel(k)}
+                meta={score != null ? score.toFixed(2) : dash}
+                metaStyle={[f.d(17, 0, 1.1), { color: slaColor(t, score) }]}
+                selected={slaMonth === k}
+                onPress={() => {
+                  setSlaMonth(k);
+                  closeSheet();
+                }}
+              />
+            );
+          })}
+        </View>
+      </JoSheet>
+
+      <JoSheet visible={sheet === "site"} onClose={closeSheet} title="Site" subtitle="Every module follows the site you pick here.">
+        <ScrollView style={{ maxHeight: 420 }} contentContainerStyle={styles.options}>
+          {sites.map((site) => (
+            <SheetOption
+              key={site.site_code}
+              label={site.name || site.site_code}
+              meta={site.site_code}
+              selected={site.site_code === activeSiteCode}
+              onPress={() => {
+                setSelectedSiteCode(site.site_code);
+                setTeamOpen(false);
+                closeSheet();
+              }}
+            />
+          ))}
+        </ScrollView>
+      </JoSheet>
 
       <ReportPickerModal
         visible={reportPickerOpen}
         onClose={() => setReportPickerOpen(false)}
       />
-    </View>
+    </JoPage>
   );
 }
 
-const makeStyles = (JO: Jo) =>
-  StyleSheet.create({
-  screen: { flex: 1, backgroundColor: JO.page },
-  body: { paddingHorizontal: 16, paddingTop: 2, paddingBottom: 20, gap: 14 },
-  offline: { fontSize: 11, color: JO.muted, marginTop: -4 },
-
-  chartHead: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 10,
-    marginBottom: 12,
-  },
-
-
-  rangeRow: { flexDirection: "row", gap: 8, marginTop: 14 },
+const useStyles = makeJoStyles((t) => ({
+  body: { paddingHorizontal: 16, paddingBottom: 24 },
+  note: { ...f.t(11), color: t.muted, marginTop: 10, paddingHorizontal: 4 },
+  options: { gap: 6, marginTop: 16 },
+  rangeRow: { flexDirection: "row", gap: 8, marginTop: 16 },
   rangeField: {
     flex: 1,
     minWidth: 0,
-    backgroundColor: JO.tile,
-    borderWidth: 1,
-    borderColor: JO.line,
-    borderRadius: 12,
-    paddingVertical: 9,
-    paddingHorizontal: 11,
+    borderRadius: 20,
+    backgroundColor: t.sheetField,
+    borderWidth: 1.5,
+    borderColor: "transparent",
+    paddingVertical: 12,
+    paddingHorizontal: 14,
   },
-  rangeCap: { fontSize: 9, fontWeight: "700", color: JO.muted, letterSpacing: 0.8 },
-  rangeValue: { fontSize: 13, fontWeight: "700", color: JO.ink, marginTop: 5 },
-  applyBtn: {
-    height: 46,
-    marginTop: 12,
-    borderRadius: 14,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: JO.primary,
-  },
-  applyText: { color: "#FFFFFF", fontSize: 13.5, fontWeight: "800" },
-});
-
-const STYLES = new Map<Jo, ReturnType<typeof makeStyles>>();
-
-/** One stylesheet per Home palette (light / dark), built on first use. */
-function useStyles() {
-  const JO = useJo();
-  let built = STYLES.get(JO);
-  if (!built) {
-    built = makeStyles(JO);
-    STYLES.set(JO, built);
-  }
-  return built;
-}
+}));

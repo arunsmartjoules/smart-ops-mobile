@@ -51,6 +51,17 @@ import {
 } from "@/services/NotificationService";
 import { applyNotificationNavigation } from "@/utils/notificationDeepLink";
 import { PendingNotificationNavigation } from "@/components/PendingNotificationNavigation";
+import { useFonts } from "expo-font";
+import { BricolageGrotesque_600SemiBold } from "@expo-google-fonts/bricolage-grotesque/600SemiBold";
+import { BricolageGrotesque_700Bold } from "@expo-google-fonts/bricolage-grotesque/700Bold";
+import { BricolageGrotesque_800ExtraBold } from "@expo-google-fonts/bricolage-grotesque/800ExtraBold";
+import { Geist_400Regular } from "@expo-google-fonts/geist/400Regular";
+import { Geist_500Medium } from "@expo-google-fonts/geist/500Medium";
+import { Geist_600SemiBold } from "@expo-google-fonts/geist/600SemiBold";
+import { Geist_700Bold } from "@expo-google-fonts/geist/700Bold";
+import { GeistMono_400Regular } from "@expo-google-fonts/geist-mono/400Regular";
+import { GeistMono_500Medium } from "@expo-google-fonts/geist-mono/500Medium";
+import { GeistMono_600SemiBold } from "@expo-google-fonts/geist-mono/600SemiBold";
 
 // Fix: crypto.getRandomValues() not supported — required for uuid library in React Native
 if (!globalThis.crypto) {
@@ -66,8 +77,16 @@ if (!globalThis.crypto) {
 // module load or first mount shows a frame of bare background (the flicker).
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
-function AuthGuard({ children }: { children: React.ReactNode }) {
-  const { token, isLoading, isEmailVerified } = useAuth();
+function AuthGuard({
+  children,
+  fontsReady,
+}: {
+  children: React.ReactNode;
+  /** The design fonts (constants/jo.ts JF) — held behind the splash so text never flashes in the system face. */
+  fontsReady: boolean;
+}) {
+  const { token, isLoading: authLoading, isEmailVerified } = useAuth();
+  const isLoading = authLoading || !fontsReady;
   const segments = useSegments();
   const router = useRouter();
   // The Stack below only mounts once auth resolves, so on that same commit the
@@ -127,7 +146,6 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
 const LIGHT_STATUS_BAR_ROUTES = new Set([
   "/sign-up",
   "/signup-verify",
-  "/profile",
   "/attendance",
   "/pm-execution",
 ]);
@@ -183,6 +201,22 @@ function PresenceTracker() {
 }
 
 export default function RootLayout() {
+  // A font that fails to load falls back to the system face rather than
+  // holding the app behind the splash.
+  const [fontsLoaded, fontError] = useFonts({
+    BricolageGrotesque_600SemiBold,
+    BricolageGrotesque_700Bold,
+    BricolageGrotesque_800ExtraBold,
+    Geist_400Regular,
+    Geist_500Medium,
+    Geist_600SemiBold,
+    Geist_700Bold,
+    GeistMono_400Regular,
+    GeistMono_500Medium,
+    GeistMono_600SemiBold,
+  });
+  const fontsReady = fontsLoaded || !!fontError;
+
   useEffect(() => {
     const init = async () => {
       try {
@@ -243,7 +277,7 @@ export default function RootLayout() {
         <SafeAreaProvider>
           <AuthProvider>
           <AttendanceGateProvider>
-            <AuthGuard>
+            <AuthGuard fontsReady={fontsReady}>
               <ThemeProvider>
                 <ServerStatusOverlay />
                 <NotificationGate />
@@ -264,6 +298,7 @@ export default function RootLayout() {
                   <Stack.Screen name="attendance" />
                   <Stack.Screen name="privacy-security" />
                   <Stack.Screen name="app-settings" />
+                  <Stack.Screen name="appearance" />
                   <Stack.Screen name="notification-settings" />
                   <Stack.Screen name="notifications" />
                   <Stack.Screen name="sitelog-detail" />

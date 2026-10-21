@@ -15,12 +15,22 @@ import logger from "../utils/logger";
 export type ReadOnlyDomain = "tickets" | "incidents" | "pm" | "site-logs";
 export type GateDomain = "dashboard" | ReadOnlyDomain;
 
-const PRIVILEGED_ROLES = new Set(["admin", "manager"]);
+/**
+ * Roles that don't punch in at all: they get full access without an
+ * attendance session, and the app offers them no punch-in / punch-out
+ * controls (only technicians attend a site shift).
+ */
+const PRIVILEGED_ROLES = new Set(["admin", "manager", "regional_manager"]);
+
+/** True for roles that never punch in (see PRIVILEGED_ROLES). */
+export function isNonPunchingRole(role: unknown, isSuperadmin?: unknown): boolean {
+  return PRIVILEGED_ROLES.has(String(role || "").toLowerCase()) || Boolean(isSuperadmin);
+}
 
 interface AttendanceGateContextValue {
   /** True if the user has an open attendance session (checked in, not yet checked out). */
   isPunchedIn: boolean;
-  /** True if role is admin/manager or is_superadmin is set — these users bypass the gate. */
+  /** True for admin / manager / regional_manager or is_superadmin — these users bypass the gate and never punch in. */
   isPrivileged: boolean;
   /** True when no gate applies AND no read-only mode is active. Every write surface should check this. */
   canEdit: boolean;
@@ -77,9 +87,7 @@ export const AttendanceGateProvider: React.FC<{ children: React.ReactNode }> = (
 }) => {
   const { user } = useAuth();
   const userId = user?.user_id || user?.id || "";
-  const role = String(user?.role || "").toLowerCase();
-  const isPrivileged =
-    PRIVILEGED_ROLES.has(role) || Boolean(user?.is_superadmin);
+  const isPrivileged = isNonPunchingRole(user?.role, user?.is_superadmin);
 
   const [isPunchedIn, setIsPunchedIn] = useState(false);
   const [loading, setLoading] = useState(true);
