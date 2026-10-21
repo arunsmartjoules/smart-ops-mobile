@@ -1,46 +1,45 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useQuickCreate } from "@/services/QuickCreate";
 import {
   Alert,
-  Image,
   InteractionManager,
-  Modal,
-  Platform,
   RefreshControl,
   ScrollView,
   Text,
-  TextInput,
   TouchableOpacity,
-  useColorScheme,
   View,
 } from "react-native";
 import { FlashList } from "@shopify/flash-list";
-import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Haptics from "expo-haptics";
-import PressableScale from "@/components/PressableScale";
 import { useAttendanceGate } from "@/contexts/AttendanceGateContext";
-import * as ImagePicker from "expo-image-picker";
-import { Plus, Camera, Image as ImageIcon, X } from "lucide-react-native";
 import { useFocusEffect, useLocalSearchParams } from "expo-router";
-import DateTimePicker, { DateTimePickerAndroid } from "@react-native-community/datetimepicker";
 import { useAuth } from "@/contexts/AuthContext";
 import { useSites } from "@/hooks/useSites";
 import { useNetworkStatus } from "@/hooks/useNetworkStatus";
 import { useAutoSync } from "@/hooks/useAutoSync";
-import AdvancedFilterModal from "@/components/AdvancedFilterModal";
-import TicketSkeleton from "@/components/TicketSkeleton";
+import { Bx } from "@/components/jo/Bx";
+import {
+  EmptyState,
+  Fab,
+  IconButton,
+  JoPage,
+  JoSheet,
+  SearchField,
+  SheetOption,
+  Shimmer,
+  f,
+  makeJoStyles,
+  useJoTheme,
+} from "@/components/jo/ui";
+import { useNavInsets } from "@/components/jo/navInsets";
 import IncidentDetailModal from "@/components/IncidentDetailModal";
 import IncidentCard from "@/components/IncidentItem";
 import RaiseIncidentChooser, { type RaiseChoice } from "@/components/incidents/RaiseIncidentChooser";
 import RcaImportModal from "@/components/incidents/RcaImportModal";
-import { makeThemedStyles, useDs } from "@/hooks/useDs";
-import {
-  ListCountLine,
-  ListEmptyCard,
-  ModuleListHeader,
-  useListSlide,
-  type StatusChip,
-  SwipeTabsView,
-} from "@/components/shared/ListChrome";
+import IncidentCreateSheet from "@/components/incidents/IncidentCreateForm";
+import IncidentFilterSheet from "@/components/incidents/IncidentFilterSheet";
+import { IncChip, Notice } from "@/components/incidents/IncFields";
+import { SwipeTabs, useListSlide } from "@/components/incidents/IncListMotion";
 import { IncidentsService } from "@/services/IncidentsService";
 import cacheManager from "@/services/CacheManager";
 import {
@@ -51,10 +50,6 @@ import {
 import { db, incidents as incidentsTable } from "@/database";
 import { eq, and, gte, lte, desc } from "drizzle-orm";
 import { StorageService } from "@/services/StorageService";
-import FullscreenPicker from "@/components/FullscreenPicker";
-import AttachmentField from "@/components/AttachmentField";
-import RequiredMark from "@/components/RequiredMark";
-import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import { type SelectOption } from "@/components/SearchableSelect";
 import { TicketsService } from "@/services/TicketsService";
 import {
@@ -219,9 +214,9 @@ interface IncidentCreateForm {
 }
 
 export default function IncidentsTab() {
-  const styles = useStyles();
-  const ds = useDs();
-  const isDark = useColorScheme() === "dark";
+  const t = useJoTheme();
+  const s = useStyles();
+  const { clearance } = useNavInsets();
   const { user } = useAuth();
   const { canEdit } = useAttendanceGate();
   const { isConnected } = useNetworkStatus();
@@ -268,10 +263,12 @@ export default function IncidentsTab() {
     "Newest",
   );
   const [slide, setSlide] = useState({ seq: 0, dir: 1 });
-  const insets = useSafeAreaInsets();
   const listSlideStyle = useListSlide(slide.seq, slide.dir);
   const [showFilter, setShowFilter] = useState(false);
-  const [tempSearch, setTempSearch] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [sitePickerOpen, setSitePickerOpen] = useState(false);
+  // The last network refresh failed (cache may still be showing).
+  const [loadFailed, setLoadFailed] = useState(false);
   const [search, setSearch] = useState("");
   const [fromDate, setFromDate] = useState<string | null>(defaultFromDate);
   const [toDate, setToDate] = useState<string | null>(defaultToDate);
@@ -279,11 +276,12 @@ export default function IncidentsTab() {
     () => formatDateRange(fromDate, toDate),
     [fromDate, toDate],
   );
-  const [tempFromDate, setTempFromDate] = useState<string | null>(defaultFromDate);
-  const [tempToDate, setTempToDate] = useState<string | null>(defaultToDate);
   const [creating, setCreating] = useState(false);
   // The Raise FAB first asks: fill in manually, or upload the RCA report.
   const [chooserOpen, setChooserOpen] = useState(false);
+  // Tab bar "+" → Raise incident chooser (only once the user may raise).
+  const openQuickIncident = useCallback(() => setChooserOpen(true), []);
+  useQuickCreate("incident", openQuickIncident, canEdit);
   const [rcaImportOpen, setRcaImportOpen] = useState(false);
   // New key per open → the import screen always starts fresh.
   const [rcaImportSession, setRcaImportSession] = useState(0);
@@ -299,7 +297,6 @@ export default function IncidentsTab() {
   const [detailResolvedAt, setDetailResolvedAt] = useState<Date | null>(null);
   const [detailAssignedTo, setDetailAssignedTo] = useState("");
   const [siteUserOptions, setSiteUserOptions] = useState<SelectOption[]>([]);
-  const [showCreatedTimePicker, setShowCreatedTimePicker] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [assetsLoading, setAssetsLoading] = useState(false);
   const [assetOptions, setAssetOptions] = useState<SelectOption[]>([]);
@@ -327,15 +324,6 @@ export default function IncidentsTab() {
         description: s.site_code || "",
       })),
     [sites],
-  );
-
-  const staticOptions = useMemo(
-    () => ({
-      faultType: FAULT_TYPE_OPTIONS.map((value) => ({ value, label: value })),
-      severity: SEVERITY_OPTIONS.map((value) => ({ value, label: value })),
-      operatingCondition: OPERATING_CONDITION_OPTIONS.map((value) => ({ value, label: value })),
-    }),
-    [],
   );
 
   const fetchGenRef = useRef(0);
@@ -428,8 +416,10 @@ export default function IncidentsTab() {
       if (statsRes?.success) {
         setStats(statsRes.data?.byStatus || statsRes.data || {});
       }
+      setLoadFailed(!listRes?.success);
     } catch (e) {
       console.warn("Incidents background fetch failed", e);
+      if (requestGen === fetchGenRef.current) setLoadFailed(true);
     } finally {
       setLoading(false);
       setIsSwitchingFilters(false);
@@ -467,12 +457,11 @@ export default function IncidentsTab() {
     await fetchData("refresh");
   }, [fetchData]);
 
-  const applyAdvancedFilters = () => {
-    setSearch(tempSearch);
-    setFromDate(tempFromDate);
-    setToDate(tempToDate);
+  const applyDateFilter = useCallback((range: { from: string | null; to: string | null }) => {
+    setFromDate(range.from);
+    setToDate(range.to);
     setShowFilter(false);
-  };
+  }, []);
 
   const loadSiteUsers = useCallback(async (siteCode: string) => {
     if (!siteCode) {
@@ -553,7 +542,7 @@ export default function IncidentsTab() {
     }
   }, [creating, form.site_code, selectedSiteCode, loadAssets, loadSiteUsers]);
 
-  /** `AttachmentField` drives `form.attachments` through a plain state setter. */
+  /** The attachment control drives `form.attachments` through a plain state setter. */
   const setFormAttachments = useCallback<React.Dispatch<React.SetStateAction<string[]>>>(
     (update) =>
       setForm((prev) => ({
@@ -562,32 +551,6 @@ export default function IncidentsTab() {
       })),
     [],
   );
-
-  const openCreatedTimePicker = useCallback(() => {
-    if (!canEditMeta) return;
-    if (Platform.OS === "android") {
-      DateTimePickerAndroid.open({
-        value: form.incident_created_time,
-        mode: "date",
-        is24Hour: true,
-        onChange: (_event, date) => {
-          if (!date) return;
-          DateTimePickerAndroid.open({
-            value: date,
-            mode: "time",
-            is24Hour: true,
-            onChange: (_event2, date2) => {
-              if (!date2) return;
-              setForm((prev) => ({ ...prev, incident_created_time: date2 }));
-            },
-          });
-        },
-      });
-      return;
-    }
-    setShowCreatedTimePicker(true);
-  }, [canEditMeta, form.incident_created_time]);
-
 
   const onCreateIncident = async () => {
     if (!form.site_code) return Alert.alert("Required", "Please select site.");
@@ -1194,7 +1157,7 @@ export default function IncidentsTab() {
     [openIncidentModal, statusFilter],
   );
 
-  const statusChips = useMemo<StatusChip[]>(() => {
+  const statusChips = useMemo<{ key: string; label: string; count?: number }[]>(() => {
     const total =
       (stats.Open || 0) +
       (stats.Inprogress || 0) +
@@ -1279,39 +1242,183 @@ export default function IncidentsTab() {
     );
   }, []);
 
+
+  const isDefaultRange = fromDate === defaultFromDate && toDate === defaultToDate;
+  const rcaOwed = stats.Resolved || 0;
+  const noSiteMapped = isConnected && !sitesLoading && sites.length === 0;
+
+  const closeCreate = useCallback(() => {
+    setCreating(false);
+    resetCreateForm();
+  }, [resetCreateForm]);
+
+  const listEmpty = loading ? (
+    <View style={{ gap: 8 }}>
+      {[0, 1, 2, 3].map((i) => (
+        <Shimmer key={i} height={132} radius={22} />
+      ))}
+    </View>
+  ) : noSiteMapped ? (
+    <EmptyState icon="bx-buildings" title="No site is mapped to you yet" sub="Ask an admin to add you to a site to see its incidents." />
+  ) : loadFailed && isConnected !== false ? (
+    <EmptyState
+      icon="bx-error-circle"
+      title="Couldn't load incidents"
+      sub="Check your connection and try again."
+      action={{ label: "Try again", onPress: () => void onRefresh() }}
+    />
+  ) : (
+    <EmptyState
+      icon="bx-search-alt"
+      title="No incidents match this filter"
+      sub={
+        search
+          ? `Nothing here matches “${search}”.`
+          : `Nothing ${statusFilter === "All" ? "" : `${(statusChips.find((c) => c.key === statusFilter)?.label ?? statusFilter).toLowerCase()} `}raised ${isDefaultRange ? "this month" : `in ${dateRangeLabel}`}.`
+      }
+      action={
+        statusFilter !== "All" || search || !isDefaultRange
+          ? {
+              label: "Show all",
+              onPress: () => {
+                setSearchInput("");
+                setSearch("");
+                setFromDate(defaultFromDate);
+                setToDate(defaultToDate);
+                selectStatusChip("All");
+              },
+            }
+          : undefined
+      }
+    />
+  );
+
   return (
-    <View style={{ flex: 1, backgroundColor: ds.pageBg }}>
-      <ModuleListHeader
-        topInset={insets.top}
-        eyebrow="INCIDENTS"
-        siteName={siteName}
-        dateLabel={dateRangeLabel}
-        onRefresh={() => {
-          if (!isConnected || !selectedSiteCode) return;
-          onRefresh();
-        }}
-        refreshDisabled={!isConnected || !selectedSiteCode}
-        onFilter={() => setShowFilter(true)}
-        filterActive={!!fromDate}
-        search={searchInput}
-        onChangeSearch={setSearchInput}
-        searchPlaceholder="Search ID, asset or fault"
-        chips={statusChips}
-        activeChip={statusFilter}
-        onSelectChip={selectStatusChip}
-      />
+    <JoPage>
+      <View style={s.top}>
+        <View style={s.head}>
+          <View style={{ flexShrink: 1, minWidth: 0 }}>
+            <TouchableOpacity
+              style={s.siteChip}
+              onPress={() => setSitePickerOpen(true)}
+              disabled={sites.length < 2}
+              activeOpacity={0.8}
+              accessibilityRole="button"
+              accessibilityLabel={`Site: ${siteName}${sites.length > 1 ? ", change" : ""}`}
+            >
+              <Bx name="bx-buildings" size={14} color={t.accentInk} />
+              <Text style={s.siteText} numberOfLines={1}>
+                {siteName}
+              </Text>
+              {sites.length > 1 ? <Bx name="bx-chevron-down" size={15} color={t.muted} /> : null}
+            </TouchableOpacity>
+            <Text style={s.title} numberOfLines={1}>
+              Incidents
+            </Text>
+          </View>
+          <View style={{ flexDirection: "row", gap: 8, marginTop: 4 }}>
+            <IconButton
+              icon={searchOpen ? "bx-x" : "bx-search"}
+              iconSize={19}
+              label={searchOpen ? "Close search" : "Search incidents"}
+              onPress={() => {
+                if (searchOpen) setSearchInput("");
+                setSearchOpen((o) => !o);
+              }}
+            />
+            <IconButton
+              icon="bx-filter-alt"
+              iconSize={19}
+              label={`Filter by date: ${dateRangeLabel}`}
+              dot={!isDefaultRange}
+              onPress={() => setShowFilter(true)}
+            />
+          </View>
+        </View>
 
-      <ListCountLine
-        count={visibleCount}
-        label={countLabel}
-        sortLabel={sortMode}
-        onSort={cycleSort}
-      />
+        {searchOpen ? (
+          <SearchField
+            value={searchInput}
+            onChangeText={setSearchInput}
+            placeholder="Search ID, asset or fault"
+            style={{ marginTop: 12 }}
+          />
+        ) : null}
 
-      <SwipeTabsView
-        chips={statusChips}
-        activeChip={statusFilter}
-        onSelectChip={selectStatusChip}
+        {rcaOwed > 0 && statusFilter !== "Resolved" ? (
+          <TouchableOpacity
+            style={s.banner}
+            onPress={() => selectStatusChip("Resolved")}
+            activeOpacity={0.85}
+            accessibilityRole="button"
+            accessibilityLabel={`${rcaOwed} resolved incident${rcaOwed === 1 ? "" : "s"} waiting on an RCA. Open`}
+          >
+            <View style={s.bannerIcon}>
+              <Bx name="bx-search-alt" size={17} color={t.bad} />
+            </View>
+            <Text style={s.bannerText}>
+              {rcaOwed} incident{rcaOwed === 1 ? "" : "s"} waiting on an RCA{roleAllowsRca ? " from you" : ""}
+            </Text>
+            <View style={s.bannerBtn}>
+              <Text style={s.bannerBtnText}>Open</Text>
+            </View>
+          </TouchableOpacity>
+        ) : null}
+
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={{ marginTop: 12, marginHorizontal: -16 }}
+          contentContainerStyle={{ gap: 6, paddingHorizontal: 16 }}
+        >
+          {statusChips.map((c) => (
+            <IncChip
+              key={c.key}
+              label={c.label}
+              count={c.count ?? 0}
+              selected={statusFilter === c.key}
+              onPress={() => selectStatusChip(c.key)}
+            />
+          ))}
+        </ScrollView>
+
+        {isConnected === false ? (
+          <Notice icon="bx-wifi-off" tone="warn" style={{ marginTop: 10 }}>
+            Offline · showing incidents saved on this phone. Changes sync when you&apos;re back online.
+          </Notice>
+        ) : loadFailed && incidents.length > 0 ? (
+          <Notice icon="bx-error-circle" tone="warn" style={{ marginTop: 10 }}>
+            Couldn&apos;t refresh. Showing the last saved list — pull down to retry.
+          </Notice>
+        ) : null}
+        {!canEdit ? (
+          <Notice icon="bx-lock-alt" tone="mute" style={{ marginTop: 10 }}>
+            View only — punch in to raise or update incidents.
+          </Notice>
+        ) : null}
+
+        <View style={s.countRow}>
+          <Text style={s.countText} numberOfLines={1}>
+            <Text style={s.countNum}>{visibleCount}</Text> {countLabel}
+            <Text style={{ color: t.faint }}> · {isDefaultRange ? "this month" : dateRangeLabel}</Text>
+          </Text>
+          <TouchableOpacity
+            onPress={cycleSort}
+            hitSlop={8}
+            style={s.sortBtn}
+            accessibilityRole="button"
+            accessibilityLabel={`Sort: ${sortMode}. Change`}
+          >
+            <Bx name="bx-sort-alt-2" size={15} color={t.muted} />
+            <Text style={s.sortText}>{sortMode}</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      <SwipeTabs
+        keys={statusChips.map((c) => c.key)}
+        active={statusFilter}
+        onSelect={selectStatusChip}
         style={[{ flex: 1 }, listSlideStyle]}
       >
         <FlashList
@@ -1321,365 +1428,206 @@ export default function IncidentsTab() {
           // Uniform-height cards (single recycle pool) + wider draw distance so
           // fast flings don't reveal blank space. See PM list for the same config.
           drawDistance={600}
-          ListEmptyComponent={
-            loading ? (
-              <TicketSkeleton />
-            ) : (
-              <ListEmptyCard
-                label={
-                  isConnected && !sitesLoading && sites.length === 0
-                    ? "No site is mapped to you yet"
-                    : "No incidents match this filter"
-                }
-              />
-            )
-          }
+          ListEmptyComponent={listEmpty}
           refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={onRefresh}
-              tintColor={ds.carbon[500]}
-            />
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={t.muted} colors={[t.accent]} />
           }
           showsVerticalScrollIndicator={false}
-          contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: 24 }}
+          keyboardShouldPersistTaps="handled"
+          contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: clearance + (canEdit ? 64 : 0) }}
         />
-      </SwipeTabsView>
+      </SwipeTabs>
 
-
-        {canEdit && (
-          <PressableScale
-            onPress={() => {
-              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
-              setChooserOpen(true);
-            }}
-            style={styles.fab}
-            accessibilityRole="button"
-            accessibilityLabel="Raise an incident"
-          >
-            <Plus color={ds.onControl} size={22} strokeWidth={2.2} />
-            <Text style={styles.fabLabel}>Raise</Text>
-          </PressableScale>
-        )}
-
-        <RaiseIncidentChooser
-          visible={chooserOpen}
-          offline={isConnected === false}
-          onClose={() => setChooserOpen(false)}
-          onPick={onPickRaise}
-        />
-
-        <RcaImportModal
-          key={rcaImportSession}
-          visible={rcaImportOpen}
-          defaultSiteCode={selectedSiteCode}
-          siteOptions={siteOptions}
-          isConnected={isConnected}
-          onClose={() => setRcaImportOpen(false)}
-          onCreated={() => {
-            void fetchData("refresh");
-          }}
-          onViewIncident={(incident) => {
-            // Let the import screen finish closing first — iOS drops a modal
-            // presented while another is still dismissing.
-            setTimeout(() => openIncidentModal(incident as IncidentItem), 450);
+      {canEdit ? (
+        <Fab
+          label="Raise"
+          icon="bx-plus"
+          onPress={() => {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+            setChooserOpen(true);
           }}
         />
+      ) : null}
 
-        <AdvancedFilterModal
-          visible={showFilter}
-          onClose={() => setShowFilter(false)}
-          tempSearch={tempSearch}
-          setTempSearch={setTempSearch}
-          tempFromDate={tempFromDate}
-          setTempFromDate={setTempFromDate}
-          tempToDate={tempToDate}
-          setTempToDate={setTempToDate}
-          dateMode="date-range"
-          sites={sites}
-          selectedSiteCode={selectedSiteCode}
-          setSelectedSiteCode={(code: string) => {
-            const target = sites.find((s) => s.site_code === code);
-            if (target) selectSite(target);
-          }}
-          user={user}
-          statusFilter={statusFilter}
-          setStatusFilter={(v: string) => setStatusFilter(v as IncidentStatus)}
-          priorityFilter={"All"}
-          setPriorityFilter={() => {}}
-          statusOptions={["All", "Inprogress", "Resolved", "RCA Submitted"]}
-          statusOptionLabels={{ Inprogress: "In progress" }}
-          applyAdvancedFilters={applyAdvancedFilters}
-          title="Filter Incidents"
-        />
+      <JoSheet
+        visible={sitePickerOpen}
+        onClose={() => setSitePickerOpen(false)}
+        title="Site"
+        subtitle={`You have access to ${sites.length} site${sites.length === 1 ? "" : "s"}.`}
+      >
+        <ScrollView style={{ marginTop: 14 }} contentContainerStyle={{ gap: 6 }}>
+          {sites.map((site) => (
+            <SheetOption
+              key={site.site_code}
+              label={site.site_name || site.site_code}
+              meta={site.site_code}
+              metaStyle={f.m(11)}
+              selected={site.site_code === selectedSiteCode}
+              onPress={() => {
+                setSitePickerOpen(false);
+                if (site.site_code !== selectedSiteCode) selectSite(site);
+              }}
+            />
+          ))}
+        </ScrollView>
+      </JoSheet>
 
-        <Modal
-          visible={creating}
-          animationType="slide"
-          statusBarTranslucent
-          navigationBarTranslucent
-          onRequestClose={() => {
-            setCreating(false);
-            resetCreateForm();
-          }}
-        >
-          <View className="flex-1 bg-slate-50 dark:bg-slate-950">
-            <SafeAreaView className="flex-1">
-              <View className="px-5 py-4 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
-                <View className="flex-row items-center justify-between">
-                  <Text className="text-slate-900 dark:text-slate-50 font-black text-lg">Create Incident</Text>
-                  <TouchableOpacity
-                    onPress={() => {
-                      setCreating(false);
-                      resetCreateForm();
-                    }}
-                    className="w-8 h-8 rounded-full items-center justify-center bg-slate-100 dark:bg-slate-800"
-                  >
-                    <X size={18} color={isDark ? "#cbd5e1" : "#334155"} />
-                  </TouchableOpacity>
-                </View>
-              </View>
+      <IncidentFilterSheet
+        visible={showFilter}
+        onClose={() => setShowFilter(false)}
+        from={fromDate}
+        to={toDate}
+        defaultRange={{ from: defaultFromDate, to: defaultToDate }}
+        onApply={applyDateFilter}
+      />
 
-              {/* keyboard-controller's KAV, not RN's: see IncidentDetailModal. The
-                  create footer had no keyboard handling at all, so Create
-                  Incident sat behind the keyboard while typing. */}
-              <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
-              <ScrollView
-                showsVerticalScrollIndicator={false}
-                keyboardShouldPersistTaps="handled"
-                className="flex-1"
-                contentContainerStyle={{ padding: 20, paddingBottom: 120 }}
-              >
-                <FullscreenPicker
-                  label="Site *"
-                  placeholder="Select site"
-                  options={siteOptions}
-                  value={form.site_code}
-                  onChange={(value) =>
-                    setForm((prev) => ({
-                      ...prev,
-                      site_code: value,
-                      asset_location: "",
-                    }))
-                  }
-                />
-                <FullscreenPicker
-                  label="Asset *"
-                  placeholder="Select asset"
-                  options={assetOptions}
-                  value={form.asset_location}
-                  onChange={(value) => setForm((prev) => ({ ...prev, asset_location: value }))}
-                  loading={assetsLoading}
-                  searchPlaceholder="Search assets..."
-                  emptyMessage="No assets found"
-                  searchValue={assetSearchQuery}
-                  onSearchChange={setAssetSearchQuery}
-                  remoteSearch
-                />
-                <View className="mb-4">
-                  <Text className="text-slate-700 dark:text-slate-300 font-semibold text-sm mb-2">
-                    <RequiredMark label="Incident Name *" />
-                  </Text>
-                  <TextInput
-                    placeholder="Enter incident name"
-                    value={form.fault_symptom}
-                    onChangeText={(v) => setForm((prev) => ({ ...prev, fault_symptom: v }))}
-                    className="border border-slate-300 dark:border-slate-700 rounded-xl px-3 py-3 text-slate-900 dark:text-slate-50"
-                    placeholderTextColor={ds.carbon[600]}
-                  />
-                </View>
-                <FullscreenPicker
-                  label="Fault Type *"
-                  placeholder="Select fault type"
-                  options={staticOptions.faultType}
-                  value={form.fault_type}
-                  onChange={(value) => setForm((prev) => ({ ...prev, fault_type: value }))}
-                />
-                <FullscreenPicker
-                  label="Severity *"
-                  placeholder="Select severity"
-                  options={staticOptions.severity}
-                  value={form.severity}
-                  onChange={(value) =>
-                    setForm((prev) => ({ ...prev, severity: value as IncidentCreateForm["severity"] }))
-                  }
-                />
-                <FullscreenPicker
-                  label="Operating Condition *"
-                  placeholder="Select operating condition"
-                  options={staticOptions.operatingCondition}
-                  value={form.operating_condition}
-                  onChange={(value) => setForm((prev) => ({ ...prev, operating_condition: value }))}
-                />
-                <View className="mb-4">
-                  <Text className="text-slate-700 dark:text-slate-300 font-semibold text-sm mb-2">
-                    Incident Created Time
-                  </Text>
-                  <TouchableOpacity
-                    onPress={openCreatedTimePicker}
-                    disabled={!canEditMeta}
-                    className="border border-slate-300 dark:border-slate-700 rounded-xl px-3 py-3"
-                    style={{ opacity: canEditMeta ? 1 : 0.7 }}
-                  >
-                    <Text className="text-slate-900 dark:text-slate-50">
-                      {formatIST(form.incident_created_time, { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: true }, "en-US")}
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-                <View className="mb-4">
-                  <Text className="text-slate-700 dark:text-slate-300 font-semibold text-sm mb-2">
-                    Raised By
-                  </Text>
-                  <TextInput
-                    placeholder="Who reported it? e.g. Sister Mary, ICU"
-                    value={form.raised_by}
-                    onChangeText={(v) => setForm((prev) => ({ ...prev, raised_by: v }))}
-                    maxLength={200}
-                    className="border border-slate-300 dark:border-slate-700 rounded-xl px-3 py-3 text-slate-900 dark:text-slate-50"
-                    placeholderTextColor={ds.carbon[600]}
-                  />
-                </View>
-                <FullscreenPicker
-                  label="Assigned To *"
-                  placeholder="Choose who handles this incident"
-                  options={siteUserOptions}
-                  value={form.assigned_to}
-                  onChange={(value) => setForm((prev) => ({ ...prev, assigned_to: value }))}
-                />
-                <View className="mb-4">
-                  <Text className="text-slate-700 dark:text-slate-300 font-semibold text-sm mb-2">
-                    <RequiredMark label="Immediate Action Taken *" />
-                  </Text>
-                  <TextInput
-                    placeholder="Describe immediate action taken"
-                    value={form.immediate_action_taken}
-                    onChangeText={(v) => setForm((prev) => ({ ...prev, immediate_action_taken: v }))}
-                    multiline
-                    textAlignVertical="top"
-                    numberOfLines={4}
-                    className="border border-slate-300 dark:border-slate-700 rounded-xl px-3 py-3 text-slate-900 dark:text-slate-50 min-h-[110px]"
-                    placeholderTextColor={ds.carbon[600]}
-                  />
-                </View>
+      <RaiseIncidentChooser
+        visible={chooserOpen}
+        offline={isConnected === false}
+        onClose={() => setChooserOpen(false)}
+        onPick={onPickRaise}
+      />
 
-                {/* One button for camera / photo library / any file, with tap-to-
-                    preview on everything picked. */}
-                <AttachmentField
-                  title="Attachments"
-                  pending={form.attachments}
-                  onChangePending={setFormAttachments}
-                  emptyText="No attachments selected"
-                />
-              </ScrollView>
+      <RcaImportModal
+        key={rcaImportSession}
+        visible={rcaImportOpen}
+        defaultSiteCode={selectedSiteCode}
+        siteOptions={siteOptions}
+        isConnected={isConnected}
+        onClose={() => setRcaImportOpen(false)}
+        onCreated={() => {
+          void fetchData("refresh");
+        }}
+        onViewIncident={(incident) => {
+          // Let the import screen finish closing first — iOS drops a modal
+          // presented while another is still dismissing.
+          setTimeout(() => openIncidentModal(incident as IncidentItem), 450);
+        }}
+      />
 
-              <View className="px-5 py-3 border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
-                <View className="flex-row gap-2">
-                  <TouchableOpacity
-                    onPress={() => {
-                      setCreating(false);
-                      resetCreateForm();
-                    }}
-                    className="flex-1 bg-slate-200 dark:bg-slate-700 rounded-xl py-3"
-                  >
-                    <Text className="text-center font-bold text-slate-800 dark:text-slate-100">Cancel</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    onPress={onCreateIncident}
-                    disabled={submitting}
-                    className="flex-1 rounded-xl py-3"
-                    style={{ backgroundColor: ds.controlOn, opacity: submitting ? 0.6 : 1 }}
-                  >
-                    <Text className="text-center font-bold text-white">
-                      {submitting ? "Creating..." : "Create Incident"}
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-              </KeyboardAvoidingView>
-              {showCreatedTimePicker && Platform.OS !== "android" ? (
-                <DateTimePicker
-                  value={form.incident_created_time}
-                  mode="datetime"
-                  onChange={(_, date) => {
-                    setShowCreatedTimePicker(false);
-                    if (!date) return;
-                    setForm((prev) => ({ ...prev, incident_created_time: date }));
-                  }}
-                />
-              ) : null}
-            </SafeAreaView>
-          </View>
-        </Modal>
+      <IncidentCreateSheet
+        visible={creating}
+        onCancel={closeCreate}
+        form={form}
+        setForm={setForm}
+        setAttachments={setFormAttachments}
+        siteOptions={siteOptions}
+        assetOptions={assetOptions}
+        assetsLoading={assetsLoading}
+        assetSearch={assetSearchQuery}
+        onAssetSearch={setAssetSearchQuery}
+        assigneeOptions={siteUserOptions}
+        faultTypes={FAULT_TYPE_OPTIONS}
+        severities={SEVERITY_OPTIONS}
+        operatingConditions={OPERATING_CONDITION_OPTIONS}
+        canEditMeta={canEditMeta}
+        offline={isConnected === false}
+        submitting={submitting}
+        onSubmit={onCreateIncident}
+      />
 
-        <IncidentDetailModal
-          visible={incidentModalVisible}
-          incident={selectedIncident}
-          onClose={() => {
-            setIncidentModalVisible(false);
-            setSelectedIncident(null);
-            setDetailPendingAttachments([]);
-            setDetailPendingRcaAttachments([]);
-          }}
-          canEditMeta={canEditMeta}
-          assignedTo={detailAssignedTo}
-          setAssignedTo={setDetailAssignedTo}
-          assigneeOptions={siteUserOptions}
-          respondedAt={detailRespondedAt}
-          setRespondedAt={setDetailRespondedAt}
-          createdAt={detailCreatedAt}
-          setCreatedAt={setDetailCreatedAt}
-          resolvedAt={detailResolvedAt}
-          setResolvedAt={setDetailResolvedAt}
-          canEditRca={
-            canEditRca &&
-            (selectedIncident?.status === "Resolved" ||
-              selectedIncident?.status === "RCA Submitted")
-          }
-          nextStatus={nextStatus}
-          setNextStatus={setNextStatus}
-          remarks={updateRemarks}
-          setRemarks={setUpdateRemarks}
-          isUpdating={isUpdatingIncident}
-          onSubmit={handleIncidentUpdate}
-          existingAttachmentUrls={selectedIncident ? parseIncidentAttachments(selectedIncident.attachments) : []}
-          pendingAttachments={detailPendingAttachments}
-          setPendingAttachments={setDetailPendingAttachments}
-          existingRcaAttachmentUrls={selectedIncident ? parseIncidentAttachments(selectedIncident.rca_attachments) : []}
-          pendingRcaAttachments={detailPendingRcaAttachments}
-          setPendingRcaAttachments={setDetailPendingRcaAttachments}
-        />
-    </View>
+      <IncidentDetailModal
+        visible={incidentModalVisible}
+        incident={selectedIncident}
+        onClose={() => {
+          setIncidentModalVisible(false);
+          setSelectedIncident(null);
+          setDetailPendingAttachments([]);
+          setDetailPendingRcaAttachments([]);
+        }}
+        canEditMeta={canEditMeta}
+        assignedTo={detailAssignedTo}
+        setAssignedTo={setDetailAssignedTo}
+        assigneeOptions={siteUserOptions}
+        respondedAt={detailRespondedAt}
+        setRespondedAt={setDetailRespondedAt}
+        createdAt={detailCreatedAt}
+        setCreatedAt={setDetailCreatedAt}
+        resolvedAt={detailResolvedAt}
+        setResolvedAt={setDetailResolvedAt}
+        canEditRca={
+          canEditRca &&
+          (selectedIncident?.status === "Resolved" ||
+            selectedIncident?.status === "RCA Submitted")
+        }
+        nextStatus={nextStatus}
+        setNextStatus={setNextStatus}
+        remarks={updateRemarks}
+        setRemarks={setUpdateRemarks}
+        isUpdating={isUpdatingIncident}
+        onSubmit={handleIncidentUpdate}
+        existingAttachmentUrls={selectedIncident ? parseIncidentAttachments(selectedIncident.attachments) : []}
+        pendingAttachments={detailPendingAttachments}
+        setPendingAttachments={setDetailPendingAttachments}
+        existingRcaAttachmentUrls={selectedIncident ? parseIncidentAttachments(selectedIncident.rca_attachments) : []}
+        pendingRcaAttachments={detailPendingRcaAttachments}
+        setPendingRcaAttachments={setDetailPendingRcaAttachments}
+      />
+    </JoPage>
   );
 }
 
-/**
- * The artboard's "Raise" pill — a flame lozenge floating over the list, sized
- * so the label rides beside the glyph rather than a bare round button.
- */
-const useStyles = makeThemedStyles((ds) => ({
-  fab: {
-    position: "absolute",
-    right: 22,
-    bottom: 22,
-    minWidth: 52,
-    height: 52,
-    borderRadius: 99,
-    backgroundColor: ds.controlOn,
+/** Artboard r_incidents: site chip + 28 Bricolage title, RCA-due banner, chips, count line. */
+const useStyles = makeJoStyles((t) => ({
+  top: { paddingHorizontal: 16 },
+  head: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 12,
+    paddingTop: 12,
+    paddingHorizontal: 4,
+  },
+  siteChip: {
+    alignSelf: "flex-start",
     flexDirection: "row",
     alignItems: "center",
+    gap: 5,
+    height: 28,
+    paddingLeft: 8,
+    paddingRight: 9,
+    borderRadius: 14,
+    backgroundColor: t.input,
+    borderWidth: 1,
+    borderColor: t.isDark ? "rgba(255,255,255,0.09)" : t.lineMid,
+    maxWidth: 240,
+  },
+  siteText: { ...f.t(12.5, 500), color: t.ink2, flexShrink: 1 },
+  title: { ...f.d(28, -0.025), color: t.ink, marginTop: 4 },
+  banner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    marginTop: 14,
+    borderRadius: 22,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    backgroundColor: t.badWash,
+    borderWidth: 1,
+    borderColor: t.badBorder,
+  },
+  bannerIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: t.badTint,
+    alignItems: "center",
     justifyContent: "center",
-    gap: 7,
-    paddingHorizontal: 18,
-    shadowColor: ds.controlOn,
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.5,
-    shadowRadius: 8,
-    elevation: 8,
   },
-  fabLabel: {
-    fontSize: 13,
-    fontWeight: "600",
-    letterSpacing: 0.13,
-    color: ds.onControl,
+  bannerText: { ...f.t(13, 500), flex: 1, lineHeight: 17.5, color: t.ink },
+  bannerBtn: { height: 30, paddingHorizontal: 12, borderRadius: 15, backgroundColor: t.bad, justifyContent: "center" },
+  bannerBtnText: { ...f.t(12, 700), color: t.onAccent },
+  countRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+    paddingTop: 14,
+    paddingHorizontal: 4,
+    paddingBottom: 10,
   },
+  countText: { ...f.t(13), color: t.muted, flexShrink: 1 },
+  countNum: { ...f.t(13, 600), color: t.ink },
+  sortBtn: { flexDirection: "row", alignItems: "center", gap: 4 },
+  sortText: { ...f.t(12.5, 500), color: t.muted },
 }));

@@ -1,3 +1,9 @@
+/**
+ * Photo attachment for a log entry — the artboard's dashed "Add photo" slot
+ * (height 52, radius 26, accent camera) with a gallery button beside it; once
+ * a photo is attached, a thumbnail row with Replace / Remove and a
+ * full-screen preview. Upload: S3 via StorageService ("jouleops-attachments").
+ */
 import React, { useState } from "react";
 import {
   View,
@@ -8,15 +14,20 @@ import {
   ActivityIndicator,
   Alert,
 } from "react-native";
-import { Camera, Image as ImageIcon, X, Maximize2, RefreshCw, Trash2 } from "lucide-react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as ImagePicker from "expo-image-picker";
 import { StorageService } from "@/services/StorageService";
+import { Bx } from "@/components/jo/Bx";
+import { IconButton, f, useJoTheme } from "@/components/jo/ui";
+import { FieldLabel } from "./LogsKit";
 
 interface LogImagePickerProps {
   value?: string;
   onImageChange: (url: string | null) => void;
   uploadPath: string; // e.g., "temprh/site_code"
   label?: string;
+  /** Text inside the empty slot. */
+  cta?: string;
   compact?: boolean;
   disabled?: boolean;
 }
@@ -26,9 +37,12 @@ export const LogImagePicker: React.FC<LogImagePickerProps> = ({
   onImageChange,
   uploadPath,
   label,
+  cta = "Add photo",
   compact = false,
   disabled = false,
 }) => {
+  const t = useJoTheme();
+  const insets = useSafeAreaInsets();
   const [isUploading, setIsUploading] = useState(false);
   const [isPreviewVisible, setIsPreviewVisible] = useState(false);
 
@@ -99,170 +113,243 @@ export const LogImagePicker: React.FC<LogImagePickerProps> = ({
     ]);
   };
 
-  const renderEntry = () => {
-    if (value) {
-      return (
-        <View className="flex-row items-center space-x-2 gap-2">
-          <TouchableOpacity
-            onPress={() => setIsPreviewVisible(true)}
-            className="w-16 h-16 rounded-xl overflow-hidden border border-slate-200 dark:border-slate-800"
-          >
-            <Image source={{ uri: value }} className="w-full h-full" />
-            <View className="absolute bottom-1 right-1 bg-black/50 rounded-full p-1">
-              <Maximize2 size={10} color="white" />
-            </View>
-          </TouchableOpacity>
-          <View className="flex-1 space-y-2 gap-2">
-            <TouchableOpacity
-              onPress={() => handlePickImage(true)}
-              className="flex-row items-center py-2 px-3 bg-slate-100 dark:bg-slate-800 rounded-lg"
-              disabled={isUploading || disabled}
-            >
-              <RefreshCw size={14} color="#64748b" />
-              <Text className="ml-2 text-[10px] font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wider">
-                Reupload
-              </Text>
-            </TouchableOpacity>
-            {!disabled && (
-              <TouchableOpacity
-                onPress={removeImage}
-                className="flex-row items-center"
-              >
-                <Text className="text-[10px] font-bold text-red-500 uppercase tracking-widest px-1">
-                  Remove
-                </Text>
-              </TouchableOpacity>
-            )}
-          </View>
-        </View>
-      );
-    }
+  const busy = isUploading || disabled;
 
-    return (
-      <View className="flex-row space-x-3 gap-3">
-        <TouchableOpacity
-          onPress={() => handlePickImage(true)}
-          disabled={isUploading || disabled}
-          className="flex-1 flex-row items-center justify-center bg-slate-50 dark:bg-slate-900 border border-dashed border-slate-300 dark:border-slate-700 py-3 rounded-xl"
+  const roundTile = (size: number) => ({
+    width: size,
+    height: size,
+    borderRadius: size / 2,
+    alignItems: "center" as const,
+    justifyContent: "center" as const,
+    backgroundColor: t.raised,
+    borderWidth: 1,
+    borderColor: t.lineMid,
+  });
+
+  const renderPreviewModal = () => (
+    <Modal
+      visible={isPreviewVisible}
+      transparent={false}
+      animationType="fade"
+      onRequestClose={() => setIsPreviewVisible(false)}
+    >
+      <View style={{ flex: 1, backgroundColor: t.page, justifyContent: "center" }}>
+        <Image source={{ uri: value }} style={{ width: "100%", height: "100%" }} resizeMode="contain" />
+        <View style={{ position: "absolute", top: insets.top + 10, right: 16 }}>
+          <IconButton icon="bx-x" label="Close preview" onPress={() => setIsPreviewVisible(false)} />
+        </View>
+        <View
+          style={{
+            position: "absolute",
+            left: 16,
+            right: 16,
+            bottom: insets.bottom + 20,
+            flexDirection: "row",
+            justifyContent: "center",
+            gap: 10,
+          }}
         >
-          {isUploading ? (
-            <ActivityIndicator size="small" color="#94a3b8" />
-          ) : (
-            <>
-              <Camera size={18} color="#94a3b8" />
-              <Text className="ml-2 text-[11px] font-bold text-slate-500 uppercase tracking-wider">
-                Capture
-              </Text>
-            </>
+          <TouchableOpacity
+            onPress={() => {
+              setIsPreviewVisible(false);
+              handlePickImage(true);
+            }}
+            activeOpacity={0.85}
+            accessibilityRole="button"
+            style={{
+              height: 48,
+              paddingHorizontal: 20,
+              borderRadius: 24,
+              flexDirection: "row",
+              alignItems: "center",
+              gap: 8,
+              backgroundColor: t.input,
+              borderWidth: 1,
+              borderColor: t.lineMid,
+            }}
+          >
+            <Bx name="bx-revision" size={18} color={t.ink} />
+            <Text style={[f.t(14, 600), { color: t.ink }]}>Reupload</Text>
+          </TouchableOpacity>
+          {!disabled && (
+            <TouchableOpacity
+              onPress={() => {
+                setIsPreviewVisible(false);
+                removeImage();
+              }}
+              activeOpacity={0.85}
+              accessibilityRole="button"
+              style={{
+                height: 48,
+                paddingHorizontal: 20,
+                borderRadius: 24,
+                flexDirection: "row",
+                alignItems: "center",
+                gap: 8,
+                backgroundColor: t.badWash,
+                borderWidth: 1,
+                borderColor: t.badBorder,
+              }}
+            >
+              <Bx name="bx-trash" size={18} color={t.bad} />
+              <Text style={[f.t(14, 600), { color: t.bad }]}>Delete</Text>
+            </TouchableOpacity>
           )}
-        </TouchableOpacity>
-        <TouchableOpacity
-          onPress={() => handlePickImage(false)}
-          disabled={isUploading || disabled}
-          className="w-12 h-12 items-center justify-center bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl"
-        >
-          <ImageIcon size={18} color="#94a3b8" />
-        </TouchableOpacity>
+        </View>
       </View>
-    );
-  };
+    </Modal>
+  );
 
   if (compact) {
     return (
-      <View className="flex-row items-center gap-2">
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
         <TouchableOpacity
           onPress={value ? () => setIsPreviewVisible(true) : () => handlePickImage(true)}
-          disabled={isUploading || disabled}
-          className={`w-12 h-12 rounded-xl items-center justify-center border ${value ? "bg-slate-100 border-slate-200" : "bg-slate-50 border-dashed border-slate-300 dark:bg-slate-900 dark:border-slate-700"}`}
+          disabled={busy}
+          activeOpacity={0.8}
+          accessibilityRole="button"
+          accessibilityLabel={value ? "Preview photo" : "Take photo"}
+          style={[roundTile(44), !value && { borderStyle: "dashed", borderColor: t.lineStrong }]}
         >
           {isUploading ? (
-            <ActivityIndicator size="small" color="#0d9488" />
+            <ActivityIndicator size="small" color={t.accentInk} />
           ) : value ? (
-            <Image source={{ uri: value }} className="w-10 h-10 rounded-lg" />
+            <Image source={{ uri: value }} style={{ width: 36, height: 36, borderRadius: 18 }} />
           ) : (
-            <Camera size={20} color="#94a3b8" />
+            <Bx name="bx-camera" size={19} color={t.accentInk} />
           )}
         </TouchableOpacity>
-
         {!disabled && (
           <TouchableOpacity
             onPress={() => handlePickImage(false)}
             disabled={isUploading}
-            className="w-12 h-12 rounded-xl items-center justify-center border bg-slate-50 dark:bg-slate-900 border-slate-200 dark:border-slate-700"
+            activeOpacity={0.8}
+            accessibilityRole="button"
+            accessibilityLabel="Choose from gallery"
+            style={roundTile(44)}
           >
-            {isUploading ? (
-              <ActivityIndicator size="small" color="#94a3b8" />
-            ) : (
-              <ImageIcon size={18} color="#94a3b8" />
-            )}
+            <Bx name="bx-images" size={18} color={t.ink2} />
           </TouchableOpacity>
         )}
-
-        {/* Simplified Preview Modal for compact mode if needed, but we'll use the same full screen one */}
         {renderPreviewModal()}
       </View>
     );
   }
 
-  function renderPreviewModal() {
-    return (
-      <Modal
-        visible={isPreviewVisible}
-        transparent={true}
-        animationType="fade"
-        onRequestClose={() => setIsPreviewVisible(false)}
-      >
-        <View className="flex-1 bg-black justify-center items-center">
+  return (
+    <View style={{ gap: 10 }}>
+      {label ? <FieldLabel label={label} /> : null}
+      {value ? (
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
           <TouchableOpacity
-            onPress={() => setIsPreviewVisible(false)}
-            className="absolute top-12 right-6 z-10 w-10 h-10 rounded-full bg-black/50 items-center justify-center border border-white/20"
+            onPress={() => setIsPreviewVisible(true)}
+            activeOpacity={0.85}
+            accessibilityRole="imagebutton"
+            accessibilityLabel="Preview photo"
+            style={{ width: 64, height: 64, borderRadius: 18, overflow: "hidden", backgroundColor: t.raised }}
           >
-            <X size={24} color="white" />
-          </TouchableOpacity>
-          
-          <Image
-            source={{ uri: value }}
-            className="w-full h-full"
-            resizeMode="contain"
-          />
-
-          <View className="absolute bottom-12 w-full px-6 flex-row justify-center space-x-4 gap-4">
-            <TouchableOpacity
-              onPress={() => {
-                setIsPreviewVisible(false);
-                handlePickImage(true);
+            <Image source={{ uri: value }} style={{ width: "100%", height: "100%" }} />
+            <View
+              style={{
+                position: "absolute",
+                right: 4,
+                bottom: 4,
+                width: 20,
+                height: 20,
+                borderRadius: 10,
+                backgroundColor: t.scrim,
+                alignItems: "center",
+                justifyContent: "center",
               }}
-              className="px-6 py-3 bg-white/20 rounded-full border border-white/30 flex-row items-center"
             >
-              <RefreshCw size={18} color="white" />
-              <Text className="text-white font-bold ml-2">Reupload</Text>
-            </TouchableOpacity>
-            {!disabled && (
+              <Bx name="bx-fullscreen" size={11} color={t.selBg} />
+            </View>
+          </TouchableOpacity>
+          <View style={{ flex: 1, minWidth: 0, gap: 8 }}>
+            <Text style={[f.t(13.5, 600), { color: t.ink }]}>Photo attached</Text>
+            <View style={{ flexDirection: "row", gap: 8 }}>
               <TouchableOpacity
-                onPress={() => {
-                  setIsPreviewVisible(false);
-                  removeImage();
+                onPress={() => handlePickImage(true)}
+                disabled={busy}
+                activeOpacity={0.8}
+                accessibilityRole="button"
+                style={{
+                  height: 32,
+                  paddingHorizontal: 12,
+                  borderRadius: 16,
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: 6,
+                  backgroundColor: t.raised,
+                  borderWidth: 1,
+                  borderColor: t.lineMid,
                 }}
-                className="px-6 py-3 bg-red-500/80 rounded-full flex-row items-center"
               >
-                <Trash2 size={18} color="white" />
-                <Text className="text-white font-bold ml-2">Delete</Text>
+                {isUploading ? (
+                  <ActivityIndicator size="small" color={t.muted} />
+                ) : (
+                  <Bx name="bx-revision" size={14} color={t.ink2} />
+                )}
+                <Text style={[f.t(12.5, 600), { color: t.ink2 }]}>Reupload</Text>
               </TouchableOpacity>
-            )}
+              {!disabled && (
+                <TouchableOpacity
+                  onPress={removeImage}
+                  activeOpacity={0.8}
+                  accessibilityRole="button"
+                  style={{ height: 32, paddingHorizontal: 10, justifyContent: "center" }}
+                >
+                  <Text style={[f.t(12.5, 600), { color: t.bad }]}>Remove</Text>
+                </TouchableOpacity>
+              )}
+            </View>
           </View>
         </View>
-      </Modal>
-    );
-  }
-
-  return (
-    <View className="space-y-2 gap-2">
-      {label && (
-        <Text className="text-[10px] font-black uppercase tracking-widest text-slate-400">
-          {label}
-        </Text>
+      ) : (
+        <View style={{ flexDirection: "row", gap: 8 }}>
+          <TouchableOpacity
+            onPress={() => handlePickImage(true)}
+            disabled={busy}
+            activeOpacity={0.8}
+            accessibilityRole="button"
+            accessibilityLabel={cta}
+            style={{
+              flex: 1,
+              height: 52,
+              borderRadius: 26,
+              borderWidth: 1,
+              borderStyle: "dashed",
+              borderColor: t.lineStrong,
+              flexDirection: "row",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 8,
+              opacity: disabled ? 0.6 : 1,
+            }}
+          >
+            {isUploading ? (
+              <ActivityIndicator size="small" color={t.accentInk} />
+            ) : (
+              <>
+                <Bx name="bx-camera" size={19} color={t.accentInk} />
+                <Text style={[f.t(13.5, 600), { color: t.ink }]} numberOfLines={1}>
+                  {cta}
+                </Text>
+              </>
+            )}
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => handlePickImage(false)}
+            disabled={busy}
+            activeOpacity={0.8}
+            accessibilityRole="button"
+            accessibilityLabel="Choose from gallery"
+            style={[roundTile(52), { opacity: disabled ? 0.6 : 1 }]}
+          >
+            <Bx name="bx-images" size={19} color={t.ink2} />
+          </TouchableOpacity>
+        </View>
       )}
-      {renderEntry()}
       {renderPreviewModal()}
     </View>
   );

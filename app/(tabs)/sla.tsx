@@ -10,9 +10,10 @@
  * Non-admins can't see months before SLA_OPEN_FROM_MONTH (backend 403s them),
  * so the month picker and trend stop there.
  */
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BackHandler, RefreshControl, ScrollView, Text, TouchableOpacity, View } from "react-native";
 import { router, type Href } from "expo-router";
+import { LinearGradient } from "expo-linear-gradient";
 import { format } from "date-fns";
 import { eq } from "drizzle-orm";
 import {
@@ -31,8 +32,9 @@ import {
   ShieldOff,
   WifiOff,
   type LucideIcon,
-} from "lucide-react-native";
+} from "@/components/jo/bxIcons";
 import { EmptyState, JoPage, JoSheet, Shimmer, Toast, f, makeJoStyles, useJoTheme } from "@/components/jo/ui";
+import { useNavInsets } from "@/components/jo/navInsets";
 import { useAuth } from "@/contexts/AuthContext";
 import { useSelectedSiteCode } from "@/services/SiteSelection";
 import AttendanceService, { getISTDateString } from "@/services/AttendanceService";
@@ -89,6 +91,7 @@ const MONTH_OPTIONS = 12;
 export default function SlaScreen() {
   const t = useJoTheme();
   const s = useStyles();
+  const { clearance } = useNavInsets();
   const { user } = useAuth();
   const userId = user?.user_id || user?.id || "";
   const isAdmin = canSeeAllSlaHistory(user);
@@ -149,6 +152,11 @@ export default function SlaScreen() {
 
   // ── View state ────────────────────────────────────────────────────────
   const [pickedTab, setTab] = useState<SlaTab>("overall");
+  // Chip row: remember each chip's x so the selected one scrolls into view
+  // (only ~2½ chips fit, and KPI cards / dashboard rows switch tabs too).
+  const tabsRef = useRef<ScrollView>(null);
+  const bodyRef = useRef<ScrollView>(null);
+  const tabX = useRef<Partial<Record<SlaTab, number>>>({});
   const [pickedView, setView] = useState<View_>({ kind: "main" });
   const [sheet, setSheet] = useState<SheetKind>(null);
   const [toast, setToast] = useState("");
@@ -188,6 +196,12 @@ export default function SlaScreen() {
     !isCategoryApplicable(report.categories.find((x) => x.category === pickedTab))
       ? "overall"
       : pickedTab;
+  useEffect(() => {
+    const x = tabX.current[tab];
+    if (x != null) tabsRef.current?.scrollTo({ x: Math.max(0, x - 16), animated: true });
+    // A new tab is a new page — start it at the top, not at the old offset.
+    bodyRef.current?.scrollTo({ y: 0, animated: false });
+  }, [tab]);
 
   const delivs = useMemo(() => (report ? numberedDeliverables(report) : []), [report]);
   // A drill target the (new) site's template doesn't carry has nothing to show.
@@ -504,6 +518,7 @@ export default function SlaScreen() {
         ) : null}
 
         <ScrollView
+          ref={tabsRef}
           horizontal
           showsHorizontalScrollIndicator={false}
           style={s.tabsScroll}
@@ -520,6 +535,12 @@ export default function SlaScreen() {
                 accessibilityRole="tab"
                 accessibilityState={{ selected: on }}
                 accessibilityLabel={tb.score ? `${tb.label}, score ${tb.score}` : tb.label}
+                onLayout={(e) => {
+                  const x = e.nativeEvent.layout.x;
+                  tabX.current[tb.key] = x;
+                  // First paint: the effect below ran before chips had a position.
+                  if (on) tabsRef.current?.scrollTo({ x: Math.max(0, x - 16), animated: false });
+                }}
                 style={[s.tab, on ? s.tabOn : null]}
               >
                 <Icon size={15} color={on ? t.selFg : tb.color} />
@@ -533,10 +554,17 @@ export default function SlaScreen() {
         </ScrollView>
       </View>
 
-      {/* ── Body ── */}
+      {/* ── Body ── (content slides under a short fade instead of a hard edge) */}
+      <View style={{ flex: 1 }}>
+      <LinearGradient
+        pointerEvents="none"
+        colors={[t.page, `${t.page}00`]}
+        style={s.fade}
+      />
       <ScrollView
+        ref={bodyRef}
         style={{ flex: 1 }}
-        contentContainerStyle={s.body}
+        contentContainerStyle={[s.body, { paddingBottom: clearance }]}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={t.muted} colors={[t.accent]} />}
       >
         {!userId ? null : !sitesLoaded && sites.length === 0 ? (
@@ -586,6 +614,7 @@ export default function SlaScreen() {
           <EmptyState icon={LayoutDashboard} title="No data for this KPI" />
         )}
       </ScrollView>
+      </View>
 
       {/* ── Sheets ── */}
       <JoSheet visible={sheet === "site"} onClose={() => setSheet(null)} title="Site" subtitle="SLA is scored per site">
@@ -730,6 +759,7 @@ const useStyles = makeJoStyles((t) => ({
   },
   tabOn: { backgroundColor: t.selBg, borderColor: t.selBg },
   body: { paddingTop: 12, paddingHorizontal: 16, paddingBottom: 24 },
+  fade: { position: "absolute", top: 0, left: 0, right: 0, height: 14, zIndex: 2 },
   sheetList: { marginTop: 14, maxHeight: 420 },
 }));
 

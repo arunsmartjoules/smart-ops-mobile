@@ -8,6 +8,7 @@
  *    web Reports page and the scheduled emails produce). The card shows their
  *    headline numbers; "Download PDF" fetches the backend-rendered PDF.
  */
+import { useNavInsets } from "@/components/jo/navInsets";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { RefreshControl, ScrollView, Text, View } from "react-native";
 import { useFocusEffect } from "expo-router";
@@ -25,7 +26,7 @@ import {
   WifiOff,
   Wrench,
   type LucideIcon,
-} from "lucide-react-native";
+} from "@/components/jo/bxIcons";
 import {
   EmptyState,
   JoPage,
@@ -111,6 +112,7 @@ function shortSiteName(name: string): string {
 
 export default function ReportsScreen() {
   const t = useJoTheme();
+  const { clearance, fabBottom } = useNavInsets();
   const { user } = useAuth();
   const userId = user?.user_id || user?.id || "";
   const net = useNetInfo();
@@ -475,7 +477,7 @@ export default function ReportsScreen() {
 
       <ScrollView
         style={{ flex: 1 }}
-        contentContainerStyle={{ paddingTop: 12, paddingHorizontal: 16, paddingBottom: isDoc ? 90 : 24 }}
+        contentContainerStyle={{ paddingTop: 12, paddingHorizontal: 16, paddingBottom: isDoc ? clearance + 62 : clearance }}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={t.muted} colors={[t.accent]} />
         }
@@ -484,15 +486,10 @@ export default function ReportsScreen() {
         {isDoc ? renderDoc() : renderModules()}
       </ScrollView>
 
-      {isDoc ? <DownloadBar busy={pdfBusy} onPress={() => void downloadPdf()} /> : null}
+      {isDoc ? <DownloadBar busy={pdfBusy} bottom={fabBottom} onPress={() => void downloadPdf()} /> : null}
 
       {/* Lifted above the Download PDF bar on the document tabs. */}
-      <View
-        pointerEvents="none"
-        style={{ position: "absolute", left: 0, right: 0, bottom: isDoc ? 66 : 0, height: 1, zIndex: 20 }}
-      >
-        <Toast message={toast} onHide={() => setToast("")} />
-      </View>
+      <Toast message={toast} onHide={() => setToast("")} bottom={isDoc ? fabBottom + 62 : fabBottom} />
 
       <JoSheet
         visible={sheet === "site"}

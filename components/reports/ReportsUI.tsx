@@ -11,7 +11,7 @@ import {
   Download,
   FileText,
   type LucideIcon,
-} from "lucide-react-native";
+} from "@/components/jo/bxIcons";
 import { Card, Shimmer, StatusPill, capsStyle, f, makeJoStyles, useJoTheme, type JoTheme } from "@/components/jo/ui";
 import type { JoTone } from "@/constants/jo";
 import type { DocSite, DocStat, DocTone } from "@/services/ReportsService";
@@ -468,11 +468,20 @@ export function DocCardSkeleton() {
 }
 
 /** Bottom action bar: the accent "Download PDF" button. */
-export function DownloadBar({ busy, onPress }: { busy: boolean; onPress: () => void }) {
+export function DownloadBar({
+  busy,
+  onPress,
+  bottom,
+}: {
+  busy: boolean;
+  onPress: () => void;
+  /** Artboard bottom: 96 — just above the floating tab bar. */
+  bottom: number;
+}) {
   const t = useJoTheme();
   const st = useStyles();
   return (
-    <View style={st.bar} pointerEvents="box-none">
+    <View style={[st.bar, { bottom }]} pointerEvents="box-none">
       <TouchableOpacity
         onPress={onPress}
         disabled={busy}

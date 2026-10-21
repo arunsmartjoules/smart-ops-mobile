@@ -27,16 +27,18 @@ import {
   View,
 } from "react-native";
 import * as FileSystem from "expo-file-system/legacy";
-import { Printer, Share2 } from "lucide-react-native";
-import { makeThemedStyles, useDs } from "@/hooks/useDs";
 import {
-  AttachButton,
-  Badge,
-  DetailCard,
-  DetailHeader,
-  soRadius,
-} from "@/components/tickets/TicketDetailUI";
+  Card,
+  PrimaryButton,
+  SecondaryButton,
+  StatusPill,
+  f,
+  makeJoStyles,
+  useJoTheme,
+} from "@/components/jo/ui";
+import { JO_LIGHT } from "@/constants/jo";
 import type { MappedAsset } from "@/services/AssetMappingService";
+import { DetailTop } from "./ui";
 import { getMappingStatus, qrImageUrl, qrValue, typeMeta } from "./lib";
 
 /** Big enough to print sharply; the web thumbnails use the same image scaled down. */
@@ -73,10 +75,10 @@ export default function AssetQrView({
   asset: MappedAsset;
   onBack: () => void;
 }) {
-  const styles = useStyles();
-  const ds = useDs();
+  const s = useStyles();
+  const t = useJoTheme();
   const value = qrValue(asset);
-  const status = getMappingStatus(asset, ds);
+  const status = getMappingStatus(asset);
   // Keyed by the value it was loaded for, so a different asset never shows a
   // stale QR while its own is still downloading.
   const [result, setResult] = useState<{ value: string; qr: LoadedQr | null; failed: boolean }>({
@@ -127,37 +129,37 @@ export default function AssetQrView({
   };
 
   return (
-    <View style={styles.screen}>
-      <DetailHeader topInset={topInset} title="QR label" subtitle={asset.asset_id} onBack={onBack} />
-      <ScrollView contentContainerStyle={styles.body} showsVerticalScrollIndicator={false}>
-        <DetailCard style={styles.card}>
-          <Text style={styles.title}>{asset.asset_name}</Text>
-          <View style={styles.badgeRow}>
-            <Badge label={status.label} bg={status.bg} fg={status.fg} />
-            <Badge label={typeMeta(asset).label} bg={ds.carbon[1000]} fg={ds.carbon[400]} />
-          </View>
+    <View style={s.screen}>
+      <DetailTop topInset={topInset} title="QR label" subtitle={asset.asset_id} onBack={onBack} />
+      <ScrollView contentContainerStyle={s.body} showsVerticalScrollIndicator={false}>
+        <View style={s.pills}>
+          <StatusPill label={status.label} tone={status.tone} height={24} />
+          <StatusPill label={typeMeta(asset).label} tone="mute" height={24} />
+        </View>
+        <Text style={s.title} selectable>
+          {asset.asset_name}
+        </Text>
 
-          <View style={styles.qrTile}>
+        <Card style={s.card}>
+          {/* A QR must sit on white to scan, in either theme. */}
+          <View style={s.qrTile}>
             {failed ? (
-              <Text style={styles.qrError}>QR image unavailable — check your connection</Text>
+              <Text style={s.qrError}>QR image unavailable — check your connection</Text>
             ) : qr ? (
-              <Image
-                source={{ uri: qr.fileUri }}
-                style={styles.qr}
-                accessibilityLabel={`QR code for ${value}`}
-              />
+              <Image source={{ uri: qr.fileUri }} style={s.qr} accessibilityLabel={`QR code for ${value}`} />
             ) : (
-              <ActivityIndicator color={ds.carbon[500]} />
+              <ActivityIndicator color={JO_LIGHT.muted} />
             )}
           </View>
-          <Text style={styles.code}>{value}</Text>
-
-          <View style={styles.actions}>
-            <AttachButton icon={Share2} label="Share" onPress={share} active={!!qr} />
-            <AttachButton icon={Printer} label="Print label" onPress={print} active={!!qr} />
+          <Text style={s.code} selectable>
+            {value}
+          </Text>
+          <View style={s.actions}>
+            <SecondaryButton label="Share" icon="bx-share-alt" onPress={share} style={{ flex: 1, opacity: qr ? 1 : 0.5 }} />
+            <PrimaryButton label="Print label" icon="bx-printer" onPress={print} disabled={!qr} height={52} style={{ flex: 1 }} />
           </View>
-        </DetailCard>
-        <Text style={styles.helper}>
+        </Card>
+        <Text style={[f.t(12), { color: t.muted, textAlign: "center", lineHeight: 18, marginTop: 14, paddingHorizontal: 12 }]}>
           Stick this label on the asset housing so it can be scanned in the field.
         </Text>
       </ScrollView>
@@ -165,33 +167,22 @@ export default function AssetQrView({
   );
 }
 
-const useStyles = makeThemedStyles((ds) => ({
-  screen: { flex: 1, backgroundColor: ds.pageBg },
-  body: { paddingHorizontal: 20, paddingTop: 16, paddingBottom: 24 },
-  card: { padding: 16 },
-  title: { fontSize: 16, lineHeight: 22, fontWeight: "600", color: ds.carbon[100], marginBottom: 10 },
-  badgeRow: { flexDirection: "row", gap: 7, marginBottom: 16 },
+const useStyles = makeJoStyles((t) => ({
+  screen: { flex: 1, backgroundColor: t.page },
+  body: { paddingHorizontal: 16, paddingTop: 4, paddingBottom: 40 },
+  pills: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
+  title: { ...f.d(24, -0.025, 1.12), color: t.ink, marginTop: 10 },
+  card: { padding: 16, marginTop: 14 },
   qrTile: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: soRadius.card,
-    borderWidth: 1,
-    borderColor: ds.carbon[1000],
+    backgroundColor: JO_LIGHT.card,
+    borderRadius: 20,
     padding: 20,
     alignItems: "center",
     justifyContent: "center",
     minHeight: 240,
   },
   qr: { width: 200, height: 200 },
-  qrError: { fontSize: 12, color: "#5C5857", textAlign: "center" },
-  code: {
-    fontSize: 13,
-    fontWeight: "600",
-    letterSpacing: 1,
-    color: ds.carbon[100],
-    textAlign: "center",
-    marginTop: 12,
-    marginBottom: 14,
-  },
-  actions: { flexDirection: "row", gap: 10 },
-  helper: { fontSize: 11, lineHeight: 17, color: ds.carbon[400], textAlign: "center", paddingHorizontal: 12 },
+  qrError: { ...f.t(12.5), color: JO_LIGHT.muted, textAlign: "center" },
+  code: { ...f.m(14, 600), color: t.ink, textAlign: "center", marginTop: 14, marginBottom: 14 },
+  actions: { flexDirection: "row", gap: 8 },
 }));

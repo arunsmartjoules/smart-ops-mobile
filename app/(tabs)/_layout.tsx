@@ -39,6 +39,7 @@ function TabsContent({ hideTabBar = false }: { hideTabBar?: boolean }) {
         name="customer-communication"
         options={{ title: "Client communication" }}
       />
+      <Tabs.Screen name="attendance" options={{ title: "Attendance" }} />
       <Tabs.Screen name="profile" options={{ title: "Profile" }} />
     </Tabs>
   );

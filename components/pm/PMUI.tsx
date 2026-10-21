@@ -1,63 +1,65 @@
 /**
- * PM-specific colour maps and date copy — Claude Design "JouleOps PM.dc.html".
- * The surrounding chrome is shared; see components/shared/ListChrome.
+ * PM status vocabulary + date copy for the "JouleOps App" artboard
+ * (app.dc.html `r_pm`, constants PM_ST: Overdue BAD · Due WARN ·
+ * In progress INFO · Completed OK · Skipped MUTE).
+ *
+ * The backend only ever stores Pending / In-progress / Completed (assorted
+ * casing over the years). "Overdue" is not a stored status — it is derived
+ * here the same way the backend's getOverduePMInstances does: a not-started
+ * PM whose due date is before today (IST calendar day).
  */
-import type { DsTheme } from "@/hooks/useDs";
+import type { JoTone } from "@/constants/jo";
 import { formatIST, istDayStartMs } from "@/utils/istDate";
 
-export { soRadius, soShadow } from "@/components/home/SiteOverview";
+export type PmStatusKey =
+  | "Overdue"
+  | "Due"
+  | "In progress"
+  | "Completed"
+  | "Skipped";
 
-/** The mock's amber "Due" pair has no ds token — it's specific to PM. */
-const DUE_BG_LIGHT = "#FEF4E9";
-const DUE_FG_LIGHT = "#B5710A";
-/** Dark counterparts — the artboard's amber `#E5A93A` on a deep wash. */
-const DUE_BG_DARK = "#3A2E12";
-const DUE_FG_DARK = "#E5A93A";
+export const PM_TONE: Record<PmStatusKey, JoTone> = {
+  Overdue: "bad",
+  Due: "warn",
+  "In progress": "info",
+  Completed: "ok",
+  Skipped: "mute",
+};
 
-export const pmStatusMap = (
-  ds: DsTheme,
-): Record<string, { label: string; bg: string; fg: string }> => ({
-  Overdue: { label: "Overdue", bg: ds.flame[1000], fg: ds.flame[100] },
-  // Not-started PMs (stored `Pending`) read as "Open" everywhere.
-  Due: {
-    label: "Open",
-    bg: ds.isDark ? DUE_BG_DARK : DUE_BG_LIGHT,
-    fg: ds.isDark ? DUE_FG_DARK : DUE_FG_LIGHT,
-  },
-  "In progress": { label: "In progress", bg: ds.sky[1000], fg: ds.sky[100] },
-  Completed: {
-    label: "Completed",
-    bg: ds.sky[900],
-    fg: ds.sky[100],
-  },
-  Skipped: { label: "Skipped", bg: ds.carbon[1000], fg: ds.carbon[500] },
-});
+const norm = (status: string | null | undefined) =>
+  (status || "").toLowerCase().trim();
+
+export const isPmInProgress = (status: string | null | undefined) => {
+  const s = norm(status);
+  return s === "in-progress" || s === "in progress" || s === "inprogress";
+};
+
+export const isPmCompleted = (status: string | null | undefined) =>
+  norm(status) === "completed";
+
+/** Pending / Open / blank (and a legacy stored "Overdue") — not started yet. */
+export const isPmNotStarted = (status: string | null | undefined) => {
+  const s = norm(status);
+  return s === "pending" || s === "open" || s === "overdue" || s === "";
+};
 
 /**
- * The backend's PM vocabulary (Pending / Overdue / In-progress / Completed,
- * with assorted casing) mapped onto the design's five states.
+ * The artboard's five states for one PM. `todayStartMs` is the IST start of
+ * today — pass it in so a list classifies every row against the same day.
  */
-export const getPmStatus = (status: string | null | undefined, ds: DsTheme) => {
-  const PM_STATUS = pmStatusMap(ds);
-  const s = (status || "").toLowerCase().trim();
-  if (s === "completed") return PM_STATUS.Completed;
-  if (s === "in-progress" || s === "in progress" || s === "inprogress") {
-    return PM_STATUS["In progress"];
-  }
-  if (s === "overdue") return PM_STATUS.Overdue;
-  if (s === "skipped" || s === "cancelled") return PM_STATUS.Skipped;
-  return PM_STATUS.Due;
-};
-
-/** Frequency rides in the second badge, in neutral carbon. */
-export const getPmFrequency = (
-  frequency: string | null | undefined,
-  ds: DsTheme,
-) => {
-  const label = (frequency || "").trim();
-  if (!label) return null;
-  return { label, bg: ds.carbon[1000], fg: ds.carbon[400] };
-};
+export function pmStatusKey(
+  status: string | null | undefined,
+  dueMs: number | null | undefined,
+  todayStartMs: number = istDayStartMs(new Date()),
+): PmStatusKey {
+  const s = norm(status);
+  if (s === "completed") return "Completed";
+  if (isPmInProgress(s)) return "In progress";
+  if (s === "skipped" || s === "cancelled") return "Skipped";
+  if (s === "overdue") return "Overdue";
+  if (dueMs != null && istDayStartMs(dueMs) < todayStartMs) return "Overdue";
+  return "Due";
+}
 
 /** "3/12" → 25. Returns null when the string isn't a fraction. */
 export const parsePmProgress = (progress?: string | null) => {
@@ -69,9 +71,11 @@ export const parsePmProgress = (progress?: string | null) => {
   return Math.max(0, Math.min(100, Math.round((done / total) * 100)));
 };
 
+const DM: Intl.DateTimeFormatOptions = { day: "numeric", month: "short" };
+
 /**
- * "Due today" / "Due tomorrow" / "Due 17 Aug · 2d late" / "Done 17 Aug".
- * `late` drives the flame treatment on the date line.
+ * "Due today" / "Due tomorrow" / "Due 17 Aug" / "Done 17 Aug".
+ * `late` drives the BAD colour on the date line.
  */
 export function formatPmDue(
   dueMs?: number | null,
@@ -89,10 +93,8 @@ export function formatPmDue(
 
   if (days === 0) return { label: "Due today", late: false };
   if (days === 1) return { label: "Due tomorrow", late: false };
-  // Overdue shows the due date only — the day count was noise on the card.
-  // `late` still drives the flame treatment, so the row reads as overdue.
+  // Overdue shows the due date only — the day count was dropped earlier as
+  // noise on the card. `late` still paints the line as overdue.
   if (days < 0) return { label: `Due ${formatIST(dueMs, DM)}`, late: true };
   return { label: `Due ${formatIST(dueMs, DM)}`, late: false };
 }
-
-const DM: Intl.DateTimeFormatOptions = { day: "numeric", month: "short" };

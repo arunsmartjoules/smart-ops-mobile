@@ -1,10 +1,10 @@
 /**
  * Site Logs › History filter — date range (presets or custom), status and,
  * for Temp & RH, shift. Edits a draft; nothing applies until "Apply".
+ * Drawn as a JoSheet with ink-select chips (artboard sheet language).
  */
 import React, { useState } from "react";
-import { Platform, Text, TouchableOpacity, View } from "react-native";
-import BottomSheet, { BottomSheetView } from "@expo/ui/community/bottom-sheet";
+import { Platform, ScrollView, Text, TouchableOpacity, View } from "react-native";
 import DateTimePicker, {
   DateTimePickerAndroid,
 } from "@react-native-community/datetimepicker";
@@ -16,9 +16,9 @@ import {
   startOfMonth,
   startOfWeek,
 } from "date-fns";
-import { Calendar, Check } from "lucide-react-native";
-import { makeThemedStyles, useDs } from "@/hooks/useDs";
-import { FilterChip, soRadius, type LogStatusFilter } from "./LogsUI";
+import { Bx } from "@/components/jo/Bx";
+import { JoSheet, PrimaryButton, SecondaryButton, capsStyle, f, useJoTheme } from "@/components/jo/ui";
+import { FilterChip, type LogStatusFilter } from "./LogsUI";
 
 export type RangePreset = "today" | "7d" | "week" | "30d" | "month" | "custom";
 
@@ -94,8 +94,7 @@ export function LogHistoryFilterSheet({
   onApply: (next: HistoryFilters) => void;
   onClose: () => void;
 }) {
-  const styles = useStyles();
-  const ds = useDs();
+  const t = useJoTheme();
   const [draft, setDraft] = useState<HistoryFilters>(value);
   const [iosPicker, setIosPicker] = useState<"from" | "to" | null>(null);
 
@@ -130,21 +129,17 @@ export function LogHistoryFilterSheet({
   };
 
   const isCustom = draft.range.preset === "custom";
+  const section = (label: string) => (
+    <Text style={[capsStyle(11.5), { color: t.muted, marginTop: 18, marginBottom: 9, paddingHorizontal: 2 }]}>
+      {label}
+    </Text>
+  );
 
   return (
-    <BottomSheet
-      enableDynamicSizing
-      enablePanDownToClose
-      onClose={onClose}
-      backgroundStyle={{ backgroundColor: ds.white }}
-    >
-      <BottomSheetView
-        style={{ paddingHorizontal: 22, paddingTop: 6, paddingBottom: 30 }}
-      >
-        <Text style={styles.heading}>Filter history</Text>
-
-        <Text style={styles.section}>Date</Text>
-        <View style={styles.wrap}>
+    <JoSheet visible onClose={onClose} title="Filter history" subtitle="Date window, status and shift">
+      <ScrollView style={{ flexGrow: 0 }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+        {section("Date")}
+        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
           {PRESETS.map((p) => (
             <FilterChip
               key={p.key}
@@ -170,27 +165,29 @@ export function LogHistoryFilterSheet({
 
         {isCustom ? (
           <>
-            <View style={styles.dateRow}>
+            <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
               {(["from", "to"] as const).map((edge) => (
                 <TouchableOpacity
                   key={edge}
                   onPress={() => openPicker(edge)}
                   activeOpacity={0.85}
-                  style={[
-                    styles.dateField,
-                    iosPicker === edge && { borderColor: ds.controlOn },
-                  ]}
                   accessibilityRole="button"
-                  accessibilityLabel={`${edge === "from" ? "From" : "To"} date`}
+                  accessibilityLabel={`${edge === "from" ? "From" : "To"} date, ${format(draft.range[edge], "d MMM yyyy")}`}
+                  style={{
+                    flex: 1,
+                    borderRadius: 18,
+                    backgroundColor: t.sheetField,
+                    borderWidth: 1.5,
+                    borderColor: iosPicker === edge ? t.accent : "transparent",
+                    paddingVertical: 9,
+                    paddingHorizontal: 14,
+                    gap: 3,
+                  }}
                 >
-                  <Text style={styles.dateLabel}>
-                    {edge === "from" ? "From" : "To"}
-                  </Text>
-                  <View style={styles.dateValueRow}>
-                    <Calendar size={14} color={ds.carbon[500]} strokeWidth={2} />
-                    <Text style={styles.dateValue}>
-                      {format(draft.range[edge], "d MMM yyyy")}
-                    </Text>
+                  <Text style={[f.t(11.5, 500), { color: t.muted }]}>{edge === "from" ? "From" : "To"}</Text>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                    <Bx name="bx-calendar" size={15} color={t.accentInk} />
+                    <Text style={[f.t(14, 600), { color: t.ink }]}>{format(draft.range[edge], "d MMM yyyy")}</Text>
                   </View>
                 </TouchableOpacity>
               ))}
@@ -200,6 +197,8 @@ export function LogHistoryFilterSheet({
                 value={draft.range[iosPicker]}
                 mode="date"
                 display="inline"
+                themeVariant={t.isDark ? "dark" : "light"}
+                accentColor={t.accent}
                 maximumDate={new Date()}
                 onChange={(_, date) => {
                   if (date) setCustom(iosPicker, date);
@@ -209,8 +208,8 @@ export function LogHistoryFilterSheet({
           </>
         ) : null}
 
-        <Text style={styles.section}>Status</Text>
-        <View style={styles.wrap}>
+        {section("Status")}
+        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
           {(
             [
               { key: "all", label: "All" },
@@ -229,13 +228,12 @@ export function LogHistoryFilterSheet({
 
         {hasShift ? (
           <>
-            <Text style={styles.section}>Shift</Text>
-            <View style={styles.wrap}>
+            {section("Shift")}
+            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
               {(["all", "A", "B", "C"] as const).map((sh) => (
                 <FilterChip
                   key={sh}
                   label={sh === "all" ? "All shifts" : `Shift ${sh}`}
-                  tone={sh === "all" ? "control" : "flame"}
                   on={draft.shift === sh}
                   onPress={() => setDraft((d) => ({ ...d, shift: sh }))}
                 />
@@ -243,97 +241,19 @@ export function LogHistoryFilterSheet({
             </View>
           </>
         ) : null}
+      </ScrollView>
 
-        <View style={styles.actions}>
-          <TouchableOpacity
-            onPress={() => {
-              setIosPicker(null);
-              setDraft(DEFAULT_HISTORY_FILTERS());
-            }}
-            activeOpacity={0.85}
-            style={styles.resetBtn}
-            accessibilityRole="button"
-          >
-            <Text style={styles.resetText}>Reset</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            onPress={() => onApply(draft)}
-            activeOpacity={0.85}
-            style={styles.applyBtn}
-            accessibilityRole="button"
-          >
-            <Check size={17} color={ds.onControl} strokeWidth={2.4} />
-            <Text style={styles.applyText}>Apply</Text>
-          </TouchableOpacity>
-        </View>
-      </BottomSheetView>
-    </BottomSheet>
+      <View style={{ flexDirection: "row", gap: 9, marginTop: 22 }}>
+        <SecondaryButton
+          label="Reset"
+          onPress={() => {
+            setIosPicker(null);
+            setDraft(DEFAULT_HISTORY_FILTERS());
+          }}
+          style={{ paddingHorizontal: 22 }}
+        />
+        <PrimaryButton label="Apply" icon="bx-check" height={52} onPress={() => onApply(draft)} style={{ flex: 1 }} />
+      </View>
+    </JoSheet>
   );
 }
-
-const useStyles = makeThemedStyles((ds) => ({
-  heading: {
-    fontSize: 18,
-    fontWeight: "700",
-    letterSpacing: 0.36,
-    color: ds.carbon[100],
-    marginBottom: 6,
-  },
-  section: {
-    fontSize: 9,
-    fontWeight: "600",
-    letterSpacing: 1.08,
-    textTransform: "uppercase",
-    color: ds.carbon[600],
-    marginTop: 14,
-    marginBottom: 8,
-  },
-  wrap: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
-  dateRow: { flexDirection: "row", gap: 8, marginTop: 10 },
-  dateField: {
-    flex: 1,
-    borderWidth: 1.5,
-    borderColor: ds.fieldBorder,
-    backgroundColor: ds.field,
-    borderRadius: soRadius.sm,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-  },
-  dateLabel: {
-    fontSize: 9,
-    fontWeight: "600",
-    letterSpacing: 1.08,
-    textTransform: "uppercase",
-    color: ds.carbon[600],
-    marginBottom: 3,
-  },
-  dateValueRow: { flexDirection: "row", alignItems: "center", gap: 6 },
-  dateValue: { fontSize: 14, fontWeight: "600", color: ds.carbon[100] },
-  actions: { flexDirection: "row", gap: 9, marginTop: 22 },
-  resetBtn: {
-    minHeight: 46,
-    justifyContent: "center",
-    paddingHorizontal: 18,
-    borderRadius: soRadius.sm,
-    borderWidth: 1,
-    borderColor: ds.carbon[800],
-    backgroundColor: ds.white,
-  },
-  resetText: { fontSize: 14, fontWeight: "500", color: ds.carbon[400] },
-  applyBtn: {
-    flex: 1,
-    minHeight: 46,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-    borderRadius: soRadius.sm,
-    backgroundColor: ds.controlOn,
-  },
-  applyText: {
-    fontSize: 14.5,
-    fontWeight: "600",
-    letterSpacing: 0.15,
-    color: ds.onControl,
-  },
-}));

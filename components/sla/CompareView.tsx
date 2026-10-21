@@ -4,8 +4,8 @@
  * Every number comes from each site's own /summary for the selected month.
  */
 import React, { useMemo, useState } from "react";
-import { Text, TouchableOpacity, View } from "react-native";
-import { ChevronDown, ChevronUp, GitCompare, Maximize2 } from "lucide-react-native";
+import { Text, TouchableOpacity, View, useWindowDimensions } from "react-native";
+import { ChevronDown, ChevronUp, GitCompare, Maximize2 } from "@/components/jo/bxIcons";
 import { Card, EmptyState, Shimmer, f, makeJoStyles, useJoTheme } from "@/components/jo/ui";
 import { toneBg, toneFg } from "@/constants/jo";
 import type { SlaReport } from "@/services/SlaService";
@@ -63,6 +63,7 @@ export function CompareView({
   onOpenDrill: (key: string) => void;
 }) {
   const t = useJoTheme();
+  const { width: winWidth } = useWindowDimensions();
   const s = useStyles();
   const [riskOpen, setRiskOpen] = useState(false);
   const mLabel = monthLabel(monthKey);
@@ -138,12 +139,20 @@ export function CompareView({
   // Best/worst per KPI column, judged only among sites that carry the KPI.
   const kpiExtremes = CATEGORY_ORDER.map((_, ki) => {
     const vals = ranked.map((r) => r.kpi[ki]).filter((v): v is number => v != null);
-    return vals.length ? { mx: Math.max(...vals), mn: Math.min(...vals) } : null;
+    return vals.length ? { mx: Math.max(...vals), mn: Math.min(...vals), n: vals.length } : null;
   });
+
+  // Site columns widen to fill the card when only a few sites are loaded,
+  // instead of leaving an empty band on the right.
+  const matrixAvail = winWidth - 32 - 2 - MATRIX_LEFT - MATRIX_COMMIT;
+  const siteColW = Math.max(MATRIX_SITE, perSite.length ? Math.floor(matrixAvail / perSite.length) : MATRIX_SITE);
 
   const matrixRows: FrozenRow[] = delivRows.map((d) => {
     const vals = perSite.map((p) => p.map.get(d.key) ?? null);
-    const present = vals.filter((v): v is number => v != null);
+    // Judge "lowest" on the value as shown (1 dp): 99.94 vs 99.86 both read
+    // 99.9%, and highlighting one of them as the laggard looks like a bug.
+    const shown = (v: number) => Math.round(v * 1000) / 10;
+    const present = vals.filter((v): v is number => v != null).map(shown);
     const mn = present.length ? Math.min(...present) : 0;
     const mx = present.length ? Math.max(...present) : 0;
     return {
@@ -166,15 +175,18 @@ export function CompareView({
           {vals.map((v, i) => {
             if (v == null) {
               return (
-                <View key={perSite[i]!.siteCode} style={s.matrixCell}>
+                <View key={perSite[i]!.siteCode} style={[s.matrixCell, { width: siteColW }]}>
                   <Text style={[f.t(12), { color: t.faint }]}>—</Text>
                 </View>
               );
             }
             const meets = v >= d.commitmentPct;
-            const worst = Math.abs(v - mn) < 0.0001 && mx - mn > 0.0001;
+            const worst = present.length > 1 && shown(v) === mn && mx > mn;
             return (
-              <View key={perSite[i]!.siteCode} style={[s.matrixCell, worst ? { backgroundColor: t.badTint } : null]}>
+              <View
+                key={perSite[i]!.siteCode}
+                style={[s.matrixCell, { width: siteColW }, worst ? { backgroundColor: t.badTint } : null]}
+              >
                 <Text style={[f.t(12, worst ? 700 : 600), { color: meets ? t.ok : t.bad }]}>{fmtPct(v)}%</Text>
               </View>
             );
@@ -246,7 +258,9 @@ export function CompareView({
         <Text style={[f.t(15, 600), { color: t.ink }]}>Site ranking</Text>
         <Text style={[f.t(11.5), { color: t.muted }]}>{mLabel}</Text>
       </View>
-      <Text style={[f.t(11.5), s.headSub]}>Green = best in KPI · Red = lowest · Tap a site to switch to it</Text>
+      <Text style={[f.t(11.5), s.headSub]}>
+        {ranked.length >= 3 ? "Green = best in KPI · Red = lowest · " : ""}Tap a site to switch to it
+      </Text>
       <View style={{ gap: 8 }}>
         {ranked.map((r, i) => {
           const cur = r.siteCode === currentSiteCode;
@@ -285,8 +299,11 @@ export function CompareView({
                 {CATEGORY_ORDER.map((cat, ki) => {
                   const v = r.kpi[ki] ?? null;
                   const ex = kpiExtremes[ki];
-                  const isBest = v != null && ex != null && Math.abs(v - ex.mx) < 0.005 && ranked.length > 1;
-                  const isWorst = v != null && ex != null && Math.abs(v - ex.mn) < 0.005 && ex.mx - ex.mn > 0.005;
+                  // Best/lowest only mean something across 3+ sites; with two,
+                  // every value is one or the other and the card turns all red.
+                  const judged = ex != null && ex.n >= 3;
+                  const isBest = judged && v != null && Math.abs(v - ex.mx) < 0.005 && ex.mx - ex.mn > 0.005;
+                  const isWorst = judged && v != null && Math.abs(v - ex.mn) < 0.005 && ex.mx - ex.mn > 0.005;
                   return (
                     <View key={cat} style={s.kpiCell}>
                       <Text style={[f.t(9.5), { color: t.muted }]} numberOfLines={1}>
@@ -352,7 +369,7 @@ export function CompareView({
               {perSite.map((p) => {
                 const cur = p.siteCode === currentSiteCode;
                 return (
-                  <View key={p.siteCode} style={s.matrixHead}>
+                  <View key={p.siteCode} style={[s.matrixHead, { width: siteColW }]}>
                     <Text style={[f.t(10.5, cur ? 700 : 500), { color: cur ? t.ink : t.muted }]} numberOfLines={1}>
                       {p.shortName}
                     </Text>

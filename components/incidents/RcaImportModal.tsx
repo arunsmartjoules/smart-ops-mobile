@@ -14,26 +14,12 @@ import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as DocumentPicker from "expo-document-picker";
 import * as Haptics from "expo-haptics";
-import {
-  CircleAlert,
-  CircleCheck,
-  CloudUpload,
-  CopyCheck,
-  FileText,
-  Image as ImageIcon,
-  Paperclip,
-  RefreshCw,
-  Sparkles,
-  WifiOff,
-  X,
-} from "lucide-react-native";
 import { v4 as uuidv4 } from "uuid";
 import PressableScale from "@/components/PressableScale";
-import FullscreenPicker from "@/components/FullscreenPicker";
-import RequiredMark from "@/components/RequiredMark";
 import type { SelectOption } from "@/components/SearchableSelect";
-import { DetailCard, DetailHeader, soRadius } from "@/components/tickets/TicketDetailUI";
-import { makeThemedStyles, useDs } from "@/hooks/useDs";
+import { Bx, type BxName } from "@/components/jo/Bx";
+import { Card, f, makeJoStyles, useJoTheme } from "@/components/jo/ui";
+import { FieldLabel, IncHeader, IncPicker, Panel } from "./IncFields";
 import { StorageService } from "@/services/StorageService";
 import { TicketsService } from "@/services/TicketsService";
 import { IncidentsService } from "@/services/IncidentsService";
@@ -100,7 +86,7 @@ export default function RcaImportModal({
   onCreated,
   onViewIncident,
 }: Props) {
-  const ds = useDs();
+  const t = useJoTheme();
   const styles = useStyles();
   const insets = useSafeAreaInsets();
   const offline = isConnected === false;
@@ -616,7 +602,7 @@ export default function RcaImportModal({
   } else if (step === "error" && failure) {
     body = (
       <StatusScreen
-        icon={failure.retry && failure.title !== "This is taking too long" ? WifiOff : CircleAlert}
+        icon={failure.retry && failure.title !== "This is taking too long" ? "bx-wifi-off" : "bx-error-circle"}
         tone="warn"
         title={failure.title}
         message={failure.message}
@@ -634,7 +620,7 @@ export default function RcaImportModal({
   } else if (step === "duplicate" && result?.duplicate) {
     body = (
       <StatusScreen
-        icon={CopyCheck}
+        icon="bx-copy"
         tone="warn"
         title="Already used"
         message={`This RCA was already used for incident ${result.duplicate.incident_id}.`}
@@ -730,18 +716,18 @@ export default function RcaImportModal({
       : 0;
     body = (
       <StatusScreen
-        icon={CircleCheck}
+        icon="bx-check-circle"
         tone="ok"
         title="Incident created"
         badge={created.incident_id}
         message="Your RCA report has been turned into an incident."
         lines={[
-          { icon: Paperclip, text: "RCA report saved to the RCA attachments" },
+          { icon: "bx-paperclip" as BxName, text: "RCA report saved to the RCA attachments" },
           ...(photos
-            ? [{ icon: ImageIcon, text: `${photos} ${photos === 1 ? "photo" : "photos"} attached` }]
+            ? [{ icon: "bx-image" as BxName, text: `${photos} ${photos === 1 ? "photo" : "photos"} attached` }]
             : []),
           ...(result?.rca_status_on_create === "RCA Under Review"
-            ? [{ icon: RefreshCw, text: "A manager will review the RCA" }]
+            ? [{ icon: "bx-refresh" as BxName, text: "A manager will review the RCA" }]
             : []),
         ]}
       />
@@ -770,13 +756,8 @@ export default function RcaImportModal({
       statusBarTranslucent
       navigationBarTranslucent
     >
-      <View style={{ flex: 1, backgroundColor: ds.pageBg }}>
-        <DetailHeader
-          topInset={insets.top}
-          title="Upload RCA report"
-          subtitle={subtitle}
-          onBack={requestClose}
-        />
+      <View style={{ flex: 1, backgroundColor: t.page }}>
+        <IncHeader title="Upload RCA report" subtitle={subtitle} onBack={requestClose} backIcon="bx-x" />
         {/* keyboard-controller's KAV, not RN's — see IncidentDetailModal. */}
         <KeyboardAvoidingView style={styles.flex} behavior="padding">
           {body}
@@ -808,7 +789,7 @@ function UploadStep({
   onPick: () => void;
   onRemove: () => void;
 }) {
-  const ds = useDs();
+  const t = useJoTheme();
   const styles = useStyles();
   return (
     <ScrollView
@@ -819,7 +800,7 @@ function UploadStep({
     >
       <View style={styles.intro}>
         <View style={styles.introIcon}>
-          <Sparkles size={20} color={ds.flame[100]} strokeWidth={2.1} />
+          <Bx name="bxs-magic-wand" size={20} color={t.accentInk} />
         </View>
         <View style={{ flex: 1, minWidth: 0 }}>
           <Text style={styles.introTitle}>Let us fill it in</Text>
@@ -830,26 +811,23 @@ function UploadStep({
         </View>
       </View>
 
-      <DetailCard style={{ padding: 16 }}>
-        <FullscreenPicker
-          label="Site *"
+      <Panel style={{ marginTop: 6 }}>
+        <IncPicker
+          label="Site"
+          required
           placeholder="Select site"
           options={siteOptions}
           value={siteCode}
           onChange={onSiteChange}
+          searchPlaceholder="Search sites"
+          style={{ marginTop: 0 }}
         />
 
-        <Text style={styles.label}>
-          <RequiredMark label="RCA report *" />
-        </Text>
+        <FieldLabel label="RCA report" required style={{ marginTop: 16, marginBottom: 6 }} />
         {file ? (
           <View style={styles.fileChip}>
             <View style={styles.fileIcon}>
-              {file.kind === "photo" ? (
-                <ImageIcon size={20} color={ds.sky[100]} strokeWidth={2} />
-              ) : (
-                <FileText size={20} color={ds.sky[100]} strokeWidth={2} />
-              )}
+              <Bx name={file.kind === "photo" ? "bx-image" : "bx-file"} size={20} color={t.accentInk} />
             </View>
             <View style={{ flex: 1, minWidth: 0 }}>
               <Text style={styles.fileName} numberOfLines={2}>
@@ -875,7 +853,7 @@ function UploadStep({
               accessibilityRole="button"
               accessibilityLabel={`Remove ${file.name}`}
             >
-              <X size={16} color={ds.carbon[400]} strokeWidth={2.2} />
+              <Bx name="bx-x" size={17} color={t.ink2} />
             </TouchableOpacity>
           </View>
         ) : (
@@ -883,13 +861,13 @@ function UploadStep({
             onPress={onPick}
             disabled={offline}
             scaleTo={0.98}
-            style={[styles.drop, offline && { opacity: 0.55 }, !!fileError && { borderColor: ds.flame[100] }]}
+            style={[styles.drop, offline && { opacity: 0.55 }, !!fileError && { borderColor: t.bad }]}
             accessibilityRole="button"
             accessibilityLabel="Choose file"
             accessibilityState={{ disabled: offline }}
           >
             <View style={styles.dropIcon}>
-              <CloudUpload size={26} color={ds.sky[100]} strokeWidth={2} />
+              <Bx name="bx-cloud-upload" size={26} color={t.onAccent} />
             </View>
             <Text style={styles.dropTitle}>Choose file</Text>
             <Text style={styles.dropSub}>Tap to pick the RCA report from your phone</Text>
@@ -897,21 +875,21 @@ function UploadStep({
         )}
         <InlineError text={fileError} style={{ marginTop: 10 }} />
         <Text style={styles.hint}>PDF, Word, PowerPoint or a photo · up to 15 MB</Text>
-      </DetailCard>
+      </Panel>
 
       {offline ? (
-        <Notice icon={WifiOff} tone="warn" style={{ marginBottom: 12 }}>
+        <Notice icon="bx-wifi-off" tone="warn" style={{ marginTop: 10 }}>
           You&apos;re offline. Uploading an RCA needs an internet connection.
         </Notice>
       ) : null}
 
       <View style={styles.howRow}>
-        {["Upload the report", "Answer a few questions", "Check & create"].map((t, i) => (
-          <View key={t} style={styles.howItem}>
+        {["Upload the report", "Answer a few questions", "Check & create"].map((label, i) => (
+          <View key={label} style={styles.howItem}>
             <View style={styles.howNum}>
               <Text style={styles.howNumText}>{i + 1}</Text>
             </View>
-            <Text style={styles.howText}>{t}</Text>
+            <Text style={styles.howText}>{label}</Text>
           </View>
         ))}
       </View>
@@ -922,7 +900,7 @@ function UploadStep({
 /* ── Centered status screens (error, duplicate, success) ─────────────────── */
 
 function StatusScreen({
-  icon: Icon,
+  icon,
   tone,
   title,
   message,
@@ -930,23 +908,21 @@ function StatusScreen({
   badge,
   lines,
 }: {
-  icon: typeof CircleAlert;
+  icon: BxName;
   tone: "ok" | "warn";
   title: string;
   message: string;
   detail?: string;
   badge?: string;
-  lines?: { icon: typeof CircleAlert; text: string }[];
+  lines?: { icon: BxName; text: string }[];
 }) {
-  const ds = useDs();
+  const t = useJoTheme();
   const styles = useStyles();
   const ok = tone === "ok";
   return (
     <ScrollView style={styles.flex} contentContainerStyle={styles.statusBody}>
-      <View
-        style={[styles.statusIcon, { backgroundColor: ok ? ds.sky[1000] : ds.flame[1000] }]}
-      >
-        <Icon size={36} color={ok ? ds.sky[100] : ds.flame[100]} strokeWidth={2} />
+      <View style={[styles.statusIcon, { backgroundColor: ok ? t.okTint : t.warnTint }]}>
+        <Bx name={icon} size={38} color={ok ? t.ok : t.warn} />
       </View>
       <Text style={styles.statusTitle} accessibilityRole="header">
         {title}
@@ -959,125 +935,108 @@ function StatusScreen({
       <Text style={styles.statusMessage}>{message}</Text>
       {detail ? <Text style={styles.statusDetail}>{detail}</Text> : null}
       {lines?.length ? (
-        <DetailCard style={{ alignSelf: "stretch", marginTop: 22, paddingVertical: 4 }}>
-          {lines.map((l, i) => {
-            const LineIcon = l.icon;
-            return (
-              <View key={l.text} style={[styles.statusLine, i > 0 && styles.statusLineDivider]}>
-                <LineIcon size={16} color={ds.carbon[400]} strokeWidth={2} />
-                <Text style={styles.statusLineText}>{l.text}</Text>
-              </View>
-            );
-          })}
-        </DetailCard>
+        <Card style={{ alignSelf: "stretch", marginTop: 22, paddingVertical: 4, paddingHorizontal: 16 }}>
+          {lines.map((l, i) => (
+            <View key={l.text} style={[styles.statusLine, i > 0 && styles.statusLineDivider]}>
+              <Bx name={l.icon} size={17} color={t.muted} />
+              <Text style={styles.statusLineText}>{l.text}</Text>
+            </View>
+          ))}
+        </Card>
       ) : null}
     </ScrollView>
   );
 }
 
-const useStyles = makeThemedStyles((ds) => ({
+const useStyles = makeJoStyles((t) => ({
   flex: { flex: 1 },
-  body: { paddingHorizontal: 16, paddingTop: 18, paddingBottom: 24 },
+  body: { paddingHorizontal: 16, paddingTop: 12, paddingBottom: 24 },
 
-  intro: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 12,
-    marginBottom: 14,
-    paddingHorizontal: 4,
-  },
+  intro: { flexDirection: "row", alignItems: "flex-start", gap: 12, marginBottom: 6, paddingHorizontal: 4 },
   introIcon: {
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: ds.flame[1000],
+    backgroundColor: t.accentTint,
     alignItems: "center",
     justifyContent: "center",
   },
-  introTitle: { fontSize: 16, fontWeight: "700", color: ds.carbon[100] },
-  introText: { fontSize: 13, lineHeight: 19, color: ds.carbon[500], marginTop: 3 },
+  introTitle: { ...f.t(15, 600), color: t.ink },
+  introText: { ...f.t(13), lineHeight: 19, color: t.muted, marginTop: 3 },
 
-  label: {
-    fontSize: 9,
-    fontWeight: "600",
-    letterSpacing: 1.08,
-    textTransform: "uppercase",
-    color: ds.carbon[500],
-    marginBottom: 8,
-  },
   drop: {
     alignItems: "center",
     justifyContent: "center",
     minHeight: 170,
     paddingVertical: 24,
     paddingHorizontal: 16,
-    borderRadius: soRadius.card,
+    borderRadius: 22,
     borderWidth: 1.5,
     borderStyle: "dashed",
-    borderColor: ds.carbon[800],
-    backgroundColor: ds.field,
+    borderColor: t.lineStrong,
+    backgroundColor: t.raised,
   },
   dropIcon: {
     width: 56,
     height: 56,
     borderRadius: 28,
-    backgroundColor: ds.sky[1000],
+    backgroundColor: t.accent,
     alignItems: "center",
     justifyContent: "center",
     marginBottom: 12,
   },
-  dropTitle: { fontSize: 16, fontWeight: "700", color: ds.carbon[100] },
-  dropSub: { fontSize: 12.5, color: ds.carbon[500], marginTop: 4, textAlign: "center" },
-  hint: { fontSize: 12, color: ds.carbon[500], marginTop: 10 },
+  dropTitle: { ...f.t(15, 600), color: t.ink },
+  dropSub: { ...f.t(12.5), color: t.muted, marginTop: 4, textAlign: "center" },
+  hint: { ...f.t(12), color: t.muted, marginTop: 10 },
 
   fileChip: {
     flexDirection: "row",
     alignItems: "flex-start",
     gap: 12,
     padding: 12,
-    borderRadius: soRadius.card,
+    borderRadius: 20,
     borderWidth: 1.5,
-    borderColor: ds.controlOn,
-    backgroundColor: ds.sky[1000],
+    borderColor: t.accent,
+    backgroundColor: t.accentTint,
   },
   fileIcon: {
     width: 44,
     height: 44,
-    borderRadius: soRadius.sm,
-    backgroundColor: ds.white,
+    borderRadius: 22,
+    backgroundColor: t.card,
     alignItems: "center",
     justifyContent: "center",
   },
-  fileName: { fontSize: 14, fontWeight: "600", color: ds.carbon[100] },
-  fileMeta: { fontSize: 12, color: ds.carbon[500], marginTop: 2 },
-  link: { fontSize: 12.5, fontWeight: "600", color: ds.sky[100] },
+  fileName: { ...f.t(14, 600), color: t.ink },
+  fileMeta: { ...f.t(12), color: t.muted, marginTop: 2 },
+  link: { ...f.t(12.5, 600), color: t.accentInk },
   removeBtn: {
     width: 30,
     height: 30,
     borderRadius: 15,
-    backgroundColor: ds.white,
+    backgroundColor: t.card,
     alignItems: "center",
     justifyContent: "center",
   },
 
-  howRow: { flexDirection: "row", gap: 8, marginTop: 4, paddingHorizontal: 2 },
+  howRow: { flexDirection: "row", gap: 8, marginTop: 16, paddingHorizontal: 2 },
   howItem: { flex: 1, alignItems: "center", gap: 6 },
   howNum: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: ds.carbon[1000],
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: t.track,
     alignItems: "center",
     justifyContent: "center",
   },
-  howNumText: { fontSize: 11.5, fontWeight: "700", color: ds.carbon[400] },
-  howText: { fontSize: 11.5, lineHeight: 15, color: ds.carbon[500], textAlign: "center" },
+  howNumText: { ...f.t(12, 700), color: t.ink2 },
+  howText: { ...f.t(11.5), lineHeight: 15, color: t.muted, textAlign: "center" },
 
   statusBody: {
     flexGrow: 1,
     alignItems: "center",
     justifyContent: "center",
-    paddingHorizontal: 28,
+    paddingHorizontal: 24,
     paddingVertical: 32,
   },
   statusIcon: {
@@ -1088,30 +1047,19 @@ const useStyles = makeThemedStyles((ds) => ({
     justifyContent: "center",
     marginBottom: 18,
   },
-  statusTitle: { fontSize: 21, fontWeight: "700", color: ds.carbon[100], textAlign: "center" },
+  statusTitle: { ...f.d(24, -0.02), color: t.ink, textAlign: "center" },
   statusBadge: {
     marginTop: 10,
-    paddingVertical: 4,
-    paddingHorizontal: 10,
-    borderRadius: soRadius.pill,
-    backgroundColor: ds.carbon[1000],
+    height: 26,
+    justifyContent: "center",
+    paddingHorizontal: 11,
+    borderRadius: 13,
+    backgroundColor: t.raised,
   },
-  statusBadgeText: { fontSize: 13, fontWeight: "700", letterSpacing: 0.4, color: ds.carbon[200] },
-  statusMessage: {
-    fontSize: 14.5,
-    lineHeight: 21,
-    color: ds.carbon[300],
-    textAlign: "center",
-    marginTop: 10,
-  },
-  statusDetail: {
-    fontSize: 13,
-    lineHeight: 19,
-    color: ds.carbon[500],
-    textAlign: "center",
-    marginTop: 8,
-  },
+  statusBadgeText: { ...f.m(12.5, 600), color: t.ink2 },
+  statusMessage: { ...f.t(14.5), lineHeight: 21, color: t.ink2, textAlign: "center", marginTop: 10 },
+  statusDetail: { ...f.t(13), lineHeight: 19, color: t.muted, textAlign: "center", marginTop: 8 },
   statusLine: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 12 },
-  statusLineDivider: { borderTopWidth: 1, borderTopColor: ds.carbon[1000] },
-  statusLineText: { flex: 1, fontSize: 13.5, color: ds.carbon[200] },
+  statusLineDivider: { borderTopWidth: 1, borderTopColor: t.line },
+  statusLineText: { ...f.t(13.5), flex: 1, color: t.ink2 },
 }));

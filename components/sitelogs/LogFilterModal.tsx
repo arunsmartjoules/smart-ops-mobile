@@ -1,13 +1,16 @@
+/**
+ * Site history filter — quick date presets, site and a custom date range,
+ * as a JoSheet in the artboard language. The site list opens inline (a
+ * second Modal can't stack reliably on iOS).
+ */
 import React from "react";
 import {
   View,
   Text,
   TouchableOpacity,
-  Modal,
   ScrollView,
   Platform,
 } from "react-native";
-import { X, Calendar } from "lucide-react-native";
 import DateTimePicker from "@expo/ui/community/datetime-picker";
 import {
   format,
@@ -20,7 +23,19 @@ import {
   subMonths,
   subYears,
 } from "date-fns";
-import SearchableSelect from "../SearchableSelect";
+import { Bx } from "@/components/jo/Bx";
+import {
+  JoSheet,
+  PrimaryButton,
+  SearchField,
+  SecondaryButton,
+  SheetOption,
+  capsStyle,
+  f,
+  useJoTheme,
+} from "@/components/jo/ui";
+import { FilterChip } from "./LogsUI";
+import { SelectField } from "./LogsKit";
 
 interface LogFilterModalProps {
   visible: boolean;
@@ -50,6 +65,9 @@ const LogFilterModal = ({
   const [showStartPicker, setShowStartPicker] = React.useState(false);
   const [showEndPicker, setShowEndPicker] = React.useState(false);
   const [activePreset, setActivePreset] = React.useState<string | null>(null);
+  const [siteListOpen, setSiteListOpen] = React.useState(false);
+  const [siteQuery, setSiteQuery] = React.useState("");
+  const t = useJoTheme();
 
   const onStartChange = (event: any, selectedDate?: Date) => {
     setShowStartPicker(Platform.OS === "ios");
@@ -135,188 +153,149 @@ const LogFilterModal = ({
 
   if (!visible) return null;
 
-  return (
-    <Modal
-      visible={visible}
-      animationType="slide"
-      transparent={true}
-      statusBarTranslucent={true}
-    >
-      <View className="flex-1 bg-black/60 justify-end">
-        <View className="bg-white dark:bg-slate-900 rounded-t-3xl p-6 max-h-[85%] border-t border-slate-100 dark:border-slate-800">
-          <View className="flex-row items-center justify-between mb-6">
-            <Text className="text-slate-900 dark:text-slate-50 text-xl font-bold">
-              Filter Logs
-            </Text>
-            <TouchableOpacity
-              onPress={onClose}
-              className="w-10 h-10 bg-slate-50 dark:bg-slate-800 rounded-full items-center justify-center"
-            >
-              <X size={20} color="#94a3b8" />
-            </TouchableOpacity>
-          </View>
+  const section = (label: string) => (
+    <Text style={[capsStyle(11.5), { color: t.muted, marginTop: 18, marginBottom: 9, paddingHorizontal: 2 }]}>
+      {label}
+    </Text>
+  );
+  const selectedSite = siteOptions.find((o) => o.value === selectedSiteCode);
+  const q = siteQuery.trim().toLowerCase();
+  const shownSites = q
+    ? siteOptions.filter((o) => `${o.label} ${o.description}`.toLowerCase().includes(q))
+    : siteOptions;
 
-          <ScrollView showsVerticalScrollIndicator={false}>
-            <View className="gap-6">
-              {/* Presets */}
-              <View>
-                <Text className="text-slate-400 dark:text-slate-500 text-[10px] font-bold uppercase tracking-widest mb-3 ml-1">
-                  Quick Presets
-                </Text>
-                <View className="flex-row flex-wrap gap-2">
-                  {quickRanges.map((preset) => {
-                    const isActive = activePreset === preset.key;
-                    return (
-                      <TouchableOpacity
-                        key={preset.key}
-                        onPress={() => {
-                          const { from, to } = preset.getRange();
-                          setFromDate(from);
-                          setToDate(to);
-                          setActivePreset(preset.key);
-                        }}
-                        className={`px-3.5 py-2 rounded-xl border ${
-                          isActive
-                            ? "bg-red-50 dark:bg-red-950/30 border-red-200 dark:border-red-900/60"
-                            : "border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-800"
-                        }`}
-                        style={{
-                          shadowColor: "#000",
-                          shadowOffset: { width: 0, height: 1 },
-                          shadowOpacity: 0.05,
-                          shadowRadius: 2,
-                          elevation: 1,
-                        }}
-                      >
-                        <Text
-                          className={`text-xs font-bold ${
-                            isActive
-                              ? "text-red-700 dark:text-red-400"
-                              : "text-slate-600 dark:text-slate-400"
-                          }`}
-                        >
-                          {preset.label}
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
-              </View>
-
-              {/* Site Selection */}
-              <View>
-                <Text className="text-slate-400 dark:text-slate-500 text-[10px] font-bold uppercase tracking-widest mb-3 ml-1">
-                  Select Site
-                </Text>
-                <SearchableSelect
-                  label=""
-                  placeholder="Select a site"
-                  options={siteOptions}
-                  value={selectedSiteCode || ""}
-                  onChange={onSiteSelect}
-                />
-              </View>
-
-              {/* Date Range Selection */}
-              <View>
-                <Text className="text-slate-400 dark:text-slate-500 text-[10px] font-bold uppercase tracking-widest mb-3 ml-1">
-                  Date Range
-                </Text>
-                <View className="flex-row gap-2">
-                  <TouchableOpacity
-                    onPress={() => {
-                      setActivePreset(null);
-                      setShowStartPicker(true);
-                    }}
-                    className="flex-1 bg-slate-50 dark:bg-slate-800 rounded-xl p-3 border border-slate-100 dark:border-slate-800 flex-row items-center"
-                  >
-                    <Calendar size={14} color="#dc2626" />
-                    <View className="ml-2">
-                      <Text className="text-[10px] text-slate-400 dark:text-slate-500 font-bold uppercase">
-                        Start Date
-                      </Text>
-                      <Text className="text-slate-700 dark:text-slate-300 font-bold text-xs">
-                        {fromDate ? format(fromDate, "dd MMM yyyy") : "Select"}
-                      </Text>
-                    </View>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    onPress={() => {
-                      setActivePreset(null);
-                      setShowEndPicker(true);
-                    }}
-                    className="flex-1 bg-slate-50 dark:bg-slate-800 rounded-xl p-3 border border-slate-100 dark:border-slate-800 flex-row items-center"
-                  >
-                    <Calendar size={14} color="#dc2626" />
-                    <View className="ml-2">
-                      <Text className="text-[10px] text-slate-400 dark:text-slate-500 font-bold uppercase">
-                        End Date
-                      </Text>
-                      <Text className="text-slate-700 dark:text-slate-300 font-bold text-xs">
-                        {toDate ? format(toDate, "dd MMM yyyy") : "Select"}
-                      </Text>
-                    </View>
-                  </TouchableOpacity>
-                </View>
-
-                {showStartPicker && (
-                  <DateTimePicker
-                    value={fromDate || new Date()}
-                    mode="date"
-                    display={Platform.OS === "ios" ? "inline" : "default"}
-                    onChange={onStartChange}
-                    maximumDate={toDate || new Date()}
-                  />
-                )}
-
-                {showEndPicker && (
-                  <DateTimePicker
-                    value={toDate || new Date()}
-                    mode="date"
-                    display={Platform.OS === "ios" ? "inline" : "default"}
-                    onChange={onEndChange}
-                    minimumDate={fromDate || undefined}
-                    maximumDate={new Date()}
-                  />
-                )}
-              </View>
-            </View>
-
-            {/* Action Buttons */}
-            <View className="flex-row gap-3 mt-10 mb-6">
-              <TouchableOpacity
-                onPress={() => {
-                  setFromDate(null);
-                  setToDate(null);
-                  setActivePreset(null);
-                }}
-                className="flex-1 bg-slate-100 dark:bg-slate-800 py-4 rounded-xl items-center"
-              >
-                <Text className="text-slate-500 dark:text-slate-400 font-bold text-sm">
-                  Reset
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={onApply}
-                className="flex-[2] bg-red-600 py-4 rounded-xl items-center shadow-md shadow-red-600/20"
-                style={{
-                  shadowColor: "#dc2626",
-                  shadowOffset: { width: 0, height: 4 },
-                  shadowOpacity: 0.2,
-                  shadowRadius: 8,
-                  elevation: 4,
-                }}
-              >
-                <Text className="text-white font-bold text-sm">
-                  Apply Filters
-                </Text>
-              </TouchableOpacity>
-            </View>
-          </ScrollView>
+  const dateBox = (edge: "from" | "to") => {
+    const value = edge === "from" ? fromDate : toDate;
+    return (
+      <TouchableOpacity
+        onPress={() => {
+          setActivePreset(null);
+          if (edge === "from") setShowStartPicker(true);
+          else setShowEndPicker(true);
+        }}
+        activeOpacity={0.85}
+        accessibilityRole="button"
+        accessibilityLabel={`${edge === "from" ? "Start" : "End"} date, ${value ? format(value, "dd MMM yyyy") : "not set"}`}
+        style={{
+          flex: 1,
+          borderRadius: 18,
+          backgroundColor: t.sheetField,
+          paddingVertical: 9,
+          paddingHorizontal: 14,
+          gap: 3,
+        }}
+      >
+        <Text style={[f.t(11.5, 500), { color: t.muted }]}>{edge === "from" ? "Start date" : "End date"}</Text>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+          <Bx name="bx-calendar" size={15} color={t.accentInk} />
+          <Text style={[f.t(14, 600), { color: value ? t.ink : t.faint }]}>
+            {value ? format(value, "dd MMM yyyy") : "Select"}
+          </Text>
         </View>
+      </TouchableOpacity>
+    );
+  };
+
+  return (
+    <JoSheet visible={visible} onClose={onClose} title="Filter logs">
+      <ScrollView style={{ flexGrow: 0 }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+        {section("Quick presets")}
+        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+          {quickRanges.map((preset) => (
+            <FilterChip
+              key={preset.key}
+              label={preset.label}
+              on={activePreset === preset.key}
+              onPress={() => {
+                const { from, to } = preset.getRange();
+                setFromDate(from);
+                setToDate(to);
+                setActivePreset(preset.key);
+              }}
+            />
+          ))}
+        </View>
+
+        {section("Site")}
+        <SelectField
+          icon="bx-buildings"
+          value={selectedSite?.label || selectedSiteCode || ""}
+          placeholder="Select a site"
+          onPress={() => setSiteListOpen((o) => !o)}
+        />
+        {siteListOpen ? (
+          <View style={{ marginTop: 8, gap: 6 }}>
+            {siteOptions.length > 6 ? (
+              <SearchField
+                value={siteQuery}
+                onChangeText={setSiteQuery}
+                placeholder="Search sites"
+                style={{ backgroundColor: t.sheetField }}
+              />
+            ) : null}
+            {shownSites.length === 0 ? (
+              <Text style={[f.t(13), { color: t.muted, textAlign: "center", paddingVertical: 12 }]}>
+                No sites match.
+              </Text>
+            ) : (
+              shownSites.map((o) => (
+                <SheetOption
+                  key={o.value}
+                  label={o.label}
+                  meta={o.description || undefined}
+                  selected={o.value === selectedSiteCode}
+                  onPress={() => {
+                    onSiteSelect(o.value);
+                    setSiteListOpen(false);
+                    setSiteQuery("");
+                  }}
+                />
+              ))
+            )}
+          </View>
+        ) : null}
+
+        {section("Date range")}
+        <View style={{ flexDirection: "row", gap: 8 }}>
+          {dateBox("from")}
+          {dateBox("to")}
+        </View>
+
+        {showStartPicker && (
+          <DateTimePicker
+            value={fromDate || new Date()}
+            mode="date"
+            display={Platform.OS === "ios" ? "inline" : "default"}
+            onChange={onStartChange}
+            maximumDate={toDate || new Date()}
+          />
+        )}
+
+        {showEndPicker && (
+          <DateTimePicker
+            value={toDate || new Date()}
+            mode="date"
+            display={Platform.OS === "ios" ? "inline" : "default"}
+            onChange={onEndChange}
+            minimumDate={fromDate || undefined}
+            maximumDate={new Date()}
+          />
+        )}
+      </ScrollView>
+
+      <View style={{ flexDirection: "row", gap: 9, marginTop: 22 }}>
+        <SecondaryButton
+          label="Reset"
+          onPress={() => {
+            setFromDate(null);
+            setToDate(null);
+            setActivePreset(null);
+          }}
+          style={{ paddingHorizontal: 22 }}
+        />
+        <PrimaryButton label="Apply filters" icon="bx-check" height={52} onPress={onApply} style={{ flex: 1 }} />
       </View>
-    </Modal>
+    </JoSheet>
   );
 };
 

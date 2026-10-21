@@ -19,7 +19,6 @@ import { useSelectedSiteCode } from "@/services/SiteSelection";
 import NetInfo from "@react-native-community/netinfo";
 import * as Location from "expo-location";
 import DateTimePicker from "@expo/ui/community/datetime-picker";
-import { FileText } from "lucide-react-native";
 import { router } from "expo-router";
 import { addDays, format } from "date-fns";
 import { useAuth } from "@/contexts/AuthContext";
@@ -70,6 +69,8 @@ import {
   type TechTile,
 } from "@/components/home/HomeUI";
 import { makeJoStyles, useJoTheme, type JoTheme } from "@/hooks/useJoTheme";
+import { usePermissions } from "@/contexts/PermissionsContext";
+import { useNavInsets } from "@/components/jo/navInsets";
 
 function formatLocationFailureMessage(
   message: string,
@@ -214,6 +215,8 @@ DashboardSkeleton.displayName = "DashboardSkeleton";
 export default function Dashboard() {
   const t = useJoTheme();
   const styles = useStyles();
+  const { clearance } = useNavInsets();
+  const { canView } = usePermissions();
   const { user, signOut } = useAuth();
   const {
     isPrivileged,
@@ -576,8 +579,12 @@ export default function Dashboard() {
   const periodMeta =
     period === "month" ? monthLabel(todayIso.slice(0, 7)) : rangeLabel(range.from, range.to);
 
-  // Navigation out of Home is blocked while locked (tab bar hidden).
-  const go = (path: string) => (isLocked ? undefined : () => router.push(path as any));
+  // Navigation out of Home is blocked while locked (tab bar hidden), and never
+  // leads into a module the role can't view.
+  const go = (path: string, perm?: Parameters<typeof canView>[0]) =>
+    isLocked || (perm && !canView(perm)) ? undefined : () => router.push(path as any);
+  const showSla = canView("sla");
+  const showDashboard = canView("dashboard");
 
   const s = summary;
   const dash = "—";
@@ -718,7 +725,7 @@ export default function Dashboard() {
       greeting={`${greetingFor(currentTime)}, ${firstName}`}
       siteName={siteName}
       onSitePress={canSwitchSite ? () => setSheet("site") : undefined}
-      bellIcon={isLocked ? FileText : undefined}
+      bellIcon={isLocked ? "bx-file" : undefined}
       bellLabel={isLocked ? "Reports" : "Notifications"}
       bellDot={!isLocked && unread > 0}
       onBell={() => (isLocked ? setReportPickerOpen(true) : router.push("/notifications"))}
@@ -775,31 +782,39 @@ export default function Dashboard() {
       label: "Open tkts",
       value: num(s?.tickets.open),
       color: s && s.tickets.open > 0 ? t.warn : t.ink,
-      onPress: go("/(tabs)/tickets"),
+      onPress: go("/(tabs)/tickets", "tickets"),
     },
     {
       label: "Logs",
       value: s ? `${s.logs.completed}/${s.logs.expected}` : dash,
       color: s && s.logs.expected > 0 ? pctColor(t, logsPct) : t.ink,
-      onPress: go("/(tabs)/site-logs"),
+      onPress: go("/(tabs)/site-logs", "site_logs"),
     },
     {
       label: "PM due",
       value: s ? String(pendingPm) : dash,
       color: s && s.pm.planned > 0 && pendingPm > 0 ? pctColor(t, pmPct) : t.ink,
-      onPress: go("/(tabs)/preventive-maintenance"),
+      onPress: go("/(tabs)/preventive-maintenance", "pm"),
     },
     {
       label: "Incidents",
       value: num(s?.incidents.raised),
       color: t.ink,
-      onPress: go("/(tabs)/incidents"),
+      onPress: go("/(tabs)/incidents", "incidents"),
     },
   ];
 
+  const tilePerm: Record<string, Parameters<typeof canView>[0]> = {
+    "Open tkts": "tickets",
+    Logs: "site_logs",
+    "PM due": "pm",
+    Incidents: "incidents",
+  };
+  const shownTiles = techTiles.filter((tile) => canView(tilePerm[tile.label]!));
+
   const techBars = [
-    { label: "Site logs", done: s?.logs.completed ?? 0, total: s?.logs.expected ?? 0 },
-    { label: "PM tasks", done: s?.pm.completed ?? 0, total: s?.pm.planned ?? 0 },
+    ...(canView("site_logs") ? [{ label: "Site logs", done: s?.logs.completed ?? 0, total: s?.logs.expected ?? 0 }] : []),
+    ...(canView("pm") ? [{ label: "PM tasks", done: s?.pm.completed ?? 0, total: s?.pm.planned ?? 0 }] : []),
   ].map((b) => {
     const pct = pctOf(b.done, b.total);
     return { ...b, pct, color: pctColor(t, pct) };
@@ -807,14 +822,18 @@ export default function Dashboard() {
 
   // ── Manager view ──────────────────────────────────────────────────────
   const heroStats = [
-    { label: "Incidents", value: num(s?.incidents.raised) },
-    { label: "Pend. PM", value: s ? String(pendingPm) : dash },
-    { label: "Pend. logs", value: s ? String(pendingLogs) : dash },
+    ...(canView("incidents") ? [{ label: "Incidents", value: num(s?.incidents.raised) }] : []),
+    ...(canView("pm") ? [{ label: "Pend. PM", value: s ? String(pendingPm) : dash }] : []),
+    ...(canView("site_logs") ? [{ label: "Pend. logs", value: s ? String(pendingLogs) : dash }] : []),
   ];
 
   const plannedBars: PlannedBar[] = [
-    { label: "Preventive maint.", icon: "pm" as const, done: s?.pm.completed ?? 0, total: s?.pm.planned ?? 0 },
-    { label: "Tickets resolved", icon: "tickets" as const, done: s?.tickets.resolved ?? 0, total: s?.tickets.raised ?? 0 },
+    ...(canView("pm")
+      ? [{ label: "Preventive maint.", icon: "pm" as const, done: s?.pm.completed ?? 0, total: s?.pm.planned ?? 0 }]
+      : []),
+    ...(canView("tickets")
+      ? [{ label: "Tickets resolved", icon: "tickets" as const, done: s?.tickets.resolved ?? 0, total: s?.tickets.raised ?? 0 }]
+      : []),
   ].map((b) => {
     const pct = pctOf(b.done, b.total);
     return { ...b, pct, color: pctColor(t, pct) };
@@ -823,7 +842,7 @@ export default function Dashboard() {
   return (
     <JoPage>
       <ScrollView
-        contentContainerStyle={styles.body}
+        contentContainerStyle={[styles.body, { paddingBottom: isLocked ? 32 : clearance }]}
         showsVerticalScrollIndicator={false}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={t.muted} />
@@ -831,12 +850,14 @@ export default function Dashboard() {
       >
         {header}
 
-        <DateButton
-          label={periodLabel}
-          meta={periodMeta}
-          onPress={isLocked ? undefined : () => setSheet("period")}
-          style={{ marginTop: 14, marginLeft: 4 }}
-        />
+        {showDashboard ? (
+          <DateButton
+            label={periodLabel}
+            meta={periodMeta}
+            onPress={isLocked ? undefined : () => setSheet("period")}
+            style={{ marginTop: 14, marginLeft: 4 }}
+          />
+        ) : null}
 
         {isOperator ? (
           <>
@@ -844,71 +865,83 @@ export default function Dashboard() {
               label={techHero.label}
               big={techHero.big}
               sub={techHero.sub}
-              slaTag={techHero.slaTag}
+              slaTag={showSla ? techHero.slaTag : null}
               slaTagColor={slaCol}
-              onSla={isLocked ? undefined : () => setSheet("month")}
+              onSla={isLocked ? undefined : () => router.push("/(tabs)/sla")}
               cta={techHero.cta}
             />
-            {dataNote}
-            {alertView ? (
-              <BreachBanner
-                title={alertView.title}
-                subtitle={alertView.subtitle}
-                onPress={go("/(tabs)/tickets")}
-              />
+            {showDashboard ? (
+              <>
+                {dataNote}
+                {alertView && canView("tickets") ? (
+                  <BreachBanner
+                    title={alertView.title}
+                    subtitle={alertView.subtitle}
+                    onPress={go("/(tabs)/tickets", "tickets")}
+                  />
+                ) : null}
+                {shownTiles.length > 0 ? <TechTiles tiles={shownTiles} /> : null}
+                {techBars.length > 0 ? <ProgressCard meta={periodLabel} bars={techBars} /> : null}
+              </>
             ) : null}
-            <TechTiles tiles={techTiles} />
-            <ProgressCard meta={periodLabel} bars={techBars} />
           </>
-        ) : (
+        ) : showDashboard ? (
           <>
             <OpsHero
               openTickets={num(s?.tickets.open)}
               breachLabel={breachTag}
               stats={heroStats}
-              onPress={go("/(tabs)/tickets")}
+              onPress={go("/(tabs)/tickets", "tickets")}
             />
             {dataNote}
-            <TeamCard
-              count={teamRowsRaw ? team.length : null}
-              rows={teamShown}
-              hasMore={team.length > TEAM_LIMIT}
-              expanded={teamOpen}
-              onToggle={() => setTeamOpen((o) => !o)}
-              loading={teamLoading}
-              note={!teamLoading && !teamRowsRaw ? "Couldn't load today's attendance." : null}
-            />
-            <SlaScoreCard
-              monthLabel={monthLabel(slaMonth)}
-              canPrev={monthIdx < monthKeys.length - 1}
-              canNext={monthIdx > 0}
-              onPrev={() => setSlaMonth(monthKeys[Math.min(monthKeys.length - 1, monthIdx + 1)]!)}
-              onNext={() => setSlaMonth(monthKeys[Math.max(0, monthIdx - 1)]!)}
-              onMonth={() => setSheet("month")}
-              onTitle={() => router.push("/(tabs)/sla")}
-              score={slaScoreText}
-              color={slaCol}
-              status={slaStat.label}
-              statusBg={slaStat.bg}
-              pctText={sla?.pct != null ? `${sla.pct.toFixed(1)}%` : dash}
-              emptyNote={
-                sla?.pct != null ? null : slaLoading ? "Loading…" : "No SLA report for this month"
-              }
-              ringPct={slaScoreNum != null ? slaScoreNum / 5 : 0}
-              kpis={kpis}
-              loading={slaLoading && !sla}
-            />
-            <SectionHead title="Planned vs completed" meta={periodLabel} />
-            <PlannedCards
-              bars={plannedBars}
-              onPress={(b) =>
-                router.push(b.icon === "pm" ? "/(tabs)/preventive-maintenance" : "/(tabs)/tickets")
-              }
-            />
+            {canView("attendance") ? (
+              <TeamCard
+                count={teamRowsRaw ? team.length : null}
+                rows={teamShown}
+                hasMore={team.length > TEAM_LIMIT}
+                expanded={teamOpen}
+                onToggle={() => setTeamOpen((o) => !o)}
+                loading={teamLoading}
+                note={!teamLoading && !teamRowsRaw ? "Couldn't load today's attendance." : null}
+              />
+            ) : null}
+            {showSla ? (
+              <SlaScoreCard
+                monthLabel={monthLabel(slaMonth)}
+                canPrev={monthIdx < monthKeys.length - 1}
+                canNext={monthIdx > 0}
+                onPrev={() => setSlaMonth(monthKeys[Math.min(monthKeys.length - 1, monthIdx + 1)]!)}
+                onNext={() => setSlaMonth(monthKeys[Math.max(0, monthIdx - 1)]!)}
+                onMonth={() => setSheet("month")}
+                onTitle={() => router.push("/(tabs)/sla")}
+                score={slaScoreText}
+                color={slaCol}
+                status={slaStat.label}
+                statusBg={slaStat.bg}
+                pctText={sla?.pct != null ? `${sla.pct.toFixed(1)}%` : dash}
+                emptyNote={
+                  sla?.pct != null ? null : slaLoading ? "Loading…" : "No SLA report for this month"
+                }
+                ringPct={slaScoreNum != null ? slaScoreNum / 5 : 0}
+                kpis={kpis}
+                loading={slaLoading && !sla}
+              />
+            ) : null}
+            {plannedBars.length > 0 ? (
+              <>
+                <SectionHead title="Planned vs completed" meta={periodLabel} />
+                <PlannedCards
+                  bars={plannedBars}
+                  onPress={(b) =>
+                    router.push(b.icon === "pm" ? "/(tabs)/preventive-maintenance" : "/(tabs)/tickets")
+                  }
+                />
+              </>
+            ) : null}
           </>
-        )}
+        ) : null}
 
-        <EfficiencyCard items={effItems} note={effNote} />
+        {showDashboard && canView("efficiency") ? <EfficiencyCard items={effItems} note={effNote} /> : null}
       </ScrollView>
 
       <JoSheet
@@ -1014,7 +1047,7 @@ export default function Dashboard() {
 }
 
 const useStyles = makeJoStyles((t) => ({
-  body: { paddingHorizontal: 16, paddingBottom: 24 },
+  body: { paddingHorizontal: 16 },
   note: { ...f.t(11), color: t.muted, marginTop: 10, paddingHorizontal: 4 },
   options: { gap: 6, marginTop: 16 },
   rangeRow: { flexDirection: "row", gap: 8, marginTop: 16 },

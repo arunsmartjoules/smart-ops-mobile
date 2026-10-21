@@ -1,49 +1,36 @@
 import React, { useState, useEffect, useRef } from "react";
-import {
-  View,
-  Text,
-  ScrollView,
-  TouchableOpacity,
-  Alert,
-  ActivityIndicator,
-  Image,
-  Modal,
-} from "react-native";
+import { View, ScrollView, Alert } from "react-native";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
-import {
-  SafeAreaView,
-  useSafeAreaInsets,
-} from "react-native-safe-area-context";
 import { router, useLocalSearchParams } from "expo-router";
-import {
-  ChevronLeft,
-  FlaskConical,
-  Camera,
-  Trash2,
-  ChevronDown,
-  Check,
-} from "lucide-react-native";
 import SiteLogService from "@/services/SiteLogService";
 import { formatAssignee } from "@/utils/assignee";
 import { useAuth } from "@/contexts/AuthContext";
-import { useTheme } from "@/contexts/ThemeContext";
 import { useAttendanceGate } from "@/contexts/AttendanceGateContext";
-import { ViewOnlyEntryNotice } from "@/components/ViewOnlyEntryNotice";
 import * as ImagePicker from "expo-image-picker";
 import * as Haptics from "expo-haptics";
 import { StorageService } from "@/services/StorageService";
-import SignaturePad from "@/components/SignaturePad";
+import { Card, JoPage, PrimaryButton, SecondaryButton } from "@/components/jo/ui";
+import {
+  AttachmentSlot,
+  BottomBar,
+  CardTitle,
+  DoseChoice,
+  EntryHeader,
+  EntryLoading,
+  FormHeading,
+  ReadOnlyEntry,
+  ReadOnlyField,
+} from "@/components/sitelogs/LogsKit";
+import { SignatureSheet } from "@/components/sitelogs/SignatureSheet";
 
 export default function ChemicalEntry() {
   const { canEdit } = useAttendanceGate();
-  if (!canEdit) return <ViewOnlyEntryNotice what="chemical readings" />;
+  if (!canEdit) return <ReadOnlyEntry what="chemical readings" />;
   return <ChemicalEntryContent />;
 }
 
 function ChemicalEntryContent() {
   const { user } = useAuth();
-  const insets = useSafeAreaInsets();
-  const { isDark } = useTheme();
   const params = useLocalSearchParams<{
     id?: string;
     areaId?: string;
@@ -65,7 +52,6 @@ function ChemicalEntryContent() {
   const [uploading, setUploading] = useState(false);
   const [loadingEdit, setLoadingEdit] = useState(false);
   const [signatureModalVisible, setSignatureModalVisible] = useState(false);
-  const [showDosingPicker, setShowDosingPicker] = useState(false);
   // Read-only operator label shown when editing an existing log.
   const [assignedToDisplay, setAssignedToDisplay] = useState("");
   // Single-row model — see water-entry for the rationale.
@@ -330,234 +316,80 @@ function ChemicalEntryContent() {
   };
 
   if (loadingEdit) {
-    return (
-      <View className="flex-1 bg-slate-50 dark:bg-slate-950 items-center justify-center">
-        <ActivityIndicator size="large" color="#9333ea" />
-        <Text className="text-slate-500 mt-4 font-bold">Loading log...</Text>
-      </View>
-    );
+    return <EntryLoading />;
   }
 
   return (
-    <View className="flex-1 bg-slate-50 dark:bg-slate-950">
-      <SafeAreaView className="flex-1" edges={["top"]}>
-        {/* Header */}
-        <View className="flex-row items-center justify-between px-5 py-4 bg-white dark:bg-slate-900 border-b border-slate-100 dark:border-slate-800">
-          <TouchableOpacity
-            onPress={() => router.back()}
-            hitSlop={{ top: 20, bottom: 20, left: 20, right: 20 }}
-            className="w-10 h-10 rounded-full bg-slate-50 dark:bg-slate-800 items-center justify-center"
-          >
-            <ChevronLeft size={20} color={isDark ? "#e2e8f0" : "#0f172a"} />
-          </TouchableOpacity>
-          <View className="items-center">
-            <Text className="text-slate-900 dark:text-slate-50 font-bold text-lg">
-              {params.areaName || "Chemical Log"}
-            </Text>
-            <Text className="text-slate-400 text-[10px] font-bold uppercase tracking-wider">
-              {isEditMode ? "Edit Entry" : "New Entry"}
-            </Text>
-          </View>
-          <View className="w-10" />
-        </View>
+    <JoPage glow={false}>
+      <EntryHeader
+        title={params.areaName || "Chemical Log"}
+        sub={isEditMode ? "Edit entry" : "New entry"}
+        onBack={() => router.back()}
+      />
 
-        <KeyboardAvoidingView
-          behavior="padding"
-          style={{ flex: 1 }}
-        >
+      <KeyboardAvoidingView behavior="padding" style={{ flex: 1 }}>
         <ScrollView
-          className="flex-1 p-5"
+          style={{ flex: 1 }}
+          contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 4, paddingBottom: 150 }}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
         >
           {isEditMode && (
-            <View className="mb-1">
-              <Text className="text-slate-500 dark:text-slate-400 text-[10px] font-bold uppercase tracking-widest mb-1.5 ml-1">
-                Assigned To
-              </Text>
-              <View className="bg-slate-100 dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 px-3 py-3.5">
-                <Text className="font-semibold text-base text-slate-500 dark:text-slate-400">
-                  {assignedToDisplay || "—"}
-                </Text>
-              </View>
+            <View style={{ marginBottom: 16 }}>
+              <ReadOnlyField label="Assigned to" value={assignedToDisplay || "—"} icon="bx-user" />
             </View>
           )}
-          <View className="mt-4">
-            <View className="flex-row items-end space-x-3 gap-3 mb-6">
-              <View className="flex-1">
-                <Text className="text-slate-500 dark:text-slate-400 text-[10px] font-bold uppercase tracking-widest mb-2 ml-1">
-                  Chemical Dosing Done?
-                </Text>
-                <TouchableOpacity
-                  onPress={() => setShowDosingPicker(true)}
-                  className="flex-row items-center justify-between bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-100 dark:border-slate-800"
-                  style={{
-                    shadowColor: "#000",
-                    shadowOffset: { width: 0, height: 1 },
-                    shadowOpacity: 0.05,
-                    shadowRadius: 4,
-                    elevation: 2,
-                  }}
-                >
-                  <View className="flex-row items-center">
-                    <View className="w-8 h-8 rounded-lg bg-purple-50 dark:bg-purple-900/30 items-center justify-center mr-3">
-                      <FlaskConical size={18} color="#9333ea" />
-                    </View>
-                    <Text
-                      className={`font-bold text-lg ${formData.chemicalDosing ? "text-slate-900 dark:text-slate-50" : "text-slate-400"}`}
-                    >
-                      {formData.chemicalDosing === "Yes" ? "Dosed" : formData.chemicalDosing === "No" ? "Not Dosed" : "Select Option"}
-                    </Text>
-                  </View>
-                  <ChevronDown size={20} color="#94a3b8" />
-                </TouchableOpacity>
-              </View>
 
-              <View className="w-24">
-                <Text className="text-slate-500 dark:text-slate-400 text-[10px] font-bold uppercase tracking-widest mb-2 ml-1">
-                  Photo
-                </Text>
-                {formData.attachment ? (
-                  <View className="relative">
-                    <TouchableOpacity onPress={() => updateField("attachment", "")}>
-                      <Image
-                        source={{ uri: formData.attachment }}
-                        className="w-full h-14 rounded-2xl bg-slate-100"
-                        resizeMode="cover"
-                      />
-                      <View className="absolute top-1 right-1 bg-red-500 w-5 h-5 rounded-full items-center justify-center">
-                        <Trash2 size={10} color="white" />
-                      </View>
-                    </TouchableOpacity>
-                  </View>
-                ) : (
-                  <TouchableOpacity
-                    onPress={handleAttachment}
-                    disabled={uploading}
-                    className="w-full h-14 border-2 border-dashed border-slate-300 dark:border-slate-700 rounded-2xl items-center justify-center bg-white dark:bg-slate-900"
-                  >
-                    {uploading ? (
-                      <ActivityIndicator size="small" color="#9333ea" />
-                    ) : (
-                      <Camera size={20} color="#94a3b8" />
-                    )}
-                  </TouchableOpacity>
-                )}
-              </View>
-            </View>
-
-            {/* Removed manual remarks and old attachment section */}
-
-            {/* Spacer for fixed bottom button */}
-            <View className="h-24" />
-          </View>
-        </ScrollView>
-        </KeyboardAvoidingView>
-
-        {/* Fixed Bottom Buttons */}
-        <View
-          className="absolute bottom-0 left-0 right-0 bg-white dark:bg-slate-900 border-t border-slate-100 dark:border-slate-800 px-5 pt-4 flex-row gap-3"
-          style={{ paddingBottom: Math.max(insets.bottom, 16) }}
-        >
-          <TouchableOpacity
-            onPress={handleSave}
-            disabled={saving}
-            activeOpacity={0.8}
-            className="flex-1 py-4 rounded-xl items-center justify-center border-2 border-purple-600"
-          >
-            {saving ? (
-              <ActivityIndicator color="#9333ea" />
-            ) : (
-              <Text className="text-purple-600 font-bold text-base uppercase tracking-widest">Save</Text>
-            )}
-          </TouchableOpacity>
-          <TouchableOpacity
-            onPress={handleCompletePress}
-            disabled={saving}
-            activeOpacity={0.8}
-            className={`flex-1 py-4 rounded-xl flex-row items-center justify-center ${saving ? "bg-slate-200" : "bg-purple-600"}`}
-            style={!saving ? { shadowColor: "#9333ea", shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.2, shadowRadius: 8, elevation: 4 } : {}}
-          >
-            {saving ? (
-              <ActivityIndicator color="white" />
-            ) : (
-              <Text className="text-white font-bold text-base uppercase tracking-widest">
-                {isEditMode ? "Update" : "Complete"}
-              </Text>
-            )}
-          </TouchableOpacity>
-        </View>
-      </SafeAreaView>
-
-      {/* Signature Modal */}
-      <Modal
-        visible={signatureModalVisible}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setSignatureModalVisible(false)}
-      >
-        <View className="flex-1 bg-black/50 justify-end">
-          <View className="bg-white dark:bg-slate-900 rounded-t-3xl h-[60%] overflow-hidden">
-            <View className="flex-row items-center justify-between px-6 py-4 border-b border-slate-100 dark:border-slate-800">
-              <Text className="text-slate-900 dark:text-slate-50 font-bold text-lg">
-                Sign to {isEditMode ? "Update" : "Complete"}
-              </Text>
-              <TouchableOpacity onPress={() => setSignatureModalVisible(false)}>
-                <Text className="text-purple-600 font-bold">Close</Text>
-              </TouchableOpacity>
-            </View>
-            <SignaturePad
-              standalone
-              okText={isEditMode ? "Update Log" : "Complete Log"}
-              onOK={(sig: string) => handleSaveWithSignature(sig)}
+          <FormHeading>Was dosing carried out?</FormHeading>
+          <View style={{ marginTop: 14 }}>
+            <DoseChoice
+              value={formData.chemicalDosing}
+              onChange={(v) => updateField("chemicalDosing", v)}
             />
           </View>
-        </View>
-      </Modal>
 
-      {/* Chemical Dosing Picker Modal */}
-      <Modal
-        visible={showDosingPicker}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setShowDosingPicker(false)}
-      >
-        <TouchableOpacity
-          activeOpacity={1}
-          onPress={() => setShowDosingPicker(false)}
-          className="flex-1 bg-black/50 justify-center px-6"
-        >
-          <View className="bg-white dark:bg-slate-900 rounded-3xl overflow-hidden shadow-2xl">
-            <View className="p-4 border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50">
-              <Text className="text-slate-900 dark:text-slate-50 font-bold text-center">
-                Chemical Dosing Done?
-              </Text>
+          <Card style={{ marginTop: 12, padding: 16 }}>
+            <CardTitle>Attachment</CardTitle>
+            <View style={{ marginTop: 10 }}>
+              <AttachmentSlot
+                value={formData.attachment}
+                uploading={uploading}
+                onAdd={handleAttachment}
+                onRemove={() => updateField("attachment", "")}
+                cta="Add photo of dosing log"
+              />
             </View>
-            {[
-              { label: "Dosed", value: "Yes" },
-              { label: "Not Dosed", value: "No" },
-            ].map((option) => (
-              <TouchableOpacity
-                key={option.value}
-                onPress={() => {
-                  updateField("chemicalDosing", option.value);
-                  setShowDosingPicker(false);
-                }}
-                className="flex-row items-center justify-between p-5 border-b border-slate-50 dark:border-slate-800/50 last:border-b-0"
-              >
-                <Text
-                  className={`text-lg font-bold ${formData.chemicalDosing === option.value ? "text-purple-600" : "text-slate-600 dark:text-slate-400"}`}
-                >
-                  {option.label}
-                </Text>
-                {formData.chemicalDosing === option.value && (
-                  <Check size={20} color="#9333ea" />
-                )}
-              </TouchableOpacity>
-            ))}
-          </View>
-        </TouchableOpacity>
-      </Modal>
-    </View>
+          </Card>
+        </ScrollView>
+      </KeyboardAvoidingView>
+
+      {/* Save (in progress) + Complete */}
+      <BottomBar>
+        <View style={{ flexDirection: "row", gap: 9 }}>
+          <SecondaryButton
+            label="Save"
+            onPress={handleSave}
+            busy={saving}
+            height={54}
+            style={{ flex: 1 }}
+          />
+          <PrimaryButton
+            label={isEditMode ? "Update" : "Complete"}
+            icon="bx-check"
+            onPress={handleCompletePress}
+            busy={saving}
+            style={{ flex: 1 }}
+          />
+        </View>
+      </BottomBar>
+
+      <SignatureSheet
+        visible={signatureModalVisible}
+        title={`Sign to ${isEditMode ? "update" : "complete"}`}
+        okText={isEditMode ? "Update Log" : "Complete Log"}
+        onClose={() => setSignatureModalVisible(false)}
+        onOK={(sig: string) => handleSaveWithSignature(sig)}
+      />
+    </JoPage>
   );
 }

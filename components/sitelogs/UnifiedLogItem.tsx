@@ -1,24 +1,17 @@
+/**
+ * One line item (room / tank / point) on a log entry screen, in the
+ * artboard's chemical-entry language: a #141418 card with the reading wells
+ * (big Bricolage digits + unit), the dashed photo slot and the remarks field.
+ * Readings still owed get a soft red outline, as before. Chemical is a
+ * compact card with a single dosed checkbox.
+ */
 import React from "react";
-import {
-  View,
-  Text,
-  TextInput,
-  TouchableOpacity,
-} from "react-native";
-import {
-  Check,
-  Minus,
-  Droplets,
-  Activity,
-  Beaker,
-  Thermometer,
-  CloudRain,
-  MapPin,
-} from "lucide-react-native";
+import { Text, TextInput, TouchableOpacity, View } from "react-native";
 import { TaskItem } from "@/services/SiteConfigService";
+import { Bx } from "@/components/jo/Bx";
+import { Card, f, useJoTheme } from "@/components/jo/ui";
 import { LogImagePicker } from "./LogImagePicker";
-import { makeThemedStyles, useDs } from "@/hooks/useDs";
-import { soRadius, soShadow } from "@/components/home/SiteOverview";
+import { NumberField, RemarksField, Tag } from "./LogsKit";
 
 interface UnifiedLogItemProps {
   item: TaskItem;
@@ -42,217 +35,182 @@ export const UnifiedLogItem = React.memo(
     index,
     total,
   }: UnifiedLogItemProps) => {
-  const itemStyles = useItemStyles();
-  const ds = useDs();
+    const t = useJoTheme();
     // The scheduling label; `remarks` is the technician's note, not this.
     const location = item.meta?.meta_date || null;
 
     const isFilled =
-      type === "Chemical"
-        ? hasText(value.dosing)
-        : type === "Water"
+      type === "Water"
           ? hasText(value.tds) || hasText(value.ph) || hasText(value.hardness)
           : hasText(value.temp) && hasText(value.rh);
 
-    const pad = (n?: number) =>
-      n == null ? "" : String(n).padStart(2, "0");
-    const indexLabel =
-      index != null && total != null ? `${pad(index)} / ${total}` : null;
+    const pad = (n?: number) => (n == null ? "" : String(n).padStart(2, "0"));
+    const indexLabel = index != null && total != null ? `${pad(index)} / ${total}` : null;
+
+    // Chemical: one compact card — a checkbox (ticked = dosed, unticked = not
+    // dosed; LogEntryModule defaults untouched rows to "No"), then a slim row
+    // with the photo buttons and a one-line remark.
+    if (type === "Chemical") {
+      const dosed = value.dosing === "Yes";
+      return (
+        <Card style={{ paddingVertical: 12, paddingHorizontal: 14, marginBottom: 8 }}>
+          <TouchableOpacity
+            onPress={() => onUpdateValue(item.id, "dosing", dosed ? "No" : "Yes")}
+            disabled={isUploading}
+            activeOpacity={0.75}
+            accessibilityRole="checkbox"
+            accessibilityState={{ checked: dosed, disabled: isUploading }}
+            accessibilityLabel={`${item.name || "Dosing point"}, dosed`}
+            style={{ flexDirection: "row", alignItems: "center", gap: 12 }}
+          >
+            <View
+              style={{
+                width: 28,
+                height: 28,
+                borderRadius: 9,
+                alignItems: "center",
+                justifyContent: "center",
+                backgroundColor: dosed ? t.accent : "transparent",
+                borderWidth: 2,
+                borderColor: dosed ? t.accent : t.disabled,
+              }}
+            >
+              {dosed ? <Bx name="bx-check" size={20} color={t.onAccent} /> : null}
+            </View>
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <Text style={[f.t(14, 600), { color: t.ink }]} numberOfLines={1}>
+                {item.name || "Unnamed Area"}
+              </Text>
+              <Text style={[f.t(11.5), { color: dosed ? t.ok : t.muted, marginTop: 2 }]} numberOfLines={1}>
+                {dosed ? "Dosed" : "Not dosed"}
+                {location ? <Text style={{ color: t.muted }}>{`  ·  ${location}`}</Text> : null}
+              </Text>
+            </View>
+            {indexLabel ? <Tag label={indexLabel} tone={dosed ? "ok" : "mute"} /> : null}
+          </TouchableOpacity>
+
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 10 }}>
+            <LogImagePicker
+              compact
+              value={value.attachment}
+              onImageChange={(url) => onUpdateValue(item.id, "attachment", url || "")}
+              uploadPath={`${type.toLowerCase()}/${item.id}`}
+              disabled={isUploading}
+            />
+            <TextInput
+              value={value.mainRemarks ?? ""}
+              onChangeText={(v) => onUpdateValue(item.id, "mainRemarks", v)}
+              placeholder={dosed ? "Optional notes" : "Why was dosing skipped?"}
+              placeholderTextColor={t.faint}
+              accessibilityLabel="Remarks"
+              style={[
+                f.t(13),
+                {
+                  flex: 1,
+                  minWidth: 0,
+                  height: 44,
+                  paddingVertical: 0,
+                  paddingHorizontal: 14,
+                  borderRadius: 22,
+                  color: t.ink,
+                  backgroundColor: t.raised,
+                  borderWidth: 1,
+                  borderColor: t.lineMid,
+                },
+              ]}
+            />
+          </View>
+        </Card>
+      );
+    }
 
     return (
-      <View
-        style={[
-          itemStyles.card,
-          !isFilled && { borderColor: ds.flame[900] },
-        ]}
-      >
+      <Card style={{ padding: 16, marginBottom: 10, borderColor: isFilled ? t.cardBorder : t.badBorder }}>
         {/* Header: area + location + index */}
-        <View className="flex-row items-start justify-between gap-2 mb-2.5">
-          <View className="flex-1 min-w-0">
-            <Text
-              className="text-slate-900 dark:text-slate-50 font-bold text-[13px]"
-              numberOfLines={1}
-            >
+        <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 10 }}>
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text style={[f.t(15, 600), { color: t.ink }]} numberOfLines={2}>
               {item.name || "Unnamed Area"}
             </Text>
-            {location && (
-              <View className="flex-row items-center gap-1 mt-0.5">
-                <MapPin size={10} color={ds.carbon[600]} />
-                <Text
-                  className="text-slate-400 dark:text-slate-500 text-[10px] flex-1"
-                  numberOfLines={1}
-                >
+            {location ? (
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 4, marginTop: 4 }}>
+                <Bx name="bx-map-pin" size={13} color={t.muted} />
+                <Text style={[f.t(12.5), { color: t.muted, flex: 1 }]} numberOfLines={1}>
                   {location}
                 </Text>
               </View>
-            )}
+            ) : null}
           </View>
-          {indexLabel && (
-            <View
-              className={`px-2 py-1 rounded-md shrink-0 border ${
-                isFilled
-                  ? "bg-slate-50 dark:bg-slate-800 border-slate-100 dark:border-slate-700"
-                  : "bg-red-50 dark:bg-red-950/40 border-red-100 dark:border-red-900/40"
-              }`}
-            >
-              <Text
-                className={`text-[9.5px] font-semibold ${
-                  isFilled
-                    ? "text-slate-400 dark:text-slate-500"
-                    : "text-red-500 dark:text-red-400"
-                }`}
-              >
-                {indexLabel}
-              </Text>
-            </View>
-          )}
+          {indexLabel ? <Tag label={indexLabel} tone={isFilled ? "ok" : "bad"} /> : null}
         </View>
 
         {/* TempRH: Temp + RH */}
         {type === "TempRH" && (
-          <View className="flex-row gap-2 mb-2.5">
-            <View
-              style={[
-                itemStyles.field,
-                !hasText(value.temp) && { borderColor: ds.flame[900] },
-              ]}
-            >
-              <Thermometer size={14} color={ds.flame[100]} />
-              <View className="flex-1">
-                <Text className="text-[9px] text-slate-400 dark:text-slate-500 uppercase">
-                  Temp °C
-                </Text>
-                <TextInput
-                  value={value.temp}
-                  onChangeText={(t) => onUpdateValue(item.id, "temp", t)}
-                  placeholder="— —"
-                  keyboardType="numeric"
-                  placeholderTextColor={ds.carbon[600]}
-                  className="text-[14px] font-bold text-slate-900 dark:text-slate-50 p-0 m-0"
-                />
-              </View>
-            </View>
-            <View
-              style={[
-                itemStyles.field,
-                !hasText(value.rh) && { borderColor: ds.flame[900] },
-              ]}
-            >
-              <CloudRain size={14} color="#3b82f6" />
-              <View className="flex-1">
-                <Text className="text-[9px] text-slate-400 dark:text-slate-500 uppercase">
-                  RH %
-                </Text>
-                <TextInput
-                  value={value.rh}
-                  onChangeText={(t) => onUpdateValue(item.id, "rh", t)}
-                  placeholder="— —"
-                  keyboardType="numeric"
-                  placeholderTextColor={ds.carbon[600]}
-                  className="text-[14px] font-bold text-slate-900 dark:text-slate-50 p-0 m-0"
-                />
-              </View>
-            </View>
+          <View style={{ flexDirection: "row", gap: 8, marginTop: 14 }}>
+            <NumberField
+              label="Temperature"
+              value={value.temp}
+              onChangeText={(v) => onUpdateValue(item.id, "temp", v)}
+              unit="°C"
+              placeholder="— —"
+              size="md"
+              attention={!hasText(value.temp)}
+              style={{ flex: 1, minWidth: 0 }}
+            />
+            <NumberField
+              label="RH"
+              value={value.rh}
+              onChangeText={(v) => onUpdateValue(item.id, "rh", v)}
+              unit="%"
+              placeholder="— —"
+              size="md"
+              attention={!hasText(value.rh)}
+              style={{ flex: 1, minWidth: 0 }}
+            />
           </View>
         )}
 
         {/* Water: TDS / pH / Hardness */}
         {type === "Water" && (
-          <View className="flex-row gap-2 mb-2.5">
+          <View style={{ flexDirection: "row", gap: 8, marginTop: 14 }}>
             {[
-              { key: "tds", label: "TDS", Icon: Droplets, color: "#3b82f6" },
-              { key: "ph", label: "pH", Icon: Activity, color: "#10b981" },
-              {
-                key: "hardness",
-                label: "Hard",
-                Icon: Beaker,
-                color: ds.sky[100],
-              },
-            ].map(({ key, label, Icon, color }) => (
-              <View
+              { key: "tds", label: "TDS" },
+              { key: "ph", label: "pH" },
+              { key: "hardness", label: "Hardness" },
+            ].map(({ key, label }) => (
+              <NumberField
                 key={key}
-                style={[
-                  itemStyles.field,
-                  { gap: 6, paddingHorizontal: 10 },
-                  !hasText(value[key]) && { borderColor: ds.flame[900] },
-                ]}
-              >
-                <Icon size={13} color={color} />
-                <View className="flex-1">
-                  <Text className="text-[9px] text-slate-400 dark:text-slate-500 uppercase">
-                    {label}
-                  </Text>
-                  <TextInput
-                    value={value[key]}
-                    onChangeText={(t) => onUpdateValue(item.id, key, t)}
-                    placeholder="—"
-                    keyboardType="numeric"
-                    placeholderTextColor={ds.carbon[600]}
-                    className="text-[13px] font-bold text-slate-900 dark:text-slate-50 p-0 m-0"
-                  />
-                </View>
-              </View>
+                label={label}
+                value={value[key]}
+                onChangeText={(v) => onUpdateValue(item.id, key, v)}
+                placeholder="—"
+                size="sm"
+                attention={!hasText(value[key])}
+                style={{ flex: 1, minWidth: 0 }}
+              />
             ))}
           </View>
         )}
 
-        {/* Dosing (Chemical only) + remark + attachments — one row */}
-        <View className="flex-row items-center gap-2">
-          {type === "Chemical" && (
-            <TouchableOpacity
-              onPress={() =>
-                onUpdateValue(
-                  item.id,
-                  "dosing",
-                  value.dosing === "Yes" ? "No" : "Yes",
-                )
-              }
-              activeOpacity={0.85}
-              accessibilityRole="checkbox"
-              accessibilityState={{ checked: value.dosing === "Yes" }}
-              accessibilityLabel="Dosing done"
-              hitSlop={{ top: 8, bottom: 8, left: 10, right: 6 }}
-              style={[
-                itemStyles.checkbox,
-                value.dosing === "Yes" && {
-                  backgroundColor: ds.controlOn,
-                  borderColor: ds.controlOn,
-                },
-                !hasText(value.dosing) && { borderColor: ds.flame[900] },
-              ]}
-            >
-              {value.dosing === "Yes" ? (
-                <Check size={16} color={ds.onControl} strokeWidth={3} />
-              ) : value.dosing === "No" ? (
-                <Minus size={16} color={ds.carbon[500]} strokeWidth={3} />
-              ) : null}
-            </TouchableOpacity>
-          )}
-          <View
-            style={[
-              itemStyles.field,
-              { paddingVertical: 0, height: ROW_FIELD_HEIGHT },
-            ]}
-          >
-            <TextInput
-              placeholder="Add a remark…"
-              value={value.mainRemarks}
-              onChangeText={(t) => onUpdateValue(item.id, "mainRemarks", t)}
-              className="flex-1 p-0 text-xs font-medium text-slate-600 dark:text-slate-300"
-              placeholderTextColor={ds.carbon[600]}
-            />
-          </View>
+        <View style={{ marginTop: 16 }}>
           <LogImagePicker
+            label="Attachment"
             value={value.attachment}
-            onImageChange={(url) =>
-              onUpdateValue(item.id, "attachment", url || "")
-            }
+            onImageChange={(url) => onUpdateValue(item.id, "attachment", url || "")}
             uploadPath={`${type.toLowerCase()}/${item.id}`}
-            compact
+            cta="Add photo"
             disabled={isUploading}
           />
         </View>
-      </View>
+
+        <RemarksField
+          label="Remarks"
+          value={value.mainRemarks}
+          onChangeText={(v) => onUpdateValue(item.id, "mainRemarks", v)}
+          placeholder="Add a remark…"
+          style={{ marginTop: 14 }}
+        />
+      </Card>
     );
   },
   (prev, next) => {
@@ -268,42 +226,3 @@ export const UnifiedLogItem = React.memo(
 );
 
 UnifiedLogItem.displayName = "UnifiedLogItem";
-
-/** Shared height for the dosing checkbox and the remark input beside it. */
-const ROW_FIELD_HEIGHT = 36;
-
-const useItemStyles = makeThemedStyles((ds) => ({
-  card: {
-    backgroundColor: ds.white,
-    borderRadius: soRadius.card,
-    padding: 12,
-    marginBottom: 8,
-    borderWidth: 1,
-    borderColor: ds.carbon[900],
-    ...soShadow,
-  },
-  // Square, and the same height + radius as the remark input beside it so the
-  // two line up; the extra tap area comes from hitSlop, not from the box.
-  checkbox: {
-    width: ROW_FIELD_HEIGHT,
-    height: ROW_FIELD_HEIGHT,
-    borderRadius: soRadius.sm,
-    borderWidth: 1.5,
-    borderColor: ds.carbon[800],
-    backgroundColor: ds.white,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  field: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    backgroundColor: ds.pageBg,
-    borderRadius: soRadius.sm,
-    borderWidth: 1,
-    borderColor: ds.carbon[900],
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-  },
-}));

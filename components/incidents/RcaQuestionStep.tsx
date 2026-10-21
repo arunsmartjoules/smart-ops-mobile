@@ -5,10 +5,9 @@
  */
 import React, { useEffect, useMemo } from "react";
 import { ScrollView, Text, View } from "react-native";
-import { Search, Sparkles, UserSearch } from "lucide-react-native";
-import { makeThemedStyles, useDs } from "@/hooks/useDs";
-import FullscreenPicker from "@/components/FullscreenPicker";
-import { Field } from "@/components/tickets/TicketDetailUI";
+import { Bx } from "@/components/jo/Bx";
+import { f, makeJoStyles, useJoTheme } from "@/components/jo/ui";
+import { IncPicker, TextField } from "./IncFields";
 import type { SelectOption } from "@/components/SearchableSelect";
 import type {
   RcaAssetCandidate,
@@ -54,7 +53,7 @@ export default function RcaQuestionStep({
   onAssetSearch,
 }: Props) {
   const styles = useStyles();
-  const ds = useDs();
+  const t = useJoTheme();
   const value = fields[question.field];
 
   // Asset / person: pre-select the recommended match when nothing is chosen
@@ -118,7 +117,7 @@ export default function RcaQuestionStep({
         {picksFrom ? (
           <>
             {shownCandidates.length === 0 ? (
-              <Notice icon={question.kind === "user" ? UserSearch : Search} style={{ marginBottom: 14 }}>
+              <Notice icon={question.kind === "user" ? "bx-user" : "bx-search"} style={{ marginBottom: 14 }}>
                 {question.kind === "user"
                   ? "We couldn't match a person automatically. Search for them below."
                   : "We couldn't match the equipment automatically. Search for it below."}
@@ -147,7 +146,7 @@ export default function RcaQuestionStep({
             ))}
             <View style={{ marginTop: 8 }}>
               {question.kind === "user" ? (
-                <FullscreenPicker
+                <IncPicker
                   label="Not in the list?"
                   placeholder="Search all people at this site"
                   options={peopleOptions}
@@ -157,7 +156,7 @@ export default function RcaQuestionStep({
                   emptyMessage="No people found for this site"
                 />
               ) : (
-                <FullscreenPicker
+                <IncPicker
                   label="Not in the list?"
                   placeholder="Search all assets at this site"
                   options={assetSearchOptions}
@@ -185,12 +184,11 @@ export default function RcaQuestionStep({
         ) : null}
 
         {question.kind === "text" ? (
-          <Field
+          <TextField
             placeholder="Type your answer"
             value={(value as string | null) ?? ""}
             onChangeText={(v) => setField(question.field, v as never)}
             multiline
-            textAlignVertical="top"
             minHeight={120}
             accessibilityLabel={question.title}
           />
@@ -199,7 +197,7 @@ export default function RcaQuestionStep({
 
       {question.kind === "choice" && (question.options ?? []).some((o) => o.recommended) ? (
         <View style={styles.aiNote}>
-          <Sparkles size={12} color={ds.carbon[500]} strokeWidth={2} />
+          <Bx name="bxs-magic-wand" size={13} color={t.muted} />
           <Text style={styles.aiNoteText}>
             We picked the Recommended answer from the report. Tap another one to change it.
           </Text>
@@ -209,49 +207,31 @@ export default function RcaQuestionStep({
   );
 }
 
-const useStyles = makeThemedStyles((ds) => ({
-  body: { paddingHorizontal: 20, paddingTop: 20, paddingBottom: 28 },
+const useStyles = makeJoStyles((t) => ({
+  body: { paddingHorizontal: 16, paddingTop: 20, paddingBottom: 28 },
   progressRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     marginBottom: 18,
+    paddingHorizontal: 4,
   },
-  counter: {
-    fontSize: 11,
-    fontWeight: "700",
-    letterSpacing: 1,
-    textTransform: "uppercase",
-    color: ds.carbon[500],
-  },
-  title: {
-    fontSize: 21,
-    lineHeight: 28,
-    fontWeight: "700",
-    color: ds.carbon[100],
-    letterSpacing: 0.1,
-  },
-  help: { fontSize: 14, lineHeight: 20, color: ds.carbon[500], marginTop: 8 },
+  counter: { ...f.t(12, 600, 0.04), textTransform: "uppercase", color: t.muted },
+  title: { ...f.d(24, -0.02, 1.18), color: t.ink, paddingHorizontal: 4 },
+  help: { ...f.t(14), lineHeight: 20, color: t.muted, marginTop: 8, paddingHorizontal: 4 },
   optional: {
     alignSelf: "flex-start",
     marginTop: 10,
-    fontSize: 11,
-    fontWeight: "600",
-    color: ds.carbon[400],
-    backgroundColor: ds.carbon[1000],
+    marginLeft: 4,
+    ...f.t(11, 600),
+    color: t.ink2,
+    backgroundColor: t.muteTint,
     paddingVertical: 3,
-    paddingHorizontal: 8,
+    paddingHorizontal: 9,
     borderRadius: 99,
     overflow: "hidden",
   },
-  listLabel: {
-    fontSize: 9,
-    fontWeight: "600",
-    letterSpacing: 1.08,
-    textTransform: "uppercase",
-    color: ds.carbon[500],
-    marginBottom: 8,
-  },
-  aiNote: { flexDirection: "row", alignItems: "flex-start", gap: 6, marginTop: 6 },
-  aiNoteText: { flex: 1, fontSize: 12, lineHeight: 17, color: ds.carbon[500] },
+  listLabel: { ...f.t(12, 600, 0.04), textTransform: "uppercase", color: t.muted, marginBottom: 8, paddingHorizontal: 4 },
+  aiNote: { flexDirection: "row", alignItems: "flex-start", gap: 6, marginTop: 6, paddingHorizontal: 4 },
+  aiNoteText: { ...f.t(12), flex: 1, lineHeight: 17, color: t.muted },
 }));

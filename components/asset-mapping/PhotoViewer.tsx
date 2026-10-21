@@ -1,8 +1,13 @@
-/** Asset Mapping — full-screen preview of a captured photo. */
+/**
+ * Asset Mapping — full-screen preview of a captured photo. Dark chrome in
+ * both themes (the artboard's dark tokens), matching the camera.
+ */
 import React, { useState } from "react";
 import { ActivityIndicator, Image, Modal, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { X } from "lucide-react-native";
+import { Bx } from "@/components/jo/Bx";
+import { f, useJoTheme } from "@/components/jo/ui";
+import { joTheme } from "@/constants/jo";
 
 export default function PhotoViewer({
   photo,
@@ -12,12 +17,14 @@ export default function PhotoViewer({
   onClose: () => void;
 }) {
   const insets = useSafeAreaInsets();
+  const { accentKey } = useJoTheme();
+  const dk = joTheme(true, accentKey);
   const [loadedUrl, setLoadedUrl] = useState<string | null>(null);
   const loading = !!photo && loadedUrl !== photo.url;
 
   return (
     <Modal visible={!!photo} animationType="fade" onRequestClose={onClose} statusBarTranslucent>
-      <View style={styles.screen}>
+      <View style={[styles.screen, { backgroundColor: dk.page }]}>
         {photo ? (
           <Image
             source={{ uri: photo.url }}
@@ -27,20 +34,20 @@ export default function PhotoViewer({
             accessibilityLabel={photo.title}
           />
         ) : null}
-        {loading ? <ActivityIndicator style={StyleSheet.absoluteFill} color="#FFFFFF" /> : null}
-        <View style={[styles.bar, { paddingTop: insets.top + 10 }]}>
-          <Text style={styles.title} numberOfLines={1}>
-            {photo?.title}
-          </Text>
+        {loading ? <ActivityIndicator style={StyleSheet.absoluteFill} color={dk.ink} /> : null}
+        <View style={[styles.bar, { paddingTop: insets.top + 8, backgroundColor: dk.scrim }]}>
           <TouchableOpacity
             onPress={onClose}
-            hitSlop={12}
-            style={styles.close}
+            hitSlop={8}
+            style={[styles.close, { backgroundColor: dk.input, borderColor: dk.lineMid }]}
             accessibilityRole="button"
             accessibilityLabel="Close preview"
           >
-            <X size={20} color="#FFFFFF" strokeWidth={2.2} />
+            <Bx name="bx-x" size={24} color={dk.ink} />
           </TouchableOpacity>
+          <Text style={[f.t(15, 600), { color: dk.ink, flex: 1 }]} numberOfLines={1}>
+            {photo?.title}
+          </Text>
         </View>
       </View>
     </Modal>
@@ -48,7 +55,7 @@ export default function PhotoViewer({
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: "#000000" },
+  screen: { flex: 1 },
   bar: {
     position: "absolute",
     top: 0,
@@ -56,17 +63,16 @@ const styles = StyleSheet.create({
     right: 0,
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 20,
+    gap: 12,
+    paddingHorizontal: 16,
     paddingBottom: 12,
-    backgroundColor: "rgba(0,0,0,0.45)",
   },
-  title: { flex: 1, fontSize: 14, fontWeight: "600", color: "#FFFFFF" },
   close: {
-    width: 34,
-    height: 34,
-    borderRadius: 99,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    borderWidth: 1,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(255,255,255,0.16)",
   },
 });

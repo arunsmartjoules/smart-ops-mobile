@@ -11,11 +11,13 @@
  * by site NAME, so the site code is resolved to `sites.name` first and
  * matched trimmed + case-insensitively, exactly like the web.
  */
+import { useQuickCreate } from "@/services/QuickCreate";
+import { useNavInsets } from "@/components/jo/navInsets";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FlatList, RefreshControl, ScrollView, Text, TouchableOpacity, View } from "react-native";
 import NetInfo from "@react-native-community/netinfo";
 import { eq } from "drizzle-orm";
-import { Building2, ChevronDown, Inbox, MessagesSquare, Plus, Search, X } from "lucide-react-native";
+import { Building2, ChevronDown, Inbox, MessagesSquare, Plus, Search, X } from "@/components/jo/bxIcons";
 import {
   EmptyState,
   Fab,
@@ -102,6 +104,7 @@ const useStyles = makeJoStyles((t) => ({
 export default function ClientCommunicationScreen() {
   const t = useJoTheme();
   const s = useStyles();
+  const { clearance } = useNavInsets();
   const { user } = useAuth();
   const userId = user?.user_id || user?.id || "";
   const userName = user?.name || user?.full_name || user?.email || "You";
@@ -301,13 +304,13 @@ export default function ClientCommunicationScreen() {
 
   const openRow = useCallback((row: CommRow) => setSheet({ mode: "detail", id: row.id }), []);
 
-  const openLog = () => {
+  const openLog = useCallback(() => {
     if (!online) {
       setToast("You're offline — logging needs a connection");
       return;
     }
     setSheet({ mode: "form", editingId: null, fromDetail: false });
-  };
+  }, [online]);
 
   const pickStream = (k: Stream) => {
     setStream(k);
@@ -317,6 +320,8 @@ export default function ClientCommunicationScreen() {
   // ── Render ────────────────────────────────────────────────────────────
   const loading = !loaded || (!sitesLoaded && sites.length === 0);
   const noSite = sitesLoaded && sites.length === 0;
+  // Tab bar "+" → Log a client communication.
+  useQuickCreate("comm", openLog, sitesLoaded && !noSite);
 
   const header = (
     <View style={s.top}>
@@ -464,7 +469,7 @@ export default function ClientCommunicationScreen() {
         keyExtractor={(r) => r.id}
         renderItem={({ item }) => <CommCard row={item} today={today} onPress={openRow} />}
         ItemSeparatorComponent={() => <View style={{ height: 8 }} />}
-        contentContainerStyle={s.list}
+        contentContainerStyle={[s.list, { paddingBottom: clearance + 64 }]}
         keyboardShouldPersistTaps="handled"
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={t.muted} colors={[t.accent]} />}
         ListEmptyComponent={

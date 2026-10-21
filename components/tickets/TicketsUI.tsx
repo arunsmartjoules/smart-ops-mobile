@@ -1,86 +1,104 @@
 /**
- * Ticket-specific colour maps for the list — Claude Design "JouleOps
- * Tickets.dc.html". The surrounding chrome (header, tabs, count line, empty
- * card) is shared; see components/shared/ListChrome.
+ * Ticket colour + label rules — the "JouleOps App" artboard's TK_ST / priority
+ * maps (constants 1471–1540, v5Vals tkRows), keyed by the backend's status
+ * values. Shared by the list row and the detail screen.
  */
-import type { DsTheme } from "@/hooks/useDs";
-import { soRadius, soShadow } from "@/components/home/SiteOverview";
+import type { BxName } from "@/components/jo/Bx";
+import { toneBg, toneFg, type JoTheme, type JoTone } from "@/constants/jo";
+import { formatIST, formatISTTime, istParts } from "@/utils/istDate";
+import type { Ticket } from "@/services/TicketsService";
 
-export { soRadius, soShadow };
+/** Artboard TK_ST: Open BAD · In progress INFO · Hold MUTE · Waiting WARN · Resolved OK · Cancelled MUTE. */
+const STATUS_TONE: Record<string, JoTone> = {
+  Open: "bad",
+  Inprogress: "info",
+  Hold: "mute",
+  Waiting: "warn",
+  Resolved: "ok",
+  Cancelled: "mute",
+};
 
-// The list chrome itself is shared with the other module tabs.
-export {
-  ModuleListHeader,
-  ListCountLine,
-  ListEmptyCard,
-  useListSlide,
-  type StatusChip,
-} from "@/components/shared/ListChrome";
+/** "Inprogress" is what the backend stores; the artboard shows "In progress". */
+export const ticketStatusText = (status: string | undefined) =>
+  status === "Inprogress" ? "In progress" : status || "Open";
 
-/** The mock's STATUS map, keyed by the backend's status values. */
-export const ticketStatusMap = (
-  ds: DsTheme,
-): Record<string, { label: string; bg: string; fg: string }> => ({
-  Open: { label: "Open", bg: ds.flame[1000], fg: ds.flame[100] },
-  Inprogress: { label: "In progress", bg: ds.sky[1000], fg: ds.sky[100] },
-  Hold: { label: "Hold", bg: ds.carbon[1000], fg: ds.carbon[400] },
-  Waiting: { label: "Waiting", bg: ds.carbon[1000], fg: ds.carbon[400] },
-  Resolved: { label: "Resolved", bg: ds.sky[900], fg: ds.sky[100] },
-  Cancelled: { label: "Cancelled", bg: ds.carbon[1000], fg: ds.carbon[500] },
-});
+export const ticketStatusTone = (status: string | undefined): JoTone =>
+  STATUS_TONE[status || "Open"] ?? "mute";
 
-export const getTicketStatus = (status: string | undefined, ds: DsTheme) =>
-  ticketStatusMap(ds)[status || "Open"] ?? {
-    label: status || "Open",
-    bg: ds.carbon[1000],
-    fg: ds.carbon[400],
-  };
+export const ticketStatusColors = (t: JoTheme, status: string | undefined) => {
+  const tone = ticketStatusTone(status);
+  return { label: ticketStatusText(status), fg: toneFg(t, tone), bg: toneBg(t, tone) };
+};
 
 /**
- * "SLA breached" tag (web tickets grid parity). Solid red so it reads above the
- * tinted-red Open badge; shown only when utils/ticketSla says breached.
+ * Artboard priority pill: Very high = solid BAD with dark text, High = BAD
+ * tint, Low = INFO tint, anything else (Medium) = MUTE tint. Null when the
+ * ticket carries no priority.
  */
-export const ticketSlaBreachTone = (ds: DsTheme) => ({
-  label: "SLA breached",
-  bg: ds.flame[100],
-  fg: ds.onAccent,
-});
-
-/** The mock's PRIORITY map. */
-export const ticketPriorityMap = (
-  ds: DsTheme,
-): Record<string, { label: string; bg: string; fg: string }> => ({
-  "very high": { label: "Very high", bg: ds.flame[100], fg: ds.onAccent },
-  high: { label: "High", bg: ds.flame[1000], fg: ds.flame[100] },
-  medium: { label: "Medium", bg: ds.carbon[1000], fg: ds.carbon[400] },
-  low: { label: "Low", bg: ds.sky[1000], fg: ds.sky[100] },
-});
-
-export const getTicketPriority = (priority: string | undefined, ds: DsTheme) => {
-  const key = (priority || "").toLowerCase().trim();
-  if (!key) return null;
-  return (
-    ticketPriorityMap(ds)[key] ?? {
-      label: priority as string,
-      bg: ds.carbon[1000],
-      fg: ds.carbon[400],
-    }
-  );
+export const ticketPriorityColors = (t: JoTheme, priority: string | undefined) => {
+  const raw = (priority || "").trim();
+  if (!raw) return null;
+  const key = raw.toLowerCase();
+  if (key === "very high") return { label: "Very high", bg: t.bad, fg: t.onAccent };
+  if (key === "high") return { label: "High", bg: t.badTint, fg: t.bad };
+  if (key === "low") return { label: "Low", bg: t.infoTint, fg: t.info };
+  if (key === "medium") return { label: "Medium", bg: t.muteTint, fg: t.mute };
+  return { label: raw, bg: t.muteTint, fg: t.mute };
 };
 
-/** Icon well behind a row's category glyph — tinted by the ticket's status. */
-export const getTicketTint = (status: string | undefined, ds: DsTheme) => {
-  switch (status) {
-    case "Inprogress":
-      return { tint: ds.sky[1000], icon: ds.sky[100] };
-    case "Resolved":
-      return { tint: ds.sky[900], icon: ds.sky[100] };
-    case "Hold":
-    case "Waiting":
-    case "Cancelled":
-      return { tint: ds.carbon[1000], icon: ds.carbon[400] };
-    default:
-      return { tint: ds.flame[1000], icon: ds.flame[100] };
-  }
+/**
+ * Category → artboard glyph. Categories are free text from the backend
+ * ("Area Temperature Complaints", "AHU and FCU Breakdown"…), so match on
+ * keywords — same buckets as utils/ticketVisuals.
+ */
+export const ticketCategoryIcon = (category?: string): BxName => {
+  const c = (category || "").toLowerCase();
+  if (/(water|leak|drain|condensate|rh\b|humid)/.test(c)) return "bxs-droplet";
+  if (/(air ?flow|ventilat|draft|air quality|\bfan\b|blower|ahu|fcu)/.test(c)) return "bx-wind";
+  if (/(temp|cooling|cold|hot)/.test(c)) return "bxs-thermometer";
+  if (/(chiller|electr|power|panel|voltage)/.test(c)) return "bxs-bolt";
+  return "bxs-cog";
 };
 
+/** "1h 29m" / "2d 8h" / "5d" — the artboard's compact age. */
+export const formatTicketAge = (createdAt?: string) => {
+  if (!createdAt) return "—";
+  const started = Date.parse(createdAt);
+  if (Number.isNaN(started)) return "—";
+  const mins = Math.max(0, Math.floor((Date.now() - started) / 60000));
+  if (mins < 60) return `${mins}m`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ${String(mins % 60).padStart(2, "0")}m`;
+  const days = Math.floor(hours / 24);
+  const restHours = hours % 24;
+  if (days >= 3 || restHours === 0) return `${days}d`;
+  return `${days}d ${restHours}h`;
+};
+
+/** "22 Sep, 10:30 AM" in IST — year appended only when it isn't this year. */
+export const formatTicketCreated = (createdAt?: string) => {
+  if (!createdAt) return "";
+  const ms = Date.parse(createdAt);
+  if (Number.isNaN(ms)) return "";
+  const sameYear = istParts(ms).year === istParts(new Date()).year;
+  const day = formatIST(ms, {
+    day: "numeric",
+    month: "short",
+    ...(sameYear ? {} : { year: "numeric" }),
+  });
+  return `${day}, ${formatISTTime(ms)}`;
+};
+
+const CLOSED = new Set(["Resolved", "Cancelled"]);
+
+/**
+ * A ticket only reads as late when the backend actually gave it a due date and
+ * that date has passed while the ticket is still open — no SLA is inferred
+ * from age alone.
+ */
+export const isTicketLate = (item: Pick<Ticket, "status" | "due_date">) => {
+  if (CLOSED.has(item.status)) return false;
+  if (!item.due_date) return false;
+  const due = Date.parse(item.due_date);
+  return !Number.isNaN(due) && due < Date.now();
+};

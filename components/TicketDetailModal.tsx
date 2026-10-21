@@ -2,30 +2,23 @@ import React from "react";
 import { Modal, ScrollView, Text, View } from "react-native";
 // Lifts the Update bar above the keyboard — RN's KAV can't on edge-to-edge Android.
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
+import { LinearGradient } from "expo-linear-gradient";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { type Ticket } from "@/services/TicketsService";
 import { type SelectOption } from "./SearchableSelect";
 import TicketDetailStatusUpdate, {
   getTicketUpdateBlocker,
   isTempMandatoryCategory,
-  statusLabel,
   ticketCategory,
 } from "./TicketDetailStatusUpdate";
 import TicketActivity from "@/components/tickets/TicketActivity";
 import {
-  Badge,
-  DetailCard,
-  DetailHeader,
-  MetaBlock,
-  SubmitBar,
-} from "@/components/tickets/TicketDetailUI";
-import {
-  getTicketPriority,
-  getTicketStatus,
-  ticketSlaBreachTone,
+  ticketPriorityColors,
+  ticketStatusColors,
 } from "@/components/tickets/TicketsUI";
-import { isSlaBreached } from "@/utils/ticketSla";
-import { makeThemedStyles, useDs } from "@/hooks/useDs";
+import { Bx } from "@/components/jo/Bx";
+import { Card, IconButton, PrimaryButton, f, makeJoStyles, useJoTheme } from "@/components/jo/ui";
+import { isSlaBreached, slaDueToMs } from "@/utils/ticketSla";
 import { formatIST } from "@/utils/istDate";
 import type { TicketIncidentDraft } from "@/constants/incidentFormOptions";
 
@@ -67,6 +60,9 @@ interface TicketDetailModalProps {
   canEdit?: boolean;
 }
 
+const CLOSED = new Set(["Resolved", "Cancelled"]);
+
+/** "Raised 21 Oct · 08:12" (IST), or the site when the ticket has no stamp. */
 const raisedLine = (ticket: Ticket) => {
   const ms = Date.parse(ticket.created_at || "");
   if (Number.isNaN(ms)) return ticket.site_name || ticket.site_code;
@@ -77,6 +73,35 @@ const raisedLine = (ticket: Ticket) => {
   )}`;
 };
 
+/** "30 min" / "2h 10m" / "3d 4h". */
+const formatSpan = (mins: number) => {
+  if (mins < 60) return `${mins} min`;
+  const h = Math.floor(mins / 60);
+  if (h < 24) return `${h}h ${String(mins % 60).padStart(2, "0")}m`;
+  const d = Math.floor(h / 24);
+  return h % 24 ? `${d}d ${h % 24}h` : `${d}d`;
+};
+
+/**
+ * The artboard's "· escalates in 30 min" — built only from the server's SLA
+ * fields (utils/ticketSla); nothing is shown when no SLA clock is running.
+ */
+const slaLine = (ticket: Ticket): { text: string; urgent: boolean } | null => {
+  // A breach is already shown as the solid "SLA breached" pill.
+  if (isSlaBreached(ticket) || CLOSED.has(ticket.status)) return null;
+  const due = slaDueToMs(ticket.sla_due_at);
+  if (due == null) return null;
+  const mins = Math.max(0, Math.round((due - Date.now()) / 60000));
+  return { text: `SLA due in ${formatSpan(mins)}`, urgent: mins <= 60 };
+};
+
+/**
+ * Ticket detail — artboard "ticketDetail" (lines 403–459): back button and
+ * ticket number with the raised / SLA line, status + priority pills, the
+ * title in display type, an Area / Category / Assigned strip, the status
+ * update card, the activity timeline and a pinned accent "Update ticket" CTA.
+ * Full-screen Modal, so the floating tab bar is already covered.
+ */
 const TicketDetailModal = React.memo(
   ({
     visible,
@@ -114,16 +139,21 @@ const TicketDetailModal = React.memo(
     setIncidentDraft,
     canEdit = true,
   }: TicketDetailModalProps) => {
-    const styles = useStyles();
-    const ds = useDs();
+    const t = useJoTheme();
+    const s = useStyles();
     const insets = useSafeAreaInsets();
     // Turns the hints and the sticky bar's message on only once the operator
     // has actually tried to submit.
     const [attempted, setAttempted] = React.useState(false);
 
-    React.useEffect(() => {
+    // Reset on every open / ticket switch — adjusted during render rather than
+    // in an effect, so the stale "attempted" flag never paints.
+    const resetKey = visible ? (ticket?.id ?? "") : null;
+    const [seenKey, setSeenKey] = React.useState(resetKey);
+    if (seenKey !== resetKey) {
+      setSeenKey(resetKey);
       if (visible) setAttempted(false);
-    }, [visible, ticket?.id]);
+    }
 
     const isDirty = React.useMemo(() => {
       if (!ticket) return false;
@@ -194,10 +224,11 @@ const TicketDetailModal = React.memo(
 
     if (!ticket || !visible) return null;
 
-    const status = getTicketStatus(ticket.status, ds);
-    const priority = getTicketPriority(ticket.priority, ds);
-    const slaBreach = isSlaBreached(ticket) ? ticketSlaBreachTone(ds) : null;
+    const status = ticketStatusColors(t, ticket.status);
+    const priority = ticketPriorityColors(t, ticket.priority);
+    const sla = slaLine(ticket);
     const ready = isDirty && !blocker;
+    const bottomPad = Math.max(insets.bottom + 8, 20);
 
     return (
       <Modal
@@ -208,112 +239,129 @@ const TicketDetailModal = React.memo(
         statusBarTranslucent
         navigationBarTranslucent
       >
-        <View style={styles.screen}>
-          <DetailHeader
-            topInset={insets.top}
-            title={ticket.ticket_no}
-            subtitle={raisedLine(ticket)}
-            onBack={onClose}
-          />
+        <View style={s.screen}>
+          <View style={[s.header, { paddingTop: insets.top + 8 }]}>
+            <IconButton icon="bx-chevron-left" iconSize={24} label="Back to tickets" onPress={onClose} />
+            <View style={s.headLead}>
+              <Text style={s.headTitle} numberOfLines={1}>
+                {ticket.ticket_no}
+              </Text>
+              <Text style={s.headSub} numberOfLines={1}>
+                {raisedLine(ticket)}
+                {sla ? (
+                  <Text style={{ color: sla.urgent ? t.bad : t.muted }}>{` · ${sla.text}`}</Text>
+                ) : null}
+              </Text>
+            </View>
+          </View>
 
           <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
-          <ScrollView
-            style={{ flex: 1 }}
-            contentContainerStyle={styles.body}
-            showsVerticalScrollIndicator={false}
-            keyboardShouldPersistTaps="handled"
-          >
-            <DetailCard style={styles.summary}>
-              <Text style={styles.title}>{ticket.title}</Text>
-              <View style={styles.badgeRow}>
-                <Badge label={status.label} bg={status.bg} fg={status.fg} />
+            <ScrollView
+              style={{ flex: 1 }}
+              contentContainerStyle={s.body}
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+            >
+              <View style={s.pills}>
+                <View style={[s.pill, { backgroundColor: status.bg }]}>
+                  <Text style={[s.pillText, { color: status.fg }]}>{status.label}</Text>
+                </View>
                 {priority ? (
-                  <Badge
-                    label={priority.label}
-                    bg={priority.bg}
-                    fg={priority.fg}
-                  />
+                  <View style={[s.pill, { backgroundColor: priority.bg }]}>
+                    <Text style={[s.pillText, { color: priority.fg }]}>{priority.label}</Text>
+                  </View>
                 ) : null}
-                {slaBreach ? (
-                  <Badge
-                    label={slaBreach.label}
-                    bg={slaBreach.bg}
-                    fg={slaBreach.fg}
-                  />
+                {isSlaBreached(ticket) ? (
+                  <View style={[s.pill, { backgroundColor: t.bad, flexDirection: "row", gap: 4 }]}>
+                    <Bx name="bx-error" size={13} color={t.onAccent} />
+                    <Text style={[s.pillText, { color: t.onAccent }]}>SLA breached</Text>
+                  </View>
                 ) : null}
               </View>
-              <View style={styles.metaWrap}>
-                <MetaBlock
-                  label="Area"
-                  value={ticket.area_asset || ticket.location || "—"}
-                />
-                <MetaBlock label="Category" value={ticketCategory(ticket) || "—"} />
-                <MetaBlock
-                  label="Assigned"
-                  value={ticket.assigned_to || "Unassigned"}
-                />
+
+              <Text style={s.title}>{ticket.title}</Text>
+
+              <View style={s.metaGrid}>
+                <MetaCell label="Area" value={ticket.area_asset || ticket.location || "—"} />
+                <MetaCell label="Category" value={ticketCategory(ticket) || "—"} />
+                <MetaCell label="Assigned" value={ticket.assigned_to || "Unassigned"} />
               </View>
-            </DetailCard>
+
+              {canEdit ? (
+                <View style={{ marginTop: 12 }}>
+                  <TicketDetailStatusUpdate
+                    ticket={ticket}
+                    updateStatus={updateStatus}
+                    setUpdateStatus={setUpdateStatus}
+                    updateRemarks={updateRemarks}
+                    setUpdateRemarks={setUpdateRemarks}
+                    updateArea={updateArea}
+                    setUpdateArea={setUpdateArea}
+                    updateCategory={updateCategory}
+                    setUpdateCategory={setUpdateCategory}
+                    updateBreakdownType={updateBreakdownType}
+                    setUpdateBreakdownType={setUpdateBreakdownType}
+                    areaOptions={areaOptions}
+                    categoryOptions={categoryOptions}
+                    areasLoading={areasLoading}
+                    beforeTemp={beforeTemp}
+                    setBeforeTemp={setBeforeTemp}
+                    afterTemp={afterTemp}
+                    setAfterTemp={setAfterTemp}
+                    attachmentUri={attachmentUri}
+                    setAttachmentUri={setAttachmentUri}
+                    areaSearchQuery={areaSearchQuery}
+                    setAreaSearchQuery={setAreaSearchQuery}
+                    loadMoreAreas={loadMoreAreas}
+                    hasMoreAreas={hasMoreAreas}
+                    loadingMoreAreas={loadingMoreAreas}
+                    createIncidentFromTicket={createIncidentFromTicket}
+                    setCreateIncidentFromTicket={setCreateIncidentFromTicket}
+                    incidentDraft={incidentDraft}
+                    setIncidentDraft={setIncidentDraft}
+                    attempted={attempted}
+                  />
+                </View>
+              ) : (
+                <Card style={s.readOnly} radius={22}>
+                  <Bx name="bx-lock-alt" size={18} color={t.muted} />
+                  <Text style={s.readOnlyText}>View only · punch in to update this ticket</Text>
+                </Card>
+              )}
+
+              <TicketActivity ticket={ticket} />
+            </ScrollView>
 
             {canEdit ? (
-              <TicketDetailStatusUpdate
-                ticket={ticket}
-                updateStatus={updateStatus}
-                setUpdateStatus={setUpdateStatus}
-                updateRemarks={updateRemarks}
-                setUpdateRemarks={setUpdateRemarks}
-                updateArea={updateArea}
-                setUpdateArea={setUpdateArea}
-                updateCategory={updateCategory}
-                setUpdateCategory={setUpdateCategory}
-                updateBreakdownType={updateBreakdownType}
-                setUpdateBreakdownType={setUpdateBreakdownType}
-                areaOptions={areaOptions}
-                categoryOptions={categoryOptions}
-                areasLoading={areasLoading}
-                beforeTemp={beforeTemp}
-                setBeforeTemp={setBeforeTemp}
-                afterTemp={afterTemp}
-                setAfterTemp={setAfterTemp}
-                attachmentUri={attachmentUri}
-                setAttachmentUri={setAttachmentUri}
-                areaSearchQuery={areaSearchQuery}
-                setAreaSearchQuery={setAreaSearchQuery}
-                loadMoreAreas={loadMoreAreas}
-                hasMoreAreas={hasMoreAreas}
-                loadingMoreAreas={loadingMoreAreas}
-                createIncidentFromTicket={createIncidentFromTicket}
-                setCreateIncidentFromTicket={setCreateIncidentFromTicket}
-                incidentDraft={incidentDraft}
-                setIncidentDraft={setIncidentDraft}
-                attempted={attempted}
-              />
+              <View style={[s.bar, { paddingBottom: bottomPad }]}>
+                <LinearGradient
+                  pointerEvents="none"
+                  colors={[`${t.page}00`, t.page]}
+                  style={s.barFade}
+                />
+                {attempted && isDirty && blocker ? (
+                  <View style={s.blocked} accessibilityLiveRegion="polite">
+                    <Bx name="bx-error-circle" size={15} color={t.bad} />
+                    <Text style={s.blockedText}>{blocker}</Text>
+                  </View>
+                ) : null}
+                <PrimaryButton
+                  label={isDirty ? "Update ticket" : "No changes yet"}
+                  icon="bx-check"
+                  busy={isUpdating}
+                  disabled={!isDirty}
+                  style={!ready && isDirty ? { opacity: 0.85 } : undefined}
+                  onPress={() => {
+                    setAttempted(true);
+                    // The calling screen re-validates and surfaces its own
+                    // alert; this just avoids a pointless round-trip when we
+                    // already know the form is incomplete.
+                    if (!isDirty || blocker) return;
+                    handleUpdateStatus();
+                  }}
+                />
+              </View>
             ) : null}
-
-            <TicketActivity ticket={ticket} />
-          </ScrollView>
-
-          {canEdit ? (
-            <SubmitBar
-              label={
-                isDirty
-                  ? `Update to ${statusLabel(updateStatus)}`
-                  : "No changes yet"
-              }
-              blocked={attempted && isDirty ? blocker : null}
-              ready={ready}
-              busy={isUpdating}
-              bottomInset={insets.bottom}
-              onPress={() => {
-                setAttempted(true);
-                // The calling screen re-validates and surfaces its own alert;
-                // this just avoids a pointless round-trip when we already know
-                // the form is incomplete.
-                if (!isDirty || blocker) return;
-                handleUpdateStatus();
-              }}
-            />
-          ) : null}
           </KeyboardAvoidingView>
         </View>
       </Modal>
@@ -323,26 +371,67 @@ const TicketDetailModal = React.memo(
 
 TicketDetailModal.displayName = "TicketDetailModal";
 
-const useStyles = makeThemedStyles((ds) => ({
-  screen: { flex: 1, backgroundColor: ds.pageBg },
-  body: { paddingHorizontal: 20, paddingTop: 16, paddingBottom: 20 },
-  summary: { padding: 16, marginBottom: 12 },
-  badgeRow: { flexDirection: "row", flexWrap: "wrap", gap: 7, marginBottom: 14 },
-  title: {
-    fontSize: 16,
-    lineHeight: 22,
-    fontWeight: "600",
-    letterSpacing: 0.16,
-    color: ds.carbon[100],
-    marginBottom: 10,
-  },
-  metaWrap: {
+function MetaCell({ label, value }: { label: string; value: string }) {
+  const s = useStyles();
+  return (
+    <View style={s.metaCell}>
+      <Text style={s.metaLabel}>{label}</Text>
+      <Text style={s.metaValue} numberOfLines={3}>
+        {value}
+      </Text>
+    </View>
+  );
+}
+
+const useStyles = makeJoStyles((t) => ({
+  screen: { flex: 1, backgroundColor: t.page },
+  header: {
     flexDirection: "row",
-    flexWrap: "wrap",
-    borderTopWidth: 1,
-    borderTopColor: ds.carbon[1000],
-    paddingTop: 13,
+    alignItems: "center",
+    gap: 12,
+    paddingHorizontal: 16,
+    paddingBottom: 10,
   },
+  headLead: { flex: 1, minWidth: 0 },
+  headTitle: { ...f.t(15, 600), color: t.ink },
+  headSub: { ...f.t(11.5), color: t.muted, marginTop: 2 },
+  body: { paddingTop: 4, paddingHorizontal: 16, paddingBottom: 24 },
+  pills: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
+  pill: {
+    height: 24,
+    paddingHorizontal: 10,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  pillText: { ...f.t(11.5, 600) },
+  title: { ...f.d(26, -0.025, 1.12), color: t.ink, marginTop: 10 },
+  metaGrid: { flexDirection: "row", gap: 6, marginTop: 14 },
+  metaCell: {
+    flex: 1,
+    minWidth: 0,
+    borderRadius: 18,
+    backgroundColor: t.card,
+    borderWidth: 1,
+    borderColor: t.cardBorder,
+    paddingVertical: 11,
+    paddingHorizontal: 12,
+  },
+  metaLabel: { ...f.t(11), color: t.muted },
+  metaValue: { ...f.t(13, 600), color: t.ink, marginTop: 4 },
+  readOnly: {
+    marginTop: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingVertical: 13,
+    paddingHorizontal: 14,
+  },
+  readOnlyText: { ...f.t(12.5, 500), color: t.ink3, flex: 1 },
+  bar: { paddingTop: 14, paddingHorizontal: 16, backgroundColor: t.page },
+  barFade: { position: "absolute", left: 0, right: 0, top: -28, height: 28 },
+  blocked: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 10, paddingHorizontal: 4 },
+  blockedText: { ...f.t(12, 600), color: t.bad, flex: 1 },
 }));
 
 export default TicketDetailModal;

@@ -8,10 +8,6 @@ import {
   ActivityIndicator,
   BackHandler,
 } from "react-native";
-import BottomSheet, {
-  BottomSheetScrollView,
-  BottomSheetView,
-} from "@expo/ui/community/bottom-sheet";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { router, useFocusEffect } from "expo-router";
 import Animated, {
@@ -29,26 +25,30 @@ import {
   istParts,
   formatIST,
 } from "@/utils/istDate";
-import {
-  Check,
-  ChevronLeft,
-  SlidersHorizontal,
-  CloudSun,
-  MapPin,
-  Moon,
-  PlayCircle,
-  Sun,
-} from "lucide-react-native";
 import { useNetworkStatus } from "@/hooks/useNetworkStatus";
 import { useSites } from "@/hooks/useSites";
 import { setRouteParams } from "@/utils/routeParams";
 import { uiShiftToLabel } from "@/services/LogActivityMasterService";
 import { startOfDay, endOfDay, addDays } from "date-fns";
 import loggerUtil from "@/utils/logger";
-import Skeleton from "@/components/Skeleton";
 import * as Haptics from "expo-haptics";
-import { makeThemedStyles, useDs } from "@/hooks/useDs";
-import { ModuleListHeader } from "@/components/shared/ListChrome";
+import { Bx, type BxName } from "@/components/jo/Bx";
+import {
+  EmptyState,
+  IconButton,
+  JoPage,
+  JoSheet,
+  PrimaryButton,
+  SecondaryButton,
+  SheetOption,
+  Shimmer,
+  StatusPill,
+  f,
+  makeJoStyles,
+  useJoTheme,
+} from "@/components/jo/ui";
+import { useNavInsets } from "@/components/jo/navInsets";
+import { useHideTabBar } from "@/services/TabBarVisibility";
 import {
   LogHistoryCard,
   normaliseLogStatus,
@@ -57,9 +57,9 @@ import { LogEditSheet } from "@/components/sitelogs/LogEditSheet";
 import {
   HistoryCounters,
   LogTypeCard,
-  ShiftCountStrip,
-  soRadius,
+  PendingLegend,
 } from "@/components/sitelogs/LogsUI";
+import { NoticePill, ShiftCells } from "@/components/sitelogs/LogsKit";
 import {
   DEFAULT_HISTORY_FILTERS,
   LogHistoryFilterSheet,
@@ -106,11 +106,16 @@ const OVERVIEW_DAYS = 7;
 const SHIFTS = ["A", "B", "C"] as const;
 type ShiftKey = (typeof SHIFTS)[number];
 
-const SHIFT_OPTIONS = [
-  { value: "A", label: "Shift A · Morning", window: "06:00 – 14:00", icon: Sun },
-  { value: "B", label: "Shift B · Evening", window: "14:00 – 22:00", icon: CloudSun },
-  { value: "C", label: "Shift C · Night", window: "22:00 – 06:00", icon: Moon },
-] as const;
+const SHIFT_OPTIONS: readonly {
+  value: ShiftKey;
+  label: string;
+  window: string;
+  icon: BxName;
+}[] = [
+  { value: "A", label: "Shift A · Morning", window: "06:00 – 14:00", icon: "bxs-sun" },
+  { value: "B", label: "Shift B · Evening", window: "14:00 – 22:00", icon: "bxs-cloud" },
+  { value: "C", label: "Shift C · Night", window: "22:00 – 06:00", icon: "bxs-moon" },
+];
 
 /** The shift the IST clock is in now — C wraps midnight. */
 const currentIstShift = (): ShiftKey => {
@@ -159,8 +164,9 @@ type StartSheet = {
 } | null;
 
 export default function SiteLogs() {
-  const ds = useDs();
-  const sheetStyles = useSheetStyles();
+  const t = useJoTheme();
+  const s = useStyles();
+  const { clearance } = useNavInsets();
   const { user } = useAuth();
   const { canEdit } = useAttendanceGate();
   const { isConnected } = useNetworkStatus();
@@ -200,7 +206,6 @@ export default function SiteLogs() {
         weekday: "short",
         day: "numeric",
         month: "short",
-        year: "numeric",
       }),
     [],
   );
@@ -645,11 +650,16 @@ export default function SiteLogs() {
     [historyKey, openEntry],
   );
 
+  // The history panel draws full-screen over the tab, like the artboard's
+  // detail views — the floating bar steps aside while it is open.
+  useHideTabBar(historyKey !== null);
+
   const refreshControl = (
     <RefreshControl
       refreshing={refreshing}
       onRefresh={onRefresh}
-      tintColor={ds.carbon[500]}
+      tintColor={t.muted}
+      colors={[t.accent]}
     />
   );
 
@@ -663,63 +673,112 @@ export default function SiteLogs() {
     ? SHIFT_OPTIONS.find((o) => o.value === startSheet.shift)?.label
     : null;
 
-  return (
-    <View style={{ flex: 1, backgroundColor: ds.pageBg }}>
-      <ModuleListHeader
-        topInset={insets.top}
-        eyebrow="SITE LOGS"
-        siteName={siteName}
-        dateLabel={todayLabel}
-        onPressSite={() => setSitePickerVisible(true)}
-        onRefresh={() => {
-          if (!isConnected || !siteCode) return;
-          onRefresh();
-        }}
-        refreshDisabled={!isConnected || !siteCode}
-      />
+  const totalPending = overview.reduce((sum, o) => sum + (o.loaded ? o.pending : 0), 0);
+  const canRefresh = isConnected && !!siteCode;
 
+  return (
+    <JoPage>
       <ScrollView
-        contentContainerStyle={{
-          paddingHorizontal: 16,
-          paddingTop: 16,
-          paddingBottom: 22,
-        }}
+        contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: clearance }}
         showsVerticalScrollIndicator={false}
         refreshControl={refreshControl}
       >
-        {!siteCode ? (
-          <View style={{ paddingVertical: 28, alignItems: "center" }}>
-            <Text style={{ fontSize: 12.5, color: ds.carbon[400] }}>
-              Select a site to see its logs
-            </Text>
+        {/* Title block — site pill + date, "Today's logs", refresh */}
+        <View style={s.titleRow}>
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <View style={s.siteRow}>
+              <TouchableOpacity
+                onPress={() => setSitePickerVisible(true)}
+                disabled={availableSites.length === 0}
+                activeOpacity={0.75}
+                accessibilityRole="button"
+                accessibilityLabel={`Site: ${siteName}. Change site`}
+                style={s.sitePill}
+              >
+                <Bx name="bx-buildings" size={14} color={t.accentInk} />
+                <Text style={[f.t(12.5, 500), { color: t.ink2, flexShrink: 1 }]} numberOfLines={1}>
+                  {siteName}
+                </Text>
+                <Bx name="bx-chevron-down" size={15} color={t.muted} />
+              </TouchableOpacity>
+              <Text style={[f.t(12.5), { color: t.muted }]} numberOfLines={1}>
+                {todayLabel}
+              </Text>
+            </View>
+            <Text style={[f.d(28, -0.025), { color: t.ink, marginTop: 4 }]}>Today&apos;s logs</Text>
           </View>
-        ) : !anyLoaded ? (
-          LOG_TABS.map((t) => (
-            <Skeleton
-              key={t.key}
-              width="100%"
-              height={t.hasShift ? 136 : 104}
-              borderRadius={soRadius.card}
-              style={{ marginBottom: 9 }}
+          <View style={{ marginTop: 4, opacity: canRefresh ? 1 : 0.45 }}>
+            <IconButton
+              icon="bx-refresh"
+              iconSize={21}
+              label={canRefresh ? "Refresh logs" : "Refresh unavailable offline"}
+              onPress={canRefresh ? () => void onRefresh() : undefined}
             />
-          ))
+          </View>
+        </View>
+
+        {!siteCode ? (
+          <View style={{ marginTop: 16 }}>
+            <EmptyState
+              icon="bx-buildings"
+              title="Select a site"
+              sub="Pick a site to see today's logs."
+              action={
+                availableSites.length > 0
+                  ? { label: "Choose site", onPress: () => setSitePickerVisible(true) }
+                  : undefined
+              }
+            />
+          </View>
         ) : (
-          overview.map((o) => (
-            <LogTypeCard
-              key={o.tab.key}
-              logName={o.tab.key}
-              label={o.tab.label}
-              sub={o.sub}
-              pending={o.pending}
-              completed={o.completed}
-              shiftCounts={o.shiftCounts}
-              continuing={o.continuing}
-              done={o.done}
-              canStart={canEdit}
-              onStart={() => onStart(o.tab.key)}
-              onHistory={() => openHistory(o.tab.key)}
-            />
-          ))
+          <>
+            <View style={{ gap: 8, marginTop: 12, marginLeft: 4, marginBottom: 4 }}>
+              {anyLoaded ? (
+                <NoticePill
+                  tone={totalPending > 0 ? "bad" : "ok"}
+                  text={
+                    totalPending > 0
+                      ? `${totalPending} pending across ${LOG_TABS.length} log types`
+                      : `Nothing pending across ${LOG_TABS.length} log types`
+                  }
+                />
+              ) : null}
+              {!canEdit ? (
+                <NoticePill
+                  tone="warn"
+                  icon="bx-lock-alt"
+                  text="View only — start your day to log readings"
+                />
+              ) : null}
+              {!isConnected ? (
+                <NoticePill tone="mute" icon="bx-wifi-off" text="Offline — showing logs saved on this device" />
+              ) : null}
+            </View>
+
+            <View style={{ gap: 10, marginTop: 10 }}>
+              {!anyLoaded
+                ? LOG_TABS.map((tab) => (
+                    <Shimmer key={tab.key} height={tab.hasShift ? 190 : 140} radius={26} />
+                  ))
+                : overview.map((o) => (
+                    <LogTypeCard
+                      key={o.tab.key}
+                      logName={o.tab.key}
+                      label={o.tab.label}
+                      sub={o.sub}
+                      pending={o.pending}
+                      completed={o.completed}
+                      shiftCounts={o.shiftCounts}
+                      continuing={o.continuing}
+                      done={o.done}
+                      canStart={canEdit}
+                      onStart={() => onStart(o.tab.key)}
+                      onHistory={() => openHistory(o.tab.key)}
+                    />
+                  ))}
+            </View>
+            {anyLoaded ? <PendingLegend /> : null}
+          </>
         )}
       </ScrollView>
 
@@ -728,54 +787,31 @@ export default function SiteLogs() {
         <Animated.View
           entering={SlideInRight.duration(240).easing(Easing.bezier(0.4, 0, 0.2, 1))}
           exiting={SlideOutRight.duration(200)}
-          style={[
-            sheetStyles.panel,
-            { backgroundColor: ds.pageBg, paddingTop: insets.top + 2 },
-          ]}
+          style={[s.panel, { paddingTop: insets.top }]}
         >
-          <View style={sheetStyles.panelHeader}>
-            <TouchableOpacity
-              onPress={closeHistory}
-              activeOpacity={0.8}
-              hitSlop={6}
-              style={sheetStyles.backTile}
-              accessibilityRole="button"
-              accessibilityLabel="Back to site logs"
-            >
-              <ChevronLeft size={20} color={ds.carbon[100]} strokeWidth={2.2} />
-            </TouchableOpacity>
+          <View style={s.panelHeader}>
+            <IconButton icon="bx-chevron-left" iconSize={24} label="Back to site logs" onPress={closeHistory} />
             <View style={{ flex: 1, minWidth: 0 }}>
-              <Text style={sheetStyles.panelTitle} numberOfLines={1}>
+              <Text style={[f.t(15, 600), { color: t.ink }]} numberOfLines={1}>
                 {historyTab.label} log
               </Text>
-              <Text style={sheetStyles.panelSub} numberOfLines={1}>
+              <Text style={[f.t(11.5), { color: t.muted, marginTop: 2 }]} numberOfLines={1}>
                 {historyLabel}
               </Text>
             </View>
             <TouchableOpacity
               onPress={() => setFilterOpen(true)}
-              activeOpacity={0.8}
-              hitSlop={6}
-              style={[
-                sheetStyles.backTile,
-                filtersActive(filters) && {
-                  backgroundColor: ds.controlOn,
-                  borderColor: ds.controlOn,
-                },
-              ]}
+              activeOpacity={0.75}
               accessibilityRole="button"
               accessibilityLabel="Filter history"
               accessibilityState={{ selected: filtersActive(filters) }}
+              style={[s.roundBtn, filtersActive(filters) && { backgroundColor: t.selBg, borderColor: t.selBg }]}
             >
-              <SlidersHorizontal
-                size={17}
-                color={filtersActive(filters) ? ds.onControl : ds.carbon[100]}
-                strokeWidth={2}
-              />
+              <Bx name="bx-slider-alt" size={19} color={filtersActive(filters) ? t.selFg : t.ink} />
             </TouchableOpacity>
           </View>
 
-          <View style={{ paddingHorizontal: 16, paddingTop: 10, gap: 8 }}>
+          <View style={{ paddingHorizontal: 16, paddingTop: 4, gap: 8 }}>
             <HistoryCounters
               total={historyCounts.total}
               pending={historyCounts.pending}
@@ -783,17 +819,18 @@ export default function SiteLogs() {
               totalLabel={historyKey === "Chiller Logs" ? "Target" : "Total"}
               completedLabel={historyKey === "Chiller Logs" ? "Logged" : "Completed"}
               status={filters.status}
-              onStatus={(status) => setFilters((f) => ({ ...f, status }))}
+              onStatus={(status) => setFilters((fl) => ({ ...fl, status }))}
             />
             {historyShiftCounts ? (
-              <ShiftCountStrip
+              <ShiftCells
                 counts={historyShiftCounts}
+                showCounts
                 selected={historyShift === "all" ? null : `Shift ${historyShift}`}
                 onSelect={(label) => {
                   const sh = label.slice(-1) as ShiftKey;
-                  setFilters((f) => ({
-                    ...f,
-                    shift: f.shift === sh ? "all" : sh,
+                  setFilters((fl) => ({
+                    ...fl,
+                    shift: fl.shift === sh ? "all" : sh,
                   }));
                 }}
               />
@@ -804,27 +841,39 @@ export default function SiteLogs() {
             contentContainerStyle={{
               paddingHorizontal: 16,
               paddingTop: 12,
-              paddingBottom: 24,
+              paddingBottom: insets.bottom + 24,
             }}
             showsVerticalScrollIndicator={false}
             refreshControl={refreshControl}
           >
             {historyLoading ? (
-              [1, 2, 3, 4].map((i) => (
-                <Skeleton
-                  key={i}
-                  width="100%"
-                  height={92}
-                  borderRadius={soRadius.card}
-                  style={{ marginBottom: 7 }}
-                />
-              ))
-            ) : visibleRows.length === 0 ? (
-              <View style={{ paddingVertical: 28, alignItems: "center" }}>
-                <Text style={{ fontSize: 12.5, color: ds.carbon[400] }}>
-                  No {historyTab.label.toLowerCase()} entries in this window
-                </Text>
+              <View style={{ gap: 8 }}>
+                {[1, 2, 3, 4].map((i) => (
+                  <Shimmer key={i} height={124} radius={22} />
+                ))}
               </View>
+            ) : visibleRows.length === 0 ? (
+              <EmptyState
+                icon="bx-history"
+                title={`No ${historyTab.label.toLowerCase()} entries`}
+                sub={
+                  filtersActive(filters)
+                    ? "Nothing matches these filters in this window."
+                    : "Nothing was scheduled or logged in this window."
+                }
+                action={
+                  filtersActive(filters)
+                    ? {
+                        label: "Reset filters",
+                        onPress: () => {
+                          const next = DEFAULT_HISTORY_FILTERS();
+                          if (next.range.preset !== filters.range.preset) setHistoryRows(null);
+                          setFilters(next);
+                        },
+                      }
+                    : undefined
+                }
+              />
             ) : (
               visibleRows.map((row) => (
                 <LogHistoryCard
@@ -836,6 +885,12 @@ export default function SiteLogs() {
               ))
             )}
           </ScrollView>
+
+          {refreshing ? null : historyLoading ? (
+            <View style={{ position: "absolute", top: insets.top + 22, right: 76 }}>
+              <ActivityIndicator size="small" color={t.muted} />
+            </View>
+          ) : null}
         </Animated.View>
       ) : null}
 
@@ -863,293 +918,151 @@ export default function SiteLogs() {
       ) : null}
 
       {/* Start flow — shift choice (Temp & RH), then confirm */}
-      {startSheet && startTab ? (
-        <BottomSheet
-          key={startSheet.step}
-          enableDynamicSizing
-          enablePanDownToClose
-          onClose={() => setStartSheet(null)}
-          backgroundStyle={{ backgroundColor: ds.white }}
-        >
-          <BottomSheetView
-            style={{ paddingHorizontal: 22, paddingTop: 6, paddingBottom: 30 }}
-          >
-            {startSheet.step === "shift" ? (
-              <>
-                <Text style={sheetStyles.heading}>Which shift?</Text>
-                <Text style={sheetStyles.sub}>
-                  Choose the shift you&apos;re logging Temperature &amp; RH for.
-                </Text>
-
-                <View style={{ gap: 8 }}>
-                  {SHIFT_OPTIONS.map((sh) => {
-                    const tag = shiftTags[sh.value];
-                    const Icon = sh.icon;
-                    const tone =
-                      tag.kind === "logged"
-                        ? { tint: ds.sky[900], fg: ds.sky[100], text: "Logged" }
-                        : tag.kind === "due"
-                          ? {
-                              tint: ds.flame[1000],
-                              fg: ds.flame[100],
-                              text: tag.pending > 0 ? `${tag.pending > 99 ? "99+" : tag.pending} due` : "Due",
-                            }
-                          : { tint: ds.carbon[1000], fg: ds.carbon[500], text: "Upcoming" };
-                    return (
-                      <TouchableOpacity
-                        key={sh.value}
-                        onPress={() => {
-                          Haptics.selectionAsync().catch(() => {});
-                          setStartSheet({
-                            key: startSheet.key,
-                            step: "confirm",
-                            shift: sh.value,
-                          });
-                        }}
-                        activeOpacity={0.85}
-                        style={sheetStyles.shiftRow}
-                      >
-                        <View
-                          style={[
-                            sheetStyles.shiftIcon,
-                            { backgroundColor: tone.tint },
-                          ]}
-                        >
-                          <Icon size={17} color={tone.fg} strokeWidth={2.1} />
-                        </View>
-                        <View style={{ flex: 1, minWidth: 0 }}>
-                          <Text style={sheetStyles.shiftLabel}>{sh.label}</Text>
-                          <Text style={sheetStyles.shiftWindow}>{sh.window}</Text>
-                        </View>
-                        <View
-                          style={[sheetStyles.tag, { backgroundColor: tone.tint }]}
-                        >
-                          <Text style={[sheetStyles.tagText, { color: tone.fg }]}>
-                            {tone.text}
-                          </Text>
-                        </View>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
-              </>
-            ) : (
-              <>
-                <View style={sheetStyles.confirmIcon}>
-                  <PlayCircle size={24} color={ds.flame[100]} strokeWidth={2} />
-                </View>
-                <Text style={sheetStyles.confirmTitle}>
-                  {startContinuing
-                    ? "Continue this log?"
-                    : `Start ${startTab.label} log?`}
-                </Text>
-                <Text style={sheetStyles.confirmBody}>
-                  {startShiftLabel ? `${startShiftLabel} · ` : ""}
-                  A new entry will open for {siteName} for today,{" "}
-                  {formatIST(new Date(), { day: "numeric", month: "short" })}.
-                  Readings save to the log sheet once complete.
-                </Text>
-                <View style={{ flexDirection: "row", gap: 9 }}>
+      <JoSheet
+        visible={!!(startSheet && startTab)}
+        onClose={() => setStartSheet(null)}
+        title={startSheet?.step === "shift" ? "Which shift?" : undefined}
+        subtitle={
+          startSheet?.step === "shift"
+            ? "Choose the shift you're logging Temperature & RH for."
+            : undefined
+        }
+      >
+        {startSheet && startTab ? (
+          startSheet.step === "shift" ? (
+            <View style={{ gap: 6, marginTop: 16 }}>
+              {SHIFT_OPTIONS.map((sh) => {
+                const tag = shiftTags[sh.value];
+                const tone =
+                  tag.kind === "logged"
+                    ? { tone: "ok" as const, text: "Logged" }
+                    : tag.kind === "due"
+                      ? {
+                          tone: "bad" as const,
+                          text: tag.pending > 0 ? `${tag.pending > 99 ? "99+" : tag.pending} due` : "Due",
+                        }
+                      : { tone: "mute" as const, text: "Upcoming" };
+                return (
                   <TouchableOpacity
-                    onPress={() => setStartSheet(null)}
-                    activeOpacity={0.85}
-                    style={sheetStyles.cancelBtn}
+                    key={sh.value}
+                    onPress={() => {
+                      Haptics.selectionAsync().catch(() => {});
+                      setStartSheet({
+                        key: startSheet.key,
+                        step: "confirm",
+                        shift: sh.value,
+                      });
+                    }}
+                    activeOpacity={0.8}
                     accessibilityRole="button"
+                    accessibilityLabel={`${sh.label}, ${sh.window}, ${tone.text}`}
+                    style={s.shiftRow}
                   >
-                    <Text style={sheetStyles.cancelText}>Cancel</Text>
+                    <View style={[s.shiftIcon, { backgroundColor: t[`${tone.tone}Tint` as const] }]}>
+                      <Bx name={sh.icon} size={18} color={t[tone.tone]} />
+                    </View>
+                    <View style={{ flex: 1, minWidth: 0 }}>
+                      <Text style={[f.t(14.5, 600), { color: t.ink }]} numberOfLines={1}>
+                        {sh.label}
+                      </Text>
+                      <Text style={[f.t(12), { color: t.muted, marginTop: 2 }]}>{sh.window}</Text>
+                    </View>
+                    <StatusPill label={tone.text} tone={tone.tone} />
                   </TouchableOpacity>
-                  <TouchableOpacity
-                    onPress={confirmStart}
-                    activeOpacity={0.85}
-                    style={sheetStyles.primaryBtn}
-                    accessibilityRole="button"
-                  >
-                    <Check size={17} color={ds.onControl} strokeWidth={2.4} />
-                    <Text style={sheetStyles.primaryText}>
-                      {startContinuing ? "Continue" : "Start now"}
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-              </>
-            )}
-          </BottomSheetView>
-        </BottomSheet>
-      ) : null}
+                );
+              })}
+            </View>
+          ) : (
+            <View>
+              <View style={s.confirmIcon}>
+                <Bx name="bx-play-circle" size={24} color={t.accentInk} />
+              </View>
+              <Text style={[f.d(22, -0.02), { color: t.ink }]}>
+                {startContinuing ? "Continue this log?" : `Start ${startTab.label} log?`}
+              </Text>
+              <Text style={[f.t(13), { color: t.muted, lineHeight: 19, marginTop: 6 }]}>
+                {startShiftLabel ? `${startShiftLabel} · ` : ""}
+                A new entry will open for {siteName} for today,{" "}
+                {formatIST(new Date(), { day: "numeric", month: "short" })}.
+                Readings save to the log sheet once complete.
+              </Text>
+              <View style={{ flexDirection: "row", gap: 9, marginTop: 20 }}>
+                <SecondaryButton label="Cancel" onPress={() => setStartSheet(null)} style={{ paddingHorizontal: 22 }} />
+                <PrimaryButton
+                  label={startContinuing ? "Continue" : "Start now"}
+                  icon="bx-check"
+                  height={52}
+                  onPress={confirmStart}
+                  style={{ flex: 1 }}
+                />
+              </View>
+            </View>
+          )
+        ) : null}
+      </JoSheet>
 
-      {/* Site picker — native sheet (SwiftUI / Material3) */}
-      {sitePickerVisible ? (
-        <BottomSheet
-          snapPoints={["55%"]}
-          enablePanDownToClose
-          onClose={() => setSitePickerVisible(false)}
-          backgroundStyle={{ backgroundColor: ds.white }}
-        >
-          <BottomSheetView style={{ paddingHorizontal: 22, paddingTop: 6 }}>
-            <Text style={sheetStyles.title}>Switch site</Text>
-          </BottomSheetView>
-          <BottomSheetScrollView
-            contentContainerStyle={{
-              paddingHorizontal: 22,
-              paddingBottom: 30,
-            }}
-          >
-            {availableSites.map((s2) => {
-              const on = s2.site_code === siteCode;
-              return (
-                <TouchableOpacity
-                  key={s2.site_code}
-                  onPress={() => {
-                    selectSite(s2);
-                    setSitePickerVisible(false);
-                    // Drop every cached bucket — they belong to the old site.
-                    setRowsByType({});
-                    setHistoryKey(null);
-                  }}
-                  activeOpacity={0.85}
-                  style={[
-                    sheetStyles.row,
-                    { backgroundColor: on ? ds.controlOn : ds.pageBg },
-                  ]}
-                >
-                  <MapPin
-                    size={15}
-                    color={on ? ds.onControl : ds.carbon[500]}
-                    strokeWidth={2}
-                  />
-                  <Text
-                    style={[
-                      sheetStyles.rowLabel,
-                      { color: on ? ds.onControl : ds.carbon[100] },
-                    ]}
-                  >
-                    {s2.site_name || s2.site_code}
-                  </Text>
-                  {on ? <Check size={16} color={ds.onChrome} /> : null}
-                </TouchableOpacity>
-              );
-            })}
-          </BottomSheetScrollView>
-        </BottomSheet>
-      ) : null}
-
-      {refreshing ? null : historyLoading ? (
-        <View style={{ position: "absolute", top: insets.top + 20, right: 22 }}>
-          <ActivityIndicator size="small" color={ds.carbon[500]} />
-        </View>
-      ) : null}
-    </View>
+      {/* Site picker */}
+      <JoSheet
+        visible={sitePickerVisible}
+        onClose={() => setSitePickerVisible(false)}
+        title="Site"
+        subtitle="Logs are recorded per site"
+      >
+        <ScrollView style={{ maxHeight: 420, marginTop: 14 }} contentContainerStyle={{ gap: 6 }}>
+          {availableSites.map((s2) => (
+            <SheetOption
+              key={s2.site_code}
+              label={s2.site_name || s2.site_code}
+              meta={s2.site_name ? s2.site_code : undefined}
+              selected={s2.site_code === siteCode}
+              onPress={() => {
+                selectSite(s2);
+                setSitePickerVisible(false);
+                // Drop every cached bucket — they belong to the old site.
+                setRowsByType({});
+                setHistoryKey(null);
+              }}
+            />
+          ))}
+        </ScrollView>
+      </JoSheet>
+    </JoPage>
   );
 }
 
-/* Sheet + panel content styling only — the native sheets' own chrome
-   (grabber, corner radius, scrim, swipe-to-dismiss) is not ours to draw. */
-const useSheetStyles = makeThemedStyles((ds) => ({
-  title: {
-    fontSize: 15,
-    fontWeight: "700",
-    color: ds.carbon[100],
-    marginBottom: 12,
-  },
-  heading: {
-    fontSize: 18,
-    fontWeight: "700",
-    letterSpacing: 0.36,
-    color: ds.carbon[100],
-    marginBottom: 4,
-  },
-  sub: { fontSize: 12.5, color: ds.carbon[500], marginBottom: 16 },
-  row: {
+const useStyles = makeJoStyles((t) => ({
+  titleRow: {
     flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    borderRadius: soRadius.card,
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-    marginBottom: 8,
-  },
-  rowLabel: { flex: 1, fontSize: 14, fontWeight: "600" },
-  shiftRow: {
-    flexDirection: "row",
-    alignItems: "center",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
     gap: 12,
-    paddingVertical: 13,
-    paddingHorizontal: 14,
-    borderRadius: soRadius.sm,
-    borderWidth: 1.5,
-    borderColor: ds.carbon[900],
-    backgroundColor: ds.white,
+    paddingTop: 12,
+    paddingHorizontal: 4,
   },
-  shiftIcon: {
-    width: 34,
-    height: 34,
-    borderRadius: 99,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  shiftLabel: { fontSize: 14, fontWeight: "600", color: ds.carbon[100] },
-  shiftWindow: { fontSize: 11, color: ds.carbon[500] },
-  tag: {
-    paddingVertical: 2,
-    paddingHorizontal: 6,
-    borderRadius: 4,
-  },
-  tagText: {
-    fontSize: 8.5,
-    fontWeight: "600",
-    letterSpacing: 0.68,
-    textTransform: "uppercase",
-  },
-
-  confirmIcon: {
-    width: 46,
-    height: 46,
-    borderRadius: 99,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: ds.flame[1000],
-    marginBottom: 16,
-  },
-  confirmTitle: {
-    fontSize: 18,
-    lineHeight: 22,
-    fontWeight: "700",
-    letterSpacing: 0.36,
-    color: ds.carbon[100],
-    marginBottom: 6,
-  },
-  confirmBody: {
-    fontSize: 12.5,
-    lineHeight: 19,
-    color: ds.carbon[500],
-    marginBottom: 20,
-  },
-  cancelBtn: {
-    minHeight: 46,
-    justifyContent: "center",
-    paddingHorizontal: 18,
-    borderRadius: soRadius.sm,
-    borderWidth: 1,
-    borderColor: ds.carbon[800],
-    backgroundColor: ds.white,
-  },
-  cancelText: { fontSize: 14, fontWeight: "500", color: ds.carbon[400] },
-  primaryBtn: {
-    flex: 1,
-    minHeight: 46,
+  siteRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  sitePill: {
+    flexShrink: 1,
     flexDirection: "row",
     alignItems: "center",
+    gap: 5,
+    height: 28,
+    paddingLeft: 8,
+    paddingRight: 9,
+    borderRadius: 14,
+    backgroundColor: t.input,
+    borderWidth: 1,
+    borderColor: t.lineMid,
+  },
+  roundBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: t.input,
+    borderWidth: 1,
+    borderColor: t.lineMid,
+    alignItems: "center",
     justifyContent: "center",
-    gap: 8,
-    borderRadius: soRadius.sm,
-    backgroundColor: ds.controlOn,
   },
-  primaryText: {
-    fontSize: 14.5,
-    fontWeight: "600",
-    letterSpacing: 0.15,
-    color: ds.onControl,
-  },
-
   panel: {
     position: "absolute",
     top: 0,
@@ -1157,31 +1070,41 @@ const useSheetStyles = makeThemedStyles((ds) => ({
     right: 0,
     bottom: 0,
     zIndex: 20,
+    backgroundColor: t.page,
   },
   panelHeader: {
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
-    paddingHorizontal: 20,
     paddingTop: 8,
-    paddingBottom: 6,
+    paddingHorizontal: 16,
+    paddingBottom: 12,
   },
-  backTile: {
-    width: 36,
-    height: 36,
-    borderRadius: 99,
+  shiftRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    minHeight: 64,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: t.line,
+  },
+  shiftIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: ds.white,
-    borderWidth: 1,
-    borderColor: ds.carbon[900],
   },
-  panelTitle: {
-    fontSize: 17,
-    lineHeight: 20,
-    fontWeight: "700",
-    letterSpacing: 0.34,
-    color: ds.carbon[100],
+  confirmIcon: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: t.accentTint,
+    marginBottom: 14,
   },
-  panelSub: { fontSize: 11.5, color: ds.carbon[500], marginTop: 3 },
 }));

@@ -15,7 +15,8 @@
  *
  * While the parent uploads the shot it passes `busy`, which shows a spinner
  * overlay; the nameplate is read later, in the background. The camera chrome
- * stays dark in both themes.
+ * uses the artboard's DARK tokens in both themes (it sits over a live feed),
+ * with the user's accent on the shutter, the focus ring and active toggles.
  */
 import React, { useEffect, useRef, useState } from "react";
 import {
@@ -29,8 +30,9 @@ import {
   View,
 } from "react-native";
 import { CameraView, useCameraPermissions, type FocusMode } from "expo-camera";
-import { Camera, Focus, Zap, ZapOff } from "lucide-react-native";
-import { useDs } from "@/hooks/useDs";
+import { Bx } from "@/components/jo/Bx";
+import { PrimaryButton, f, useJoTheme } from "@/components/jo/ui";
+import { joTheme, type JoTheme } from "@/constants/jo";
 
 export type CaptureMode = "nameplate" | "location" | "proof";
 
@@ -49,12 +51,6 @@ const COPY: Record<CaptureMode, { title: string; hint: string }> = {
   },
 };
 
-// Viewfinder chrome sits on the app's thunder, dark in both themes.
-const INK = "#F1F4F4";
-const INK_SUB = "#9FB0B3";
-const DIM = "rgba(7,33,38,0.9)";
-// Scrim behind the top/bottom chrome so text stays legible over a bright shot.
-const SCRIM = "rgba(4,20,23,0.55)";
 
 interface Props {
   mode: CaptureMode;
@@ -75,8 +71,11 @@ export default function CaptureCamera({
   onCapture,
   onCancel,
 }: Props) {
-  const ds = useDs();
-  const accent = ds.flame[100];
+  const { accentKey } = useJoTheme();
+  // Dark chrome in both themes; scrims keep text legible over a bright shot.
+  const dk = joTheme(true, accentKey);
+  const styles = stylesFor(dk);
+  const accent = dk.accent;
   const [permission, requestPermission] = useCameraPermissions();
   const cameraRef = useRef<CameraView>(null);
   const [ready, setReady] = useState(false);
@@ -159,11 +158,24 @@ export default function CaptureCamera({
       ) : null}
 
       {/* Top bar */}
-      <View style={[styles.topBar, { paddingTop: topInset + 10 }]}>
-        <Text style={styles.topTitle}>{copy.title}</Text>
-        <TouchableOpacity onPress={onCancel} hitSlop={12} accessibilityRole="button">
-          <Text style={styles.cancel}>Cancel</Text>
+      <View style={[styles.topBar, { paddingTop: topInset + 8 }]}>
+        <TouchableOpacity
+          onPress={onCancel}
+          hitSlop={8}
+          style={styles.roundButton}
+          accessibilityRole="button"
+          accessibilityLabel="Cancel"
+        >
+          <Bx name="bx-x" size={24} color={dk.ink} />
         </TouchableOpacity>
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text style={styles.topTitle} numberOfLines={1}>
+            {copy.title}
+          </Text>
+          <Text style={styles.topSub} numberOfLines={1}>
+            {assetName}
+          </Text>
+        </View>
       </View>
 
       {/* Viewfinder — open, full frame. Tapping it focuses there. */}
@@ -198,31 +210,24 @@ export default function CaptureCamera({
         ) : null}
         {!permission || granted ? null : (
           <View style={styles.permission}>
-            <Camera size={28} color={INK_SUB} strokeWidth={2} />
+            <View style={styles.permissionIcon}>
+              <Bx name="bx-camera-off" size={24} color={dk.ink2} />
+            </View>
             <Text style={styles.permissionTitle}>Camera access needed</Text>
-            <Text style={styles.permissionBody}>
-              Allow the camera to photograph this asset.
-            </Text>
-            <TouchableOpacity
-              onPress={() =>
-                permission?.canAskAgain === false ? Linking.openSettings() : requestPermission()
-              }
-              style={[styles.permissionButton, { backgroundColor: accent }]}
-              accessibilityRole="button"
-            >
-              <Text style={styles.permissionButtonText}>
-                {permission?.canAskAgain === false ? "Open Settings" : "Allow camera"}
-              </Text>
-            </TouchableOpacity>
+            <Text style={styles.permissionBody}>Allow the camera to photograph this asset.</Text>
+            <PrimaryButton
+              label={permission?.canAskAgain === false ? "Open Settings" : "Allow camera"}
+              icon="bx-camera"
+              height={48}
+              style={{ marginTop: 10, paddingHorizontal: 22 }}
+              onPress={() => (permission?.canAskAgain === false ? Linking.openSettings() : requestPermission())}
+            />
           </View>
         )}
       </Pressable>
 
       {/* Bottom */}
       <View style={[styles.bottom, { paddingBottom: bottomInset + 22 }]}>
-        <Text style={styles.assetName} numberOfLines={1}>
-          {assetName}
-        </Text>
         <Text style={styles.hint}>
           {autofocus === "on" ? "Focus locked — tap the view to move it, or Auto to release." : copy.hint}
         </Text>
@@ -239,11 +244,7 @@ export default function CaptureCamera({
             accessibilityState={{ checked: torch }}
             accessibilityLabel="Flash"
           >
-            {torch ? (
-              <Zap size={22} color="#FFFFFF" strokeWidth={2.2} />
-            ) : (
-              <ZapOff size={22} color={INK} strokeWidth={2.2} />
-            )}
+            <Bx name={torch ? "bxs-zap" : "bx-bolt-circle"} size={22} color={torch ? dk.onAccent : dk.ink} />
           </TouchableOpacity>
           <TouchableOpacity
             onPress={shoot}
@@ -271,78 +272,119 @@ export default function CaptureCamera({
             accessibilityRole="button"
             accessibilityLabel={autofocus === "on" ? "Release focus" : "Focus on the centre"}
           >
-            <Focus size={22} color={autofocus === "on" ? "#FFFFFF" : INK} strokeWidth={2.2} />
+            <Bx name="bx-target-lock" size={22} color={autofocus === "on" ? dk.onAccent : dk.ink} />
           </TouchableOpacity>
         </View>
       </View>
 
       {busy ? (
         <View style={[StyleSheet.absoluteFill, styles.overlay]}>
-          <ActivityIndicator size="large" color={accent} />
-          <Text style={styles.busyTitle}>{busy.title}</Text>
-          <Text style={styles.busySub}>{busy.sub}</Text>
+          <View style={styles.busyCard} accessibilityLiveRegion="polite">
+            <ActivityIndicator size="large" color={accent} />
+            <Text style={styles.busyTitle}>{busy.title}</Text>
+            <Text style={styles.busySub}>{busy.sub}</Text>
+          </View>
         </View>
       ) : null}
-
     </View>
   );
 }
 
 const FOCUS_RING = 72;
 
-const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: "#041417" },
-  focusRing: {
-    position: "absolute",
-    width: FOCUS_RING,
-    height: FOCUS_RING,
-    borderRadius: FOCUS_RING / 2,
-    borderWidth: 2,
-  },
-  topBar: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 20,
-    paddingBottom: 10,
-    backgroundColor: SCRIM,
-  },
-  topTitle: { flex: 1, fontSize: 13, fontWeight: "600", color: INK },
-  cancel: { fontSize: 13, fontWeight: "600", color: INK_SUB },
-  middle: { flex: 1, alignItems: "center", justifyContent: "center", paddingHorizontal: 34 },
-  permission: { alignItems: "center", gap: 8, paddingHorizontal: 20 },
-  permissionTitle: { fontSize: 15, fontWeight: "700", color: INK, marginTop: 6 },
-  permissionBody: { fontSize: 12.5, color: INK_SUB, textAlign: "center" },
-  permissionButton: { marginTop: 10, borderRadius: 12, paddingVertical: 11, paddingHorizontal: 20 },
-  permissionButtonText: { fontSize: 13, fontWeight: "600", color: "#FFFFFF" },
-  bottom: { paddingHorizontal: 20, paddingTop: 14, alignItems: "center", backgroundColor: SCRIM },
-  controls: {
-    alignSelf: "stretch",
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 24,
-  },
-  sideButton: {
-    width: 48,
-    height: 48,
-    borderRadius: 99,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "rgba(238,242,255,0.16)",
-  },
-  assetName: { fontSize: 12.5, fontWeight: "600", color: INK, marginBottom: 6 },
-  hint: { fontSize: 11.5, lineHeight: 17, color: INK_SUB, textAlign: "center", marginBottom: 18 },
-  shutter: {
-    width: 70,
-    height: 70,
-    borderRadius: 99,
-    borderWidth: 4,
-    borderColor: "rgba(238,242,255,0.85)",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  shutterInner: { width: 54, height: 54, borderRadius: 99 },
-  overlay: { backgroundColor: DIM, alignItems: "center", justifyContent: "center", gap: 14 },
-  busyTitle: { fontSize: 14, fontWeight: "600", color: INK },
-  busySub: { fontSize: 11.5, fontWeight: "500", color: INK_SUB },
-});
+const STYLE_CACHE = new Map<JoTheme, ReturnType<typeof buildStyles>>();
+function stylesFor(dk: JoTheme) {
+  let hit = STYLE_CACHE.get(dk);
+  if (!hit) {
+    hit = buildStyles(dk);
+    STYLE_CACHE.set(dk, hit);
+  }
+  return hit;
+}
+
+function buildStyles(dk: JoTheme) {
+  return StyleSheet.create({
+    screen: { flex: 1, backgroundColor: dk.page },
+    focusRing: {
+      position: "absolute",
+      width: FOCUS_RING,
+      height: FOCUS_RING,
+      borderRadius: FOCUS_RING / 2,
+      borderWidth: 2,
+    },
+    topBar: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 12,
+      paddingHorizontal: 16,
+      paddingBottom: 12,
+      backgroundColor: dk.scrim,
+    },
+    roundButton: {
+      width: 44,
+      height: 44,
+      borderRadius: 22,
+      backgroundColor: dk.input,
+      borderWidth: 1,
+      borderColor: dk.lineMid,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    topTitle: { ...f.t(15, 600), color: dk.ink },
+    topSub: { ...f.t(11.5), color: dk.muted, marginTop: 2 },
+    middle: { flex: 1, alignItems: "center", justifyContent: "center", paddingHorizontal: 34 },
+    permission: { alignItems: "center", gap: 8, paddingHorizontal: 20 },
+    permissionIcon: {
+      width: 56,
+      height: 56,
+      borderRadius: 28,
+      backgroundColor: dk.raised,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    permissionTitle: { ...f.d(22, -0.02), color: dk.ink, marginTop: 6 },
+    permissionBody: { ...f.t(13), color: dk.muted, textAlign: "center" },
+    bottom: { paddingHorizontal: 20, paddingTop: 16, alignItems: "center", backgroundColor: dk.scrim },
+    controls: {
+      alignSelf: "stretch",
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      paddingHorizontal: 24,
+    },
+    sideButton: {
+      width: 52,
+      height: 52,
+      borderRadius: 26,
+      alignItems: "center",
+      justifyContent: "center",
+      backgroundColor: dk.input,
+      borderWidth: 1,
+      borderColor: dk.lineMid,
+    },
+    hint: { ...f.t(12.5), lineHeight: 18, color: dk.ink2, textAlign: "center", marginBottom: 18 },
+    shutter: {
+      width: 76,
+      height: 76,
+      borderRadius: 38,
+      borderWidth: 4,
+      borderColor: dk.ink,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    shutterInner: { width: 58, height: 58, borderRadius: 29 },
+    overlay: { backgroundColor: dk.scrim, alignItems: "center", justifyContent: "center", gap: 12 },
+    busyCard: {
+      alignItems: "center",
+      gap: 10,
+      paddingVertical: 22,
+      paddingHorizontal: 28,
+      borderRadius: 26,
+      backgroundColor: dk.card,
+      borderWidth: 1,
+      borderColor: dk.cardBorder,
+    },
+    busyTitle: { ...f.t(15, 600), color: dk.ink },
+    busySub: { ...f.t(12), color: dk.muted },
+  });
+}

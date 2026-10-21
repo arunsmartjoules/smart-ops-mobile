@@ -1,22 +1,15 @@
 /**
  * The history log card — extracted from app/history/site-history.tsx so the
  * Logs tab and the history screen render byte-identical rows instead of
- * drifting copies.
+ * drifting copies. Drawn in the artboard's list-card language.
  */
 import React, { memo } from "react";
 import { View, Text, TouchableOpacity } from "react-native";
 import { Image } from "expo-image";
 import { format } from "date-fns";
-import {
-  Activity,
-  Thermometer,
-  Droplets,
-  FlaskRound,
-  MapPin,
-  Maximize2,
-  Snowflake,
-  History as HistoryIcon,
-} from "lucide-react-native";
+import { Bx } from "@/components/jo/Bx";
+import { Card, StatusPill, f, useJoTheme } from "@/components/jo/ui";
+import { typeLook } from "@/components/sitelogs/LogsKit";
 
 export const formatScheduledDate = (raw: string | null | undefined) => {
   if (!raw) return "—";
@@ -44,15 +37,8 @@ export const HistoryLogCard = memo(
     onLongPress: () => void;
     onPreviewImage: (url: string) => void;
   }) => {
-    const getLogIcon = () => {
-      if (logName === "Temp RH") return Thermometer;
-      if (logName === "Water") return Droplets;
-      if (logName === "Chemical Dosing") return FlaskRound;
-      if (logName === "Chiller Logs") return Snowflake;
-      return HistoryIcon;
-    };
-
-    const IconComp = getLogIcon();
+    const t = useJoTheme();
+    const look = typeLook(t, logName);
     // Normalize so legacy "In-progress" / "in_progress" and canonical
     // "Inprogress" render identically (label + colour). Empty/null = Completed
     // (a chiller_readings row only exists once submitted).
@@ -66,202 +52,148 @@ export const HistoryLogCard = memo(
           : normStatus === "open" || normStatus === "pending"
             ? "Open"
             : rawStatus;
-    const isPendingTone = logStatus === "Open" || logStatus === "Inprogress";
+
+    const statusTone =
+      logStatus === "Completed" ? "ok" : logStatus === "Inprogress" ? "info" : logStatus === "Open" ? "bad" : "mute";
+    const synced = item.isSynced !== false;
+    const title =
+      logName === "Chiller Logs"
+        ? item.asset_name || item.chiller_id || "Unknown Asset"
+        : item.task_name || format(new Date(item.created_at || item.createdAt), "dd MMM yyyy");
+    const when =
+      logName === "Chiller Logs"
+        ? format(new Date(item.reading_time || item.created_at || item.createdAt), "dd MMM, HH:mm")
+        : `${formatScheduledDate(item.scheduled_date)} • ${format(new Date(item.created_at || item.createdAt), "HH:mm")}`;
+
+    const readings: { label: string; value: string }[] = [];
+    if (item.log_name === "Temp RH") {
+      readings.push({ label: "Temp", value: `${item.temperature}°C` }, { label: "RH", value: `${item.rh}%` });
+    }
+    if (item.log_name === "Water") {
+      readings.push(
+        { label: "TDS", value: String(item.tds) },
+        { label: "pH", value: String(item.ph) },
+        { label: "Hard", value: String(item.hardness) },
+      );
+    }
+    if (item.log_name === "Chemical Dosing") {
+      readings.push({ label: "Dosing", value: String(item.chemical_dosing ?? "") });
+    }
+    if (logName === "Chiller Logs" || item.chiller_id) {
+      readings.push(
+        { label: "Load", value: `${item.compressor_load_percentage}%` },
+        { label: "ID", value: item.chiller_id?.slice(-6) || "N/A" },
+      );
+    }
+    const attachment = item.attachment || item.attachments;
 
     return (
-      <TouchableOpacity
-        onPress={onPress}
-        onLongPress={onLongPress}
-        activeOpacity={0.7}
-        className="bg-white dark:bg-slate-900 rounded-xl mb-2.5 p-3"
-        style={{
-          shadowColor: "#000",
-          shadowOffset: { width: 0, height: 2 },
-          shadowOpacity: 0.04,
-          shadowRadius: 6,
-          elevation: 2,
-        }}
+      <Card
+        radius={22}
+        style={{ marginBottom: 8 }}
       >
-        <View className="flex-row justify-between items-start mb-2">
-          <View className="flex-row items-center flex-1 mr-3">
-            <View className="w-7 h-7 rounded-lg bg-slate-50 dark:bg-slate-800 items-center justify-center mr-2.5">
-              <IconComp size={14} color="#64748b" />
-            </View>
-            <View className="flex-1">
-              <Text
-                className="text-slate-900 dark:text-slate-50 font-bold text-sm"
-                numberOfLines={1}
-              >
-                {logName === "Chiller Logs"
-                  ? item.asset_name || item.chiller_id || "Unknown Asset"
-                  : item.task_name ||
-                    format(
-                      new Date(item.created_at || item.createdAt),
-                      "dd MMM yyyy",
-                    )}
-              </Text>
-              <Text className="text-slate-400 text-xs font-bold uppercase tracking-wider">
-                {logName === "Chiller Logs"
-                  ? format(
-                      new Date(
-                        item.reading_time || item.created_at || item.createdAt,
-                      ),
-                      "dd MMM, HH:mm",
-                    )
-                  : `${formatScheduledDate(item.scheduled_date)} • ${format(
-                      new Date(item.created_at || item.createdAt),
-                      "HH:mm",
-                    )}`}{" "}
-                • {resolvedName || "Unknown"}
-              </Text>
-            </View>
-          </View>
-          <View className="items-end">
+        <TouchableOpacity
+          onPress={onPress}
+          onLongPress={onLongPress}
+          activeOpacity={0.75}
+          accessibilityRole="button"
+          accessibilityLabel={`${title}, ${logStatus}`}
+          accessibilityHint="Long-press to delete"
+          style={{ padding: 14 }}
+        >
+          <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 12 }}>
             <View
-              className={`px-1.5 py-0.5 rounded ${item.isSynced !== false ? "bg-green-50" : "bg-amber-50"}`}
+              style={{
+                width: 40,
+                height: 40,
+                borderRadius: 20,
+                backgroundColor: look.bg,
+                alignItems: "center",
+                justifyContent: "center",
+              }}
             >
-              <Text
-                className={`text-[10px] font-bold uppercase tracking-wider ${item.isSynced !== false ? "text-green-600" : "text-amber-600"}`}
-              >
-                {item.isSynced !== false ? "Synced" : "Pending"}
+              <Bx name={look.icon} size={19} color={look.fg} />
+            </View>
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <Text style={[f.t(14.5, 600), { color: t.ink }]} numberOfLines={1}>
+                {title}
+              </Text>
+              <Text style={[f.t(11.5), { color: t.muted, marginTop: 2 }]} numberOfLines={1}>
+                {when} • {resolvedName || "Unknown"}
               </Text>
             </View>
+            <StatusPill label={synced ? "Synced" : "Pending"} tone={synced ? "ok" : "warn"} dot />
           </View>
-        </View>
 
-        <View className="bg-slate-50 dark:bg-slate-800/50 rounded-lg p-2 mb-2">
-          {item.log_name === "Temp RH" && (
-            <View className="flex-row justify-between">
-              <View>
-                <Text className="text-slate-400 text-[10px] uppercase font-bold tracking-widest mb-0.5">
-                  Temp
-                </Text>
-                <Text className="text-slate-900 dark:text-slate-50 font-bold text-sm">
-                  {item.temperature}°C
-                </Text>
-              </View>
-              <View className="items-end">
-                <Text className="text-slate-400 text-[10px] uppercase font-bold tracking-widest mb-0.5">
-                  RH
-                </Text>
-                <Text className="text-slate-900 dark:text-slate-50 font-bold text-sm">
-                  {item.rh}%
-                </Text>
-              </View>
-            </View>
-          )}
-          {item.log_name === "Water" && (
-            <View className="flex-row flex-wrap gap-y-1">
-              <View className="w-1/3">
-                <Text className="text-slate-400 text-[10px] uppercase font-bold tracking-widest mb-0.5">
-                  TDS
-                </Text>
-                <Text className="text-slate-900 dark:text-slate-50 font-bold text-xs">
-                  {item.tds}
-                </Text>
-              </View>
-              <View className="w-1/3">
-                <Text className="text-slate-400 text-[10px] uppercase font-bold tracking-widest mb-0.5">
-                  pH
-                </Text>
-                <Text className="text-slate-900 dark:text-slate-50 font-bold text-xs">
-                  {item.ph}
-                </Text>
-              </View>
-              <View className="w-1/3 items-end">
-                <Text className="text-slate-400 text-[10px] uppercase font-bold tracking-widest mb-0.5">
-                  Hard
-                </Text>
-                <Text className="text-slate-900 dark:text-slate-50 font-bold text-xs">
-                  {item.hardness}
-                </Text>
-              </View>
-            </View>
-          )}
-          {item.log_name === "Chemical Dosing" && (
-            <View>
-              <Text className="text-slate-400 text-[10px] uppercase font-bold tracking-widest mb-0.5">
-                Dosing
-              </Text>
-              <Text className="text-slate-900 dark:text-slate-50 font-bold text-xs">
-                {item.chemical_dosing}
-              </Text>
-            </View>
-          )}
-          {(logName === "Chiller Logs" || item.chiller_id) && (
-            <View className="flex-row items-center justify-between">
-              <View className="flex-row items-center">
-                <Activity size={10} color="#0d9488" />
-                <Text className="text-xs font-bold text-teal-600 ml-1">
-                  {item.compressor_load_percentage}% LOAD
-                </Text>
-              </View>
-              <Text className="text-slate-400 text-[10px] font-bold">
-                ID: {item.chiller_id?.slice(-6) || "N/A"}
-              </Text>
-            </View>
-          )}
-
-          {/* New: Image Thumbnail - Made more compact */}
-          {(item.attachment || item.attachments) && (
-            <View className="mt-2 pt-2 border-t border-slate-100 dark:border-slate-700">
-              <TouchableOpacity 
-                onPress={() => onPreviewImage(item.attachment || item.attachments)}
-                className="flex-row items-center"
-              >
-                <View className="w-10 h-10 rounded-lg overflow-hidden bg-slate-100 mr-2.5">
-                  {/* expo-image: disk+memory cached and decoded to the 40×40
-                      render bounds, instead of RN Image re-decoding the full-res
-                      S3 original into a thumbnail on every mount/scroll. */}
-                  <Image
-                    source={{ uri: item.attachment || item.attachments }}
-                    style={{ width: "100%", height: "100%" }}
-                    contentFit="cover"
-                    cachePolicy="memory-disk"
-                    transition={100}
-                  />
-                  <View className="absolute inset-0 bg-black/10 items-center justify-center">
-                    <Maximize2 size={10} color="white" />
-                  </View>
-                </View>
-                <View className="flex-1">
-                  <Text className="text-slate-600 dark:text-slate-400 text-xs" numberOfLines={1}>
-                    Tap to preview attachment
+          {readings.length > 0 ? (
+            <View style={{ flexDirection: "row", gap: 6, marginTop: 12 }}>
+              {readings.map((r) => (
+                <View
+                  key={r.label}
+                  style={{ flex: 1, minWidth: 0, borderRadius: 14, backgroundColor: t.raised, paddingVertical: 8, paddingHorizontal: 10 }}
+                >
+                  <Text style={[f.t(11, 500), { color: t.muted }]} numberOfLines={1}>
+                    {r.label}
+                  </Text>
+                  <Text style={[f.d(16, -0.02, 1.2), { color: t.ink, marginTop: 2 }]} numberOfLines={1}>
+                    {r.value}
                   </Text>
                 </View>
-              </TouchableOpacity>
+              ))}
             </View>
-          )}
-        </View>
+          ) : null}
 
-        <View className="flex-row items-center justify-between mt-1 pt-2 border-t border-slate-100 dark:border-slate-800">
-          <View className="flex-row items-center">
-            <MapPin size={10} color="#94a3b8" />
-            <Text className="text-slate-400 text-xs ml-1">
-              {item.site_code}
-            </Text>
-          </View>
+          {attachment ? (
+            <TouchableOpacity
+              onPress={() => onPreviewImage(attachment)}
+              activeOpacity={0.8}
+              accessibilityRole="imagebutton"
+              accessibilityLabel="Preview attachment"
+              style={{ flexDirection: "row", alignItems: "center", gap: 10, marginTop: 10 }}
+            >
+              <View style={{ width: 40, height: 40, borderRadius: 12, overflow: "hidden", backgroundColor: t.raised }}>
+                {/* expo-image: disk+memory cached and decoded to the 40×40
+                    render bounds, instead of RN Image re-decoding the full-res
+                    S3 original into a thumbnail on every mount/scroll. */}
+                <Image
+                  source={{ uri: attachment }}
+                  style={{ width: "100%", height: "100%" }}
+                  contentFit="cover"
+                  cachePolicy="memory-disk"
+                  transition={100}
+                />
+              </View>
+              <Text style={[f.t(12.5), { color: t.ink3, flex: 1 }]} numberOfLines={1}>
+                Tap to preview attachment
+              </Text>
+              <Bx name="bx-fullscreen" size={15} color={t.muted} />
+            </TouchableOpacity>
+          ) : null}
+
           <View
-            className={`px-1.5 py-0.5 rounded-full ${isPendingTone ? "bg-amber-50 dark:bg-amber-900/20" : "bg-green-50 dark:bg-green-900/20"}`}
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              justifyContent: "space-between",
+              marginTop: 12,
+              paddingTop: 10,
+              borderTopWidth: 1,
+              borderTopColor: t.line,
+            }}
           >
-            <Text
-              className={`text-[10px] font-bold ${isPendingTone ? "text-amber-600" : "text-green-600"}`}
-            >
-              {logStatus}
-            </Text>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+              <Bx name="bx-map-pin" size={13} color={t.muted} />
+              <Text style={[f.t(11.5), { color: t.muted }]}>{item.site_code}</Text>
+            </View>
+            <StatusPill label={logStatus} tone={statusTone} />
           </View>
-        </View>
-        {item.remarks && (
-          <View className="flex-row items-center mt-1.5">
-            <Text
-              className="text-slate-400 text-xs italic"
-              numberOfLines={1}
-            >
+          {item.remarks ? (
+            <Text style={[f.t(12), { color: t.muted, fontStyle: "italic", marginTop: 6 }]} numberOfLines={1}>
               {`"${item.remarks}"`}
             </Text>
-          </View>
-        )}
-      </TouchableOpacity>
+          ) : null}
+        </TouchableOpacity>
+      </Card>
     );
   },
   (prevProps, nextProps) => {

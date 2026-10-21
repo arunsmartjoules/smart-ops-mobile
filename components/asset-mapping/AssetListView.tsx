@@ -1,60 +1,54 @@
 /**
- * Asset Mapping list — the same chrome as the Tickets and Incidents tabs:
- * rounded thunder header (site title, progress line, refresh / filter tiles,
- * search), underline status tabs on the canvas, the count + sort line, then
- * the card list.
+ * Asset Directory — artboard `r_assets`: "Equipment Register" kicker over the
+ * "Asset Directory" title with the site chip, four count tiles (Total in the
+ * accent, then Mapped / Pending / No access), the search field with the QR
+ * scan icon, the four-way segmented tabs and the asset cards.
  *
- * Search works like the PM tab: the header box filters live, the filter tile
- * (and the site title) opens the shared advanced filter sheet — keywords,
- * site, status, and the asset's type / side / criticality / floor — and a
- * "Scan asset" QR button narrows the list to the scanned asset.
+ * Status grouping onto the tabs is documented in ./lib (TAB_OF). Inside a
+ * grouped tab, sub-chips isolate one real status (In review / Approved,
+ * To do / Read failed) whenever both halves have assets.
+ *
+ * Kept from the old list: live keyword search (asset name + equipment type),
+ * QR scan narrowing the list to one asset (and opening it when it's the only
+ * hit), the type / side / criticality / floor filters and the sort (filter
+ * icon in the search field → sheet), site switching (site chip → sheet),
+ * swipe between tabs, and pull to refresh.
  */
 import React, { useCallback, useMemo, useRef, useState } from "react";
-import { RefreshControl, Text, TouchableOpacity, View } from "react-native";
+import { RefreshControl, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { FlashList } from "@shopify/flash-list";
-import { ClipboardCheck, QrCode, X } from "lucide-react-native";
-import { makeThemedStyles, useDs } from "@/hooks/useDs";
-import TicketSkeleton from "@/components/TicketSkeleton";
-import AdvancedFilterModal, { type ExtraFilterGroup } from "@/components/AdvancedFilterModal";
+import { Bx } from "@/components/jo/Bx";
+import {
+  Chip,
+  EmptyState,
+  JoPage,
+  JoSheet,
+  Segmented,
+  SheetOption,
+  Shimmer,
+  f,
+  makeJoStyles,
+  useJoTheme,
+} from "@/components/jo/ui";
+import { useNavInsets } from "@/components/jo/navInsets";
 import QRScannerModal, { type QRScannerRef } from "@/components/QRScannerModal";
 import type { Site } from "@/services/SiteResolver";
-import {
-  ListCountLine,
-  ListEmptyCard,
-  ModuleListHeader,
-  useListSlide,
-  type StatusChip,
-  SwipeTabsView,
-} from "@/components/shared/ListChrome";
-import type { MappedAsset } from "@/services/AssetMappingService";
+import type { MappedAsset, MappingStatus } from "@/services/AssetMappingService";
 import AssetMappingItem from "./AssetMappingItem";
-import { lastActivity, sideLabel, typeMeta, type ListFilter } from "./lib";
+import AssetFilterSheet, {
+  NO_FIELD_FILTERS,
+  type FieldFilters,
+  type FilterGroup,
+  type Sort,
+} from "./AssetFilterSheet";
+import { Notice, SwipeTabs, useListSlide } from "./ui";
+import { AM_TABS, SUB_STATUSES, TAB_OF, lastActivity, sideLabel, typeMeta, type AmTab } from "./lib";
 
-const SORTS = ["Name", "Type", "Recent"] as const;
-type Sort = (typeof SORTS)[number];
-
-/** Field filters from the advanced sheet; "all" = not filtered. */
-interface FieldFilters {
-  type: string;
-  side: string;
-  criticality: string;
-  floor: string;
-}
-const NO_FIELD_FILTERS: FieldFilters = { type: "all", side: "all", criticality: "all", floor: "all" };
-
-const STATUS_KEYS = ["pending", "review", "completed", "failed", "no_access"];
-const STATUS_LABELS: Record<string, string> = {
-  pending: "Open",
-  review: "Review",
-  completed: "Approved",
-  failed: "Failed",
-  no_access: "No access",
-};
-
+const TAB_KEYS = AM_TABS.map((x) => x.key);
 const typeOf = (a: MappedAsset) => a.equipment_type || a.asset_type || "";
 const keyExtractor = (a: MappedAsset) => a.asset_id;
 
-/** Distinct non-empty values, sorted, as pill options behind an "All". */
+/** Distinct non-empty values, sorted, as chip options behind an "All". */
 function optionsFrom(values: (string | null | undefined)[], format?: (v: string) => string) {
   const unique = [...new Set(values.map((v) => (v ?? "").trim()).filter(Boolean))].sort((a, b) =>
     a.localeCompare(b, undefined, { numeric: true }),
@@ -63,12 +57,10 @@ function optionsFrom(values: (string | null | undefined)[], format?: (v: string)
 }
 
 interface Props {
-  topInset: number;
   siteName: string;
   sites: Site[];
   siteCode: string;
   onSelectSite: (site: Site) => void;
-  user: any;
   assets: MappedAsset[];
   loading: boolean;
   error: string | null;
@@ -79,12 +71,10 @@ interface Props {
 }
 
 export default function AssetListView({
-  topInset,
   siteName,
   sites,
   siteCode,
   onSelectSite,
-  user,
   assets,
   loading,
   error,
@@ -93,57 +83,58 @@ export default function AssetListView({
   onRefresh,
   onOpen,
 }: Props) {
-  const ds = useDs();
-  const styles = useStyles();
-  const [filter, setFilter] = useState<ListFilter>("pending");
+  const t = useJoTheme();
+  const s = useStyles();
+  const { clearance } = useNavInsets();
+  // Opens on Pending — the work still to do — as the old list opened on Open.
+  const [tab, setTab] = useState<AmTab>("pending");
+  const [sub, setSub] = useState<MappingStatus | null>(null);
   const [search, setSearch] = useState("");
   const [fields, setFields] = useState<FieldFilters>(NO_FIELD_FILTERS);
+  const [sort, setSort] = useState<Sort>("Name");
   const [qrAsset, setQrAsset] = useState<string | null>(null);
   const qrScannerRef = useRef<QRScannerRef>(null);
 
-  // Advanced sheet drafts — applied together on "Apply Filters", like PM.
   const [showFilters, setShowFilters] = useState(false);
-  const [tempSearch, setTempSearch] = useState("");
-  const [tempStatus, setTempStatus] = useState<string>("pending");
-  const [tempFields, setTempFields] = useState<FieldFilters>(NO_FIELD_FILTERS);
-  const [sort, setSort] = useState<Sort>("Name");
+  const [draft, setDraft] = useState<FieldFilters>(NO_FIELD_FILTERS);
+  const [showSites, setShowSites] = useState(false);
   const [slide, setSlide] = useState({ seq: 0, dir: 1 });
   const slideStyle = useListSlide(slide.seq, slide.dir);
 
   const counts = useMemo(() => {
-    const c = { pending: 0, review: 0, completed: 0, failed: 0, no_access: 0 };
-    for (const a of assets) c[a.mapping_status] += 1;
+    const c: Record<MappingStatus, number> = { pending: 0, review: 0, completed: 0, failed: 0, no_access: 0 };
+    for (const a of assets) c[a.mapping_status] = (c[a.mapping_status] ?? 0) + 1;
     return c;
   }, [assets]);
 
-  const chips = useMemo<StatusChip[]>(() => {
-    const list: StatusChip[] = [
-      { key: "pending", label: "Open", count: counts.pending },
-      { key: "review", label: "Review", count: counts.review },
-      { key: "completed", label: "Approved", count: counts.completed },
-      { key: "failed", label: "Failed", count: counts.failed },
-      { key: "no_access", label: "No access", count: counts.no_access },
-    ];
-    return list;
-  }, [assets.length, counts]);
+  const groupCount = {
+    all: assets.length,
+    mapped: counts.review + counts.completed,
+    pending: counts.pending + counts.failed,
+    no_access: counts.no_access,
+  };
 
-  const activeFilter: ListFilter = filter;
-
-  const selectChip = useCallback(
-    (key: string) => {
-      if (key === activeFilter) return;
-      const order = chips.map((c) => c.key);
-      const dir = order.indexOf(key) >= order.indexOf(activeFilter) ? 1 : -1;
+  const selectTab = useCallback(
+    (key: AmTab) => {
+      setSub(null);
+      if (key === tab) return;
+      const dir = TAB_KEYS.indexOf(key) >= TAB_KEYS.indexOf(tab) ? 1 : -1;
       setSlide((prev) => ({ seq: prev.seq + 1, dir }));
-      setFilter(key as ListFilter);
+      setTab(key);
     },
-    [activeFilter, chips],
+    [tab],
   );
+
+  // Sub-chips only when the tab really holds two statuses.
+  const subChips = (SUB_STATUSES[tab] ?? []).map((x) => ({ ...x, count: counts[x.key] }));
+  const showSub = subChips.length > 1 && subChips.every((x) => x.count > 0);
+  const activeSub = showSub ? sub : null;
 
   const rows = useMemo(() => {
     const q = search.trim().toLowerCase();
     const filtered = assets.filter((a) => {
-      if (activeFilter !== "all" && a.mapping_status !== activeFilter) return false;
+      if (tab !== "all" && TAB_OF[a.mapping_status] !== tab) return false;
+      if (activeSub && a.mapping_status !== activeSub) return false;
       if (qrAsset && a.asset_name !== qrAsset) return false;
       if (fields.type !== "all" && typeOf(a) !== fields.type) return false;
       if (fields.side !== "all" && (a.category ?? "").trim() !== fields.side) return false;
@@ -151,7 +142,7 @@ export default function AssetListView({
       if (fields.floor !== "all" && (a.floor ?? "").trim() !== fields.floor) return false;
       if (!q) return true;
       // Keyword search covers the asset name and equipment type only; the
-      // other fields have their own filters in the advanced sheet.
+      // other fields have their own filters in the sheet.
       return [a.asset_name, a.equipment_type].some((v) => (v || "").toLowerCase().includes(q));
     });
     return [...filtered].sort((x, y) => {
@@ -163,10 +154,11 @@ export default function AssetListView({
       }
       return x.asset_name.localeCompare(y.asset_name);
     });
-  }, [assets, activeFilter, search, sort, fields, qrAsset]);
+  }, [assets, tab, activeSub, search, sort, fields, qrAsset]);
 
   const listKey = [
-    activeFilter,
+    tab,
+    activeSub ?? "",
     search.trim().toLowerCase(),
     fields.type,
     fields.side,
@@ -176,56 +168,39 @@ export default function AssetListView({
     sort,
   ].join("|");
 
-  const openFilters = () => {
-    setTempSearch(search);
-    setTempStatus(activeFilter);
-    setTempFields(fields);
-    setShowFilters(true);
-  };
+  const filterGroups = useMemo<FilterGroup[]>(
+    () =>
+      (
+        [
+          { key: "type", label: "Equipment type", options: optionsFrom(assets.map(typeOf)) },
+          {
+            key: "side",
+            label: "High side / Low side",
+            options: optionsFrom(assets.map((a) => a.category), (v) => sideLabel({ category: v } as MappedAsset) ?? v),
+          },
+          { key: "criticality", label: "Criticality", options: optionsFrom(assets.map((a) => a.criticality)) },
+          { key: "floor", label: "Floor", options: optionsFrom(assets.map((a) => a.floor)) },
+        ] as FilterGroup[]
+      ).filter((g) => g.options.length > 1),
+    [assets],
+  );
 
-  const applyFilters = () => {
-    setSearch(tempSearch);
-    selectChip(chips.some((c) => c.key === tempStatus) ? tempStatus : "pending");
-    setFields(tempFields);
-    setShowFilters(false);
-  };
-
-  const extraFilters = useMemo<ExtraFilterGroup[]>(() => {
-    const group = (key: keyof FieldFilters, label: string, options: { value: string; label: string }[]) => ({
-      key,
-      label,
-      options,
-      value: tempFields[key],
-      onChange: (value: string) => setTempFields((f) => ({ ...f, [key]: value })),
-    });
-    return [
-      group("type", "Equipment type", optionsFrom(assets.map(typeOf))),
-      group(
-        "side",
-        "High side / Low side",
-        optionsFrom(assets.map((a) => a.category), (v) => sideLabel({ category: v } as MappedAsset) ?? v),
-      ),
-      group("criticality", "Criticality", optionsFrom(assets.map((a) => a.criticality))),
-      group("floor", "Floor", optionsFrom(assets.map((a) => a.floor))),
-    ].filter((g) => g.options.length > 1);
-  }, [assets, tempFields]);
-
-  const filterActive =
-    !!search.trim() || Object.values(fields).some((v) => v !== "all") || !!qrAsset;
+  const fieldCount = Object.values(fields).filter((v) => v !== "all").length;
+  const filterDot = fieldCount > 0 || sort !== "Name";
 
   const onQrFound = useCallback(
     (assetName: string) => {
       setQrAsset(assetName);
       setSearch("");
-      // One match — open it straight away, the scan's usual intent. There's
-      // no "All" tab, so move to its status tab or the list would hide it.
+      // One match — open it straight away, the scan's usual intent, and move
+      // to its tab so it's still listed when the detail closes.
       const hits = assets.filter((a) => a.asset_name === assetName);
       if (hits.length === 1) {
-        selectChip(hits[0]!.mapping_status);
+        selectTab(TAB_OF[hits[0]!.mapping_status]);
         onOpen(hits[0]!);
       }
     },
-    [assets, onOpen, selectChip],
+    [assets, onOpen, selectTab],
   );
 
   const renderItem = useCallback(
@@ -233,169 +208,347 @@ export default function AssetListView({
     [onOpen],
   );
 
-  const progressLabel =
-    assets.length > 0
-      ? `${counts.completed} of ${assets.length} completed · ${counts.review} in review`
-      : "Asset Mapping";
+  const tiles: { key: string; label: string; value: number; bg: string; fg: string }[] = [
+    { key: "all", label: "Total", value: groupCount.all, bg: t.accent, fg: t.onAccent },
+    { key: "mapped", label: "Mapped", value: groupCount.mapped, bg: t.card, fg: t.ok },
+    { key: "pending", label: "Pending", value: groupCount.pending, bg: t.card, fg: t.warn },
+    { key: "no_access", label: "No acc.", value: groupCount.no_access, bg: t.card, fg: t.bad },
+  ];
+
+  const hasExtraRow = showSub || !!qrAsset || fieldCount > 0;
+  const noSite = !siteCode;
+
+  /* ── body ── */
+  let empty: React.ReactNode;
+  if (loading) {
+    empty = (
+      <View style={{ gap: 8 }}>
+        {[0, 1, 2, 3, 4, 5].map((i) => (
+          <Shimmer key={i} height={92} radius={22} />
+        ))}
+      </View>
+    );
+  } else if (error && assets.length === 0) {
+    empty = (
+      <EmptyState
+        icon="bx-error-circle"
+        title="Couldn't load assets"
+        sub={error}
+        action={offline ? undefined : { label: "Try again", onPress: onRefresh }}
+      />
+    );
+  } else if (offline && assets.length === 0) {
+    empty = (
+      <EmptyState icon="bx-wifi-off" title="You're offline" sub="Asset mapping needs a connection. Pull to refresh once you're back online." />
+    );
+  } else if (assets.length === 0) {
+    empty = <EmptyState icon="bx-cube" title="No assets at this site yet" sub="Assets added on the web register show here." />;
+  } else {
+    const filtered = !!search.trim() || !!qrAsset || fieldCount > 0;
+    empty = (
+      <EmptyState
+        icon="bx-search"
+        title={filtered ? "No assets match" : "Nothing here"}
+        sub={filtered ? "Try a different search or clear the filters." : "No assets at this site are in this tab."}
+        action={
+          filtered
+            ? {
+                label: "Clear filters",
+                onPress: () => {
+                  setSearch("");
+                  setQrAsset(null);
+                  setFields(NO_FIELD_FILTERS);
+                },
+              }
+            : tab !== "all"
+              ? { label: "Show all", onPress: () => selectTab("all") }
+              : undefined
+        }
+      />
+    );
+  }
 
   return (
-    <View style={{ flex: 1, backgroundColor: ds.pageBg }}>
-      <ModuleListHeader
-        topInset={topInset}
-        siteName={siteName}
-        dateLabel={progressLabel}
-        subtitleIcon={ClipboardCheck}
-        onRefresh={onRefresh}
-        refreshDisabled={offline}
-        onFilter={openFilters}
-        filterActive={filterActive}
-        search={search}
-        onChangeSearch={setSearch}
-        searchPlaceholder="Search asset name or equipment type"
-        chips={chips}
-        activeChip={activeFilter}
-        onSelectChip={selectChip}
-        showSiteIcon={false}
-        tabPlacement="canvas"
-      />
-
-      <ListCountLine
-        count={rows.length}
-        label={rows.length === 1 ? "asset" : "assets"}
-        sortLabel={sort}
-        onSort={() => setSort((s) => SORTS[(SORTS.indexOf(s) + 1) % SORTS.length]!)}
-      />
-
-      {/* QR scan narrows the list to a single asset — same control as the PM tab. */}
-      <View style={styles.qrRow}>
-        {qrAsset ? (
-          <View style={styles.qrChip}>
-            <QrCode size={12} color={ds.flame[100]} />
-            <Text style={styles.qrChipText} numberOfLines={1}>
-              {qrAsset}
+    <JoPage>
+      <View style={s.top}>
+        <View style={s.head}>
+          <View style={{ flexShrink: 1, minWidth: 0 }}>
+            <Text style={s.kicker} numberOfLines={1}>
+              Equipment Register
             </Text>
-            <TouchableOpacity onPress={() => setQrAsset(null)} hitSlop={8} accessibilityLabel="Clear QR filter">
-              <X size={14} color={ds.flame[100]} />
-            </TouchableOpacity>
+            <Text style={s.title} numberOfLines={1}>
+              Asset Directory
+            </Text>
           </View>
+          <TouchableOpacity
+            onPress={() => setShowSites(true)}
+            disabled={sites.length === 0}
+            activeOpacity={0.8}
+            style={s.siteChip}
+            accessibilityRole="button"
+            accessibilityLabel={`Site: ${siteName}, change`}
+          >
+            <Bx name="bx-buildings" size={16} color={t.accentInk} />
+            <Text style={s.siteText} numberOfLines={1}>
+              {siteName}
+            </Text>
+            <Bx name="bx-chevron-down" size={16} color={t.muted} />
+          </TouchableOpacity>
+        </View>
+
+        <View style={s.tiles}>
+          {tiles.map((c) => (
+            <View
+              key={c.key}
+              style={[s.tile, { backgroundColor: c.bg }]}
+              accessible
+              accessibilityLabel={`${c.label}: ${loading ? "loading" : c.value}`}
+            >
+              <Text style={[s.tileValue, { color: c.fg }]} numberOfLines={1}>
+                {loading ? "–" : c.value}
+              </Text>
+              <Text style={[s.tileLabel, { color: c.fg }]} numberOfLines={1}>
+                {c.label}
+              </Text>
+            </View>
+          ))}
+        </View>
+
+        <View style={s.search}>
+          <Bx name="bx-search" size={18} color={t.muted} />
+          <TextInput
+            value={search}
+            onChangeText={setSearch}
+            placeholder="Search name or equipment type"
+            placeholderTextColor={t.faint}
+            style={s.searchInput}
+            returnKeyType="search"
+            autoCorrect={false}
+            accessibilityLabel="Search assets"
+          />
+          {search ? (
+            <TouchableOpacity onPress={() => setSearch("")} hitSlop={8} accessibilityLabel="Clear search">
+              <Bx name="bx-x" size={17} color={t.muted} />
+            </TouchableOpacity>
+          ) : null}
+          <TouchableOpacity
+            onPress={() => {
+              setDraft(fields);
+              setShowFilters(true);
+            }}
+            hitSlop={6}
+            accessibilityRole="button"
+            accessibilityLabel={filterDot ? "Filters, active" : "Filters"}
+          >
+            <Bx name="bx-filter-alt" size={19} color={filterDot ? t.accentInk : t.ink2} />
+            {filterDot ? <View style={s.dot} /> : null}
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => qrScannerRef.current?.open()}
+            hitSlop={6}
+            accessibilityRole="button"
+            accessibilityLabel="Scan asset QR code"
+          >
+            <Bx name="bx-qr-scan" size={19} color={t.ink2} />
+          </TouchableOpacity>
+        </View>
+
+        <Segmented items={AM_TABS} value={tab} onChange={selectTab} style={{ marginTop: 10 }} />
+
+        {hasExtraRow ? (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={{ marginTop: 10, marginHorizontal: -16 }}
+            contentContainerStyle={{ gap: 6, paddingHorizontal: 16 }}
+          >
+            {showSub
+              ? subChips.map((x) => (
+                  <Chip
+                    key={x.key}
+                    label={x.label}
+                    count={x.count}
+                    height={32}
+                    selected={activeSub === x.key}
+                    onPress={() => setSub((cur) => (cur === x.key ? null : x.key))}
+                  />
+                ))
+              : null}
+            {qrAsset ? (
+              <Chip
+                label={qrAsset}
+                icon="bx-qr-scan"
+                iconColor={t.accentInk}
+                height={32}
+                onPress={() => setQrAsset(null)}
+                count="×"
+              />
+            ) : null}
+            {fieldCount > 0 ? (
+              <Chip
+                label={`${fieldCount} filter${fieldCount === 1 ? "" : "s"}`}
+                icon="bx-filter-alt"
+                iconColor={t.accentInk}
+                height={32}
+                onPress={() => setFields(NO_FIELD_FILTERS)}
+                count="×"
+              />
+            ) : null}
+          </ScrollView>
         ) : null}
-        <TouchableOpacity
-          onPress={() => qrScannerRef.current?.open()}
-          style={styles.qrScanBtn}
-          hitSlop={6}
-          accessibilityRole="button"
-          accessibilityLabel="Scan asset QR code"
-        >
-          <QrCode size={15} color={ds.sky[100]} />
-          <Text style={styles.qrScanLabel}>{qrAsset ? "Rescan" : "Scan asset"}</Text>
-        </TouchableOpacity>
+
+        {offline && assets.length > 0 ? (
+          <Notice
+            tone="warn"
+            icon="bx-wifi-off"
+            text="Offline — showing the last loaded list. Documenting assets needs a connection."
+            style={{ marginTop: 10 }}
+          />
+        ) : error && assets.length > 0 ? (
+          <Notice tone="bad" icon="bx-error-circle" text={`Couldn't refresh: ${error}`} style={{ marginTop: 10 }} />
+        ) : null}
       </View>
 
-      <SwipeTabsView
-        chips={chips}
-        activeChip={activeFilter}
-        onSelectChip={selectChip}
-        style={[{ flex: 1 }, slideStyle]}
-      >
-        <FlashList
-          // FlashList 2.0.2 can keep showing recycled cells from the unfiltered
-          // list after the data shrinks (the count updated, the rows didn't).
-          // A fresh list per filter state sidesteps it and starts at the top.
-          key={listKey}
-          data={rows}
-          renderItem={renderItem}
-          keyExtractor={keyExtractor}
-          drawDistance={600}
-          ListEmptyComponent={
-            loading ? (
-              <TicketSkeleton />
-            ) : (
-              <ListEmptyCard
-                label={
-                  error ??
-                  (offline
-                    ? "You're offline — asset mapping needs a connection"
-                    : assets.length === 0
-                      ? "No assets at this site yet"
-                      : "No assets match this filter")
-                }
-              />
-            )
-          }
-          refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={ds.carbon[500]} />
-          }
-          showsVerticalScrollIndicator={false}
-          contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: 24 }}
-        />
-      </SwipeTabsView>
+      {noSite && !loading ? (
+        <View style={{ padding: 16 }}>
+          <EmptyState
+            icon="bx-buildings"
+            title={sites.length ? "Pick a site" : "No site assigned"}
+            sub={sites.length ? "Choose the site to walk." : "Ask an admin to add you to a site to map its assets."}
+            action={sites.length ? { label: "Choose site", onPress: () => setShowSites(true) } : undefined}
+          />
+        </View>
+      ) : (
+        <SwipeTabs keys={TAB_KEYS} active={tab} onSelect={selectTab} style={[{ flex: 1 }, slideStyle]}>
+          <FlashList
+            // FlashList 2.0.2 can keep showing recycled cells from the unfiltered
+            // list after the data shrinks (the count updated, the rows didn't).
+            // A fresh list per filter state sidesteps it and starts at the top.
+            key={listKey}
+            data={loading ? [] : rows}
+            renderItem={renderItem}
+            keyExtractor={keyExtractor}
+            drawDistance={600}
+            ListEmptyComponent={<View>{empty}</View>}
+            refreshControl={
+              <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={t.muted} colors={[t.accent]} />
+            }
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 10, paddingBottom: clearance }}
+          />
+        </SwipeTabs>
+      )}
 
-      <AdvancedFilterModal
+      <JoSheet
+        visible={showSites}
+        onClose={() => setShowSites(false)}
+        title="Site"
+        subtitle={`You have access to ${sites.length} site${sites.length === 1 ? "" : "s"}.`}
+      >
+        <ScrollView style={{ marginTop: 14 }} contentContainerStyle={{ gap: 6 }}>
+          {sites.map((site) => (
+            <SheetOption
+              key={site.site_code}
+              label={site.site_name || site.name || site.site_code}
+              meta={site.site_code}
+              metaStyle={f.m(11)}
+              selected={site.site_code === siteCode}
+              onPress={() => {
+                setShowSites(false);
+                if (site.site_code !== siteCode) {
+                  setQrAsset(null);
+                  setFields(NO_FIELD_FILTERS);
+                  onSelectSite(site);
+                }
+              }}
+            />
+          ))}
+        </ScrollView>
+      </JoSheet>
+
+      <AssetFilterSheet
         visible={showFilters}
         onClose={() => setShowFilters(false)}
-        title="Filter Assets"
-        showDate={false}
-        tempSearch={tempSearch}
-        setTempSearch={setTempSearch}
-        searchPlaceholder="Asset name or equipment type"
-        tempFromDate={null}
-        setTempFromDate={() => {}}
-        sites={sites}
-        selectedSiteCode={siteCode}
-        setSelectedSiteCode={(code) => {
-          const site = sites.find((x) => x.site_code === code);
-          if (site) onSelectSite(site);
-        }}
-        user={user}
-        statusFilter={tempStatus}
-        setStatusFilter={setTempStatus}
-        statusOptions={STATUS_KEYS}
-        statusOptionLabels={STATUS_LABELS}
-        extraFilters={extraFilters}
+        groups={filterGroups}
+        draft={draft}
+        onChangeDraft={setDraft}
+        sort={sort}
+        onChangeSort={setSort}
         onReset={() => {
-          setTempSearch("");
-          setTempStatus("pending");
-          setTempFields(NO_FIELD_FILTERS);
+          setDraft(NO_FIELD_FILTERS);
+          setSort("Name");
         }}
-        applyAdvancedFilters={applyFilters}
+        onApply={() => {
+          setFields(draft);
+          setShowFilters(false);
+        }}
       />
 
       <QRScannerModal ref={qrScannerRef} siteCode={siteCode} onClose={() => {}} onAssetFound={onQrFound} />
-    </View>
+    </JoPage>
   );
 }
 
-const useStyles = makeThemedStyles((ds) => ({
-  qrRow: {
+const useStyles = makeJoStyles((t) => ({
+  top: { paddingHorizontal: 16 },
+  head: {
     flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    paddingHorizontal: 20,
-    paddingBottom: 10,
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 12,
+    paddingTop: 12,
+    paddingHorizontal: 4,
   },
-  qrChip: {
+  kicker: { ...f.t(13), color: t.muted },
+  title: { ...f.d(28, -0.025), color: t.ink, marginTop: 4 },
+  siteChip: {
+    height: 40,
+    marginTop: 6,
+    paddingHorizontal: 12,
+    borderRadius: 20,
+    backgroundColor: t.input,
+    borderWidth: 1,
+    borderColor: t.lineMid,
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
-    backgroundColor: ds.flame[1000],
-    borderWidth: 1,
-    borderColor: ds.flame[800],
-    borderRadius: 8,
+    flexShrink: 0,
+    maxWidth: 170,
+  },
+  siteText: { ...f.t(12.5, 600), color: t.ink, flexShrink: 1 },
+  tiles: { flexDirection: "row", gap: 6, marginTop: 14 },
+  tile: {
+    flex: 1,
+    minWidth: 0,
+    borderRadius: 18,
+    paddingVertical: 11,
     paddingHorizontal: 10,
-    paddingVertical: 6,
-    flexShrink: 1,
+    borderWidth: 1,
+    borderColor: t.cardBorder,
   },
-  qrChipText: { color: ds.flame[100], fontSize: 12, fontWeight: "600", flexShrink: 1, maxWidth: 200 },
-  qrScanBtn: {
+  tileValue: { ...f.d(22, -0.03) },
+  tileLabel: { ...f.t(11), marginTop: 5, opacity: 0.75 },
+  search: {
+    height: 44,
+    marginTop: 10,
     flexDirection: "row",
     alignItems: "center",
-    gap: 6,
-    paddingVertical: 7,
-    paddingHorizontal: 11,
-    borderRadius: 99,
+    gap: 10,
+    paddingHorizontal: 14,
+    borderRadius: 22,
+    backgroundColor: t.input,
     borderWidth: 1,
-    borderColor: ds.carbon[900],
-    backgroundColor: ds.white,
+    borderColor: t.lineMid,
   },
-  qrScanLabel: { fontSize: 11, fontWeight: "600", color: ds.sky[100] },
+  searchInput: { ...f.t(13.5), flex: 1, color: t.ink, paddingVertical: 0 },
+  dot: {
+    position: "absolute",
+    top: -1,
+    right: -2,
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    backgroundColor: t.accent,
+  },
 }));

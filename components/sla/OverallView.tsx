@@ -4,7 +4,7 @@
  */
 import React from "react";
 import { Text, TouchableOpacity, View } from "react-native";
-import { ChevronRight, Maximize2 } from "lucide-react-native";
+import { ChevronRight, Maximize2 } from "@/components/jo/bxIcons";
 import { Card, HeroCard, ProgressBar, capsStyle, f, makeJoStyles, useJoTheme } from "@/components/jo/ui";
 import { toneFg } from "@/constants/jo";
 import type { SlaCategoryKey, SlaReport } from "@/services/SlaService";
@@ -17,6 +17,7 @@ import {
   clampPct,
   fmtPct,
   fmtScore,
+  feeLabel,
   fmtTarget,
   monthLabel,
   monthShortLabel,
@@ -81,7 +82,7 @@ export function OverallView({
             </Text>
           </View>
           <Text style={[f.t(11.5, 500), { color: t.onAccent, opacity: 0.75, flex: 1 }]} numberOfLines={2}>
-            {report.band.feeImplication}
+            {feeLabel(report.band.feeImplication)}
           </Text>
         </View>
       </HeroCard>
@@ -203,7 +204,7 @@ export function OverallView({
                     <Text style={[f.t(13, 600), { color: t.ink }]}>{b.label}</Text>
                     <Text style={[f.t(11.5), { color: t.muted }]}>{b.range}</Text>
                   </View>
-                  <Text style={[f.t(11.5), { color: t.ink3, marginTop: 2 }]}>{b.feeImplication}</Text>
+                  <Text style={[f.t(11.5), { color: t.ink3, marginTop: 2 }]}>{feeLabel(b.feeImplication)}</Text>
                 </View>
                 {cur ? (
                   <View style={s.currentPill}>
@@ -283,6 +284,7 @@ function TrendCard({ report, trend }: { report: SlaReport; trend: TrendPoint[] }
       </View>
       <View style={{ marginTop: 12 }}>
         <FrozenTable
+          startAtEnd
           leftWidth={TREND_LEFT}
           headerHeight={22}
           rowHeight={48}

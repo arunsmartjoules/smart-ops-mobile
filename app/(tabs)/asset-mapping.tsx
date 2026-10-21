@@ -1,15 +1,16 @@
 /**
- * Asset Mapping tab — the Claude Design "JouleOps Asset Mapping" flow,
- * presented like the other module tabs (Tickets / Incidents): shared list
- * chrome in the tab, and a full-screen detail modal with the ticket-detail
- * header, cards and sticky action bar.
+ * Asset Mapping tab — the "JouleOps App" artboard's Asset Directory
+ * (`r_assets`) for the list, and a full-screen detail modal in the artboard's
+ * detail language (round back button, radius-26 cards, gradient CTA bar).
+ * See components/asset-mapping/lib.ts for how the five mapping statuses map
+ * onto the artboard's All / Mapped / Pending / No access tabs.
  *
  * A one-time walk of each site: every asset gets a nameplate photo and a
  * location photo (taken with the camera or picked from the gallery), or is
  * logged as non-accessible with proof. The nameplate is read by AI on the
  * backend in the background — the upload just confirms and closes, and the
  * result arrives as a push naming the asset. A failed read moves the asset to
- * the Failed tab for a re-upload. Documented assets go to Review; a
+ * Pending (as "Read failed") for a re-upload. Documented assets go to Review; a
  * manager/admin approves them to Completed (here or on the web Asset Mapping
  * page). These statuses are this flow's own — unrelated to asset status.
  *
@@ -22,7 +23,7 @@
  * Online-only (see AssetMappingService).
  */
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Alert, Modal, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Alert, Modal, Text, View } from "react-native";
 import { useLocalSearchParams } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Haptics from "expo-haptics";
@@ -31,7 +32,7 @@ import * as Notifications from "expo-notifications";
 import { useAuth } from "@/contexts/AuthContext";
 import { useSites } from "@/hooks/useSites";
 import { useNetworkStatus } from "@/hooks/useNetworkStatus";
-import { useDs } from "@/hooks/useDs";
+import { f, makeJoStyles, useJoTheme } from "@/components/jo/ui";
 import {
   AssetMappingService,
   canApproveMapping,
@@ -101,12 +102,19 @@ const EMPTY: MappedAsset[] = [];
 const firstParam = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
 
 export default function AssetMappingTab() {
-  const ds = useDs();
+  const t = useJoTheme();
+  const s = useStyles();
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
   const { isConnected } = useNetworkStatus();
   const offline = isConnected === false;
-  const { sites, selectedSite, selectSite } = useSites(user?.user_id || user?.id);
+  const {
+    sites,
+    selectedSite,
+    selectSite,
+    loading: sitesLoading,
+    initialized: sitesReady,
+  } = useSites(user?.user_id || user?.id);
   const siteCode = selectedSite?.site_code || "";
   const siteName = selectedSite?.site_name || selectedSite?.site_code || "Select site";
   const params = useLocalSearchParams<{ assetId?: string | string[]; siteCode?: string | string[] }>();
@@ -520,9 +528,8 @@ export default function AssetMappingTab() {
   };
 
   return (
-    <View style={{ flex: 1, backgroundColor: ds.pageBg }}>
+    <View style={{ flex: 1, backgroundColor: t.page }}>
       <AssetListView
-        topInset={insets.top}
         siteName={siteName}
         sites={sites}
         siteCode={siteCode}
@@ -530,9 +537,9 @@ export default function AssetMappingTab() {
           setSelectedId(null);
           void selectSite(site);
         }}
-        user={user}
         assets={assets}
-        loading={!!siteCode && !current}
+        // Still resolving the user's sites counts as loading, not "no site".
+        loading={siteCode ? !current : sitesLoading || !sitesReady}
         error={current ? loaded.error : null}
         offline={offline}
         refreshing={refreshing}
@@ -629,9 +636,11 @@ export default function AssetMappingTab() {
           />
         )}
         {libraryUpload ? (
-          <View style={styles.uploading}>
-            <ActivityIndicator size="large" color="#FFFFFF" />
-            <Text style={styles.uploadingText}>{UPLOADING.title}</Text>
+          <View style={s.uploading}>
+            <View style={s.uploadingCard} accessibilityLiveRegion="polite">
+              <ActivityIndicator size="large" color={t.accent} />
+              <Text style={s.uploadingText}>{UPLOADING.title}</Text>
+            </View>
           </View>
         ) : null}
         {/* Inside the presented modal so it stacks above the detail on iOS. */}
@@ -641,17 +650,26 @@ export default function AssetMappingTab() {
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = makeJoStyles((t) => ({
   uploading: {
     position: "absolute",
     top: 0,
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: "rgba(0,0,0,0.55)",
+    backgroundColor: t.scrim,
     alignItems: "center",
     justifyContent: "center",
-    gap: 12,
   },
-  uploadingText: { color: "#FFFFFF", fontSize: 14, fontWeight: "600" },
-});
+  uploadingCard: {
+    alignItems: "center",
+    gap: 12,
+    paddingVertical: 22,
+    paddingHorizontal: 28,
+    borderRadius: 26,
+    backgroundColor: t.card,
+    borderWidth: 1,
+    borderColor: t.cardBorder,
+  },
+  uploadingText: { ...f.t(15, 600), color: t.ink },
+}));

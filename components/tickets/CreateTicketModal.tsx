@@ -1,21 +1,26 @@
 import React, { useEffect, useMemo, useState } from "react";
-import {
-  Alert,
-  Modal,
-  ScrollView,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  useColorScheme,
-  View,
-} from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { Alert, Modal, ScrollView, Text, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
-import { Check, X } from "lucide-react-native";
-import FullscreenPicker from "@/components/FullscreenPicker";
 import { type SelectOption } from "@/components/SearchableSelect";
 import { TicketsService } from "@/services/TicketsService";
-import { useDs } from "@/hooks/useDs";
+import { Bx } from "@/components/jo/Bx";
+import {
+  IconButton,
+  PrimaryButton,
+  SecondaryButton,
+  f,
+  makeJoStyles,
+  useJoTheme,
+} from "@/components/jo/ui";
+import {
+  BoxInput,
+  ChoiceChips,
+  FieldHead,
+  OptionSheet,
+  SelectBox,
+  SwitchRow,
+} from "./TicketFormParts";
 
 // Same vocabulary as the tickets priority filter.
 const PRIORITY_OPTIONS = ["Medium", "High", "Very High"] as const;
@@ -36,9 +41,11 @@ interface Props {
 }
 
 /**
- * "Raise ticket" form — site, title and category, plus optional area and priority, and a per-ticket switch for the site-group WhatsApp
- * announcement (on by default, mirroring the API). Mount it only while open
- * so every draft starts fresh.
+ * "Raise ticket" form — site, title and category, plus optional area and
+ * priority, and a per-ticket switch for the site-group WhatsApp announcement
+ * (on by default, mirroring the API). Mount it only while open so every
+ * draft starts fresh. Styled as the artboard's full-height form (radius-18
+ * boxes, option sheets, accent CTA).
  */
 export default function CreateTicketModal({
   visible,
@@ -49,8 +56,10 @@ export default function CreateTicketModal({
   defaultSiteCode,
   isConnected,
 }: Props) {
-  const ds = useDs();
-  const isDark = useColorScheme() === "dark";
+  const t = useJoTheme();
+  const s = useStyles();
+  const insets = useSafeAreaInsets();
+  const [sheet, setSheet] = useState<"site" | "category" | "area" | null>(null);
   const [siteCode, setSiteCode] = useState(defaultSiteCode);
   const [title, setTitle] = useState("");
   const [category, setCategory] = useState("");
@@ -64,10 +73,10 @@ export default function CreateTicketModal({
 
   const siteOptions = useMemo<SelectOption[]>(
     () =>
-      sites.map((s) => ({
-        value: s.site_code || "",
-        label: s.site_name || s.site_code || "",
-        description: s.site_code || "",
+      sites.map((site) => ({
+        value: site.site_code || "",
+        label: site.site_name || site.site_code || "",
+        description: site.site_code || "",
       })),
     [sites],
   );
@@ -77,7 +86,7 @@ export default function CreateTicketModal({
   useEffect(() => {
     if (!siteCode) return;
     let cancelled = false;
-    const t = setTimeout(async () => {
+    const timer = setTimeout(async () => {
       setAreasLoading(true);
       try {
         const result = await TicketsService.getAssets(siteCode, {
@@ -102,7 +111,7 @@ export default function CreateTicketModal({
     }, 300);
     return () => {
       cancelled = true;
-      clearTimeout(t);
+      clearTimeout(timer);
     };
   }, [siteCode, areaSearch]);
 
@@ -135,151 +144,194 @@ export default function CreateTicketModal({
     Alert.alert("Error", result?.error || "Failed to create ticket");
   };
 
-  return (
-    <Modal visible={visible} animationType="slide" onRequestClose={onClose} statusBarTranslucent navigationBarTranslucent>
-      <View className="flex-1 bg-slate-50 dark:bg-slate-950">
-        <SafeAreaView className="flex-1">
-          <View className="px-5 py-4 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
-            <View className="flex-row items-center justify-between">
-              <Text className="text-slate-900 dark:text-slate-50 font-black text-lg">Raise Ticket</Text>
-              <TouchableOpacity
-                onPress={onClose}
-                className="w-8 h-8 rounded-full items-center justify-center bg-slate-100 dark:bg-slate-800"
-              >
-                <X size={18} color={isDark ? "#cbd5e1" : "#334155"} />
-              </TouchableOpacity>
-            </View>
-          </View>
+  const siteLabel = siteOptions.find((o) => o.value === siteCode)?.label || siteCode;
+  const areaLabel = areaOptions.find((o) => o.value === area)?.label || area;
 
-          <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
+  return (
+    <Modal
+      visible={visible}
+      animationType="slide"
+      onRequestClose={onClose}
+      statusBarTranslucent
+      navigationBarTranslucent
+    >
+      <View style={s.screen}>
+        <View style={[s.header, { paddingTop: insets.top + 8 }]}>
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text style={s.kicker} numberOfLines={1}>
+              New ticket
+            </Text>
+            <Text style={s.title} numberOfLines={1}>
+              Raise ticket
+            </Text>
+          </View>
+          <IconButton icon="bx-x" label="Close" onPress={onClose} />
+        </View>
+
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
           <ScrollView
+            style={{ flex: 1 }}
+            contentContainerStyle={s.body}
             showsVerticalScrollIndicator={false}
-            className="flex-1"
-            contentContainerStyle={{ padding: 20, paddingBottom: 120 }}
             keyboardShouldPersistTaps="handled"
           >
-            <FullscreenPicker
-              label="Site *"
+            {!isConnected ? (
+              <View style={s.offline} accessibilityRole="alert">
+                <Bx name="bx-wifi-off" size={16} color={t.warn} />
+                <Text style={s.offlineText}>
+                  {"You're offline — raising a ticket needs a connection."}
+                </Text>
+              </View>
+            ) : null}
+
+            <FieldHead label="Site" hint="Required" />
+            <SelectBox
+              value={siteLabel}
               placeholder="Select site"
-              options={siteOptions}
-              value={siteCode}
-              onChange={(value) => {
-                setSiteCode(value);
-                setArea("");
-                setAreaSearch("");
-              }}
+              onPress={() => setSheet("site")}
+              accessibilityLabel="Site"
+              style={s.gap}
             />
-            <View className="mb-4">
-              <Text className="text-slate-700 dark:text-slate-300 font-semibold text-sm mb-2">
-                Title *
-              </Text>
-              <TextInput
-                placeholder="Describe the issue"
-                value={title}
-                onChangeText={setTitle}
-                multiline
-                textAlignVertical="top"
-                className="border border-slate-300 dark:border-slate-700 rounded-xl px-3 py-3 text-slate-900 dark:text-slate-50 min-h-[90px]"
-                placeholderTextColor={ds.carbon[600]}
-              />
-            </View>
-            <FullscreenPicker
-              label="Category *"
-              placeholder="Select category"
-              options={categoryOptions}
+
+            <FieldHead label="Title" hint="Required" style={s.head} />
+            <BoxInput
+              placeholder="Describe the issue"
+              value={title}
+              onChangeText={setTitle}
+              multiline
+              minHeight={90}
+              accessibilityLabel="Title"
+              style={s.gap}
+            />
+
+            <FieldHead label="Category" hint="Required" style={s.head} />
+            <SelectBox
               value={category}
-              onChange={setCategory}
-              searchPlaceholder="Search categories..."
-              emptyMessage="No categories found"
+              placeholder="Select category"
+              onPress={() => setSheet("category")}
+              accessibilityLabel="Category"
+              style={s.gap}
             />
-            <FullscreenPicker
-              label="Area"
-              placeholder="Select area / asset (optional)"
-              options={areaOptions}
-              value={area}
-              onChange={setArea}
-              loading={areasLoading}
-              searchPlaceholder="Search areas..."
-              emptyMessage="No areas found"
-              searchValue={areaSearch}
-              onSearchChange={setAreaSearch}
-              remoteSearch
+
+            <FieldHead label="Area" hint="Optional" style={s.head} />
+            <SelectBox
+              value={areaLabel}
+              placeholder="Select area / asset"
+              onPress={() => setSheet("area")}
+              accessibilityLabel="Area"
+              style={s.gap}
             />
-            <View className="mb-4">
-              <Text className="text-slate-700 dark:text-slate-300 font-semibold text-sm mb-2">
-                Priority
-              </Text>
-              <View className="flex-row gap-2">
-                {PRIORITY_OPTIONS.map((opt) => {
-                  const active = priority === opt;
-                  return (
-                    <TouchableOpacity
-                      key={opt}
-                      onPress={() => setPriority(opt)}
-                      className={`px-4 py-2 rounded-xl border ${
-                        active
-                          ? ""
-                          : "bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700"
-                      }`}
-                      style={active ? { backgroundColor: ds.controlOn, borderColor: ds.controlOn } : undefined}
-                    >
-                      <Text
-                        className={`text-xs font-bold ${
-                          active ? "text-white" : "text-slate-700 dark:text-slate-200"
-                        }`}
-                      >
-                        {opt}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-            </View>
-            <TouchableOpacity
-              onPress={() => setSendWhatsApp((v) => !v)}
-              className="flex-row items-center py-2"
-              accessibilityRole="checkbox"
-              accessibilityState={{ checked: sendWhatsApp }}
-            >
-              <View
-                className={`w-5 h-5 rounded-md border items-center justify-center ${
-                  sendWhatsApp
-                    ? ""
-                    : "bg-white dark:bg-slate-900 border-slate-400 dark:border-slate-600"
-                }`}
-                style={sendWhatsApp ? { backgroundColor: ds.controlOn, borderColor: ds.controlOn } : undefined}
-              >
-                {sendWhatsApp ? <Check size={14} color="#fff" strokeWidth={3} /> : null}
-              </View>
-              <Text className="ml-3 text-slate-800 dark:text-slate-100 text-sm font-semibold">
-                Send WhatsApp notification
-              </Text>
-            </TouchableOpacity>
+
+            <FieldHead label="Priority" style={s.head} />
+            <ChoiceChips
+              label="Priority"
+              options={PRIORITY_OPTIONS}
+              value={priority}
+              onChange={setPriority}
+              style={s.gap}
+            />
+
+            <SwitchRow
+              icon="bxl-whatsapp"
+              iconColor={t.ok}
+              iconBg={t.okTint}
+              title="Send WhatsApp notification"
+              sub="Announce this ticket in the site group"
+              value={sendWhatsApp}
+              onToggle={() => setSendWhatsApp((v) => !v)}
+              style={{ marginTop: 18 }}
+            />
           </ScrollView>
 
-          <View className="px-5 py-3 border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
-            <View className="flex-row gap-2">
-              <TouchableOpacity
-                onPress={onClose}
-                className="flex-1 bg-slate-200 dark:bg-slate-700 rounded-xl py-3"
-              >
-                <Text className="text-center font-bold text-slate-800 dark:text-slate-100">Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={onSubmit}
-                disabled={submitting}
-                className="flex-1 rounded-xl py-3"
-                style={{ backgroundColor: ds.controlOn, opacity: submitting ? 0.6 : 1 }}
-              >
-                <Text className="text-center font-bold text-white">
-                  {submitting ? "Creating..." : "Raise Ticket"}
-                </Text>
-              </TouchableOpacity>
-            </View>
+          <View style={[s.bar, { paddingBottom: Math.max(insets.bottom + 8, 20) }]}>
+            <SecondaryButton label="Cancel" onPress={onClose} height={54} style={{ flex: 1 }} />
+            <PrimaryButton
+              label="Raise ticket"
+              icon="bx-plus"
+              onPress={onSubmit}
+              busy={submitting}
+              style={{ flex: 1.4 }}
+            />
           </View>
-          </KeyboardAvoidingView>
-        </SafeAreaView>
+        </KeyboardAvoidingView>
       </View>
+
+      <OptionSheet
+        visible={sheet === "site"}
+        onClose={() => setSheet(null)}
+        title="Site"
+        options={siteOptions}
+        value={siteCode}
+        onPick={(value) => {
+          setSiteCode(value);
+          setArea("");
+          setAreaSearch("");
+        }}
+        searchPlaceholder="Search sites"
+        emptyMessage="No sites available"
+      />
+      <OptionSheet
+        visible={sheet === "category"}
+        onClose={() => setSheet(null)}
+        title="Category"
+        options={categoryOptions}
+        value={category}
+        onPick={setCategory}
+        searchPlaceholder="Search categories"
+        emptyMessage="No categories found"
+      />
+      <OptionSheet
+        visible={sheet === "area"}
+        onClose={() => setSheet(null)}
+        title="Area"
+        subtitle="Optional — the asset or area affected"
+        options={areaOptions}
+        value={area}
+        onPick={setArea}
+        searchPlaceholder="Search areas"
+        searchValue={areaSearch}
+        onSearchChange={setAreaSearch}
+        loading={areasLoading}
+        emptyMessage="No areas found"
+      />
     </Modal>
   );
 }
+
+const useStyles = makeJoStyles((t) => ({
+  screen: { flex: 1, backgroundColor: t.page },
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingHorizontal: 16,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: t.line,
+  },
+  kicker: { ...f.t(12.5), color: t.muted },
+  title: { ...f.d(22, -0.02), color: t.ink, marginTop: 2 },
+  body: { paddingHorizontal: 16, paddingTop: 16, paddingBottom: 24 },
+  head: { marginTop: 16 },
+  gap: { marginTop: 9 },
+  offline: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 9,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 18,
+    backgroundColor: t.warnTint,
+    marginBottom: 14,
+  },
+  offlineText: { ...f.t(12.5, 500), color: t.warn, flex: 1 },
+  bar: {
+    flexDirection: "row",
+    gap: 8,
+    paddingTop: 12,
+    paddingHorizontal: 16,
+    borderTopWidth: 1,
+    borderTopColor: t.line,
+    backgroundColor: t.page,
+  },
+}));

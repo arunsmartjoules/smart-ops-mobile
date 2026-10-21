@@ -3,10 +3,11 @@
  * fee level, each KPI's contribution (expandable to its deliverables), the
  * step-by-step arithmetic, and the raw-data CSV.
  */
+import { useHideTabBar } from "@/services/TabBarVisibility";
 import React, { useState } from "react";
 import { ActivityIndicator, ScrollView, Text, TouchableOpacity, View } from "react-native";
 import Animated, { FadeInRight } from "react-native-reanimated";
-import { Building2, ChevronDown, ChevronUp, Download, Receipt } from "lucide-react-native";
+import { Building2, ChevronDown, ChevronUp, Download, Receipt } from "@/components/jo/bxIcons";
 import { Card, f, makeJoStyles, useJoTheme } from "@/components/jo/ui";
 import { toneFg } from "@/constants/jo";
 import type { SlaReport } from "@/services/SlaService";
@@ -22,6 +23,7 @@ import {
   numPct,
   ratingTone,
   sourceModuleOf,
+  feeLabel,
 } from "./lib";
 
 export function RatingView({
@@ -44,6 +46,8 @@ export function RatingView({
   onDownload: () => void;
   downloading: boolean;
 }) {
+  // The artboard draws this view full-screen, without the floating tab bar.
+  useHideTabBar(true);
   const t = useJoTheme();
   const s = useStyles();
   const [open, setOpen] = useState<Record<string, boolean>>({});
@@ -70,7 +74,7 @@ export function RatingView({
       accent: true,
     },
     {
-      text: `Fee Level = ${report.band.label} (${report.band.range})  →  ${report.band.feeImplication}`,
+      text: `Fee Level = ${report.band.label} (${report.band.range})  →  ${feeLabel(report.band.feeImplication)}`,
       accent: true,
     },
   ];
@@ -115,7 +119,7 @@ export function RatingView({
               <Text style={[f.t(16, 700), { color: bandColor }]}>{report.band.label}</Text>
               <Text style={[f.t(11.5), { color: t.muted }]}>({report.band.range})</Text>
             </View>
-            <Text style={[f.t(11.5), { color: t.ink3, marginTop: 2 }]}>{report.band.feeImplication}</Text>
+            <Text style={[f.t(11.5), { color: t.ink3, marginTop: 2 }]}>{feeLabel(report.band.feeImplication)}</Text>
           </View>
           <Receipt size={24} color={t.faint} />
         </View>

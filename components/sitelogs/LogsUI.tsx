@@ -1,25 +1,17 @@
 /**
- * Site Logs chrome — Claude Design "JouleOps Logs.dc.html".
- * The header is shared (components/shared/ListChrome); these are the pieces
- * specific to the Logs tab: the per-type overview card and the history
- * panel's filter chips.
+ * Site Logs hub pieces — "JouleOps App" artboard, site logs screen: the
+ * per-type card (tinted icon well, pending / done in Bricolage, shift chips,
+ * Start log + History) and the history panel's counters and filter chips.
  */
 import React from "react";
 import { Text, TouchableOpacity, View } from "react-native";
-import { ArrowRight, Check, History, Plus } from "lucide-react-native";
-import { makeThemedStyles, useDs } from "@/hooks/useDs";
-import { soRadius, soShadow } from "@/components/home/SiteOverview";
-import { typeVisual } from "@/components/sitelogs/LogHistoryCard";
+import { Bx } from "@/components/jo/Bx";
+import { Card, f, useJoTheme } from "@/components/jo/ui";
+import { ShiftCells, typeLook, type ShiftCount } from "@/components/sitelogs/LogsKit";
 
-export { soRadius, soShadow };
+export type { ShiftCount };
 
 export type LogStatusFilter = "all" | "pending" | "completed";
-
-export interface ShiftCount {
-  label: string;
-  pending: number;
-  completed: number;
-}
 
 /* ── One log type: today's pending/done, shift split, Start + History ───── */
 
@@ -36,7 +28,7 @@ export function LogTypeCard({
   onStart,
   onHistory,
 }: {
-  /** Service key ("Temp RH", …) — picks the icon. */
+  /** Service key ("Temp RH", …) — picks the icon and tint. */
   logName: string;
   label: string;
   sub: string;
@@ -47,175 +39,126 @@ export function LogTypeCard({
   continuing?: boolean;
   /** Everything owed today is logged — Start gives way to a static "Completed". */
   done?: boolean;
+  /** False in view-only mode (no attendance session). */
   canStart: boolean;
   onStart: () => void;
   onHistory: () => void;
 }) {
-  const styles = useStyles();
-  const ds = useDs();
-  const visual = typeVisual(ds)[logName] ?? typeVisual(ds)["Temp RH"];
-  const Icon = visual.icon;
-  const StartIcon = continuing ? ArrowRight : Plus;
+  const t = useJoTheme();
+  const look = typeLook(t, logName);
   const hasPending = pending > 0;
 
+  const btn = {
+    flex: 1,
+    height: 42,
+    borderRadius: 21,
+    flexDirection: "row" as const,
+    alignItems: "center" as const,
+    justifyContent: "center" as const,
+    gap: 6,
+  };
+
   return (
-    <View style={styles.card}>
-      <View style={styles.cardHead}>
-        <View style={[styles.iconWell, { backgroundColor: visual.tint }]}>
-          <Icon size={17} color={visual.color} strokeWidth={2.1} />
+    <Card style={{ padding: 14 }}>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+        <View
+          style={{
+            width: 42,
+            height: 42,
+            borderRadius: 21,
+            backgroundColor: look.bg,
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          <Bx name={look.icon} size={20} color={look.fg} />
         </View>
-        <View style={styles.cardTitleWrap}>
-          <Text style={styles.cardTitle} numberOfLines={1}>
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text style={[f.t(14.5, 600), { color: t.ink }]} numberOfLines={1}>
             {label}
           </Text>
-          <Text style={styles.cardSub} numberOfLines={1}>
+          <Text style={[f.t(11.5), { color: t.muted, marginTop: 2 }]} numberOfLines={1}>
             {sub}
           </Text>
         </View>
-        <View style={styles.counts}>
-          <CountPill
-            text={`${pending} open`}
-            bg={hasPending ? ds.flame[1000] : ds.carbon[1000]}
-            fg={hasPending ? ds.flame[100] : ds.carbon[600]}
-          />
-          <CountPill
-            text={`${completed} done`}
-            bg={ds.sky[900]}
-            fg={ds.sky[100]}
-          />
+        <View
+          style={{ flexDirection: "row", alignItems: "baseline", gap: 2 }}
+          accessible
+          accessibilityLabel={`${pending} pending, ${completed} completed`}
+        >
+          <Text style={[f.d(24, -0.03, 1.1), { color: hasPending ? t.bad : t.faint }]}>{pending}</Text>
+          <Text style={[f.t(13), { color: t.faint }]}>/</Text>
+          <Text style={[f.d(16, -0.02, 1.1), { color: t.ok }]}>{completed}</Text>
         </View>
       </View>
 
-      {shiftCounts && shiftCounts.length > 0 ? (
-        <ShiftCountStrip counts={shiftCounts} style={{ marginTop: 9 }} />
-      ) : null}
+      {shiftCounts && shiftCounts.length > 0 ? <ShiftCells counts={shiftCounts} style={{ marginTop: 12 }} /> : null}
 
-      <View style={styles.actions}>
+      <View style={{ flexDirection: "row", gap: 8, marginTop: 12 }}>
         {done ? (
           <View
-            style={[styles.action, styles.actionDone]}
+            style={[btn, { backgroundColor: t.okTint }]}
             accessibilityRole="text"
             accessibilityLabel={`${label} completed for today`}
           >
-            <Check size={15} color={ds.sky[100]} strokeWidth={2.4} />
-            <Text style={[styles.actionText, { color: ds.sky[100] }]}>
-              Completed
-            </Text>
+            <Bx name="bx-check" size={17} color={t.ok} />
+            <Text style={[f.t(13, 700), { color: t.ok }]}>Completed</Text>
           </View>
         ) : canStart ? (
           <TouchableOpacity
             onPress={onStart}
             activeOpacity={0.85}
-            style={[styles.action, styles.actionPrimary]}
+            style={[btn, { backgroundColor: hasPending ? t.accent : t.raised }]}
             accessibilityRole="button"
             accessibilityLabel={`${continuing ? "Continue" : "Start"} ${label} log`}
           >
-            <StartIcon size={15} color={ds.onControl} strokeWidth={2.4} />
-            <Text style={[styles.actionText, { color: ds.onControl }]}>
+            <Bx
+              name={continuing ? "bx-right-arrow-alt" : "bx-plus"}
+              size={17}
+              color={hasPending ? t.onAccent : t.ink2}
+            />
+            <Text style={[f.t(13, 700), { color: hasPending ? t.onAccent : t.ink2 }]}>
               {continuing ? "Continue" : "Start log"}
             </Text>
           </TouchableOpacity>
-        ) : null}
+        ) : (
+          <View
+            style={[btn, { backgroundColor: t.raised, opacity: 0.7 }]}
+            accessibilityRole="text"
+            accessibilityLabel="View only — start your day to log readings"
+          >
+            <Bx name="bx-lock-alt" size={15} color={t.muted} />
+            <Text style={[f.t(13, 600), { color: t.muted }]}>View only</Text>
+          </View>
+        )}
         <TouchableOpacity
           onPress={onHistory}
           activeOpacity={0.85}
-          style={[styles.action, styles.actionSecondary]}
+          style={[btn, { backgroundColor: t.raised, borderWidth: 1, borderColor: t.lineMid }]}
           accessibilityRole="button"
           accessibilityLabel={`${label} history`}
         >
-          <History size={15} color={ds.carbon[400]} strokeWidth={2.1} />
-          <Text style={[styles.actionText, { color: ds.carbon[400] }]}>
-            History
-          </Text>
+          <Bx name="bx-history" size={16} color={t.ink} />
+          <Text style={[f.t(13, 600), { color: t.ink }]}>History</Text>
         </TouchableOpacity>
       </View>
-    </View>
+    </Card>
   );
 }
 
-function CountPill({ text, bg, fg }: { text: string; bg: string; fg: string }) {
-  const styles = useStyles();
-  return (
-    <View style={[styles.pill, { backgroundColor: bg }]}>
-      <Text style={[styles.pillText, { color: fg }]}>{text}</Text>
+/** "● Pending   ● Completed" key under the cards. */
+export function PendingLegend() {
+  const t = useJoTheme();
+  const item = (color: string, label: string) => (
+    <View style={{ flexDirection: "row", alignItems: "center", gap: 5 }}>
+      <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: color }} />
+      <Text style={[f.t(11.5), { color: t.muted }]}>{label}</Text>
     </View>
   );
-}
-
-/* ── Pending/done per shift; tappable in the history panel ─────────────── */
-
-export function ShiftCountStrip({
-  counts,
-  selected,
-  onSelect,
-  style,
-}: {
-  counts: ShiftCount[];
-  /** The selected shift's `label`, or null — only used when `onSelect` is set. */
-  selected?: string | null;
-  onSelect?: (label: string) => void;
-  style?: object;
-}) {
-  const styles = useStyles();
-  const ds = useDs();
   return (
-    <View style={[styles.shiftStrip, style]}>
-      {counts.map((sc, i) => {
-        const on = !!onSelect && selected === sc.label;
-        const body = (
-          <>
-            <Text style={[styles.eyebrow, on && { color: ds.onChrome }]}>
-              {sc.label}
-            </Text>
-            <Text style={styles.shiftValue}>
-              <Text
-                style={{
-                  color: on
-                    ? ds.onChrome
-                    : sc.pending > 0
-                      ? ds.flame[100]
-                      : ds.carbon[600],
-                }}
-              >
-                {sc.pending}
-              </Text>
-              <Text
-                style={{
-                  color: on ? ds.onChrome : ds.carbon[800],
-                  fontWeight: "500",
-                }}
-              >
-                /
-              </Text>
-              <Text style={{ color: on ? ds.onChrome : ds.sky[100] }}>
-                {sc.completed}
-              </Text>
-            </Text>
-          </>
-        );
-        const cellStyle = [
-          styles.shiftCell,
-          i < counts.length - 1 && styles.shiftDivider,
-          on && { backgroundColor: ds.flame[100] },
-        ];
-        return onSelect ? (
-          <TouchableOpacity
-            key={sc.label}
-            onPress={() => onSelect(sc.label)}
-            activeOpacity={0.85}
-            style={cellStyle}
-            accessibilityRole="button"
-            accessibilityState={{ selected: on }}
-            accessibilityLabel={`${sc.label}: ${sc.pending} open, ${sc.completed} done`}
-          >
-            {body}
-          </TouchableOpacity>
-        ) : (
-          <View key={sc.label} style={cellStyle}>
-            {body}
-          </View>
-        );
-      })}
+    <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 14, marginTop: 12 }}>
+      {item(t.bad, "Pending")}
+      {item(t.ok, "Completed")}
     </View>
   );
 }
@@ -239,172 +182,78 @@ export function HistoryCounters({
   status: LogStatusFilter;
   onStatus: (next: LogStatusFilter) => void;
 }) {
-  const styles = useStyles();
-  const ds = useDs();
-  const tile = (
-    key: LogStatusFilter,
-    label: string,
-    value: number,
-    color: string,
-  ) => {
+  const t = useJoTheme();
+  const tile = (key: LogStatusFilter, label: string, value: number, color: string) => {
     const on = key !== "all" && status === key;
     return (
       <TouchableOpacity
         key={key}
         onPress={() => onStatus(key === "all" || on ? "all" : key)}
         activeOpacity={0.85}
-        style={[styles.counter, on && { borderColor: color }]}
         accessibilityRole="button"
         accessibilityState={{ selected: on }}
         accessibilityLabel={`${value} ${label}`}
+        style={{
+          flex: 1,
+          minWidth: 0,
+          borderRadius: 22,
+          backgroundColor: t.card,
+          borderWidth: 1.5,
+          borderColor: on ? color : t.cardBorder,
+          paddingVertical: 12,
+          paddingHorizontal: 14,
+          gap: 4,
+        }}
       >
-        <Text style={styles.eyebrow}>{label}</Text>
-        <Text style={[styles.counterValue, { color }]}>{value}</Text>
+        <Text style={[f.t(11.5, 500), { color: t.muted }]} numberOfLines={1}>
+          {label}
+        </Text>
+        <Text style={[f.d(24, -0.03, 1.1), { color }]}>{value}</Text>
       </TouchableOpacity>
     );
   };
   return (
-    <View style={styles.counterRow}>
-      {tile("all", totalLabel, total, ds.carbon[100])}
-      {tile("pending", "Open", pending, ds.flame[100])}
-      {tile("completed", completedLabel, completed, ds.sky[100])}
+    <View style={{ flexDirection: "row", gap: 8 }}>
+      {tile("all", totalLabel, total, t.ink)}
+      {tile("pending", "Open", pending, t.bad)}
+      {tile("completed", completedLabel, completed, t.ok)}
     </View>
   );
 }
 
-/* ── History panel filter chip (status + shift) ─────────────────────────── */
+/* ── Filter chip (status + shift + date presets) ───────────────────────── */
 
 export function FilterChip({
   label,
   on,
-  tone = "control",
   onPress,
 }: {
   label: string;
   on: boolean;
-  /** Status chips fill with the control colour, shift chips with flame. */
+  /** Kept for call-site compatibility; every chip now selects to ink. */
   tone?: "control" | "flame";
   onPress: () => void;
 }) {
-  const styles = useStyles();
-  const ds = useDs();
-  const fill = tone === "flame" ? ds.flame[100] : ds.controlOn;
-  const onText = tone === "flame" ? ds.onChrome : ds.onControl;
+  const t = useJoTheme();
   return (
     <TouchableOpacity
       onPress={onPress}
-      activeOpacity={0.85}
-      style={[
-        styles.chip,
-        {
-          backgroundColor: on ? fill : ds.white,
-          borderColor: on ? fill : ds.carbon[900],
-        },
-      ]}
+      activeOpacity={0.8}
       accessibilityRole="button"
       accessibilityState={{ selected: on }}
+      style={{
+        height: 34,
+        paddingHorizontal: 13,
+        borderRadius: 17,
+        justifyContent: "center",
+        backgroundColor: on ? t.selBg : t.sheetField,
+        borderWidth: 1,
+        borderColor: on ? t.selBg : t.lineMid,
+      }}
     >
-      <Text style={[styles.chipText, { color: on ? onText : ds.carbon[400] }]}>
+      <Text style={[f.t(12.5, 600), { color: on ? t.selFg : t.ink2 }]} numberOfLines={1}>
         {label}
       </Text>
     </TouchableOpacity>
   );
 }
-
-const useStyles = makeThemedStyles((ds) => ({
-  eyebrow: {
-    fontSize: 9,
-    fontWeight: "600",
-    letterSpacing: 1.08,
-    textTransform: "uppercase",
-    color: ds.carbon[600],
-  },
-
-  card: {
-    backgroundColor: ds.white,
-    borderRadius: soRadius.card,
-    paddingVertical: 11,
-    paddingHorizontal: 12,
-    marginBottom: 9,
-    ...soShadow,
-  },
-  cardHead: { flexDirection: "row", alignItems: "center", gap: 10 },
-  iconWell: {
-    width: 32,
-    height: 32,
-    borderRadius: soRadius.pill,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  cardTitleWrap: { flex: 1, minWidth: 0 },
-  cardTitle: {
-    fontSize: 13.5,
-    lineHeight: 16,
-    fontWeight: "600",
-    color: ds.carbon[100],
-  },
-  cardSub: { fontSize: 10.5, color: ds.carbon[600], marginTop: 2 },
-  counts: { flexDirection: "row", alignItems: "center", gap: 5 },
-  pill: { paddingVertical: 3, paddingHorizontal: 7, borderRadius: 5 },
-  pillText: { fontSize: 10, fontWeight: "600", letterSpacing: 0.1 },
-
-  shiftStrip: {
-    flexDirection: "row",
-    backgroundColor: ds.field,
-    borderRadius: soRadius.sm,
-    overflow: "hidden",
-  },
-  shiftCell: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "baseline",
-    justifyContent: "space-between",
-    gap: 6,
-    paddingVertical: 6,
-    paddingHorizontal: 10,
-  },
-  shiftDivider: { borderRightWidth: 1, borderRightColor: ds.fieldBorder },
-  shiftValue: { fontSize: 12, lineHeight: 12, fontWeight: "700" },
-
-  actions: { flexDirection: "row", gap: 8, marginTop: 9 },
-
-  counterRow: { flexDirection: "row", gap: 8 },
-  counter: {
-    flex: 1,
-    backgroundColor: ds.white,
-    borderRadius: soRadius.card,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    borderWidth: 2,
-    borderColor: "transparent",
-    gap: 5,
-    ...soShadow,
-  },
-  counterValue: { fontSize: 22, lineHeight: 24, fontWeight: "700" },
-  action: {
-    flex: 1,
-    minHeight: 36,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 6,
-    borderRadius: soRadius.sm,
-  },
-  actionPrimary: { backgroundColor: ds.controlOn },
-  actionDone: { backgroundColor: ds.sky[900] },
-  actionSecondary: {
-    backgroundColor: ds.white,
-    borderWidth: 1,
-    borderColor: ds.carbon[900],
-  },
-  actionText: { fontSize: 12.5, fontWeight: "600", letterSpacing: 0.13 },
-
-  chip: {
-    minHeight: 32,
-    justifyContent: "center",
-    paddingHorizontal: 12,
-    borderRadius: soRadius.pill,
-    borderWidth: 1,
-  },
-  chipText: { fontSize: 11, fontWeight: "600", letterSpacing: 0.22 },
-}));

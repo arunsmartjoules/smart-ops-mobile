@@ -1,50 +1,37 @@
 import React, { useState, useEffect, useRef } from "react";
-import {
-  View,
-  Text,
-  ScrollView,
-  TouchableOpacity,
-  TextInput,
-  Alert,
-  ActivityIndicator,
-  Image,
-  Modal,
-} from "react-native";
+import { View, Text, ScrollView, Alert } from "react-native";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
-import {
-  SafeAreaView,
-  useSafeAreaInsets,
-} from "react-native-safe-area-context";
 import { router, useLocalSearchParams } from "expo-router";
-import {
-  ChevronLeft,
-  Droplets,
-  Activity,
-  Beaker,
-  Camera,
-  Trash2,
-} from "lucide-react-native";
 import SiteLogService from "@/services/SiteLogService";
 import { formatAssignee } from "@/utils/assignee";
 import { useAuth } from "@/contexts/AuthContext";
-import { useTheme } from "@/contexts/ThemeContext";
 import { useAttendanceGate } from "@/contexts/AttendanceGateContext";
-import { ViewOnlyEntryNotice } from "@/components/ViewOnlyEntryNotice";
 import * as ImagePicker from "expo-image-picker";
 import * as Haptics from "expo-haptics";
 import { StorageService } from "@/services/StorageService";
-import SignaturePad from "@/components/SignaturePad";
+import { Card, JoPage, PrimaryButton, SecondaryButton, f, useJoTheme } from "@/components/jo/ui";
+import {
+  AttachmentSlot,
+  BottomBar,
+  CardTitle,
+  EntryHeader,
+  EntryLoading,
+  FormHeading,
+  NumberField,
+  ReadOnlyEntry,
+  ReadOnlyField,
+} from "@/components/sitelogs/LogsKit";
+import { SignatureSheet } from "@/components/sitelogs/SignatureSheet";
 
 export default function WaterEntry() {
   const { canEdit } = useAttendanceGate();
-  if (!canEdit) return <ViewOnlyEntryNotice what="water readings" />;
+  if (!canEdit) return <ReadOnlyEntry what="water readings" />;
   return <WaterEntryContent />;
 }
 
 function WaterEntryContent() {
+  const t = useJoTheme();
   const { user } = useAuth();
-  const insets = useSafeAreaInsets();
-  const { isDark } = useTheme();
   const params = useLocalSearchParams<{
     id?: string;
     areaId?: string;
@@ -362,229 +349,106 @@ function WaterEntryContent() {
     }
   };
 
-  const renderInput = (
-    label: string,
-    field: string,
-    placeholder: string,
-    icon: any,
-    unit: string,
-  ) => (
-    <View className="mb-6">
-      <Text className="text-slate-500 dark:text-slate-400 text-[10px] font-bold uppercase tracking-widest mb-2 ml-1">
-        {label}
-      </Text>
-      <View
-        className="flex-row items-center bg-white dark:bg-slate-900 rounded-2xl border border-slate-100 dark:border-slate-800 px-4"
-        style={{
-          shadowColor: "#000",
-          shadowOffset: { width: 0, height: 1 },
-          shadowOpacity: 0.05,
-          shadowRadius: 4,
-          elevation: 2,
-        }}
-      >
-        <View className="mr-3">{icon}</View>
-        <TextInput
-          value={(formData as any)[field]}
-          onChangeText={(val) => updateField(field, val)}
-          placeholder={placeholder}
-          keyboardType="numeric"
-          className="flex-1 py-4 font-bold text-lg text-slate-900 dark:text-slate-50"
-        />
-        <Text className="text-slate-400 font-bold ml-2">{unit}</Text>
-      </View>
-    </View>
-  );
-
   if (loadingEdit) {
-    return (
-      <View className="flex-1 bg-slate-50 dark:bg-slate-950 items-center justify-center">
-        <ActivityIndicator size="large" color="#3b82f6" />
-        <Text className="text-slate-500 mt-4 font-bold">Loading log...</Text>
-      </View>
-    );
+    return <EntryLoading />;
   }
 
   return (
-    <View className="flex-1 bg-slate-50 dark:bg-slate-950">
-      <SafeAreaView className="flex-1" edges={["top"]}>
-        {/* Header */}
-        <View className="flex-row items-center justify-between px-5 py-4 bg-white dark:bg-slate-900 border-b border-slate-100 dark:border-slate-800">
-          <TouchableOpacity
-            onPress={() => router.back()}
-            hitSlop={{ top: 20, bottom: 20, left: 20, right: 20 }}
-            className="w-10 h-10 rounded-full bg-slate-50 dark:bg-slate-800 items-center justify-center"
-          >
-            <ChevronLeft size={20} color={isDark ? "#e2e8f0" : "#0f172a"} />
-          </TouchableOpacity>
-          <View className="items-center">
-            <Text className="text-slate-900 dark:text-slate-50 font-bold text-lg">
-              Water Parameters
-            </Text>
-            <Text className="text-slate-400 text-[10px] font-bold uppercase tracking-wider">
-              {isEditMode
-                ? `Edit: ${params.areaName || ""}`
-                : params.areaName || "New Entry"}
-            </Text>
-            {formData.remarks ? (
-              <Text className="text-slate-400 text-[10px] italic mt-0.5" numberOfLines={1}>
-                &quot;{formData.remarks}&quot;
-              </Text>
-            ) : null}
-          </View>
-          <View className="w-10" />
-        </View>
+    <JoPage glow={false}>
+      <EntryHeader
+        title={"Water Parameters"}
+        sub={isEditMode ? `Edit: ${params.areaName || ""}` : params.areaName || "New Entry"}
+        onBack={() => router.back()}
+      />
 
-        <KeyboardAvoidingView
-          behavior="padding"
-          style={{ flex: 1 }}
-        >
+      <KeyboardAvoidingView behavior="padding" style={{ flex: 1 }}>
         <ScrollView
-          className="flex-1 p-5"
+          style={{ flex: 1 }}
+          contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 4, paddingBottom: 150 }}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
         >
           {isEditMode && (
-            <View className="mb-1">
-              <Text className="text-slate-500 dark:text-slate-400 text-[10px] font-bold uppercase tracking-widest mb-1.5 ml-1">
-                Assigned To
-              </Text>
-              <View className="bg-slate-100 dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 px-3 py-3.5">
-                <Text className="font-semibold text-base text-slate-500 dark:text-slate-400">
-                  {assignedToDisplay || "—"}
-                </Text>
-              </View>
+            <View style={{ marginBottom: 16 }}>
+              <ReadOnlyField label="Assigned to" value={assignedToDisplay || "—"} icon="bx-user" />
             </View>
           )}
-          <View className="mt-4">
-            {renderInput(
-              "TDS",
-              "tds",
-              "150",
-              <Droplets size={20} color="#3b82f6" />,
-              "ppm",
-            )}
-            {renderInput(
-              "pH Level",
-              "ph",
-              "7.0",
-              <Activity size={20} color="#10b981" />,
-              "pH",
-            )}
-            {renderInput(
-              "Hardness",
-              "hardness",
-              "100",
-              <Beaker size={20} color="#8b5cf6" />,
-              "ppm",
-            )}
 
-            <View className="mb-6 mt-2">
-              <Text className="text-slate-900 dark:text-slate-50 font-bold text-base mb-4">
-                Attachment
-              </Text>
-              {formData.attachment ? (
-                <View className="relative">
-                  <Image
-                    source={{ uri: formData.attachment }}
-                    className="w-full h-48 rounded-xl bg-slate-100"
-                    resizeMode="cover"
-                  />
-                  <TouchableOpacity
-                    onPress={() => updateField("attachment", "")}
-                    className="absolute top-2 right-2 bg-red-500 w-8 h-8 rounded-full items-center justify-center p-1"
-                  >
-                    <Trash2 size={16} color="white" />
-                  </TouchableOpacity>
-                </View>
-              ) : (
-                <TouchableOpacity
-                  onPress={handleAttachment}
-                  disabled={uploading}
-                  className="w-full h-32 border-2 border-dashed border-slate-300 dark:border-slate-700 rounded-xl items-center justify-center bg-slate-50 dark:bg-slate-900"
-                >
-                  {uploading ? (
-                    <ActivityIndicator color="#0d9488" />
-                  ) : (
-                    <>
-                      <Camera size={24} color="#94a3b8" />
-                      <Text className="text-slate-400 font-bold text-xs mt-2 uppercase tracking-wider">
-                        Add Photo / Upload
-                      </Text>
-                    </>
-                  )}
-                </TouchableOpacity>
-              )}
-            </View>
+          <FormHeading>Record water readings</FormHeading>
+          {formData.remarks ? (
+            <Text style={[f.t(12.5), { color: t.muted, fontStyle: "italic", paddingHorizontal: 4, marginTop: 6 }]} numberOfLines={1}>
+              &quot;{formData.remarks}&quot;
+            </Text>
+          ) : null}
 
-            {/* Removed manual remarks */}
-
-            {/* Spacer for fixed bottom button */}
-            <View className="h-24" />
-          </View>
-        </ScrollView>
-        </KeyboardAvoidingView>
-
-        {/* Fixed Bottom Buttons */}
-        <View
-          className="absolute bottom-0 left-0 right-0 bg-white dark:bg-slate-900 border-t border-slate-100 dark:border-slate-800 px-5 pt-4 flex-row gap-3"
-          style={{ paddingBottom: Math.max(insets.bottom, 16) }}
-        >
-          <TouchableOpacity
-            onPress={handleSave}
-            disabled={saving}
-            activeOpacity={0.8}
-            className="flex-1 py-4 rounded-xl items-center justify-center border-2 border-blue-600"
-          >
-            {saving ? (
-              <ActivityIndicator color="#2563eb" />
-            ) : (
-              <Text className="text-blue-600 font-bold text-base uppercase tracking-widest">Save</Text>
-            )}
-          </TouchableOpacity>
-          <TouchableOpacity
-            onPress={handleCompletePress}
-            disabled={saving}
-            activeOpacity={0.8}
-            className={`flex-1 py-4 rounded-xl flex-row items-center justify-center ${saving ? "bg-slate-200" : "bg-blue-600"}`}
-            style={!saving ? { shadowColor: "#2563eb", shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.2, shadowRadius: 8, elevation: 4 } : {}}
-          >
-            {saving ? (
-              <ActivityIndicator color="white" />
-            ) : (
-              <Text className="text-white font-bold text-base uppercase tracking-widest">
-                {isEditMode ? "Update" : "Complete"}
-              </Text>
-            )}
-          </TouchableOpacity>
-        </View>
-      </SafeAreaView>
-
-      {/* Signature Modal */}
-      <Modal
-        visible={signatureModalVisible}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setSignatureModalVisible(false)}
-      >
-        <View className="flex-1 bg-black/50 justify-end">
-          <View className="bg-white dark:bg-slate-900 rounded-t-3xl h-[60%] overflow-hidden">
-            <View className="flex-row items-center justify-between px-6 py-4 border-b border-slate-100 dark:border-slate-800">
-              <Text className="text-slate-900 dark:text-slate-50 font-bold text-lg">
-                Sign to {isEditMode ? "Update" : "Complete"}
-              </Text>
-              <TouchableOpacity onPress={() => setSignatureModalVisible(false)}>
-                <Text className="text-purple-600 font-bold">Close</Text>
-              </TouchableOpacity>
-            </View>
-            <SignaturePad
-              standalone
-              okText={isEditMode ? "Update Log" : "Complete Log"}
-              onOK={(sig: string) => handleSaveWithSignature(sig)}
+          <Card style={{ marginTop: 14, padding: 16, gap: 14 }}>
+            <NumberField
+              label="TDS"
+              value={formData.tds}
+              onChangeText={(val) => updateField("tds", val)}
+              placeholder="150"
+              unit="ppm"
+              size="xl"
             />
-          </View>
+            <NumberField
+              label="pH Level"
+              value={formData.ph}
+              onChangeText={(val) => updateField("ph", val)}
+              placeholder="7.0"
+              unit="pH"
+              size="xl"
+            />
+            <NumberField
+              label="Hardness"
+              value={formData.hardness}
+              onChangeText={(val) => updateField("hardness", val)}
+              placeholder="100"
+              unit="ppm"
+              size="xl"
+            />
+          </Card>
+
+          <Card style={{ marginTop: 10, padding: 16 }}>
+            <CardTitle>Attachment</CardTitle>
+            <View style={{ marginTop: 10 }}>
+              <AttachmentSlot
+                value={formData.attachment}
+                uploading={uploading}
+                onAdd={handleAttachment}
+                onRemove={() => updateField("attachment", "")}
+              />
+            </View>
+          </Card>
+        </ScrollView>
+      </KeyboardAvoidingView>
+
+      {/* Save (in progress) + Complete */}
+      <BottomBar>
+        <View style={{ flexDirection: "row", gap: 9 }}>
+          <SecondaryButton
+            label="Save"
+            onPress={handleSave}
+            busy={saving}
+            height={54}
+            style={{ flex: 1 }}
+          />
+          <PrimaryButton
+            label={isEditMode ? "Update" : "Complete"}
+            icon="bx-check"
+            onPress={handleCompletePress}
+            busy={saving}
+            style={{ flex: 1 }}
+          />
         </View>
-      </Modal>
-    </View>
+      </BottomBar>
+
+      <SignatureSheet
+        visible={signatureModalVisible}
+        title={`Sign to ${isEditMode ? "update" : "complete"}`}
+        okText={isEditMode ? "Update Log" : "Complete Log"}
+        onClose={() => setSignatureModalVisible(false)}
+        onOK={(sig: string) => handleSaveWithSignature(sig)}
+      />
+    </JoPage>
   );
 }

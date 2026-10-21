@@ -11,7 +11,7 @@
  */
 import React, { useState } from "react";
 import { Linking, ScrollView, Text, TouchableOpacity, View } from "react-native";
-import { ArrowLeftRight, Paperclip, Pencil, Send } from "lucide-react-native";
+import { ArrowLeftRight, Paperclip, Pencil, Send } from "@/components/jo/bxIcons";
 import { toneBg, toneFg } from "@/constants/jo";
 import {
   Chip,

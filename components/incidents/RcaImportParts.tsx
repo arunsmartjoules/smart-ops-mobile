@@ -3,8 +3,8 @@
  * with a Recommended badge, a date + time tile pair (no future times), the
  * footer button row and the small notice/error lines.
  *
- * Built on the same DS tokens as the incident detail screen (TicketDetailUI),
- * so light and dark both follow the navy/red theme.
+ * Drawn in the JouleOps App artboard's language (jo tokens), so light and
+ * dark both follow the user's accent.
  */
 import React, { useState } from "react";
 import {
@@ -18,12 +18,11 @@ import {
   type ViewStyle,
 } from "react-native";
 import DateTimePicker, { DateTimePickerAndroid } from "@react-native-community/datetimepicker";
-import { CalendarDays, Check, CircleAlert, Clock, Sparkles } from "lucide-react-native";
-import type { LucideIcon } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Haptics from "expo-haptics";
-import { makeThemedStyles, useDs } from "@/hooks/useDs";
-import { soRadius, soShadow } from "@/components/tickets/TicketDetailUI";
+import { Bx, type BxName } from "@/components/jo/Bx";
+import { f, makeJoStyles, useJoTheme } from "@/components/jo/ui";
+import { InlineError as JoInlineError, Notice as JoNotice } from "./IncFields";
 import {
   formatClock,
   formatDay,
@@ -39,12 +38,12 @@ const tap = () => Haptics.selectionAsync().catch(() => {});
 /* ── Recommended badge ───────────────────────────────────────────────────── */
 
 export function RecommendedPill({ label = "Recommended" }: { label?: string }) {
-  const styles = useStyles();
-  const ds = useDs();
+  const s = useStyles();
+  const t = useJoTheme();
   return (
-    <View style={styles.pill}>
-      <Sparkles size={11} color={ds.flame[100]} strokeWidth={2.4} />
-      <Text style={styles.pillText}>{label}</Text>
+    <View style={s.pill}>
+      <Bx name="bxs-magic-wand" size={11} color={t.accentInk} />
+      <Text style={s.pillText}>{label}</Text>
     </View>
   );
 }
@@ -67,8 +66,8 @@ export function OptionCard({
   badge?: string;
   onPress: () => void;
 }) {
-  const styles = useStyles();
-  const ds = useDs();
+  const s = useStyles();
+  const t = useJoTheme();
   return (
     <TouchableOpacity
       onPress={() => {
@@ -76,26 +75,26 @@ export function OptionCard({
         onPress();
       }}
       activeOpacity={0.85}
-      style={[styles.option, selected && styles.optionOn]}
+      style={[s.option, selected && s.optionOn]}
       accessibilityRole="radio"
       accessibilityState={{ checked: selected }}
       accessibilityLabel={`${label}${recommended ? ", recommended" : ""}${hint ? `. ${hint}` : ""}`}
     >
-      <View style={[styles.radio, selected && styles.radioOn]}>
-        {selected ? <Check size={14} color={ds.onControl} strokeWidth={3} /> : null}
+      <View style={[s.radio, selected && s.radioOn]}>
+        {selected ? <Bx name="bx-check" size={15} color={t.onAccent} /> : null}
       </View>
       <View style={{ flex: 1, minWidth: 0 }}>
-        <View style={styles.optionTitleRow}>
-          <Text style={styles.optionLabel}>{label}</Text>
+        <View style={s.optionTitleRow}>
+          <Text style={s.optionLabel}>{label}</Text>
           {badge ? (
-            <View style={[styles.pill, { backgroundColor: ds.carbon[1000] }]}>
-              <Text style={[styles.pillText, { color: ds.carbon[400] }]}>{badge}</Text>
+            <View style={[s.pill, { backgroundColor: t.track }]}>
+              <Text style={[s.pillText, { color: t.ink2 }]}>{badge}</Text>
             </View>
           ) : recommended ? (
             <RecommendedPill />
           ) : null}
         </View>
-        {hint ? <Text style={styles.optionHint}>{hint}</Text> : null}
+        {hint ? <Text style={s.optionHint}>{hint}</Text> : null}
       </View>
     </TouchableOpacity>
   );
@@ -104,42 +103,24 @@ export function OptionCard({
 /* ── Notice + error lines ────────────────────────────────────────────────── */
 
 export function InlineError({ text, style }: { text?: string | null; style?: ViewStyle }) {
-  const styles = useStyles();
-  const ds = useDs();
-  if (!text) return null;
-  return (
-    <View style={[styles.errorRow, style]} accessibilityLiveRegion="polite">
-      <CircleAlert size={14} color={ds.flame[100]} strokeWidth={2.2} style={{ marginTop: 1 }} />
-      <Text style={styles.errorText}>{text}</Text>
-    </View>
-  );
+  return <JoInlineError text={text} style={style} />;
 }
 
 export function Notice({
-  icon: Icon,
+  icon,
   children,
   tone = "info",
   style,
 }: {
-  icon: LucideIcon;
+  icon: BxName;
   children: React.ReactNode;
   tone?: "info" | "warn";
   style?: ViewStyle;
 }) {
-  const styles = useStyles();
-  const ds = useDs();
-  const warn = tone === "warn";
   return (
-    <View
-      style={[
-        styles.notice,
-        { backgroundColor: warn ? ds.flame[1000] : ds.sky[1000] },
-        style,
-      ]}
-    >
-      <Icon size={16} color={warn ? ds.flame[100] : ds.sky[100]} strokeWidth={2.1} />
-      <Text style={[styles.noticeText, { color: ds.carbon[200] }]}>{children}</Text>
-    </View>
+    <JoNotice icon={icon} tone={tone} style={style}>
+      {children}
+    </JoNotice>
   );
 }
 
@@ -173,34 +154,36 @@ export function FooterButtons({
   /** A line above the buttons — an error or what's still missing. */
   note?: string | null;
 }) {
-  const styles = useStyles();
-  const ds = useDs();
+  const s = useStyles();
+  const t = useJoTheme();
   const off = primaryDisabled || busy;
   return (
-    <View style={[styles.footer, { paddingBottom: Math.max(bottomInset, 16) }]}>
-      {note ? <InlineError text={note} style={{ marginBottom: 10 }} /> : null}
+    <View style={[s.footer, { paddingBottom: Math.max(bottomInset, 16) + 6 }]}>
+      {note ? <InlineError text={note} style={{ marginBottom: 10, paddingHorizontal: 4 }} /> : null}
       {tertiaryLabel && onTertiary ? (
         <TouchableOpacity
           onPress={onTertiary}
           hitSlop={8}
-          style={styles.tertiary}
+          style={s.tertiary}
           accessibilityRole="button"
           accessibilityLabel={tertiaryLabel}
         >
-          <Text style={styles.tertiaryText}>{tertiaryLabel}</Text>
+          <Text style={s.tertiaryText}>{tertiaryLabel}</Text>
         </TouchableOpacity>
       ) : null}
-      <View style={styles.footerRow}>
+      <View style={s.footerRow}>
         {secondaryLabel && onSecondary ? (
           <TouchableOpacity
             onPress={onSecondary}
             activeOpacity={0.85}
             disabled={busy}
-            style={[styles.btn, styles.btnSecondary]}
+            style={[s.btn, s.btnSecondary]}
             accessibilityRole="button"
             accessibilityLabel={secondaryLabel}
           >
-            <Text style={[styles.btnText, { color: ds.carbon[200] }]}>{secondaryLabel}</Text>
+            <Text style={[s.btnText, { color: t.ink }]} numberOfLines={1}>
+              {secondaryLabel}
+            </Text>
           </TouchableOpacity>
         ) : null}
         <TouchableOpacity
@@ -208,10 +191,8 @@ export function FooterButtons({
           activeOpacity={0.85}
           disabled={off}
           style={[
-            styles.btn,
-            quiet
-              ? styles.btnSecondary
-              : { backgroundColor: off && !busy ? ds.carbon[900] : ds.controlOn },
+            s.btn,
+            quiet ? s.btnSecondary : { backgroundColor: off && !busy ? t.track : t.accent },
             { flex: secondaryLabel ? 1.6 : 1 },
           ]}
           accessibilityRole="button"
@@ -219,13 +200,14 @@ export function FooterButtons({
           accessibilityState={{ disabled: !!off, busy: !!busy }}
         >
           {busy ? (
-            <ActivityIndicator size="small" color={ds.onControl} />
+            <ActivityIndicator size="small" color={t.onAccent} />
           ) : (
             <Text
               style={[
-                styles.btnText,
-                { color: quiet ? ds.carbon[200] : off ? ds.carbon[500] : ds.onControl },
+                quiet ? s.btnText : s.btnTextPrimary,
+                { color: quiet ? t.ink : off ? t.muted : t.onAccent },
               ]}
+              numberOfLines={1}
             >
               {primaryLabel}
             </Text>
@@ -260,8 +242,8 @@ export function DateTimeTiles({
   /** Question screens: taller tiles with bigger text. */
   large?: boolean;
 }) {
-  const styles = useStyles();
-  const ds = useDs();
+  const s = useStyles();
+  const t = useJoTheme();
   const insets = useSafeAreaInsets();
   const [draftDate, setDraftDate] = useState<string | null>(null);
   const [pickError, setPickError] = useState<string | null>(null);
@@ -271,11 +253,11 @@ export function DateTimeTiles({
   const day = full ?? parseLocalDate(draftDate) ?? parseLocalDate(fallbackDate);
   const needsTime = !!day && !full;
 
-  const combine = (d: Date, t: Date) =>
-    new Date(d.getFullYear(), d.getMonth(), d.getDate(), t.getHours(), t.getMinutes(), 0, 0);
+  const combine = (d: Date, tm: Date) =>
+    new Date(d.getFullYear(), d.getMonth(), d.getDate(), tm.getHours(), tm.getMinutes(), 0, 0);
 
-  const applyTime = (t: Date, onDay: Date | null = day) => {
-    const next = combine(onDay ?? new Date(), t);
+  const applyTime = (tm: Date, onDay: Date | null = day) => {
+    const next = combine(onDay ?? new Date(), tm);
     if (isFuture(next)) {
       setPickError(FUTURE_MSG);
       return false;
@@ -309,9 +291,9 @@ export function DateTimeTiles({
       DateTimePickerAndroid.open({
         value: base,
         mode: "time",
-        onChange: (evt, t) => {
-          if (evt.type !== "set" || !t) return;
-          applyTime(t, onDay);
+        onChange: (evt, tm) => {
+          if (evt.type !== "set" || !tm) return;
+          applyTime(tm, onDay);
         },
       });
       return;
@@ -352,24 +334,21 @@ export function DateTimeTiles({
     setIosSheet(null);
   };
 
-  const tileStyle = [styles.tile, large && styles.tileLarge];
+  const tileStyle = [s.tile, large && s.tileLarge];
   return (
     <View>
-      <View style={styles.tileRow}>
+      <View style={s.tileRow}>
         <TouchableOpacity
           onPress={openDate}
           activeOpacity={0.85}
-          style={[...tileStyle, invalid && !day && styles.tileInvalid]}
+          style={[...tileStyle, invalid && !day && s.tileInvalid]}
           accessibilityRole="button"
           accessibilityLabel={day ? `Date: ${formatDay(day)}. Tap to change` : "Choose date"}
         >
-          <CalendarDays size={large ? 20 : 16} color={ds.carbon[400]} strokeWidth={2} />
+          <Bx name="bx-calendar" size={large ? 20 : 17} color={t.accentInk} />
           <View style={{ flex: 1, minWidth: 0 }}>
-            <Text style={styles.tileEyebrow}>Date</Text>
-            <Text
-              style={[styles.tileValue, large && styles.tileValueLarge, !day && styles.tilePlaceholder]}
-              numberOfLines={1}
-            >
+            <Text style={s.tileEyebrow}>Date</Text>
+            <Text style={[s.tileValue, large && s.tileValueLarge, !day && s.tilePlaceholder]} numberOfLines={1}>
               {day ? formatDay(day) : "Choose date"}
             </Text>
           </View>
@@ -377,23 +356,19 @@ export function DateTimeTiles({
         <TouchableOpacity
           onPress={() => openTime()}
           activeOpacity={0.85}
-          style={[...tileStyle, (needsTime || (invalid && !full)) && styles.tileNeeds]}
+          style={[...tileStyle, (needsTime || (invalid && !full)) && s.tileNeeds]}
           accessibilityRole="button"
           accessibilityLabel={full ? `Time: ${formatClock(full)}. Tap to change` : "Choose time"}
         >
-          <Clock
-            size={large ? 20 : 16}
-            color={needsTime ? ds.flame[100] : ds.carbon[400]}
-            strokeWidth={2}
-          />
+          <Bx name="bx-time-five" size={large ? 20 : 17} color={needsTime ? t.bad : t.accentInk} />
           <View style={{ flex: 1, minWidth: 0 }}>
-            <Text style={styles.tileEyebrow}>Time</Text>
+            <Text style={s.tileEyebrow}>Time</Text>
             <Text
               style={[
-                styles.tileValue,
-                large && styles.tileValueLarge,
-                !full && styles.tilePlaceholder,
-                needsTime && { color: ds.flame[100] },
+                s.tileValue,
+                large && s.tileValueLarge,
+                !full && s.tilePlaceholder,
+                needsTime && { color: t.bad },
               ]}
               numberOfLines={1}
             >
@@ -402,33 +377,21 @@ export function DateTimeTiles({
           </View>
         </TouchableOpacity>
       </View>
-      {needsTime && !pickError ? (
-        <Text style={styles.tileHint}>Pick the time to continue.</Text>
-      ) : null}
+      {needsTime && !pickError ? <Text style={s.tileHint}>Pick the time to continue.</Text> : null}
       <InlineError text={pickError} style={{ marginTop: 8 }} />
 
       {Platform.OS !== "android" ? (
-        <Modal
-          visible={!!iosSheet}
-          transparent
-          animationType="fade"
-          onRequestClose={() => setIosSheet(null)}
-          statusBarTranslucent
-        >
-          <Pressable style={styles.sheetBackdrop} onPress={() => setIosSheet(null)}>
-            <Pressable
-              onPress={() => {}}
-              style={[styles.sheet, { paddingBottom: Math.max(insets.bottom, 16) }]}
-            >
-              <View style={styles.sheetHead}>
-                <TouchableOpacity onPress={() => setIosSheet(null)} hitSlop={10}>
-                  <Text style={styles.sheetCancel}>Cancel</Text>
+        <Modal visible={!!iosSheet} transparent animationType="fade" onRequestClose={() => setIosSheet(null)} statusBarTranslucent>
+          <Pressable style={s.sheetBackdrop} onPress={() => setIosSheet(null)}>
+            <Pressable onPress={() => {}} style={[s.sheet, { marginBottom: 8 + insets.bottom }]}>
+              <View style={s.grabber} />
+              <View style={s.sheetHead}>
+                <TouchableOpacity onPress={() => setIosSheet(null)} hitSlop={10} accessibilityRole="button">
+                  <Text style={s.sheetCancel}>Cancel</Text>
                 </TouchableOpacity>
-                <Text style={styles.sheetTitle}>
-                  {iosSheet?.mode === "time" ? "Choose time" : "Choose date"}
-                </Text>
-                <TouchableOpacity onPress={confirmIos} hitSlop={10}>
-                  <Text style={styles.sheetDone}>Done</Text>
+                <Text style={s.sheetTitle}>{iosSheet?.mode === "time" ? "Choose time" : "Choose date"}</Text>
+                <TouchableOpacity onPress={confirmIos} hitSlop={10} accessibilityRole="button">
+                  <Text style={s.sheetDone}>Done</Text>
                 </TouchableOpacity>
               </View>
               {iosSheet ? (
@@ -436,10 +399,10 @@ export function DateTimeTiles({
                   value={iosSheet.temp}
                   mode={iosSheet.mode}
                   display="spinner"
-                  themeVariant={ds.isDark ? "dark" : "light"}
+                  themeVariant={t.isDark ? "dark" : "light"}
                   maximumDate={iosSheet.mode === "date" ? new Date() : undefined}
                   onChange={(_e, d) => {
-                    if (d) setIosSheet((s) => (s ? { ...s, temp: d } : s));
+                    if (d) setIosSheet((cur) => (cur ? { ...cur, temp: d } : cur));
                   }}
                   style={{ alignSelf: "stretch" }}
                 />
@@ -456,35 +419,27 @@ export function DateTimeTiles({
 /* ── Step dots ───────────────────────────────────────────────────────────── */
 
 export function StepDots({ count, index }: { count: number; index: number }) {
-  const styles = useStyles();
+  const s = useStyles();
   return (
-    <View style={styles.dots} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+    <View style={s.dots} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
       {Array.from({ length: count }, (_, i) => (
-        <View
-          key={i}
-          style={[styles.dot, i < index && styles.dotDone, i === index && styles.dotActive]}
-        />
+        <View key={i} style={[s.dot, i < index && s.dotDone, i === index && s.dotActive]} />
       ))}
     </View>
   );
 }
 
-const useStyles = makeThemedStyles((ds) => ({
+const useStyles = makeJoStyles((t) => ({
   pill: {
     flexDirection: "row",
     alignItems: "center",
     gap: 4,
-    paddingVertical: 3,
-    paddingHorizontal: 7,
-    borderRadius: soRadius.pill,
-    backgroundColor: ds.flame[1000],
+    height: 20,
+    paddingHorizontal: 8,
+    borderRadius: 10,
+    backgroundColor: t.accentTint,
   },
-  pillText: {
-    fontSize: 10,
-    fontWeight: "700",
-    letterSpacing: 0.4,
-    color: ds.flame[100],
-  },
+  pillText: { ...f.t(10.5, 600), color: t.accentInk },
 
   option: {
     flexDirection: "row",
@@ -493,127 +448,96 @@ const useStyles = makeThemedStyles((ds) => ({
     minHeight: 60,
     paddingVertical: 14,
     paddingHorizontal: 14,
-    marginBottom: 10,
-    borderRadius: soRadius.card,
-    borderWidth: 1.5,
-    borderColor: ds.isDark ? ds.cardBorder : ds.carbon[900],
-    backgroundColor: ds.white,
-    ...soShadow,
+    marginBottom: 8,
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: t.cardBorder,
+    backgroundColor: t.card,
   },
-  optionOn: {
-    borderColor: ds.controlOn,
-    backgroundColor: ds.sky[1000],
-  },
+  optionOn: { borderColor: t.accent, backgroundColor: t.accentTint },
   radio: {
     width: 24,
     height: 24,
     borderRadius: 12,
-    borderWidth: 2,
-    borderColor: ds.carbon[800],
+    borderWidth: 1.5,
+    borderColor: t.disabled,
     alignItems: "center",
     justifyContent: "center",
     marginTop: 1,
   },
-  radioOn: { borderColor: ds.controlOn, backgroundColor: ds.controlOn },
+  radioOn: { borderColor: t.accent, backgroundColor: t.accent },
   optionTitleRow: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 8 },
-  optionLabel: { fontSize: 15, fontWeight: "600", color: ds.carbon[100], flexShrink: 1 },
-  optionHint: { fontSize: 12.5, lineHeight: 17, color: ds.carbon[500], marginTop: 3 },
+  optionLabel: { ...f.t(14.5, 600), color: t.ink, flexShrink: 1 },
+  optionHint: { ...f.t(12.5), lineHeight: 17, color: t.muted, marginTop: 3 },
 
-  errorRow: { flexDirection: "row", alignItems: "flex-start", gap: 6 },
-  errorText: { flex: 1, fontSize: 12, lineHeight: 17, fontWeight: "500", color: ds.flame[100] },
-
-  notice: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 9,
-    paddingVertical: 11,
-    paddingHorizontal: 12,
-    borderRadius: soRadius.sm,
-  },
-  noticeText: { flex: 1, fontSize: 12.5, lineHeight: 18 },
-
-  footer: {
-    backgroundColor: ds.white,
-    borderTopWidth: 1,
-    borderTopColor: ds.isDark ? ds.cardBorder : ds.carbon[900],
-    paddingTop: 12,
-    paddingHorizontal: 20,
-  },
-  footerRow: { flexDirection: "row", gap: 10 },
+  footer: { backgroundColor: t.page, paddingTop: 12, paddingHorizontal: 16, borderTopWidth: 1, borderTopColor: t.line },
+  footerRow: { flexDirection: "row", gap: 8 },
   btn: {
     flex: 1,
-    minHeight: 50,
-    borderRadius: soRadius.sm,
+    height: 54,
+    borderRadius: 27,
     alignItems: "center",
     justifyContent: "center",
-    paddingHorizontal: 12,
+    paddingHorizontal: 14,
   },
   btnSecondary: {
-    backgroundColor: ds.white,
+    backgroundColor: t.input,
     borderWidth: 1,
-    borderColor: ds.isDark ? ds.fieldBorder : ds.carbon[900],
+    borderColor: t.isDark ? "rgba(255,255,255,0.12)" : t.lineMid,
   },
-  btnText: { fontSize: 15, fontWeight: "600", letterSpacing: 0.15 },
+  btnText: { ...f.t(14, 600) },
+  btnTextPrimary: { ...f.t(15, 700) },
   tertiary: { alignSelf: "center", paddingVertical: 4, marginBottom: 10 },
-  tertiaryText: {
-    fontSize: 13.5,
-    fontWeight: "600",
-    color: ds.carbon[400],
-    textDecorationLine: "underline",
-  },
+  tertiaryText: { ...f.t(13.5, 600), color: t.muted, textDecorationLine: "underline" },
 
-  tileRow: { flexDirection: "row", gap: 10 },
+  tileRow: { flexDirection: "row", gap: 8 },
   tile: {
     flex: 1,
     flexDirection: "row",
     alignItems: "center",
     gap: 9,
-    minHeight: 52,
+    minHeight: 54,
     paddingVertical: 9,
     paddingHorizontal: 12,
-    borderRadius: soRadius.sm,
+    borderRadius: 18,
     borderWidth: 1,
-    borderColor: ds.fieldBorder,
-    backgroundColor: ds.field,
+    borderColor: t.isDark ? "rgba(255,255,255,0.07)" : t.lineMid,
+    backgroundColor: t.raised,
   },
   tileLarge: { minHeight: 64, paddingHorizontal: 14 },
-  tileInvalid: { borderColor: ds.flame[100] },
-  tileNeeds: { borderColor: ds.flame[100], borderStyle: "dashed", borderWidth: 1.5 },
-  tileEyebrow: {
-    fontSize: 9,
-    fontWeight: "600",
-    letterSpacing: 1.08,
-    textTransform: "uppercase",
-    color: ds.carbon[500],
-  },
-  tileValue: { fontSize: 13.5, fontWeight: "600", color: ds.carbon[100], marginTop: 2 },
-  tileValueLarge: { fontSize: 16 },
-  tilePlaceholder: { color: ds.carbon[600], fontWeight: "500" },
-  tileHint: { fontSize: 12, color: ds.carbon[500], marginTop: 8 },
+  tileInvalid: { borderColor: t.bad },
+  tileNeeds: { borderColor: t.bad, borderStyle: "dashed", borderWidth: 1.5 },
+  tileEyebrow: { ...f.t(11), color: t.muted },
+  tileValue: { ...f.t(13.5, 600), color: t.ink, marginTop: 2 },
+  tileValueLarge: { ...f.t(16, 600) },
+  tilePlaceholder: { ...f.t(13.5, 500), color: t.faint },
+  tileHint: { ...f.t(12), color: t.muted, marginTop: 8 },
 
-  sheetBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "flex-end" },
+  sheetBackdrop: { flex: 1, backgroundColor: t.scrim, justifyContent: "flex-end" },
   sheet: {
-    backgroundColor: ds.white,
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    paddingTop: 6,
-    paddingHorizontal: 16,
+    marginHorizontal: 8,
+    backgroundColor: t.input,
+    borderWidth: 1,
+    borderColor: t.lineMid,
+    borderRadius: 38,
+    paddingTop: 12,
+    paddingHorizontal: 18,
+    paddingBottom: 16,
   },
+  grabber: { width: 40, height: 5, borderRadius: 3, backgroundColor: t.handle, alignSelf: "center", marginBottom: 8 },
   sheetHead: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingVertical: 12,
+    paddingVertical: 10,
     paddingHorizontal: 4,
-    borderBottomWidth: 1,
-    borderBottomColor: ds.carbon[1000],
   },
-  sheetTitle: { fontSize: 15, fontWeight: "700", color: ds.carbon[100] },
-  sheetCancel: { fontSize: 15, color: ds.carbon[500] },
-  sheetDone: { fontSize: 15, fontWeight: "700", color: ds.sky[100] },
+  sheetTitle: { ...f.t(15, 600), color: t.ink },
+  sheetCancel: { ...f.t(14.5), color: t.muted },
+  sheetDone: { ...f.t(14.5, 600), color: t.accentInk },
 
   dots: { flexDirection: "row", gap: 6, alignItems: "center" },
-  dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: ds.carbon[900] },
-  dotDone: { backgroundColor: ds.carbon[600] },
-  dotActive: { width: 22, backgroundColor: ds.flame[100] },
+  dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: t.track },
+  dotDone: { backgroundColor: t.faint },
+  dotActive: { width: 22, backgroundColor: t.accent },
 }));

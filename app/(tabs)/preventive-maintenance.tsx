@@ -1,3 +1,12 @@
+/**
+ * Preventive maintenance list — artboard "JouleOps App" `r_pm`
+ * (app.dc.html 625–663; chip/row rules in v5Vals pmChips/pmRows, PM_ST).
+ *
+ * Data flow is unchanged from the previous screen: local SQLite first with
+ * queued offline updates overlaid, a background API pull + window reconcile
+ * when online, server stats for the counts, live pm_changed events while
+ * focused, and the before-photo Start sheet that moves a PM to In-progress.
+ */
 import React, {
   useState,
   useCallback,
@@ -8,47 +17,38 @@ import React, {
 } from "react";
 import {
   View,
-  Text,
-  TouchableOpacity,
   ActivityIndicator,
-  ScrollView,
   RefreshControl,
-  useColorScheme,
-  Modal,
-  Image,
+  ScrollView,
   Alert,
   InteractionManager,
 } from "react-native";
 import { FlashList, type ListRenderItem } from "@shopify/flash-list";
 import * as Haptics from "expo-haptics";
 import * as ImagePicker from "expo-image-picker";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAttendanceGate } from "@/contexts/AttendanceGateContext";
-import {
-  ListChecks,
-  WifiOff,
-  ChevronLeft,
-  Calendar as CalendarIcon,
-  CalendarCheck,
-  QrCode,
-  X,
-  Camera,
-} from "lucide-react-native";
 import { router, useFocusEffect } from "expo-router";
-import PMItem from "@/components/PMItem";
-import { getPmStatus } from "@/components/pm/PMUI";
-import { makeThemedStyles, useDs } from "@/hooks/useDs";
+import PMItem, { type PMRow } from "@/components/PMItem";
+import { pmStatusKey, type PmStatusKey } from "@/components/pm/PMUI";
+import { PMListHeader, type PMChip } from "@/components/pm/PMListHeader";
+import { PMStartSheet } from "@/components/pm/PMStartSheet";
 import {
-  ListCountLine,
-  ListEmptyCard,
-  ModuleListHeader,
   useListSlide,
-  type StatusChip,
   SwipeTabsView,
 } from "@/components/shared/ListChrome";
+import {
+  EmptyState,
+  JoPage,
+  JoSheet,
+  SheetOption,
+  Shimmer,
+  f,
+  makeJoStyles,
+  useJoTheme,
+} from "@/components/jo/ui";
+import { useNavInsets } from "@/components/jo/navInsets";
 import { useAuth } from "@/contexts/AuthContext";
 import { useNetworkStatus } from "@/hooks/useNetworkStatus";
-import NetInfo from "@react-native-community/netinfo";
 import PMService from "@/services/PMService";
 import {
   makeEventDeduper,
@@ -56,41 +56,37 @@ import {
   type ChangeFeedEvent,
 } from "@/services/RealtimeStreamClient";
 import { useAutoSync } from "@/hooks/useAutoSync";
-import { AttendanceService, type Site } from "@/services/AttendanceService";
 import { useSites } from "@/hooks/useSites";
-import { db, pmInstances } from "@/database";
-import { eq } from "drizzle-orm";
+import { pmInstances } from "@/database";
+import type { Site } from "@/services/AttendanceService";
 import { addDays } from "date-fns";
 import {
   istDateString,
-  istTodayString,
   istParts,
+  istDayStartMs,
   istDayStartMsFromYmd,
   istDayEndMsFromYmd,
   formatIST,
 } from "@/utils/istDate";
 import AdvancedFilterModal from "@/components/AdvancedFilterModal";
 import QRScannerModal, { type QRScannerRef } from "@/components/QRScannerModal";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import logger from "@/utils/logger";
-import Skeleton from "@/components/Skeleton";
 
 type PMInstanceRow = typeof pmInstances.$inferSelect;
 
-// Constants
-const PAGE_SIZE = 20;
+/** Chip keys = the artboard's PM_ST labels (Skipped only shows under All). */
+type PmChipKey = "All" | Exclude<PmStatusKey, "Skipped">;
 
-// Display patterns used in this screen, mapped to IST Intl options so dates
-// always render as the India calendar day regardless of device timezone.
+const CHIP_ORDER: PmChipKey[] = [
+  "All",
+  "Overdue",
+  "Due",
+  "In progress",
+  "Completed",
+];
 
-
-const STATUS_OPTIONS = ["Pending", "In-progress", "Completed"];
-
-const DMY: Intl.DateTimeFormatOptions = {
-  day: "numeric",
-  month: "short",
-  year: "numeric",
-};
+// The advanced filter's status picker uses the same keys as the chip strip.
+const STATUS_OPTIONS: string[] = CHIP_ORDER;
 
 // The PM list date-range filter can target either the due date (default)
 // or the completed date — the advanced filter exposes this as a selector.
@@ -98,6 +94,14 @@ const PM_DATE_FIELD_OPTIONS = [
   { value: "due_date", label: "Due Date" },
   { value: "completed_date", label: "Completed Date" },
 ];
+
+const STATUS_RANK: Record<PmStatusKey, number> = {
+  Overdue: 1,
+  Due: 2,
+  "In progress": 3,
+  Completed: 4,
+  Skipped: 5,
+};
 
 // IST month bounds as "YYYY-MM-DD" (timezone-pure arithmetic — no DST in IST).
 const istMonthStart = () => {
@@ -110,55 +114,34 @@ const istMonthEnd = () => {
   return `${year}-${String(month).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
 };
 
-// ─── PMSkeleton ──────────────────────────────────────────────────────────────
-// Fills the list area (flex: 1) so a slow cold load reads as "loading" rather
-// than leaving dead space under a few placeholder cards, and mirrors PMItem's
-// four-line body so the handoff to real rows doesn't jump.
+const useStyles = makeJoStyles(() => ({
+  list: { paddingHorizontal: 16 },
+  skeleton: { paddingHorizontal: 16, gap: 8 },
+  pad: { paddingHorizontal: 16 },
+  footerLoader: { paddingVertical: 20, alignItems: "center" },
+}));
+
+// Fills the list area so a slow cold load reads as "loading", sized like the
+// PM card (head · title · meta · footer) so the handoff doesn't jump.
 const PMSkeleton = () => {
-  const styles = useStyles();
+  const s = useStyles();
   return (
-  <View style={styles.skeletonArea}>
-    {[1, 2, 3, 4, 5, 6].map((i) => (
-      <View key={i} style={styles.skeletonCard}>
-        <View style={styles.skeletonRow}>
-          <Skeleton width={64} height={10} borderRadius={3} />
-          <Skeleton width={54} height={12} borderRadius={4} />
-          <Skeleton width={48} height={12} borderRadius={4} />
-        </View>
-        <Skeleton
-          width="72%"
-          height={14}
-          borderRadius={4}
-          style={{ marginBottom: 8 }}
-        />
-        <Skeleton
-          width="46%"
-          height={10}
-          borderRadius={3}
-          style={{ marginBottom: 7 }}
-        />
-        <View style={styles.skeletonRow}>
-          <Skeleton width={92} height={10} borderRadius={3} />
-          <View style={{ flex: 1 }} />
-          <Skeleton width={20} height={20} borderRadius={10} />
-          <Skeleton width={62} height={10} borderRadius={3} />
-        </View>
-      </View>
-    ))}
-  </View>
+    <View style={s.skeleton}>
+      {[0, 1, 2, 3, 4, 5].map((i) => (
+        <Shimmer key={i} height={128} radius={22} />
+      ))}
+    </View>
   );
 };
 
-// ─── Memoized PM Card ──────────────────────────────────────────────────────────
-
 // ─── Main Screen ───────────────────────────────────────────────────────────────
 export default function PreventiveMaintenance() {
-  const styles = useStyles();
-  const ds = useDs();
+  const t = useJoTheme();
+  const s = useStyles();
+  const { clearance } = useNavInsets();
   const { user } = useAuth();
   const { canEdit } = useAttendanceGate();
   const { isConnected } = useNetworkStatus();
-  const isDark = useColorScheme() === "dark";
 
   const [allInstances, setAllInstances] = useState<PMInstanceRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -170,10 +153,9 @@ export default function PreventiveMaintenance() {
     useState<PMInstanceRow | null>(null);
   const [startBeforeImage, setStartBeforeImage] = useState<string>("");
   const [starting, setStarting] = useState(false);
-  const [statusFilter, setStatusFilter] = useState("Pending");
+  const [statusFilter, setStatusFilter] = useState<PmChipKey>("All");
   const [sortMode, setSortMode] = useState<"Due date" | "Status">("Due date");
   const [slide, setSlide] = useState({ seq: 0, dir: 1 });
-  const insets = useSafeAreaInsets();
   const listSlideStyle = useListSlide(slide.seq, slide.dir);
   const [showFiltersModal, setShowFiltersModal] = useState(false);
   const [serverStats, setServerStats] = useState<any>(null);
@@ -192,10 +174,18 @@ export default function PreventiveMaintenance() {
 
   // ── Clean sites hook ──────────────────────────────────────────────────────
   const userId = user?.user_id || user?.id;
-  const { sites, selectedSite, selectSite } = useSites(userId);
+  const {
+    sites,
+    selectedSite,
+    selectSite,
+    loading: sitesLoading,
+  } = useSites(userId);
   const siteCode = selectedSite?.site_code ?? "";
   const siteName =
-    selectedSite?.site_name ?? selectedSite?.site_code ?? "Select Site";
+    selectedSite?.site_name ??
+    selectedSite?.name ??
+    selectedSite?.site_code ??
+    "Select site";
 
   // Date handling — default to the current month (1st → last day)
   const [currentDate, setCurrentDate] = useState(istMonthStart());
@@ -503,30 +493,24 @@ export default function PreventiveMaintenance() {
     await loadPMData(true, 0, false);
     setRefreshing(false);
   }, [loadPMData]);
-
-  const handleHeaderManualRefresh = useCallback(async () => {
-    if (!isConnected) return;
-    // Reload from API (only runs when online) and keep UI stable (no spinner).
-    await loadPMData(true, 0, false);
-  }, [isConnected, loadPMData]);
+  // IST start of today. Re-derived whenever the data reloads (focus, the 60s
+  // auto-sync, live events), so a list left open overnight re-classifies
+  // Due → Overdue on the next refresh rather than needing a remount.
+  const todayStartMs = useMemo(
+    () => istDayStartMs(new Date()),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [allInstances],
+  );
 
   const filteredInstances = useMemo(() => {
     let list = [...allInstances];
 
-    // 1. Apply Status Filter
+    // 1. Apply Status Filter — the artboard's five states. "Overdue" is
+    //    derived (not-started + due before today, IST), not stored.
     if (statusFilter !== "All") {
-      list = list.filter((i) => {
-        const s = i.status;
-        if (statusFilter === "Pending") {
-          return s === "Pending" || s === "Overdue";
-        }
-        if (statusFilter === "In-progress") {
-          return (
-            s === "In-progress" || s === "In Progress" || s === "Inprogress"
-          );
-        }
-        return s === statusFilter;
-      });
+      list = list.filter(
+        (i) => pmStatusKey(i.status, i.start_due_date, todayStartMs) === statusFilter,
+      );
     }
 
     // 2. Apply Search or QR Filter
@@ -551,6 +535,8 @@ export default function PreventiveMaintenance() {
           (i.title && i.title.toLowerCase().includes(q)) ||
           (i.asset_id && i.asset_id.toLowerCase().includes(q)) ||
           (i.asset_type && i.asset_type.toLowerCase().includes(q)) ||
+          // The placeholder has always promised "area"; the card now shows it.
+          (i.location && i.location.toLowerCase().includes(q)) ||
           (dueDateStr && dueDateStr.toLowerCase().includes(q)) ||
           (dueDateISO && dueDateISO.includes(q)) ||
           (dueDateShort && dueDateShort.includes(q))
@@ -558,12 +544,12 @@ export default function PreventiveMaintenance() {
       });
       // Fall through to the date-range filter below: a text search narrows
       // the list but must still stay inside the selected window, so the
-      // list matches the (date-windowed) Total/Pending/Completed counts.
-      // Users reported May PMs surfacing under a July filter when search
-      // returned early here and skipped the date predicate entirely.
+      // list matches the (date-windowed) counts. Users reported May PMs
+      // surfacing under a July filter when search returned early here and
+      // skipped the date predicate entirely.
     }
 
-    // 3. Apply Date Filter. Runs for every mode now — normal browsing, text
+    // 3. Apply Date Filter. Runs for every mode — normal browsing, text
     //    search, and QR asset scan (QR resets the window to the current month
     //    in handleQRAssetFound, so this keeps it scoped to that month).
     //    The column compared depends on the selected date field.
@@ -585,6 +571,7 @@ export default function PreventiveMaintenance() {
     currentDate,
     toDate,
     dateField,
+    todayStartMs,
   ]);
 
   const stats = useMemo(() => {
@@ -601,18 +588,18 @@ export default function PreventiveMaintenance() {
 
     const localCount = {
       total: rangeInstances.length,
-      pending: rangeInstances.filter((i) => {
-        const s = i.status?.toLowerCase() || "";
-        return s === "pending" || s === "overdue";
-      }).length,
-      inProgress: rangeInstances.filter((i) => {
-        const s = i.status?.toLowerCase() || "";
-        return s === "in-progress" || s === "in progress" || s === "inprogress";
-      }).length,
-      completed: rangeInstances.filter(
-        (i) => i.status?.toLowerCase() === "completed",
-      ).length,
+      overdue: 0,
+      due: 0,
+      inProgress: 0,
+      completed: 0,
     };
+    for (const i of rangeInstances) {
+      const k = pmStatusKey(i.status, i.start_due_date, todayStartMs);
+      if (k === "Overdue") localCount.overdue += 1;
+      else if (k === "Due") localCount.due += 1;
+      else if (k === "In progress") localCount.inProgress += 1;
+      else if (k === "Completed") localCount.completed += 1;
+    }
 
     // Counts come from ONE source — never a per-field Math.max of two. Mixing
     // server and local (each windowed/complete differently, and each device's
@@ -633,12 +620,16 @@ export default function PreventiveMaintenance() {
       const completed = serverStats.byStatus?.Completed || 0;
       const total = serverStats.total ?? 0;
       const pending = Math.max(0, total - inProgress - completed);
+      // The server has no Overdue bucket (it isn't a stored status), so the
+      // not-started total is split using the local overdue tally, capped so
+      // Overdue + Due still equals the server's not-started count.
+      const overdue = Math.min(pending, localCount.overdue);
 
-      return { total, pending, inProgress, completed };
+      return { total, overdue, due: pending - overdue, inProgress, completed };
     }
 
     return localCount;
-  }, [allInstances, currentDate, toDate, serverStats, dateField]);
+  }, [allInstances, currentDate, toDate, serverStats, dateField, todayStartMs]);
 
   const handlePMCardPress = useCallback((instance: PMInstanceRow) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
@@ -657,7 +648,7 @@ export default function PreventiveMaintenance() {
         return;
       }
       // Not started yet: capture the before-image and stamp the start time
-      // in a modal before entering the execution screen. Assignment is
+      // in a sheet before entering the execution screen. Assignment is
       // stamped there, on confirm — see handleConfirmStart.
       setStartBeforeImage("");
       setStartModalInstance(instance);
@@ -673,6 +664,13 @@ export default function PreventiveMaintenance() {
       params: { instanceId: instance.id },
     });
   }, [canEdit]);
+
+  // The list only ever renders PMInstanceRow objects, so the row PMItem hands
+  // back is one of them.
+  const onCardPress = useCallback(
+    (row: PMRow) => handlePMCardPress(row as PMInstanceRow),
+    [handlePMCardPress],
+  );
 
   // Before-photo evidence must be shot on site, so it is camera-only — no
   // gallery option, which let an old or unrelated photo stand in as proof.
@@ -780,10 +778,12 @@ export default function PreventiveMaintenance() {
     setToDate(istDateString(addDays(new Date(), 30)));
   }, []);
 
-  const statusChips = useMemo<StatusChip[]>(
+  const statusChips = useMemo<PMChip[]>(
     () => [
-      { key: "Pending", label: "Open", count: stats.pending },
-      { key: "In-progress", label: "In progress", count: stats.inProgress },
+      { key: "All", label: "All", count: stats.total },
+      { key: "Overdue", label: "Overdue", count: stats.overdue },
+      { key: "Due", label: "Due", count: stats.due },
+      { key: "In progress", label: "In progress", count: stats.inProgress },
       { key: "Completed", label: "Completed", count: stats.completed },
     ],
     [stats],
@@ -791,9 +791,11 @@ export default function PreventiveMaintenance() {
 
   const visibleCount = useMemo(() => {
     switch (statusFilter) {
-      case "Pending":
-        return stats.pending;
-      case "In-progress":
+      case "Overdue":
+        return stats.overdue;
+      case "Due":
+        return stats.due;
+      case "In progress":
         return stats.inProgress;
       case "Completed":
         return stats.completed;
@@ -802,729 +804,298 @@ export default function PreventiveMaintenance() {
     }
   }, [statusFilter, stats]);
 
-  const countLabel = useMemo(() => {
-    if (statusFilter === "All") return "PMs this period";
-    const label =
-      statusChips.find((c) => c.key === statusFilter)?.label ?? statusFilter;
-    return `${label.toLowerCase()} PMs`;
-  }, [statusFilter, statusChips]);
-
   const selectStatusChip = useCallback(
     (key: string) => {
       if (key === statusFilter) return;
-      const order = statusChips.map((c) => c.key);
-      const dir = order.indexOf(key) >= order.indexOf(statusFilter) ? 1 : -1;
+      const next = CHIP_ORDER.find((k) => k === key);
+      if (!next) return;
+      const dir =
+        CHIP_ORDER.indexOf(next) >= CHIP_ORDER.indexOf(statusFilter) ? 1 : -1;
       setSlide((prev) => ({ seq: prev.seq + 1, dir }));
-      setStatusFilter(key);
+      setStatusFilter(next);
     },
-    [statusFilter, statusChips],
+    [statusFilter],
   );
+
+  // The advanced filter writes its status choice straight through.
+  const setStatusFromFilter = useCallback((key: string) => {
+    const next = CHIP_ORDER.find((k) => k === key);
+    if (next) setStatusFilter(next);
+  }, []);
 
   const cycleSort = useCallback(() => {
     setSortMode((m) => (m === "Due date" ? "Status" : "Due date"));
   }, []);
-
-  const STATUS_RANK: Record<string, number> = {
-    overdue: 1,
-    pending: 2,
-    "in-progress": 3,
-    "in progress": 3,
-    inprogress: 3,
-    completed: 4,
-  };
 
   const sortedInstances = useMemo(() => {
     const rows = [...filteredInstances];
     const due = (i: PMInstanceRow) => Number(i.start_due_date ?? 0);
     if (sortMode === "Status") {
       rows.sort((a, b) => {
-        const ra = STATUS_RANK[(a.status || "").toLowerCase()] ?? 9;
-        const rb = STATUS_RANK[(b.status || "").toLowerCase()] ?? 9;
+        const ra = STATUS_RANK[pmStatusKey(a.status, a.start_due_date, todayStartMs)];
+        const rb = STATUS_RANK[pmStatusKey(b.status, b.start_due_date, todayStartMs)];
         return ra !== rb ? ra - rb : due(a) - due(b);
       });
       return rows;
     }
     rows.sort((a, b) => due(a) - due(b));
     return rows;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filteredInstances, sortMode]);
+  }, [filteredInstances, sortMode, todayStartMs]);
+
+  const showCompletedDate =
+    statusFilter === "Completed" || dateField === "completed_date";
 
   const renderItem: ListRenderItem<PMInstanceRow> = useCallback(
     ({ item }) => (
       <PMItem
         instance={item}
-        onPress={() => handlePMCardPress(item)}
-        showCompletedDate={
-          statusFilter === "Completed" || dateField === "completed_date"
-        }
+        onPress={onCardPress}
+        showCompletedDate={showCompletedDate}
+        todayStartMs={todayStartMs}
       />
     ),
-    [handlePMCardPress, statusFilter, dateField],
+    [onCardPress, showCompletedDate, todayStartMs],
   );
 
   const keyExtractor = useCallback((item: PMInstanceRow) => item.id, []);
 
+  // Two card heights exist: in-progress rows carry a progress bar, the rest
+  // don't. Separate recycle pools stop a short cell being re-measured as a
+  // tall one mid-fling.
   const getItemType = useCallback(
     (item: PMInstanceRow) =>
-      getPmStatus(item.status, ds).label === "In progress"
+      pmStatusKey(item.status, item.start_due_date, todayStartMs) ===
+      "In progress"
         ? "progress"
         : "plain",
-    [ds],
+    [todayStartMs],
   );
 
-  const ListEmpty = useMemo(
-    () => (
-      <ListEmptyCard
-        icon={CalendarCheck}
-        label={
+  const ListEmpty = useMemo(() => {
+    const filtered = statusFilter !== "All" || !!searchQuery || !!qrAssetFilter;
+    return (
+      <EmptyState
+        icon="bx-calendar-check"
+        title={
+          allInstances.length > 0 ? "No PMs match this view" : "No PM tasks found"
+        }
+        sub={
           allInstances.length > 0
-            ? `No PMs match this filter (${allInstances.length} in range)`
-            : "No PM tasks found"
+            ? `${allInstances.length} PMs are cached for this site. Try another status, period or search.`
+            : isConnected
+              ? "Nothing is scheduled for this site in the selected period."
+              : "You're offline and nothing is cached for this site yet."
+        }
+        action={
+          filtered
+            ? {
+                label: "Show all",
+                onPress: () => {
+                  selectStatusChip("All");
+                  setSearchQuery("");
+                  if (qrAssetFilter) clearQRFilter();
+                },
+              }
+            : undefined
         }
       />
-    ),
-    [allInstances.length],
-  );
+    );
+  }, [
+    allInstances.length,
+    statusFilter,
+    searchQuery,
+    qrAssetFilter,
+    isConnected,
+    selectStatusChip,
+    clearQRFilter,
+  ]);
 
   const renderFooter = useCallback(() => {
     if (!loadingMore) return null;
     return (
-      <View style={styles.footerLoader}>
-        <ActivityIndicator size="small" color="#dc2626" />
+      <View style={s.footerLoader}>
+        <ActivityIndicator size="small" color={t.accent} />
       </View>
     );
-  }, [loadingMore, styles.footerLoader]);
+  }, [loadingMore, s.footerLoader, t.accent]);
 
+  // "1–31 Oct" — the year only appears when the range leaves this year.
   const dateRangeLabel = useMemo(() => {
-    const prefix = dateField === "completed_date" ? "Completed " : "";
+    const prefix = dateField === "completed_date" ? "Done " : "";
     const fromMs = istDayStartMsFromYmd(currentDate);
     const toMs = istDayStartMsFromYmd(toDate);
     if (fromMs == null || toMs == null) return `${prefix}All dates`;
     const a = istParts(fromMs);
     const b = istParts(toMs);
+    const thisYear = istParts(new Date()).year;
+    const end: Intl.DateTimeFormatOptions =
+      a.year === thisYear && b.year === thisYear
+        ? { day: "numeric", month: "short" }
+        : { day: "numeric", month: "short", year: "numeric" };
     if (a.year === b.year && a.month === b.month) {
-      return `${prefix}${formatIST(fromMs, { day: "numeric" })}\u2013${formatIST(toMs, DMY)}`;
+      if (a.day === b.day) return `${prefix}${formatIST(toMs, end)}`;
+      return `${prefix}${formatIST(fromMs, { day: "numeric" })}–${formatIST(toMs, end)}`;
     }
     if (a.year === b.year) {
-      return `${prefix}${formatIST(fromMs, { day: "numeric", month: "short" })} \u2013 ${formatIST(toMs, DMY)}`;
+      return `${prefix}${formatIST(fromMs, { day: "numeric", month: "short" })} – ${formatIST(toMs, end)}`;
     }
-    return `${prefix}${formatIST(fromMs, DMY)} \u2013 ${formatIST(toMs, DMY)}`;
+    const full: Intl.DateTimeFormatOptions = { day: "numeric", month: "short", year: "numeric" };
+    return `${prefix}${formatIST(fromMs, full)} – ${formatIST(toMs, full)}`;
   }, [currentDate, toDate, dateField]);
 
-  return (
-    <View style={{ flex: 1, backgroundColor: ds.pageBg }}>
-      <ModuleListHeader
-        topInset={insets.top}
-        eyebrow="PREVENTIVE MAINTENANCE"
-        siteName={siteName}
-        dateLabel={dateRangeLabel}
-        onRefresh={() => {
-          if (!isConnected) return;
-          handleHeaderManualRefresh();
-        }}
-        refreshDisabled={!isConnected}
-        onFilter={() => setShowFiltersModal(true)}
-        filterActive={
-          tempFromDate !== istTodayString() || tempToDate !== istTodayString()
-        }
-        search={searchQuery}
-        onChangeSearch={setSearchQuery}
-        searchPlaceholder="Search asset, PM type or area"
+  const [sitePickerOpen, setSitePickerOpen] = useState(false);
+  const siteLabel = (site: Site) => site.site_name || site.name || site.site_code;
+
+  let body: React.ReactNode;
+  if (!siteCode && sitesLoading) {
+    body = <PMSkeleton />;
+  } else if (!siteCode) {
+    body = (
+      <View style={s.pad}>
+        <EmptyState
+          icon="bx-buildings"
+          title={sites.length ? "Pick a site" : "No site assigned"}
+          sub={
+            sites.length
+              ? "Choose a site to see its preventive maintenance."
+              : "Ask an admin to add you to a site to see its PMs."
+          }
+          action={
+            sites.length
+              ? { label: "Choose site", onPress: () => setSitePickerOpen(true) }
+              : undefined
+          }
+        />
+      </View>
+    );
+  } else if (loading && allInstances.length === 0) {
+    body = <PMSkeleton />;
+  } else {
+    body = (
+      <SwipeTabsView
         chips={statusChips}
         activeChip={statusFilter}
         onSelectChip={selectStatusChip}
-      />
+        style={[{ flex: 1 }, listSlideStyle]}
+      >
+        <FlashList
+          data={sortedInstances}
+          renderItem={renderItem}
+          keyExtractor={keyExtractor}
+          getItemType={getItemType}
+          drawDistance={600}
+          ListEmptyComponent={ListEmpty}
+          onEndReached={handleLoadMore}
+          onEndReachedThreshold={0.5}
+          ListFooterComponent={renderFooter}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing || (syncing && allInstances.length > 0)}
+              onRefresh={onRefresh}
+              tintColor={t.muted}
+              colors={[t.accent]}
+            />
+          }
+          contentContainerStyle={{ ...s.list, paddingBottom: clearance }}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+        />
+      </SwipeTabsView>
+    );
+  }
 
-      <ListCountLine
+  return (
+    <JoPage>
+      <PMListHeader
+        siteName={siteName}
+        onSitePress={sites.length > 1 ? () => setSitePickerOpen(true) : null}
+        search={searchQuery}
+        onChangeSearch={setSearchQuery}
+        onScanPress={() => qrScannerRef.current?.open()}
+        dateLabel={dateRangeLabel}
+        onDatePress={() => setShowFiltersModal(true)}
+        chips={statusChips}
+        activeChip={statusFilter}
+        onSelectChip={selectStatusChip}
         count={visibleCount}
-        label={countLabel}
         sortLabel={sortMode}
         onSort={cycleSort}
+        qrAssetFilter={qrAssetFilter}
+        onClearQr={clearQRFilter}
+        offline={!isConnected}
+        readOnly={!canEdit}
       />
 
-      {/* QR scan narrows the list to a single asset. */}
-      <View style={styles.qrRow}>
-        {qrAssetFilter ? (
-          <View style={styles.qrChip}>
-            <QrCode size={12} color={ds.flame[100]} />
-            <Text style={styles.qrChipText} numberOfLines={1}>
-              {qrAssetFilter}
-            </Text>
-            <TouchableOpacity onPress={clearQRFilter} hitSlop={8}>
-              <X size={14} color={ds.flame[100]} />
-            </TouchableOpacity>
-          </View>
-        ) : null}
-        <TouchableOpacity
-          onPress={() => qrScannerRef.current?.open()}
-          style={styles.qrScanBtn}
-          hitSlop={6}
-          accessibilityRole="button"
-          accessibilityLabel="Scan asset QR code"
-        >
-          <QrCode size={15} color={ds.sky[100]} />
-          <Text style={styles.qrScanLabel}>
-            {qrAssetFilter ? "Rescan" : "Scan asset"}
-          </Text>
-        </TouchableOpacity>
-      </View>
+      <View style={{ flex: 1 }}>{body}</View>
 
-      {loading && allInstances.length === 0 ? (
-        <PMSkeleton />
-      ) : (
-        <SwipeTabsView
-          chips={statusChips}
-          activeChip={statusFilter}
-          onSelectChip={selectStatusChip}
-          style={[{ flex: 1 }, listSlideStyle]}
-        >
-          <FlashList
-            data={sortedInstances}
-            renderItem={renderItem}
-            keyExtractor={keyExtractor}
-            // Two card heights exist: in-progress rows carry a progress bar,
-            // everything else doesn't. Giving each its own recycle pool stops
-            // a recycled short cell being re-measured as a tall one mid-fling,
-            // which showed up as blank space on the mixed "All" tab.
-            getItemType={getItemType}
-            drawDistance={600}
-            ListEmptyComponent={ListEmpty}
-            onEndReached={handleLoadMore}
-            onEndReachedThreshold={0.5}
-            ListFooterComponent={renderFooter}
-            refreshControl={
-              <RefreshControl
-                refreshing={refreshing || (syncing && allInstances.length > 0)}
-                onRefresh={onRefresh}
-                tintColor={ds.carbon[500]}
-              />
-            }
-            contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: 24 }}
-            showsVerticalScrollIndicator={false}
-          />
-        </SwipeTabsView>
-      )}
+      <AdvancedFilterModal
+        visible={showFiltersModal}
+        onClose={() => setShowFiltersModal(false)}
+        title="Filter PM Tasks"
+        dateMode="date-range"
+        statusOptions={STATUS_OPTIONS}
+        defaultStatus="All"
+        tempSearch={tempSearch}
+        setTempSearch={setTempSearch}
+        tempFromDate={tempFromDate}
+        setTempFromDate={setTempFromDate}
+        tempToDate={tempToDate}
+        setTempToDate={setTempToDate}
+        sites={sites}
+        selectedSiteCode={siteCode}
+        setSelectedSiteCode={(code) => {
+          const site = sites.find((x) => x.site_code === code);
+          if (site) selectSite(site);
+        }}
+        user={user}
+        statusFilter={statusFilter}
+        setStatusFilter={setStatusFromFilter}
+        dateFieldOptions={PM_DATE_FIELD_OPTIONS}
+        selectedDateField={tempDateField}
+        setSelectedDateField={setTempDateField}
+        applyAdvancedFilters={applyAdvancedFilters}
+      />
 
-        <AdvancedFilterModal
-          visible={showFiltersModal}
-          onClose={() => setShowFiltersModal(false)}
-          title="Filter PM Tasks"
-          dateMode="date-range"
-          statusOptions={STATUS_OPTIONS}
-          // Stored value stays "Pending"; it reads as "Open" everywhere.
-          statusOptionLabels={{ Pending: "Open" }}
-          tempSearch={tempSearch}
-          setTempSearch={setTempSearch}
-          tempFromDate={tempFromDate}
-          setTempFromDate={setTempFromDate}
-          tempToDate={tempToDate}
-          setTempToDate={setTempToDate}
-          sites={sites}
-          selectedSiteCode={siteCode}
-          setSelectedSiteCode={(code) => {
-            const site = sites.find((s) => s.site_code === code);
-            if (site) selectSite(site);
-          }}
-          user={user}
-          statusFilter={statusFilter}
-          setStatusFilter={setStatusFilter}
-          dateFieldOptions={PM_DATE_FIELD_OPTIONS}
-          selectedDateField={tempDateField}
-          setSelectedDateField={setTempDateField}
-          applyAdvancedFilters={applyAdvancedFilters}
-        />
+      <QRScannerModal
+        ref={qrScannerRef}
+        siteCode={siteCode}
+        onClose={() => {}}
+        onAssetFound={handleQRAssetFound}
+      />
 
-        <QRScannerModal
-          ref={qrScannerRef}
-          siteCode={siteCode}
-          onClose={() => {}}
-          onAssetFound={handleQRAssetFound}
-        />
-        <Modal
-          visible={!!startModalInstance}
-          transparent
-          animationType="fade"
-          onRequestClose={closeStartModal}
-        >
-          <View style={styles.startModalOverlay}>
-            <View
-              style={[
-                styles.startModalCard,
-                { backgroundColor: isDark ? "#0f172a" : "#ffffff" },
-              ]}
-            >
-              <View style={styles.startModalHeader}>
-                <Text
-                  style={[
-                    styles.startModalTitle,
-                    { color: isDark ? "#f1f5f9" : "#0f172a" },
-                  ]}
-                >
-                  Start PM
-                </Text>
-                <TouchableOpacity
-                  onPress={closeStartModal}
-                  disabled={starting}
-                  hitSlop={10}
-                >
-                  <X size={20} color={isDark ? "#94a3b8" : "#64748b"} />
-                </TouchableOpacity>
-              </View>
+      <PMStartSheet
+        visible={!!startModalInstance}
+        title={startModalInstance?.title || ""}
+        assetId={startModalInstance?.asset_id}
+        beforeImage={startBeforeImage}
+        starting={starting}
+        onCapture={() => void captureStartBeforeImage()}
+        onClose={closeStartModal}
+        onConfirm={() => void handleConfirmStart()}
+      />
 
-              <Text
-                style={[
-                  styles.startModalSubtitle,
-                  { color: isDark ? "#94a3b8" : "#64748b" },
-                ]}
-                numberOfLines={2}
-              >
-                {startModalInstance?.title || ""}
-              </Text>
-
-              <Text
-                style={[
-                  styles.startModalLabel,
-                  { color: isDark ? "#cbd5e1" : "#475569" },
-                ]}
-              >
-                Before Photo <Text style={{ color: "#ef4444" }}>*</Text>
-              </Text>
-
-              <TouchableOpacity
-                onPress={() => void captureStartBeforeImage()}
-                disabled={starting}
-                style={[
-                  styles.startBeforeBox,
-                  {
-                    borderColor: startBeforeImage
-                      ? "#3b82f6"
-                      : isDark
-                        ? "#334155"
-                        : "#cbd5e1",
-                    backgroundColor: isDark ? "#1e293b" : "#f8fafc",
-                  },
-                ]}
-              >
-                {startBeforeImage ? (
-                  <Image
-                    source={{ uri: startBeforeImage }}
-                    style={styles.startBeforePreview}
-                    resizeMode="cover"
-                  />
-                ) : (
-                  <View style={styles.startBeforePlaceholder}>
-                    <Camera size={22} color={isDark ? "#64748b" : "#94a3b8"} />
-                    <Text
-                      style={{
-                        marginTop: 6,
-                        fontSize: 12,
-                        fontWeight: "600",
-                        color: isDark ? "#64748b" : "#94a3b8",
-                      }}
-                    >
-                      Tap to capture before photo
-                    </Text>
-                  </View>
-                )}
-              </TouchableOpacity>
-
-              {startBeforeImage ? (
-                <TouchableOpacity
-                  onPress={() => void captureStartBeforeImage()}
-                  disabled={starting}
-                  style={styles.startRetakeBtn}
-                >
-                  <Camera size={14} color="#3b82f6" />
-                  <Text style={styles.startRetakeText}>Retake photo</Text>
-                </TouchableOpacity>
-              ) : (
-                <Text
-                  style={{
-                    fontSize: 11,
-                    color: isDark ? "#64748b" : "#94a3b8",
-                    marginTop: 6,
-                  }}
-                >
-                  Required — capture a before photo to start the PM.
-                </Text>
-              )}
-
-              <View style={styles.startModalActions}>
-                <TouchableOpacity
-                  onPress={closeStartModal}
-                  disabled={starting}
-                  style={[
-                    styles.startBtn,
-                    {
-                      backgroundColor: "transparent",
-                      borderWidth: 1,
-                      borderColor: isDark ? "#334155" : "#e2e8f0",
-                    },
-                  ]}
-                >
-                  <Text
-                    style={{
-                      fontWeight: "700",
-                      color: isDark ? "#cbd5e1" : "#475569",
-                    }}
-                  >
-                    Cancel
-                  </Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  onPress={handleConfirmStart}
-                  disabled={starting || !startBeforeImage}
-                  style={[
-                    styles.startBtn,
-                    {
-                      backgroundColor:
-                        starting || !startBeforeImage ? "#93c5fd" : "#2563eb",
-                    },
-                  ]}
-                >
-                  {starting ? (
-                    <ActivityIndicator size="small" color="#ffffff" />
-                  ) : (
-                    <Text style={{ fontWeight: "700", color: "#ffffff" }}>
-                      Start
-                    </Text>
-                  )}
-                </TouchableOpacity>
-              </View>
-            </View>
-          </View>
-        </Modal>
-    </View>
+      <JoSheet
+        visible={sitePickerOpen}
+        onClose={() => setSitePickerOpen(false)}
+        title="Site"
+        subtitle={`Applies to every module. You have access to ${sites.length} site${sites.length === 1 ? "" : "s"}.`}
+      >
+        <ScrollView style={{ marginTop: 14 }} contentContainerStyle={{ gap: 6 }}>
+          {sites.map((site) => (
+            <SheetOption
+              key={site.site_code}
+              label={siteLabel(site)}
+              meta={site.site_code}
+              metaStyle={f.m(11)}
+              selected={site.site_code === siteCode}
+              onPress={() => {
+                void selectSite(site);
+                setSitePickerOpen(false);
+              }}
+            />
+          ))}
+        </ScrollView>
+      </JoSheet>
+    </JoPage>
   );
 }
-
-// ─── Styles ────────────────────────────────────────────────────────────────────
-const useStyles = makeThemedStyles((ds) => ({
-  skeletonArea: { flex: 1, paddingHorizontal: 16 },
-  skeletonCard: {
-    backgroundColor: ds.white,
-    borderRadius: 12,
-    paddingVertical: 13,
-    paddingHorizontal: 14,
-    marginBottom: 7,
-  },
-  skeletonRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 7,
-    marginBottom: 8,
-  },
-  qrRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    paddingHorizontal: 20,
-    paddingBottom: 10,
-  },
-  qrScanBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    paddingVertical: 7,
-    paddingHorizontal: 11,
-    borderRadius: 99,
-    borderWidth: 1,
-    borderColor: ds.carbon[900],
-    backgroundColor: ds.white,
-  },
-  qrScanLabel: { fontSize: 11, fontWeight: "600", color: ds.sky[100] },
-  flex: { flex: 1 },
-  container: { flex: 1 },
-  listHeader: { paddingTop: 2, paddingHorizontal: 20, paddingBottom: 8 },
-  listContent: { paddingHorizontal: 12, paddingBottom: 60 },
-
-  // Header
-  fixedArea: {
-    paddingHorizontal: 20,
-    backgroundColor: "transparent",
-    paddingBottom: 4,
-  },
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingTop: 8,
-    paddingBottom: 12,
-  },
-  headerLeft: { flex: 1 },
-  headerRight: { flexDirection: "row", alignItems: "center" },
-  headerSub: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: ds.carbon[600],
-    marginBottom: 4,
-  },
-  siteRow: { flexDirection: "row", alignItems: "center" },
-  siteName: {
-    fontSize: 20,
-    fontWeight: "800",
-    color: ds.carbon[100],
-    marginLeft: 8,
-    marginRight: 4,
-    marginHorizontal: 4,
-  },
-
-  headerTitle: {
-    fontSize: 20,
-    fontWeight: "800",
-    color: ds.carbon[100],
-  },
-  searchBarContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 12,
-    borderRadius: 12,
-    borderWidth: 1,
-    height: 46,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.04,
-    shadowRadius: 10,
-    elevation: 2,
-  },
-  actionIconBtn: {
-    width: 46,
-    height: 46,
-    backgroundColor: ds.white,
-    borderRadius: 12,
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: 1,
-    borderColor: ds.carbon[1000],
-  },
-  qrBtn: {
-    width: 34,
-    height: 34,
-    borderRadius: 8,
-    alignItems: "center",
-    justifyContent: "center",
-    marginLeft: 6,
-  },
-  qrChip: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    marginTop: 8,
-    backgroundColor: ds.flame[1000],
-    borderWidth: 1,
-    borderColor: ds.flame[800],
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    alignSelf: "flex-start",
-  },
-  qrChipText: {
-    color: ds.flame[100],
-    fontSize: 12,
-    fontWeight: "600",
-    flex: 1,
-    maxWidth: 200,
-  },
-
-  sectionRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 8,
-  },
-  sectionTitle: { fontSize: 14, fontWeight: "700", color: ds.carbon[100] },
-  sectionCount: { fontSize: 12, fontWeight: "500", color: ds.carbon[600] },
-
-  // PM Card
-  card: {
-    backgroundColor: ds.white,
-    borderRadius: 16,
-    padding: 14,
-    marginBottom: 6,
-    borderWidth: 1,
-    borderColor: ds.carbon[1000],
-    elevation: 2,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.04,
-    shadowRadius: 8,
-  },
-  cardTopRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginBottom: 8,
-  },
-  freqBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: ds.field,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 8,
-    gap: 4,
-  },
-  freqText: {
-    fontSize: 10,
-    fontWeight: "700",
-    color: ds.carbon[500],
-    textTransform: "uppercase",
-    marginLeft: 4,
-  },
-  statusBadge: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 },
-  statusText: { fontSize: 10, fontWeight: "700", textTransform: "uppercase" },
-
-  cardBody: { flexDirection: "row", alignItems: "flex-start" },
-  iconWrap: {
-    width: 48,
-    height: 48,
-    borderRadius: 16,
-    alignItems: "center",
-    justifyContent: "center",
-    marginRight: 12,
-  },
-  cardBodyText: { flex: 1 },
-  cardTitle: {
-    fontSize: 15,
-    fontWeight: "700",
-    color: ds.carbon[100],
-    marginBottom: 2,
-  },
-  cardSubTitle: {
-    fontSize: 13,
-    color: ds.carbon[500],
-    marginBottom: 6,
-  },
-  attrRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginTop: 6,
-  },
-  assetRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-  },
-  assetText: { fontSize: 12, color: ds.carbon[600], marginLeft: 4, flexShrink: 1 },
-  idBadge: {
-    backgroundColor: ds.carbon[1000],
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 4,
-  },
-  idText: { fontSize: 10, color: ds.carbon[500], fontWeight: "600" },
-  progressBadge: {
-    backgroundColor: ds.carbon[1000],
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
-  },
-  progressText: { fontSize: 10, fontWeight: "700", color: ds.carbon[500] },
-
-  cardFooter: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginTop: 12,
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: ds.field,
-  },
-  footerLeft: { flexDirection: "row", alignItems: "center", gap: 4 },
-  footerText: { fontSize: 12, color: ds.carbon[600], marginLeft: 4 },
-  footerRight: { flexDirection: "row", alignItems: "center" },
-  avatar: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    backgroundColor: ds.carbon[1000],
-    alignItems: "center",
-    justifyContent: "center",
-    marginRight: 4,
-  },
-  avatarText: { fontSize: 10, fontWeight: "700", color: ds.carbon[500] },
-  assigneeName: {
-    fontSize: 12,
-    color: ds.carbon[500],
-    fontWeight: "500",
-    maxWidth: 100,
-  },
-  unassigned: { fontSize: 10, color: ds.carbon[800], fontStyle: "italic" },
-
-  // States
-  emptyState: { alignItems: "center", paddingTop: 80 },
-  emptyIcon: {
-    width: 80,
-    height: 80,
-    backgroundColor: ds.carbon[1000],
-    borderRadius: 40,
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 16,
-  },
-  emptyTitle: { fontSize: 18, fontWeight: "700", color: ds.carbon[100] },
-  emptyBody: {
-    fontSize: 14,
-    color: ds.carbon[600],
-    marginTop: 4,
-    textAlign: "center",
-    paddingHorizontal: 40,
-  },
-  footerLoader: { paddingVertical: 20, alignItems: "center" },
-  startModalOverlay: {
-    flex: 1,
-    backgroundColor: "rgba(15,23,42,0.6)",
-    justifyContent: "center",
-    paddingHorizontal: 24,
-  },
-  startModalCard: {
-    borderRadius: 20,
-    padding: 20,
-  },
-  startModalHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-  },
-  startModalTitle: { fontSize: 18, fontWeight: "800" },
-  startModalSubtitle: { fontSize: 13, fontWeight: "600", marginTop: 4 },
-  startModalLabel: {
-    fontSize: 11,
-    fontWeight: "700",
-    textTransform: "uppercase",
-    letterSpacing: 1,
-    marginTop: 18,
-    marginBottom: 8,
-  },
-  startBeforeBox: {
-    height: 160,
-    borderRadius: 14,
-    borderWidth: 1.5,
-    borderStyle: "dashed",
-    overflow: "hidden",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  startBeforePreview: { width: "100%", height: "100%" },
-  startBeforePlaceholder: { alignItems: "center", justifyContent: "center" },
-  startRetakeBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    marginTop: 8,
-    alignSelf: "flex-start",
-  },
-  startRetakeText: { color: ds.sky[100], fontSize: 12, fontWeight: "700" },
-  startModalActions: {
-    flexDirection: "row",
-    gap: 10,
-    marginTop: 22,
-  },
-  startBtn: {
-    flex: 1,
-    height: 46,
-    borderRadius: 12,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-}));

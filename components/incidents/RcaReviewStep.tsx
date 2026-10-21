@@ -6,18 +6,9 @@
 import React, { useMemo } from "react";
 import { Image, Linking, ScrollView, Text, TouchableOpacity, View } from "react-native";
 import * as Haptics from "expo-haptics";
-import { Check, ExternalLink, FileText, ImageOff, Info, Sparkles } from "lucide-react-native";
-import { makeThemedStyles, useDs } from "@/hooks/useDs";
-import FullscreenPicker from "@/components/FullscreenPicker";
-import RequiredMark from "@/components/RequiredMark";
+import { Bx } from "@/components/jo/Bx";
+import { f, makeJoStyles, useJoTheme } from "@/components/jo/ui";
 import type { SelectOption } from "@/components/SearchableSelect";
-import {
-  CardHead,
-  DetailCard,
-  Field,
-  StatusChip,
-  soRadius,
-} from "@/components/tickets/TicketDetailUI";
 import {
   FAULT_TYPE_OPTIONS,
   OPERATING_CONDITION_OPTIONS,
@@ -25,6 +16,7 @@ import {
 } from "@/constants/incidentFormOptions";
 import type { RcaFields, RcaImportResult } from "@/services/RcaImportService";
 import { DateTimeTiles, InlineError, Notice } from "./RcaImportParts";
+import { FieldBlock, FieldLabel, IncChip, IncPicker, Panel, TextField } from "./IncFields";
 import { FILE_KIND_LABEL, type RcaFieldErrors } from "./rcaImportLib";
 
 interface Props {
@@ -44,6 +36,9 @@ interface Props {
   onSetAllImages: (all: boolean) => void;
 }
 
+/** "Label *" → label + required flag. */
+const req = (label: string) => ({ label: label.replace(/\s*\*$/, ""), required: /\*$/.test(label) });
+
 export default function RcaReviewStep({
   result,
   fields,
@@ -60,8 +55,8 @@ export default function RcaReviewStep({
   onToggleImage,
   onSetAllImages,
 }: Props) {
-  const styles = useStyles();
-  const ds = useDs();
+  const s = useStyles();
+  const t = useJoTheme();
   const err = (k: keyof RcaFields) => (showErrors ? errors[k] : undefined);
   const resolved = fields.status === "Resolved";
 
@@ -90,30 +85,32 @@ export default function RcaReviewStep({
   return (
     <ScrollView
       style={{ flex: 1 }}
-      contentContainerStyle={styles.body}
+      contentContainerStyle={s.body}
       keyboardShouldPersistTaps="handled"
       showsVerticalScrollIndicator={false}
     >
-      <View style={styles.intro}>
-        <Sparkles size={15} color={ds.flame[100]} strokeWidth={2.2} />
-        <Text style={styles.introText}>
+      <View style={s.intro}>
+        <Bx name="bxs-magic-wand" size={16} color={t.accentInk} />
+        <Text style={s.introText}>
           We filled this in from the report. Check each section and fix anything that&apos;s off.
         </Text>
       </View>
 
       {/* ── Incident ─────────────────────────────────────────────────── */}
-      <DetailCard>
-        <CardHead label="Incident" />
-        <FullscreenPicker
-          label="Site *"
+      <Panel title="Incident">
+        <IncPicker
+          label="Site"
+          required
           placeholder="Select site"
           options={siteOptions}
           value={fields.site_code}
           onChange={(v) => setField("site_code", v)}
+          error={err("site_code")}
+          searchPlaceholder="Search sites"
         />
-        <InlineError text={err("site_code")} style={styles.fieldError} />
-        <FullscreenPicker
-          label="Asset *"
+        <IncPicker
+          label="Asset"
+          required
           placeholder="Select the affected equipment"
           options={assetOptions}
           value={fields.asset_location ?? ""}
@@ -123,17 +120,17 @@ export default function RcaReviewStep({
           searchValue={assetSearch}
           onSearchChange={onAssetSearch}
           remoteSearch
+          error={err("asset_location")}
         />
-        <InlineError text={err("asset_location")} style={styles.fieldError} />
-
-        <Field
-          label="Title *"
-          placeholder="e.g. AHU-3 motor tripping"
-          value={fields.fault_symptom}
-          onChangeText={(v) => setField("fault_symptom", v)}
-          invalid={!!err("fault_symptom")}
-        />
-        <InlineError text={err("fault_symptom")} style={styles.fieldErrorTight} />
+        <FieldBlock label="Title" required error={err("fault_symptom")}>
+          <TextField
+            placeholder="e.g. AHU-3 motor tripping"
+            value={fields.fault_symptom}
+            onChangeText={(v) => setField("fault_symptom", v)}
+            invalid={!!err("fault_symptom")}
+            accessibilityLabel="Title"
+          />
+        </FieldBlock>
 
         <ChipGroup
           label="Fault type *"
@@ -161,42 +158,42 @@ export default function RcaReviewStep({
           onChange={(v) => setField("status", v as RcaFields["status"])}
         />
 
-        <View style={{ marginTop: 16 }}>
-          <FullscreenPicker
-            label="Assigned to *"
-            placeholder="Choose who handles this incident"
-            options={assigneeOptions}
-            value={fields.assigned_to ?? ""}
-            onChange={(v) => setField("assigned_to", v)}
-            searchPlaceholder="Search people..."
-            emptyMessage="No people found for this site"
-          />
-          <InlineError text={err("assigned_to")} style={styles.fieldError} />
-        </View>
-        <Field
-          label="Raised by"
-          placeholder="Who reported it? e.g. Sister Mary, ICU"
-          value={fields.raised_by ?? ""}
-          onChangeText={(v) => setField("raised_by", v)}
-          maxLength={200}
+        <IncPicker
+          label="Assigned to"
+          required
+          placeholder="Choose who handles this incident"
+          options={assigneeOptions}
+          value={fields.assigned_to ?? ""}
+          onChange={(v) => setField("assigned_to", v)}
+          searchPlaceholder="Search people..."
+          emptyMessage="No people found for this site"
+          error={err("assigned_to")}
         />
-        <Text style={styles.createdBy}>Created by: You</Text>
-      </DetailCard>
+        <FieldBlock label="Raised by">
+          <TextField
+            placeholder="Who reported it? e.g. Sister Mary, ICU"
+            value={fields.raised_by ?? ""}
+            onChangeText={(v) => setField("raised_by", v)}
+            maxLength={200}
+            accessibilityLabel="Raised by"
+          />
+        </FieldBlock>
+        <Text style={s.createdBy}>Created by: You</Text>
+      </Panel>
 
       {/* ── Timeline ─────────────────────────────────────────────────── */}
-      <DetailCard>
-        <CardHead label="Timeline" />
-        <Label text="Happened at *" />
+      <Panel title="Timeline">
+        <FieldLabel label="Happened at" required style={s.labelGap} />
         <DateTimeTiles
           value={fields.incident_created_time}
           fallbackDate={dateDefaults.incident_created_time}
           onChange={(v) => setField("incident_created_time", v)}
           invalid={!!err("incident_created_time")}
         />
-        <InlineError text={err("incident_created_time")} style={styles.fieldErrorTight} />
+        <InlineError text={err("incident_created_time")} style={s.fieldErrorTight} />
 
-        <View style={styles.labelRow}>
-          <Label text="Responded at" />
+        <View style={s.labelRow}>
+          <FieldLabel label="Responded at" />
           {fields.incident_updated_time ? (
             <TouchableOpacity
               onPress={() => setField("incident_updated_time", null)}
@@ -204,10 +201,10 @@ export default function RcaReviewStep({
               accessibilityRole="button"
               accessibilityLabel="Clear the responded time"
             >
-              <Text style={styles.clear}>Clear</Text>
+              <Text style={s.link}>Clear</Text>
             </TouchableOpacity>
           ) : (
-            <Text style={styles.optionalTag}>Optional</Text>
+            <Text style={s.optionalTag}>Optional</Text>
           )}
         </View>
         <DateTimeTiles
@@ -215,26 +212,24 @@ export default function RcaReviewStep({
           onChange={(v) => setField("incident_updated_time", v)}
           invalid={!!err("incident_updated_time")}
         />
-        <InlineError text={err("incident_updated_time")} style={styles.fieldErrorTight} />
+        <InlineError text={err("incident_updated_time")} style={s.fieldErrorTight} />
 
         {resolved ? (
           <>
-            <View style={{ height: 14 }} />
-            <Label text="Resolved at *" />
+            <FieldLabel label="Resolved at" required style={[s.labelGap, { marginTop: 14 }]} />
             <DateTimeTiles
               value={fields.incident_resolved_time}
               fallbackDate={dateDefaults.incident_resolved_time}
               onChange={(v) => setField("incident_resolved_time", v)}
               invalid={!!err("incident_resolved_time")}
             />
-            <InlineError text={err("incident_resolved_time")} style={styles.fieldErrorTight} />
+            <InlineError text={err("incident_resolved_time")} style={s.fieldErrorTight} />
           </>
         ) : null}
-      </DetailCard>
+      </Panel>
 
       {/* ── RCA findings ─────────────────────────────────────────────── */}
-      <DetailCard>
-        <CardHead label="RCA findings" />
+      <Panel title="RCA findings">
         <TextBlock
           label="Immediate action"
           value={fields.immediate_action_taken}
@@ -266,29 +261,30 @@ export default function RcaReviewStep({
           placeholder="How was it resolved?"
           error={err("remarks")}
         />
-        <Field
-          label="Vendor"
-          placeholder="Vendor involved, if any"
-          value={fields.vendor_tagged}
-          onChangeText={(v) => setField("vendor_tagged", v)}
-        />
-      </DetailCard>
+        <FieldBlock label="Vendor">
+          <TextField
+            placeholder="Vendor involved, if any"
+            value={fields.vendor_tagged}
+            onChangeText={(v) => setField("vendor_tagged", v)}
+            accessibilityLabel="Vendor"
+          />
+        </FieldBlock>
+      </Panel>
 
       {/* ── Photos ───────────────────────────────────────────────────── */}
-      <DetailCard>
-        <CardHead
-          label="Photos from the report"
-          hint={images.length ? `${keptCount} of ${images.length} photos will be attached` : undefined}
-        />
+      <Panel
+        title="Photos from the report"
+        meta={images.length ? `${keptCount} of ${images.length} kept` : undefined}
+      >
         {images.length === 0 ? (
-          <View style={styles.emptyPhotos}>
-            <ImageOff size={18} color={ds.carbon[600]} strokeWidth={2} />
-            <Text style={styles.emptyText}>No photos were found in the report.</Text>
+          <View style={s.emptyPhotos}>
+            <Bx name="bx-image" size={18} color={t.faint} />
+            <Text style={s.emptyText}>No photos were found in the report.</Text>
           </View>
         ) : (
           <>
-            <Text style={styles.photoHelp}>Tap a photo to leave it out or add it back.</Text>
-            <View style={styles.grid}>
+            <Text style={s.photoHelp}>Tap a photo to leave it out or add it back.</Text>
+            <View style={s.grid}>
               {images.map((img, i) => {
                 const on = selectedImages.includes(img.url);
                 return (
@@ -299,18 +295,14 @@ export default function RcaReviewStep({
                       onToggleImage(img.url);
                     }}
                     activeOpacity={0.85}
-                    style={[styles.thumbWrap, on && styles.thumbOn]}
+                    style={[s.thumbWrap, on && s.thumbOn]}
                     accessibilityRole="checkbox"
                     accessibilityState={{ checked: on }}
                     accessibilityLabel={`Photo ${i + 1} of ${images.length}`}
                   >
-                    <Image
-                      source={{ uri: img.url }}
-                      style={[styles.thumb, !on && { opacity: 0.35 }]}
-                      resizeMode="cover"
-                    />
-                    <View style={[styles.check, on ? styles.checkOn : styles.checkOff]}>
-                      {on ? <Check size={13} color={ds.onControl} strokeWidth={3} /> : null}
+                    <Image source={{ uri: img.url }} style={[s.thumb, !on && { opacity: 0.35 }]} resizeMode="cover" />
+                    <View style={[s.check, on ? s.checkOn : s.checkOff]}>
+                      {on ? <Bx name="bx-check" size={15} color={t.onAccent} /> : null}
                     </View>
                   </TouchableOpacity>
                 );
@@ -319,42 +311,39 @@ export default function RcaReviewStep({
             <TouchableOpacity
               onPress={() => onSetAllImages(keptCount < images.length)}
               hitSlop={8}
-              style={{ alignSelf: "flex-start", marginTop: 4 }}
+              style={{ alignSelf: "flex-start", marginTop: 6 }}
               accessibilityRole="button"
             >
-              <Text style={styles.clear}>
-                {keptCount < images.length ? "Select all photos" : "Leave all photos out"}
-              </Text>
+              <Text style={s.link}>{keptCount < images.length ? "Select all photos" : "Leave all photos out"}</Text>
             </TouchableOpacity>
           </>
         )}
-      </DetailCard>
+      </Panel>
 
       {/* ── RCA document ─────────────────────────────────────────────── */}
-      <DetailCard>
-        <CardHead label="RCA document" />
+      <Panel title="RCA document">
         <TouchableOpacity
           onPress={() => void Linking.openURL(doc.url).catch(() => {})}
           activeOpacity={0.85}
-          style={styles.docChip}
+          style={s.docChip}
           accessibilityRole="button"
           accessibilityLabel={`Open ${doc.name || "the RCA document"}`}
         >
-          <View style={styles.docIcon}>
-            <FileText size={18} color={ds.sky[100]} strokeWidth={2} />
+          <View style={s.docIcon}>
+            <Bx name="bx-file" size={19} color={t.info} />
           </View>
           <View style={{ flex: 1, minWidth: 0 }}>
-            <Text style={styles.docName} numberOfLines={1}>
+            <Text style={s.docName} numberOfLines={1}>
               {doc.name || "RCA report"}
             </Text>
-            <Text style={styles.docMeta}>{docMeta}</Text>
+            <Text style={s.docMeta}>{docMeta}</Text>
           </View>
-          <ExternalLink size={15} color={ds.carbon[500]} strokeWidth={2} />
+          <Bx name="bx-link-external" size={17} color={t.muted} />
         </TouchableOpacity>
-        <Text style={styles.docNote}>Will be saved to the incident&apos;s RCA attachments.</Text>
-      </DetailCard>
+        <Text style={s.docNote}>Will be saved to the incident&apos;s RCA attachments.</Text>
+      </Panel>
 
-      <Notice icon={Info} style={{ marginTop: 2 }}>
+      <Notice icon="bx-info-circle" style={{ marginTop: 10 }}>
         {result.rca_status_on_create === "RCA Submitted"
           ? "The RCA will be filed as submitted with this incident."
           : "A manager will review the RCA after you create the incident."}
@@ -364,15 +353,6 @@ export default function RcaReviewStep({
 }
 
 /* ── Small pieces ────────────────────────────────────────────────────────── */
-
-function Label({ text }: { text: string }) {
-  const styles = useStyles();
-  return (
-    <Text style={styles.label}>
-      <RequiredMark label={text} />
-    </Text>
-  );
-}
 
 function ChipGroup({
   label,
@@ -387,16 +367,17 @@ function ChipGroup({
   value: string;
   onChange: (v: string) => void;
 }) {
-  const styles = useStyles();
+  const s = useStyles();
+  const l = req(label);
   return (
     <View style={{ marginTop: 14 }}>
-      <Label text={label} />
-      <View style={styles.chips} accessibilityRole="radiogroup">
+      <FieldLabel label={l.label} required={l.required} style={s.labelGap} />
+      <View style={s.chips} accessibilityRole="radiogroup">
         {options.map((o) => (
-          <StatusChip
+          <IncChip
             key={o}
             label={labels?.[o] ?? o}
-            active={value === o}
+            selected={value === o}
             onPress={() => {
               Haptics.selectionAsync().catch(() => {});
               onChange(o);
@@ -421,68 +402,52 @@ function TextBlock({
   placeholder: string;
   error?: string;
 }) {
-  const styles = useStyles();
+  const l = req(label);
   return (
-    <View style={{ marginBottom: 14 }}>
-      <Field
-        label={label}
+    <FieldBlock label={l.label} required={l.required} error={error}>
+      <TextField
         placeholder={placeholder}
         value={value}
         onChangeText={onChange}
         multiline
-        textAlignVertical="top"
         minHeight={76}
         invalid={!!error}
+        accessibilityLabel={l.label}
       />
-      <InlineError text={error} style={styles.fieldErrorTight} />
-    </View>
+    </FieldBlock>
   );
 }
 
-const useStyles = makeThemedStyles((ds) => ({
-  body: { paddingHorizontal: 16, paddingTop: 16, paddingBottom: 24 },
-  intro: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 8,
-    marginBottom: 12,
-    paddingHorizontal: 4,
-  },
-  introText: { flex: 1, fontSize: 13, lineHeight: 19, color: ds.carbon[300] },
-  label: {
-    fontSize: 9,
-    fontWeight: "600",
-    letterSpacing: 1.08,
-    textTransform: "uppercase",
-    color: ds.carbon[500],
-    marginBottom: 7,
-  },
+const useStyles = makeJoStyles((t) => ({
+  body: { paddingHorizontal: 16, paddingTop: 12, paddingBottom: 24 },
+  intro: { flexDirection: "row", alignItems: "flex-start", gap: 8, marginBottom: 2, paddingHorizontal: 4 },
+  introText: { ...f.t(13), flex: 1, lineHeight: 19, color: t.ink2 },
+  labelGap: { marginBottom: 6, marginTop: 14 },
   labelRow: {
     flexDirection: "row",
     alignItems: "baseline",
     justifyContent: "space-between",
     marginTop: 14,
+    marginBottom: 6,
   },
-  clear: { fontSize: 12.5, fontWeight: "600", color: ds.sky[100] },
-  optionalTag: { fontSize: 10.5, color: ds.carbon[500] },
-  createdBy: { fontSize: 11.5, color: ds.carbon[500], marginTop: 10 },
-  chips: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-  fieldError: { marginTop: -8, marginBottom: 12 },
+  link: { ...f.t(12.5, 600), color: t.accentInk },
+  optionalTag: { ...f.t(11), color: t.muted },
+  createdBy: { ...f.t(11.5), color: t.muted, marginTop: 12 },
+  chips: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
   fieldErrorTight: { marginTop: 6 },
 
-  photoHelp: { fontSize: 12, color: ds.carbon[500], marginBottom: 10 },
-  grid: { flexDirection: "row", flexWrap: "wrap", justifyContent: "flex-start", gap: 8 },
+  photoHelp: { ...f.t(12), color: t.muted, marginTop: 8, marginBottom: 10 },
+  grid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   thumbWrap: {
-    width: 96,
-    height: 96,
-    borderRadius: soRadius.sm + 2,
+    width: 92,
+    height: 92,
+    borderRadius: 16,
     borderWidth: 2,
     borderColor: "transparent",
     overflow: "hidden",
-    backgroundColor: ds.carbon[1000],
-    marginBottom: 2,
+    backgroundColor: t.raised,
   },
-  thumbOn: { borderColor: ds.controlOn },
+  thumbOn: { borderColor: t.accent },
   thumb: { width: "100%", height: "100%" },
   check: {
     position: "absolute",
@@ -494,34 +459,31 @@ const useStyles = makeThemedStyles((ds) => ({
     alignItems: "center",
     justifyContent: "center",
   },
-  checkOn: { backgroundColor: ds.controlOn },
-  checkOff: {
-    borderWidth: 2,
-    borderColor: "#FFFFFF",
-    backgroundColor: "rgba(0,0,0,0.35)",
-  },
-  emptyPhotos: { flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 6 },
-  emptyText: { fontSize: 13, color: ds.carbon[500] },
+  checkOn: { backgroundColor: t.accent },
+  checkOff: { borderWidth: 2, borderColor: t.selBg, backgroundColor: t.scrim },
+  emptyPhotos: { flexDirection: "row", alignItems: "center", gap: 8, paddingTop: 12 },
+  emptyText: { ...f.t(13), color: t.muted },
 
   docChip: {
     flexDirection: "row",
     alignItems: "center",
     gap: 11,
+    marginTop: 12,
     padding: 11,
-    borderRadius: soRadius.sm,
+    borderRadius: 18,
     borderWidth: 1,
-    borderColor: ds.fieldBorder,
-    backgroundColor: ds.field,
+    borderColor: t.isDark ? "rgba(255,255,255,0.07)" : t.lineMid,
+    backgroundColor: t.raised,
   },
   docIcon: {
     width: 38,
     height: 38,
-    borderRadius: soRadius.sm,
-    backgroundColor: ds.sky[1000],
+    borderRadius: 19,
+    backgroundColor: t.infoTint,
     alignItems: "center",
     justifyContent: "center",
   },
-  docName: { fontSize: 13.5, fontWeight: "600", color: ds.carbon[100] },
-  docMeta: { fontSize: 11.5, color: ds.carbon[500], marginTop: 2 },
-  docNote: { fontSize: 12, color: ds.carbon[500], marginTop: 8 },
+  docName: { ...f.t(13.5, 600), color: t.ink },
+  docMeta: { ...f.t(11.5), color: t.muted, marginTop: 2 },
+  docNote: { ...f.t(12), color: t.muted, marginTop: 8 },
 }));

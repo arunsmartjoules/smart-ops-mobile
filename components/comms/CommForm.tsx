@@ -8,7 +8,7 @@
  */
 import React, { useMemo, useState } from "react";
 import { ScrollView, Text, TouchableOpacity, View } from "react-native";
-import { Flag, Link as LinkIcon, MessageCircle, Plus, X } from "lucide-react-native";
+import { Flag, Link as LinkIcon, MessageCircle, Plus, X } from "@/components/jo/bxIcons";
 import { toneFg } from "@/constants/jo";
 import { Chip, PrimaryButton, f, makeJoStyles, useJoTheme } from "@/components/jo/ui";
 import CustomerCommunicationService, {

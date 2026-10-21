@@ -13,9 +13,8 @@ import Animated, {
   withSequence,
   withTiming,
 } from "react-native-reanimated";
-import { Check, FileText, Sparkles } from "lucide-react-native";
-import { makeThemedStyles, useDs } from "@/hooks/useDs";
-import { DetailCard, soRadius } from "@/components/tickets/TicketDetailUI";
+import { Bx } from "@/components/jo/Bx";
+import { Card, f, makeJoStyles, useJoTheme } from "@/components/jo/ui";
 import type { RcaImportStage } from "@/services/RcaImportService";
 
 export type RcaPhase = "uploading" | RcaImportStage;
@@ -63,7 +62,7 @@ export default function RcaProgress({
   fileName: string;
 }) {
   const styles = useStyles();
-  const ds = useDs();
+  const t = useJoTheme();
   const active = phaseIndex(phase);
 
   const progress = useSharedValue(0);
@@ -102,13 +101,13 @@ export default function RcaProgress({
     >
       <View style={styles.hero}>
         <Animated.View style={[styles.heroIcon, pulseStyle]}>
-          <Sparkles size={30} color={ds.flame[100]} strokeWidth={2} />
+          <Bx name="bxs-magic-wand" size={30} color={t.accentInk} />
         </Animated.View>
         <Text style={styles.heroTitle} accessibilityRole="header">
           Reading your report
         </Text>
         <View style={styles.fileRow}>
-          <FileText size={13} color={ds.carbon[500]} strokeWidth={2} />
+          <Bx name="bx-file" size={14} color={t.muted} />
           <Text style={styles.fileName} numberOfLines={1}>
             {fileName}
           </Text>
@@ -124,7 +123,7 @@ export default function RcaProgress({
       </View>
       <Text style={styles.reassure}>This usually takes under a minute.</Text>
 
-      <DetailCard style={{ paddingVertical: 6 }}>
+      <Card style={{ paddingVertical: 6, paddingHorizontal: 16 }}>
         {STEPS.map((s, i) => {
           const done = i < active;
           const now = i === active;
@@ -137,14 +136,14 @@ export default function RcaProgress({
               <View
                 style={[
                   styles.stepIcon,
-                  done && { backgroundColor: ds.sky[100], borderColor: ds.sky[100] },
-                  now && { borderColor: ds.flame[100] },
+                  done && { backgroundColor: t.ok, borderColor: t.ok },
+                  now && { borderColor: t.accent },
                 ]}
               >
                 {done ? (
-                  <Check size={14} color={ds.onAccent} strokeWidth={3} />
+                  <Bx name="bx-check" size={16} color={t.onAccent} />
                 ) : now ? (
-                  <ActivityIndicator size="small" color={ds.flame[100]} />
+                  <ActivityIndicator size="small" color={t.accentInk} />
                 ) : (
                   <Text style={styles.stepNum}>{i + 1}</Text>
                 )}
@@ -153,7 +152,7 @@ export default function RcaProgress({
                 <Text
                   style={[
                     styles.stepLabel,
-                    !done && !now && { color: ds.carbon[600], fontWeight: "500" },
+                    !done && !now && styles.stepLabelIdle,
                   ]}
                 >
                   {s.label}
@@ -163,7 +162,7 @@ export default function RcaProgress({
             </View>
           );
         })}
-      </DetailCard>
+      </Card>
       <Text style={styles.footnote}>
         You can keep this screen open — we&apos;ll show you what we found as soon as it&apos;s ready.
       </Text>
@@ -171,19 +170,19 @@ export default function RcaProgress({
   );
 }
 
-const useStyles = makeThemedStyles((ds) => ({
-  body: { paddingHorizontal: 20, paddingTop: 28, paddingBottom: 24 },
+const useStyles = makeJoStyles((t) => ({
+  body: { paddingHorizontal: 16, paddingTop: 28, paddingBottom: 24 },
   hero: { alignItems: "center", marginBottom: 22 },
   heroIcon: {
     width: 72,
     height: 72,
     borderRadius: 36,
-    backgroundColor: ds.flame[1000],
+    backgroundColor: t.accentTint,
     alignItems: "center",
     justifyContent: "center",
     marginBottom: 14,
   },
-  heroTitle: { fontSize: 20, fontWeight: "700", color: ds.carbon[100], letterSpacing: 0.2 },
+  heroTitle: { ...f.d(22, -0.02), color: t.ink },
   fileRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -191,41 +190,24 @@ const useStyles = makeThemedStyles((ds) => ({
     marginTop: 6,
     maxWidth: "90%",
   },
-  fileName: { fontSize: 12.5, color: ds.carbon[500], flexShrink: 1 },
-  track: {
-    height: 8,
-    borderRadius: soRadius.pill,
-    backgroundColor: ds.carbon[1000],
-    overflow: "hidden",
-  },
-  fill: { height: "100%", borderRadius: soRadius.pill, backgroundColor: ds.flame[100] },
-  reassure: {
-    fontSize: 12.5,
-    color: ds.carbon[500],
-    textAlign: "center",
-    marginTop: 10,
-    marginBottom: 18,
-  },
+  fileName: { ...f.t(12.5), color: t.muted, flexShrink: 1 },
+  track: { height: 6, borderRadius: 3, backgroundColor: t.track, overflow: "hidden" },
+  fill: { height: "100%", borderRadius: 3, backgroundColor: t.accent },
+  reassure: { ...f.t(12.5), color: t.muted, textAlign: "center", marginTop: 10, marginBottom: 18 },
   stepRow: { flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 12 },
-  stepDivider: { borderTopWidth: 1, borderTopColor: ds.carbon[1000] },
+  stepDivider: { borderTopWidth: 1, borderTopColor: t.line },
   stepIcon: {
     width: 28,
     height: 28,
     borderRadius: 14,
     borderWidth: 1.5,
-    borderColor: ds.carbon[900],
+    borderColor: t.disabled,
     alignItems: "center",
     justifyContent: "center",
   },
-  stepNum: { fontSize: 12, fontWeight: "700", color: ds.carbon[600] },
-  stepLabel: { fontSize: 14, fontWeight: "600", color: ds.carbon[100] },
-  stepSub: { fontSize: 12, color: ds.carbon[500], marginTop: 2 },
-  footnote: {
-    fontSize: 12,
-    lineHeight: 17,
-    color: ds.carbon[500],
-    textAlign: "center",
-    marginTop: 6,
-    paddingHorizontal: 12,
-  },
+  stepNum: { ...f.t(12, 700), color: t.faint },
+  stepLabel: { ...f.t(14, 600), color: t.ink },
+  stepLabelIdle: { ...f.t(14, 500), color: t.faint },
+  stepSub: { ...f.t(12), color: t.muted, marginTop: 2 },
+  footnote: { ...f.t(12), lineHeight: 17, color: t.muted, textAlign: "center", marginTop: 12, paddingHorizontal: 12 },
 }));

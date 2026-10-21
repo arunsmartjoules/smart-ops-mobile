@@ -2,20 +2,15 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from "react"
 import {
   View,
   Text,
-  TouchableOpacity,
   FlatList,
-  ActivityIndicator,
   RefreshControl,
   Alert,
-  Modal,
 } from "react-native";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import { getSelectedSiteCode, setSelectedSiteCode } from "@/services/SiteSelection";
-import { SafeAreaView } from "react-native-safe-area-context";
 // No expo-router hooks here on purpose — they throw "Couldn't find a
 // navigation context" during route teardown. Params arrive as props from the
 // route wrapper, which reads them from the routeParams store (no hooks).
-import { ChevronLeft, CheckCircle2, Droplets, FlaskConical, Thermometer, Save, Info, ListChecks, Clock, Lock } from "lucide-react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useAuth } from "@/contexts/AuthContext";
 import { SiteConfigService, TaskItem } from "@/services/SiteConfigService";
@@ -28,16 +23,26 @@ import {
 } from "@/services/LogActivityMasterService";
 import { UnifiedLogItem } from "./UnifiedLogItem";
 import { DateNavBar } from "./DateNavBar";
-import SignaturePad from "@/components/SignaturePad";
 import { getISTDateString } from "@/services/AttendanceService";
 import { formatISTDate } from "@/utils/istDate";
 import { db } from "@/database";
-import { makeThemedStyles, useDs } from "@/hooks/useDs";
-import { soRadius, soShadow } from "@/components/home/SiteOverview";
+import { Bx } from "@/components/jo/Bx";
 import {
-  UnderlineTabs,
-  tabToneLight,
-} from "@/components/shared/ListChrome";
+  Avatar,
+  Card,
+  Chip,
+  EmptyState,
+  IconButton,
+  JoPage,
+  PrimaryButton,
+  ProgressBar,
+  Shimmer,
+  StatusPill,
+  f,
+  useJoTheme,
+} from "@/components/jo/ui";
+import { BottomBar, EntryHeader, FormHeading, NoticePill } from "./LogsKit";
+import { SignatureSheet } from "./SignatureSheet";
 
 interface LogEntryModuleProps {
   type: "Chemical" | "Water" | "TempRH";
@@ -56,8 +61,7 @@ export const LogEntryModule = ({
   initialShift,
   onBack,
 }: LogEntryModuleProps) => {
-  const entryStyles = useEntryStyles();
-  const ds = useDs();
+  const t = useJoTheme();
   const { user } = useAuth();
   const isEditMode = !!editId;
   
@@ -177,7 +181,7 @@ export const LogEntryModule = ({
           
           // Populate Initial Values
           if (type === "Chemical") {
-            initialValues[task.id] = { dosing: log.chemical_dosing || "", attachment: log.attachment || "", mainRemarks: log.main_remarks || "" };
+            initialValues[task.id] = { dosing: log.chemical_dosing || "No", attachment: log.attachment || "", mainRemarks: log.main_remarks || "" };
           } else if (type === "Water") {
             initialValues[task.id] = { tds: log.tds?.toString() || "", ph: log.ph?.toString() || "", hardness: log.hardness?.toString() || "", attachment: log.attachment || "", mainRemarks: log.main_remarks || "" };
           } else {
@@ -202,7 +206,9 @@ export const LogEntryModule = ({
 
         finalTasks.forEach(task => {
           if (type === "Chemical") {
-            initialValues[task.id] = { dosing: task.meta?.chemical_dosing || "", attachment: task.meta?.attachment || "", mainRemarks: task.meta?.main_remarks || "" };
+            // Chemical is a single checkbox: unticked means "not dosed", so an
+            // untouched row is a "No" answer rather than a missing one.
+            initialValues[task.id] = { dosing: task.meta?.chemical_dosing || "No", attachment: task.meta?.attachment || "", mainRemarks: task.meta?.main_remarks || "" };
           } else if (type === "Water") {
             initialValues[task.id] = { tds: task.meta?.tds?.toString() || "", ph: task.meta?.ph?.toString() || "", hardness: task.meta?.hardness?.toString() || "", attachment: task.meta?.attachment || "", mainRemarks: task.meta?.main_remarks || "" };
           } else {
@@ -535,12 +541,6 @@ export const LogEntryModule = ({
     };
   }, [type, siteCode, scheduledDate, logName, isEditMode, tasks.length]);
 
-  const userInitials = useMemo(() => {
-    const n = (user?.name || user?.user_id || "?").trim();
-    const parts = n.split(/\s+/).filter(Boolean);
-    return ((parts[0]?.[0] || "?") + (parts[1]?.[0] || "")).toUpperCase();
-  }, [user]);
-
   const headerDate = useMemo(() => {
     try {
       return formatISTDate(new Date(scheduledDate));
@@ -826,149 +826,127 @@ export const LogEntryModule = ({
     }
   };
 
-  const CategoryIcon =
-    type === "TempRH" ? Thermometer : type === "Water" ? Droplets : FlaskConical;
+  const locked = !isEditMode && !allScheduledTasksComplete;
+  const heading =
+    type === "Chemical"
+      ? "Tick each point that was dosed"
+      : type === "Water"
+        ? "Record water readings"
+        : "Record temperature & RH";
+  const headerSub = isEditMode
+    ? tasks[0]?.name || "Manual Entry"
+    : `${siteName || siteCode || ""}${siteName || siteCode ? " · " : ""}${headerDate}`;
+  const operator = user?.name || user?.user_id || "Unassigned";
 
-  return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: ds.pageBg }} edges={["top"]}>
-      <KeyboardAvoidingView behavior="padding" className="flex-1">
-        {/* Header Section */}
-        <View style={entryStyles.header}>
-          <View style={entryStyles.headerRow}>
-            <TouchableOpacity
-              onPress={onBack}
-              hitSlop={{ top: 20, bottom: 20, left: 20, right: 20 }}
-              style={entryStyles.headerTile}
-            >
-              <ChevronLeft size={20} color={ds.onChrome} />
-            </TouchableOpacity>
-            <View style={{ flex: 1, minWidth: 0 }}>
-              <Text style={entryStyles.headerTitle} numberOfLines={1}>
-                {isEditMode ? `Edit ${screenTitle}` : screenTitle}
-              </Text>
-              <Text style={entryStyles.headerSub} numberOfLines={1}>
-                {isEditMode
-                  ? tasks[0]?.name || "Manual Entry"
-                  : `${siteName || siteCode || ""}${
-                      siteName || siteCode ? " · " : ""
-                    }${headerDate}`}
-              </Text>
-            </View>
-            <View style={entryStyles.headerTile}>
-              <CategoryIcon size={17} color={ds.onChrome} />
-            </View>
-          </View>
-        </View>
-
-        {!isEditMode && (
-          <View style={entryStyles.controls}>
-            {/* Assignee */}
-            <View style={entryStyles.card}>
-              <View style={entryStyles.assigneeRow}>
-                <View style={entryStyles.avatar}>
-                  <Text style={entryStyles.avatarText}>{userInitials}</Text>
-                </View>
-                <View style={{ flex: 1, minWidth: 0 }}>
-                  <Text style={entryStyles.eyebrow}>Assigned to</Text>
-                  <View style={entryStyles.assigneeName}>
-                    <Text style={entryStyles.assigneeText} numberOfLines={1}>
-                      {user?.name || user?.user_id || "Unassigned"}
-                    </Text>
-                    {type === "TempRH" && shift ? (
-                      <View style={entryStyles.shiftBadge}>
-                        <Text style={entryStyles.shiftBadgeText}>
-                          Shift {shift}
-                        </Text>
-                      </View>
-                    ) : null}
-                  </View>
-                </View>
-                <View style={entryStyles.whenRow}>
-                  <Clock size={11} color={ds.carbon[600]} />
-                  <Text style={entryStyles.whenText}>{headerDate}</Text>
+  const listHeader = (
+    <View style={{ gap: 10, marginBottom: 10 }}>
+      {!isEditMode ? <FormHeading style={{ marginBottom: 4 }}>{heading}</FormHeading> : null}
+      {!isEditMode && (
+        <>
+          {/* Assignee */}
+          <Card style={{ padding: 14 }}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+              <Avatar name={operator} size={40} />
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Text style={[f.t(11.5), { color: t.muted }]}>Assigned to</Text>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 2 }}>
+                  <Text style={[f.t(14.5, 600), { color: t.ink, flexShrink: 1 }]} numberOfLines={1}>
+                    {operator}
+                  </Text>
+                  {type === "TempRH" && shift ? <StatusPill label={`Shift ${shift}`} tone="info" /> : null}
                 </View>
               </View>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+                <Bx name="bx-time-five" size={14} color={t.muted} />
+                <Text style={[f.t(11.5), { color: t.muted }]}>{headerDate}</Text>
+              </View>
             </View>
+          </Card>
 
-            {/* Date navigation + shift tabs */}
-            <View style={entryStyles.card}>
-              <DateNavBar
-                date={new Date(scheduledDate)}
-                onDateChange={(d: Date) => setScheduledDate(getISTDateString(d))}
-                showPicker={showDatePicker}
-                onShowPicker={setShowDatePicker}
-                prevCount={prevCount}
-                nextCount={nextCount}
-              />
-
-              {type === "TempRH" && (
-                <View style={entryStyles.shiftTabs}>
-                  <UnderlineTabs
-                    tone={tabToneLight(ds)}
-                    gap={18}
-                    contentContainerStyle={{ paddingHorizontal: 0 }}
-                    activeChip={shift ?? "A"}
-                    onSelectChip={(k) => setShift(k)}
-                    chips={["A", "B", "C"].map((s2) => ({
-                      key: s2,
-                      label: `Shift ${s2}`,
+          {/* Date navigation + shift chips */}
+          <Card style={{ padding: 14, gap: 12 }}>
+            <DateNavBar
+              date={new Date(scheduledDate)}
+              onDateChange={(d: Date) => setScheduledDate(getISTDateString(d))}
+              showPicker={showDatePicker}
+              onShowPicker={setShowDatePicker}
+              prevCount={prevCount}
+              nextCount={nextCount}
+            />
+            {type === "TempRH" && (
+              <View style={{ gap: 8 }}>
+                <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+                  {(["A", "B", "C"] as const).map((s2) => (
+                    <Chip
+                      key={s2}
+                      label={`Shift ${s2}`}
+                      selected={(shift ?? "A") === s2}
                       // Selected shift shows progress; the others show what's due.
-                      count:
-                        shift === s2
-                          ? undefined
-                          : (shiftPending[s2] ?? 0) || undefined,
-                    }))}
-                  />
-                  <Text style={entryStyles.shiftMeta}>
-                    {filledCount} of {tasks.length} filled
-                  </Text>
+                      count={shift === s2 ? undefined : (shiftPending[s2] ?? 0) || undefined}
+                      onPress={() => setShift(s2)}
+                    />
+                  ))}
                 </View>
-              )}
-            </View>
-
-            {/* Line items progress */}
-            {tasks.length > 0 && (
-              <View style={entryStyles.card}>
-                <View style={entryStyles.progressHead}>
-                  <View style={entryStyles.progressLabelRow}>
-                    <ListChecks size={13} color={ds.carbon[600]} />
-                    <Text style={entryStyles.progressLabel}>
-                      Line items filled
-                    </Text>
-                  </View>
-                  <Text style={entryStyles.progressCount}>
-                    {filledCount} / {tasks.length}
-                  </Text>
-                </View>
-                <View style={entryStyles.progressTrack}>
-                  <View
-                    style={[
-                      entryStyles.progressFill,
-                      {
-                        width: `${
-                          tasks.length
-                            ? Math.round((filledCount / tasks.length) * 100)
-                            : 0
-                        }%`,
-                      },
-                    ]}
-                  />
-                </View>
+                <Text style={[f.t(11.5), { color: t.muted, paddingHorizontal: 4 }]}>
+                  {filledCount} of {tasks.length} filled
+                </Text>
               </View>
             )}
-          </View>
-        )}
+          </Card>
+
+          {/* Line items progress */}
+          {tasks.length > 0 && (
+            <Card style={{ padding: 14, gap: 10 }}>
+              <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                  <Bx name="bx-list-check" size={16} color={t.muted} />
+                  <Text style={[f.t(12.5, 500), { color: t.ink3 }]}>Line items filled</Text>
+                </View>
+                <Text style={[f.d(16, -0.02, 1.2), { color: allScheduledTasksComplete ? t.ok : t.accentInk }]}>
+                  {filledCount} / {tasks.length}
+                </Text>
+              </View>
+              <ProgressBar
+                pct={tasks.length ? (filledCount / tasks.length) * 100 : 0}
+                color={t.ok}
+                height={6}
+              />
+            </Card>
+          )}
+        </>
+      )}
+    </View>
+  );
+
+  return (
+    <JoPage glow={false}>
+      <KeyboardAvoidingView behavior="padding" style={{ flex: 1 }}>
+        <EntryHeader
+          title={isEditMode ? `Edit ${screenTitle}` : screenTitle}
+          sub={headerSub}
+          onBack={onBack}
+          right={
+            !loading ? (
+              <IconButton icon="bx-save" iconSize={20} label="Save progress now" onPress={handleManualSave} />
+            ) : null
+          }
+        />
 
         {/* Task List */}
         {loading ? (
-          <View className="flex-1 items-center justify-center">
-            <ActivityIndicator size="large" color={ds.flame[100]} />
-            <Text className="mt-4 text-slate-400 font-medium italic">Getting your to-do list...</Text>
+          <View style={{ paddingHorizontal: 16, paddingTop: 4, gap: 10 }}>
+            <Shimmer height={30} radius={10} style={{ width: "70%" }} />
+            <Shimmer height={72} radius={26} />
+            <Shimmer height={type === "TempRH" ? 120 : 72} radius={26} />
+            <Shimmer height={220} radius={26} />
+            <Text style={[f.t(12.5), { color: t.muted, textAlign: "center", marginTop: 6 }]}>
+              Getting your to-do list…
+            </Text>
           </View>
         ) : (
           <FlatList
             data={filteredTasks}
-            keyExtractor={item => item.id}
+            keyExtractor={(item) => item.id}
             renderItem={({ item, index }) => (
               <UnifiedLogItem
                 item={item}
@@ -979,273 +957,68 @@ export const LogEntryModule = ({
                 total={filteredTasks.length}
               />
             )}
-            contentContainerStyle={{ padding: 20, paddingBottom: 120 }}
+            ListHeaderComponent={listHeader}
+            contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 4, paddingBottom: 150 }}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
             refreshControl={
               <RefreshControl
                 refreshing={refreshing}
                 onRefresh={handleRefresh}
-                colors={[ds.flame[100]]}
+                tintColor={t.muted}
+                colors={[t.accent]}
               />
             }
             ListEmptyComponent={
-              !loading && (
-                <View className="py-20 items-center justify-center">
-                  <View className="w-20 h-20 bg-slate-100 dark:bg-slate-800 rounded-full items-center justify-center mb-4">
-                    <CheckCircle2 size={36} color={ds.carbon[800]} />
-                  </View>
-                  <Text className="text-slate-900 dark:text-slate-50 font-bold text-lg">
-                    {editId ? "Log Not Found" : "All Caught Up!"}
-                  </Text>
-                  <Text className="text-slate-400 dark:text-slate-500 text-sm mt-1 text-center px-10">
-                    {editId ? "The log you are trying to edit could not be found." : `No open ${type.toLowerCase()} logs found for this ${shift ? "shift" : "day"}.`}
-                  </Text>
-                </View>
-              )
+              <EmptyState
+                icon={editId ? "bx-error-circle" : "bx-check-circle"}
+                title={editId ? "Log not found" : "All caught up!"}
+                sub={
+                  editId
+                    ? "The log you are trying to edit could not be found."
+                    : `No open ${type.toLowerCase()} logs found for this ${shift ? "shift" : "day"}.`
+                }
+              />
             }
           />
         )}
 
         {/* Footer Action */}
         {!loading && (
-          <View className="absolute bottom-0 left-0 right-0">
-            {!isEditMode &&
-              tasks.length > 0 &&
-              !allScheduledTasksComplete && (
-                <View style={entryStyles.notice}>
-                  <Info size={12} color={ds.flame[100]} />
-                  <Text style={entryStyles.noticeText}>
-                    {remainingCount} line item
-                    {remainingCount === 1 ? "" : "s"} still need readings to
-                    complete this {type === "TempRH" && shift ? "shift" : "log"}
-                  </Text>
-                </View>
-              )}
-            <View style={entryStyles.footer}>
-              <TouchableOpacity
-                onPress={handleManualSave}
-                activeOpacity={0.85}
-                style={entryStyles.saveBtn}
-              >
-                <Save size={18} color={ds.carbon[400]} />
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={() => handleSubmit()}
-                disabled={
-                  isSubmitting || (!isEditMode && !allScheduledTasksComplete)
-                }
-                activeOpacity={0.9}
-                style={[
-                  entryStyles.cta,
-                  {
-                    backgroundColor:
-                      isSubmitting || (!isEditMode && !allScheduledTasksComplete)
-                        ? ds.carbon[900]
-                        : ds.controlOn,
-                  },
-                ]}
-              >
-                {isSubmitting ? (
-                  <ActivityIndicator color={ds.onControl} />
-                ) : (
-                  <>
-                    {!isEditMode && !allScheduledTasksComplete && (
-                      <Lock size={13} color={ds.carbon[500]} />
-                    )}
-                    <Text
-                      style={[
-                        entryStyles.ctaText,
-                        {
-                          color:
-                            !isEditMode && !allScheduledTasksComplete
-                              ? ds.carbon[500]
-                              : ds.onControl,
-                        },
-                      ]}
-                    >
-                      {isEditMode
-                        ? "Update log"
-                        : signature
-                          ? "Submit logs"
-                          : "Complete & sign"}
-                    </Text>
-                  </>
-                )}
-              </TouchableOpacity>
-            </View>
-          </View>
+          <BottomBar>
+            {!isEditMode && tasks.length > 0 && !allScheduledTasksComplete ? (
+              <NoticePill
+                tone="bad"
+                style={{ alignSelf: "center" }}
+                text={`${remainingCount} line item${remainingCount === 1 ? "" : "s"} still need readings to complete this ${
+                  type === "TempRH" && shift ? "shift" : "log"
+                }`}
+              />
+            ) : null}
+            <PrimaryButton
+              label={isEditMode ? "Update log" : signature ? "Submit logs" : "Complete & sign"}
+              icon={locked ? "bx-lock-alt" : "bx-check"}
+              onPress={() => handleSubmit()}
+              busy={isSubmitting}
+              disabled={locked}
+            />
+          </BottomBar>
         )}
       </KeyboardAvoidingView>
-      <Modal
+
+      <SignatureSheet
         visible={showSignature}
-        animationType="slide"
-        transparent={true}
-        onRequestClose={() => setShowSignature(false)}
-      >
-        <View className="flex-1 bg-black/50 justify-end">
-          <SignaturePad
-            standalone={true}
-            onOK={(sig: string) => {
-              setSignature(sig);
-              setShowSignature(false);
-              handleSubmit(sig);
-            }}
-            onClear={() => setSignature(null)}
-          />
-        </View>
-      </Modal>
-    </SafeAreaView>
+        title="Sign to complete"
+        description={`Confirms ${filledCount} of ${tasks.length} line item${tasks.length === 1 ? "" : "s"}`}
+        okText="Save signature"
+        onClose={() => setShowSignature(false)}
+        onOK={(sig: string) => {
+          setSignature(sig);
+          setShowSignature(false);
+          handleSubmit(sig);
+        }}
+        onClear={() => setSignature(null)}
+      />
+    </JoPage>
   );
 };
-
-const useEntryStyles = makeThemedStyles((ds) => ({
-  header: { backgroundColor: ds.thunder[100] },
-  headerRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    paddingTop: 10,
-    paddingHorizontal: 20,
-    paddingBottom: 16,
-  },
-  headerTile: {
-    width: 34,
-    height: 34,
-    borderRadius: soRadius.tile,
-    backgroundColor: "rgba(255,255,255,0.1)",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  headerTitle: {
-    fontSize: 17,
-    lineHeight: 21,
-    fontWeight: "700",
-    letterSpacing: 0.34,
-    color: ds.onChrome,
-  },
-  headerSub: { fontSize: 11.5, color: ds.thunder[700], marginTop: 2 },
-
-  controls: { paddingHorizontal: 16, paddingTop: 12, gap: 10 },
-  card: {
-    backgroundColor: ds.white,
-    borderRadius: soRadius.card,
-    padding: 12,
-    ...soShadow,
-  },
-
-  assigneeRow: { flexDirection: "row", alignItems: "center", gap: 11 },
-  avatar: {
-    width: 34,
-    height: 34,
-    borderRadius: soRadius.pill,
-    backgroundColor: ds.sky[100],
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  avatarText: { fontSize: 12, fontWeight: "700", color: ds.onChrome },
-  eyebrow: {
-    fontSize: 9,
-    fontWeight: "600",
-    letterSpacing: 1.08,
-    textTransform: "uppercase",
-    color: ds.carbon[500],
-  },
-  assigneeName: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    marginTop: 2,
-  },
-  assigneeText: {
-    flexShrink: 1,
-    fontSize: 13,
-    fontWeight: "600",
-    color: ds.carbon[100],
-  },
-  shiftBadge: {
-    paddingVertical: 2,
-    paddingHorizontal: 6,
-    borderRadius: 4,
-    backgroundColor: ds.flame[1000],
-  },
-  shiftBadgeText: {
-    fontSize: 8.5,
-    fontWeight: "600",
-    letterSpacing: 0.68,
-    textTransform: "uppercase",
-    color: ds.flame[100],
-  },
-  whenRow: { flexDirection: "row", alignItems: "center", gap: 4 },
-  whenText: { fontSize: 10.5, color: ds.carbon[600] },
-
-  shiftTabs: { marginTop: 10 },
-  shiftMeta: {
-    fontSize: 10.5,
-    color: ds.carbon[600],
-    marginTop: 8,
-  },
-
-  progressHead: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: 8,
-  },
-  progressLabelRow: { flexDirection: "row", alignItems: "center", gap: 6 },
-  progressLabel: { fontSize: 11, color: ds.carbon[400] },
-  progressCount: { fontSize: 12, fontWeight: "700", color: ds.flame[100] },
-  progressTrack: {
-    height: 4,
-    borderRadius: soRadius.pill,
-    backgroundColor: ds.carbon[1000],
-    overflow: "hidden",
-  },
-  progressFill: {
-    height: "100%",
-    borderRadius: soRadius.pill,
-    backgroundColor: ds.sky[100],
-  },
-
-  notice: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 6,
-    marginHorizontal: 16,
-    marginBottom: 8,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: soRadius.sm,
-    backgroundColor: ds.flame[1000],
-  },
-  noticeText: { fontSize: 10.5, color: ds.flame[100] },
-
-  footer: {
-    flexDirection: "row",
-    gap: 9,
-    paddingHorizontal: 20,
-    paddingTop: 12,
-    paddingBottom: 20,
-    backgroundColor: ds.white,
-    borderTopWidth: 1,
-    borderTopColor: ds.carbon[900],
-  },
-  saveBtn: {
-    width: 56,
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: soRadius.sm,
-    borderWidth: 1,
-    borderColor: ds.carbon[900],
-    backgroundColor: ds.white,
-  },
-  cta: {
-    flex: 1,
-    minHeight: 48,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-    borderRadius: soRadius.sm,
-  },
-  ctaText: { fontSize: 15, fontWeight: "600", letterSpacing: 0.15 },
-}));

@@ -23,6 +23,8 @@ import "./global.css";
 enableFreeze(true);
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { AttendanceGateProvider } from "@/contexts/AttendanceGateContext";
+import { PermissionsProvider, usePermissions } from "@/contexts/PermissionsContext";
+import { permForPath } from "@/components/jo/modules";
 import { ThemeProvider, useTheme } from "@/contexts/ThemeContext";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
@@ -146,7 +148,6 @@ function AuthGuard({
 const LIGHT_STATUS_BAR_ROUTES = new Set([
   "/sign-up",
   "/signup-verify",
-  "/attendance",
   "/pm-execution",
 ]);
 
@@ -200,6 +201,22 @@ function PresenceTracker() {
   return null;
 }
 
+/**
+ * A module the role can't view is hidden everywhere; this catches the ways in
+ * that bypass the bar (deep links, notifications, back stack) and returns the
+ * user to Home.
+ */
+function ModuleRouteGuard() {
+  const pathname = usePathname();
+  const { canView } = usePermissions();
+  const perm = pathname ? permForPath(pathname) : null;
+  const denied = !!perm && !canView(perm);
+  useEffect(() => {
+    if (denied) router.replace("/(tabs)/dashboard");
+  }, [denied]);
+  return null;
+}
+
 export default function RootLayout() {
   // A font that fails to load falls back to the system face rather than
   // holding the app behind the splash.
@@ -214,6 +231,8 @@ export default function RootLayout() {
     GeistMono_400Regular,
     GeistMono_500Medium,
     GeistMono_600SemiBold,
+    // Boxicons — the artboards' icon font (components/jo/Bx.tsx).
+    boxicons: require("../assets/fonts/boxicons.ttf"),
   });
   const fontsReady = fontsLoaded || !!fontError;
 
@@ -276,6 +295,7 @@ export default function RootLayout() {
       <KeyboardProvider>
         <SafeAreaProvider>
           <AuthProvider>
+          <PermissionsProvider>
           <AttendanceGateProvider>
             <AuthGuard fontsReady={fontsReady}>
               <ThemeProvider>
@@ -284,6 +304,7 @@ export default function RootLayout() {
                 <UpdateRequiredScreen />
                 <PendingNotificationNavigation />
                 <PresenceTracker />
+                <ModuleRouteGuard />
                 <RouteStatusBar />
                 <Stack screenOptions={{ headerShown: false }}>
                   <Stack.Screen name="index" />
@@ -295,7 +316,6 @@ export default function RootLayout() {
                   <Stack.Screen name="forgot-password" />
                   <Stack.Screen name="reset-password" />
                   <Stack.Screen name="all-tasks" />
-                  <Stack.Screen name="attendance" />
                   <Stack.Screen name="privacy-security" />
                   <Stack.Screen name="app-settings" />
                   <Stack.Screen name="appearance" />
@@ -316,6 +336,7 @@ export default function RootLayout() {
               </ThemeProvider>
             </AuthGuard>
           </AttendanceGateProvider>
+          </PermissionsProvider>
         </AuthProvider>
         </SafeAreaProvider>
       </KeyboardProvider>

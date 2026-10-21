@@ -12,22 +12,7 @@ import Animated, {
   withRepeat,
   withTiming,
 } from "react-native-reanimated";
-import {
-  ArrowDown,
-  ArrowUp,
-  Bell,
-  CheckCheck,
-  ChevronDown,
-  ChevronLeft,
-  ChevronRight,
-  ChevronUp,
-  CircleAlert,
-  LogIn,
-  LogOut,
-  TriangleAlert,
-  Wrench,
-  type LucideIcon,
-} from "lucide-react-native";
+import { Bx } from "@/components/jo/Bx";
 import {
   Avatar,
   Card,
@@ -35,6 +20,7 @@ import {
   HeroTag,
   IconButton,
   ProgressBar,
+  type JoIcon,
   Ring,
   capsStyle,
   f,
@@ -55,7 +41,7 @@ export function HomeHeader({
   bellDot,
   onBell,
   bellLabel = "Notifications",
-  bellIcon = Bell,
+  bellIcon = "bx-bell",
   userName,
   onAvatar,
   avatarLabel = "Profile",
@@ -66,7 +52,7 @@ export function HomeHeader({
   bellDot?: boolean;
   onBell?: () => void;
   bellLabel?: string;
-  bellIcon?: LucideIcon;
+  bellIcon?: JoIcon;
   userName: string;
   onAvatar?: () => void;
   avatarLabel?: string;
@@ -78,7 +64,7 @@ export function HomeHeader({
       <Text style={[f.d(28, -0.025), { color: t.ink, flexShrink: 1 }]} numberOfLines={1}>
         {siteName}
       </Text>
-      {onSitePress ? <ChevronDown size={22} color={t.muted} /> : null}
+      {onSitePress ? <Bx name="bx-chevron-down" size={22} color={t.muted} /> : null}
     </View>
   );
   return (
@@ -139,7 +125,7 @@ export function OpsHero({
     >
       <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
         <Text style={[capsStyle(12), { color: t.onAccent, opacity: 0.7 }]}>Operational status</Text>
-        {breachLabel ? <HeroTag label={breachLabel} color="#FF8A7A" icon={CircleAlert} /> : null}
+        {breachLabel ? <HeroTag label={breachLabel} color="#FF8A7A" icon="bxs-error-circle" /> : null}
       </View>
       <View style={{ flexDirection: "row", alignItems: "flex-end", marginTop: 10 }}>
         <View style={{ flex: 1.25, paddingRight: 10 }}>
@@ -293,7 +279,7 @@ export function TeamCard({
           style={s.moreBtn}
         >
           <Text style={[f.t(13, 600), { color: t.ink }]}>{expanded ? "Show less" : `View all ${total}`}</Text>
-          {expanded ? <ChevronUp size={18} color={t.ink} /> : <ChevronDown size={18} color={t.ink} />}
+          <Bx name={expanded ? "bx-chevron-up" : "bx-chevron-down"} size={18} color={t.ink} />
         </TouchableOpacity>
       ) : (
         <View style={{ height: 10 }} />
@@ -350,7 +336,12 @@ export function SlaScoreCard({
   const t = useJoTheme();
   const s = useStyles();
   return (
-    <Card radius={30} style={{ marginTop: 12, paddingTop: 20, paddingHorizontal: 18, paddingBottom: 18 }}>
+    <Card
+      radius={30}
+      onPress={onTitle}
+      accessibilityLabel={`SLA score ${score} for ${monthLabel}. Open SLA`}
+      style={{ marginTop: 12, paddingTop: 20, paddingHorizontal: 18, paddingBottom: 18 }}
+    >
       <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
         <TouchableOpacity
           onPress={onTitle}
@@ -361,7 +352,7 @@ export function SlaScoreCard({
           style={{ flexDirection: "row", alignItems: "center", gap: 3 }}
         >
           <Text style={[f.t(15, 600), { color: t.ink }]}>SLA score</Text>
-          {onTitle ? <ChevronRight size={19} color={t.muted} /> : null}
+          {onTitle ? <Bx name="bx-chevron-right" size={19} color={t.muted} /> : null}
         </TouchableOpacity>
         <View style={s.stepper}>
           <TouchableOpacity
@@ -371,7 +362,7 @@ export function SlaScoreCard({
             accessibilityRole="button"
             accessibilityLabel="Previous month"
           >
-            <ChevronLeft size={19} color={canPrev ? t.ink : t.disabled} />
+            <Bx name="bx-chevron-left" size={19} color={canPrev ? t.ink : t.disabled} />
           </TouchableOpacity>
           <TouchableOpacity onPress={onMonth} accessibilityRole="button" accessibilityLabel={`SLA month ${monthLabel}. Change`}>
             <Text style={[f.t(12.5, 600), { color: t.ink }]} numberOfLines={1}>
@@ -385,7 +376,7 @@ export function SlaScoreCard({
             accessibilityRole="button"
             accessibilityLabel="Next month"
           >
-            <ChevronRight size={19} color={canNext ? t.ink : t.disabled} />
+            <Bx name="bx-chevron-right" size={19} color={canNext ? t.ink : t.disabled} />
           </TouchableOpacity>
         </View>
       </View>
@@ -423,7 +414,7 @@ export function SlaScoreCard({
               </Text>
               <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 6 }}>
                 <Text style={[f.d(20, -0.02, 1.05), { color: k.color }]}>{k.text}</Text>
-                {k.weak ? <TriangleAlert size={14} color={t.warn} fill={t.warn} fillOpacity={0.25} /> : null}
+                {k.weak ? <Bx name="bxs-error" size={14} color={t.warn} /> : null}
               </View>
               <ProgressBar pct={k.pct} color={k.color} style={{ marginTop: 9 }} />
             </View>
@@ -450,7 +441,6 @@ export function PlannedCards({ bars, onPress }: { bars: PlannedBar[]; onPress?: 
   return (
     <View style={{ flexDirection: "row", gap: 10 }}>
       {bars.map((b) => {
-        const Icon = b.icon === "pm" ? Wrench : CheckCheck;
         return (
           <Card
             key={b.label}
@@ -469,7 +459,7 @@ export function PlannedCards({ bars, onPress }: { bars: PlannedBar[]; onPress?: 
                   justifyContent: "center",
                 }}
               >
-                <Icon size={17} color={b.color} />
+                <Bx name={b.icon === "pm" ? "bx-wrench" : "bx-check-double"} size={17} color={b.color} />
               </View>
               <Text style={[f.t(11.5), { color: t.muted }]}>
                 {b.done}/{b.total}
@@ -529,7 +519,7 @@ export function EfficiencyCard({ items, note }: { items: EffItem[]; note?: strin
                   }}
                   accessibilityLabel={it.trend === "down" ? "Improved" : "Worse"}
                 >
-                  {it.trend === "down" ? <ArrowDown size={15} color={t.ok} /> : <ArrowUp size={15} color={t.bad} />}
+                  <Bx name={it.trend === "down" ? "bx-down-arrow-alt" : "bx-up-arrow-alt"} size={15} color={it.trend === "down" ? t.ok : t.bad} />
                 </View>
               ) : null}
             </View>
@@ -562,7 +552,7 @@ export function ShiftHero({
   cta: { label: string; icon: "in" | "out" | "done"; onPress: () => void; busy?: boolean } | null;
 }) {
   const t = useJoTheme();
-  const CtaIcon = cta?.icon === "out" ? LogOut : cta?.icon === "in" ? LogIn : CheckCheck;
+  const ctaIcon = cta?.icon === "out" ? "bx-log-out-circle" : cta?.icon === "in" ? "bx-log-in-circle" : "bx-check-double";
   return (
     <HeroCard rings={1} style={{ marginTop: 14, padding: 14 }}>
       <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
@@ -603,7 +593,7 @@ export function ShiftHero({
             {cta.busy ? (
               <ActivityIndicator color="#F4F4F6" size="small" />
             ) : (
-              <CtaIcon size={18} color="#F4F4F6" />
+              <Bx name={ctaIcon} size={18} color="#F4F4F6" />
             )}
             <Text style={[f.t(13.5, 600), { color: "#F4F4F6" }]}>{cta.label}</Text>
           </TouchableOpacity>
@@ -646,7 +636,7 @@ export function BreachBanner({ title, subtitle, onPress }: { title: string; subt
           justifyContent: "center",
         }}
       >
-        <CircleAlert size={19} color={t.bad} />
+        <Bx name="bxs-error-circle" size={19} color={t.bad} />
       </View>
       <View style={{ flex: 1, minWidth: 0 }}>
         <Text style={[f.t(13.5, 600), { color: t.ink }]} numberOfLines={1}>
@@ -658,7 +648,7 @@ export function BreachBanner({ title, subtitle, onPress }: { title: string; subt
           </Text>
         ) : null}
       </View>
-      <ChevronRight size={20} color={t.bad} />
+      <Bx name="bx-chevron-right" size={20} color={t.bad} />
     </TouchableOpacity>
   );
 }

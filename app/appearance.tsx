@@ -9,7 +9,7 @@
 import React from "react";
 import { ScrollView, Text, TouchableOpacity, View } from "react-native";
 import { router } from "expo-router";
-import { Check, ChevronLeft, Monitor, Moon, Sun, type LucideIcon } from "lucide-react-native";
+import { Check, ChevronLeft, Monitor, Moon, Sun, type LucideIcon } from "@/components/jo/bxIcons";
 import { useTheme } from "@/contexts/ThemeContext";
 import { ACCENTS } from "@/constants/jo";
 import {

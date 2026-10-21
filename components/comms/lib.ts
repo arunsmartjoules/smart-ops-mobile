@@ -7,7 +7,7 @@
  * artboard (app.dc.html COMM_TYPE + the comms `extra()` colour rules).
  */
 import {
-  CircleAlert,
+  bxIcon,
   File,
   Info,
   MessageCircle,
@@ -15,7 +15,7 @@ import {
   ThumbsUp,
   Users,
   type LucideIcon,
-} from "lucide-react-native";
+} from "@/components/jo/bxIcons";
 import type { JoTone } from "@/constants/jo";
 import type { CommRow } from "@/services/CustomerCommunicationService";
 
@@ -29,7 +29,7 @@ export interface CommType {
 }
 
 export const TYPES: CommType[] = [
-  { key: "Escalation", icon: CircleAlert, tone: "bad", stream: "action" },
+  { key: "Escalation", icon: bxIcon("bx-error"), tone: "bad", stream: "action" },
   { key: "Complaint", icon: MessageSquareWarning, tone: "warn", stream: "action" },
   { key: "Request / New Work", icon: File, tone: "info", stream: "action" },
   { key: "Update", icon: Info, tone: "info", stream: "feedback" },

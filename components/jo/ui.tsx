@@ -24,9 +24,11 @@ import {
 import Animated, { FadeIn, SlideInDown } from "react-native-reanimated";
 import Svg, { Circle, Defs, RadialGradient, Rect, Stop } from "react-native-svg";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { Calendar, Check, ChevronDown, ChevronRight, Search, X, type LucideIcon } from "lucide-react-native";
+import type { LucideIcon } from "lucide-react-native";
+import { Bx, type BxName } from "@/components/jo/Bx";
 import { JF, avatarColor, initials, toneBg, toneFg, type JoTone } from "@/constants/jo";
 import { makeJoStyles, useJoTheme, type JoTheme } from "@/hooks/useJoTheme";
+import { useNavInsets } from "@/components/jo/navInsets";
 
 /* ── Type ──────────────────────────────────────────────────────────────── */
 
@@ -75,9 +77,35 @@ export const capsStyle = (size = 12, ls = 0.04): TextStyle => ({
   textTransform: "uppercase",
 });
 
+/* ── Icons ─────────────────────────────────────────────────────────────── */
+
+/**
+ * An icon prop: a Boxicons class name (the artboards' set — prefer this) or a
+ * lucide component (older call sites).
+ */
+export type JoIcon = BxName | LucideIcon | React.ComponentType<{ size?: number; color?: string }>;
+
+export function JoIconView({ icon, size, color }: { icon: JoIcon; size: number; color: string }) {
+  if (typeof icon === "string") return <Bx name={icon} size={size} color={color} />;
+  const Icon = icon as React.ComponentType<{ size?: number; color?: string }>;
+  return <Icon size={size} color={color} />;
+}
+
 /* ── Page chrome ───────────────────────────────────────────────────────── */
 
-/** The artboard's top-right accent glow: 320 circle at top −120 / right −90. */
+/** "rgba(r,g,b,a)" / "#rrggbb" → SVG stop colour + opacity (react-native-svg ignores rgba alpha). */
+function splitAlpha(c: string): { color: string; opacity: number } {
+  const m = /^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*(?:,\s*([\d.]+)\s*)?\)$/i.exec(c.trim());
+  if (!m) return { color: c, opacity: 1 };
+  return { color: `rgb(${m[1]},${m[2]},${m[3]})`, opacity: m[4] != null ? Number(m[4]) : 1 };
+}
+
+/**
+ * The artboard's top-right accent glow: a 320 circle at top −120 / right −90
+ * filled with `radial-gradient(circle, glow 0%, transparent 68%)`. CSS sizes a
+ * `circle` gradient to the FARTHEST CORNER of its box (r = ½·size·√2), so the
+ * 68% stop lands just inside the circle's edge — a long, soft falloff.
+ */
 export function PageGlow({
   color,
   size = 320,
@@ -92,7 +120,9 @@ export function PageGlow({
   left?: number;
 }) {
   const t = useJoTheme();
-  const c = color ?? t.accentGlow;
+  const { color: stop, opacity } = splitAlpha(color ?? t.accentGlow);
+  const half = size / 2;
+  const r = half * Math.SQRT2;
   return (
     <View
       pointerEvents="none"
@@ -106,12 +136,12 @@ export function PageGlow({
     >
       <Svg width={size} height={size}>
         <Defs>
-          <RadialGradient id="joGlow" cx="50%" cy="50%" r="50%">
-            <Stop offset="0" stopColor={c} stopOpacity={1} />
-            <Stop offset="0.68" stopColor={c} stopOpacity={0} />
+          <RadialGradient id="joGlow" cx={half} cy={half} r={r} fx={half} fy={half} gradientUnits="userSpaceOnUse">
+            <Stop offset="0" stopColor={stop} stopOpacity={opacity} />
+            <Stop offset="0.68" stopColor={stop} stopOpacity={0} />
           </RadialGradient>
         </Defs>
-        <Circle cx={size / 2} cy={size / 2} r={size / 2} fill="url(#joGlow)" />
+        <Circle cx={half} cy={half} r={half} fill="url(#joGlow)" />
       </Svg>
     </View>
   );
@@ -160,7 +190,7 @@ export function ScreenTitle({
       <Text style={[f.d(28, -0.025), { color: t.ink, flexShrink: 1 }]} numberOfLines={1}>
         {title}
       </Text>
-      {onTitlePress ? <ChevronDown size={22} color={t.muted} /> : null}
+      {onTitlePress ? <Bx name="bx-chevron-down" size={22} color={t.muted} /> : null}
     </View>
   );
   return (
@@ -208,7 +238,7 @@ export function IconButton({
   size = 44,
   iconSize = 20,
 }: {
-  icon: LucideIcon;
+  icon: JoIcon;
   onPress?: () => void;
   dot?: boolean;
   label: string;
@@ -234,7 +264,7 @@ export function IconButton({
         justifyContent: "center",
       }}
     >
-      <Icon size={iconSize} color={t.ink} />
+      <JoIconView icon={Icon} size={iconSize} color={t.ink} />
       {dot ? (
         <View
           style={{
@@ -445,7 +475,7 @@ export function HeroTag({
 }: {
   label: string;
   color: string;
-  icon?: LucideIcon;
+  icon?: JoIcon;
   dot?: boolean;
 }) {
   return (
@@ -462,7 +492,7 @@ export function HeroTag({
       }}
     >
       {dot ? <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: color }} /> : null}
-      {Icon ? <Icon size={14} color={color} /> : null}
+      {Icon ? <JoIconView icon={Icon} size={14} color={color} /> : null}
       <Text style={[f.t(11.5, 600), { color }]} numberOfLines={1}>
         {label}
       </Text>
@@ -489,7 +519,7 @@ export function Chip({
   count?: number | string;
   selected?: boolean;
   onPress?: () => void;
-  icon?: LucideIcon;
+  icon?: JoIcon;
   iconColor?: string;
   height?: number;
 }) {
@@ -513,7 +543,7 @@ export function Chip({
         borderColor: selected ? t.selBg : t.lineMid,
       }}
     >
-      {Icon ? <Icon size={15} color={selected ? t.selFg : iconColor ?? t.ink2} /> : null}
+      {Icon ? <JoIconView icon={Icon} size={15} color={selected ? t.selFg : iconColor ?? t.ink2} /> : null}
       <Text style={[f.t(12.5, 600), { color: selected ? t.selFg : t.ink2 }]} numberOfLines={1}>
         {label}
       </Text>
@@ -778,7 +808,7 @@ export function PrimaryButton({
   style,
 }: {
   label: string;
-  icon?: LucideIcon;
+  icon?: JoIcon;
   onPress?: () => void;
   busy?: boolean;
   disabled?: boolean;
@@ -812,7 +842,7 @@ export function PrimaryButton({
         <ActivityIndicator color={t.onAccent} />
       ) : (
         <>
-          {Icon ? <Icon size={19} color={t.onAccent} /> : null}
+          {Icon ? <JoIconView icon={Icon} size={19} color={t.onAccent} /> : null}
           <Text style={[f.t(15, 700), { color: t.onAccent }]}>{label}</Text>
         </>
       )}
@@ -831,7 +861,7 @@ export function SecondaryButton({
   busy,
 }: {
   label: string;
-  icon?: LucideIcon;
+  icon?: JoIcon;
   onPress?: () => void;
   tone?: "bad";
   height?: number;
@@ -866,7 +896,7 @@ export function SecondaryButton({
         <ActivityIndicator color={fg} />
       ) : (
         <>
-          {Icon ? <Icon size={18} color={fg} /> : null}
+          {Icon ? <JoIconView icon={Icon} size={18} color={fg} /> : null}
           <Text style={[f.t(14.5, 600), { color: fg }]}>{label}</Text>
         </>
       )}
@@ -879,14 +909,16 @@ export function Fab({
   label,
   icon: Icon,
   onPress,
-  bottom = 16,
+  bottom: bottomProp,
 }: {
   label: string;
-  icon: LucideIcon;
+  icon: JoIcon;
   onPress: () => void;
+  /** Defaults to 12 above the floating tab bar (artboard bottom: 96). */
   bottom?: number;
 }) {
   const t = useJoTheme();
+  const { fabBottom } = useNavInsets();
   return (
     <TouchableOpacity
       onPress={onPress}
@@ -896,7 +928,7 @@ export function Fab({
       style={{
         position: "absolute",
         right: 20,
-        bottom,
+        bottom: bottomProp ?? fabBottom,
         height: 52,
         paddingLeft: 16,
         paddingRight: 20,
@@ -913,7 +945,7 @@ export function Fab({
         zIndex: 6,
       }}
     >
-      <Icon size={20} color={t.onAccent} />
+      <JoIconView icon={Icon} size={20} color={t.onAccent} />
       <Text style={[f.t(14, 700), { color: t.onAccent }]}>{label}</Text>
     </TouchableOpacity>
   );
@@ -958,7 +990,7 @@ export function DateButton({
         style,
       ]}
     >
-      <Calendar size={15} color={t.accentInk} />
+      <Bx name="bx-calendar" size={15} color={t.accentInk} />
       <Text style={[f.t(13, 500), { color: t.ink }]} numberOfLines={1}>
         {label}
       </Text>
@@ -970,7 +1002,7 @@ export function DateButton({
           </Text>
         </>
       ) : null}
-      <ChevronDown size={17} color={t.muted} />
+      <Bx name="bx-chevron-down" size={17} color={t.muted} />
     </TouchableOpacity>
   );
 }
@@ -1007,7 +1039,7 @@ export function SearchField({
         style,
       ]}
     >
-      <Search size={18} color={t.muted} />
+      <Bx name="bx-search" size={18} color={t.muted} />
       <TextInput
         value={value}
         onChangeText={onChangeText}
@@ -1019,7 +1051,7 @@ export function SearchField({
       />
       {value ? (
         <TouchableOpacity onPress={() => onChangeText("")} hitSlop={8} accessibilityLabel="Clear search">
-          <X size={17} color={t.muted} />
+          <Bx name="bx-x" size={17} color={t.muted} />
         </TouchableOpacity>
       ) : (
         right ?? null
@@ -1044,7 +1076,7 @@ export function ListRow({
   divider,
   onPress,
 }: {
-  icon: LucideIcon;
+  icon: JoIcon;
   iconColor?: string;
   label: string;
   sub?: string;
@@ -1078,7 +1110,7 @@ export function ListRow({
           justifyContent: "center",
         }}
       >
-        <Icon size={18} color={iconColor ?? t.ink2} />
+        <JoIconView icon={Icon} size={18} color={iconColor ?? t.ink2} />
       </View>
       <View style={{ flex: 1, minWidth: 0 }}>
         <Text style={[f.t(14, 500), { color: t.ink }]} numberOfLines={1}>
@@ -1110,7 +1142,7 @@ export function ListRow({
           {value}
         </Text>
       ) : null}
-      {chevron ? <ChevronRight size={20} color={t.faint} /> : null}
+      {chevron ? <Bx name="bx-chevron-right" size={20} color={t.faint} /> : null}
     </View>
   );
   if (!onPress) return content;
@@ -1238,7 +1270,7 @@ export function SheetOption({
           borderColor: selected ? t.accent : t.disabled,
         }}
       >
-        {selected ? <Check size={15} color={t.onAccent} strokeWidth={2.6} /> : null}
+        {selected ? <Bx name="bx-check" size={15} color={t.onAccent} /> : null}
       </View>
     </TouchableOpacity>
   );
@@ -1252,7 +1284,7 @@ export function EmptyState({
   sub,
   action,
 }: {
-  icon: LucideIcon;
+  icon: JoIcon;
   title: string;
   sub?: string;
   action?: { label: string; onPress: () => void };
@@ -1270,7 +1302,7 @@ export function EmptyState({
           justifyContent: "center",
         }}
       >
-        <Icon size={22} color={t.muted} />
+        <JoIconView icon={Icon} size={22} color={t.muted} />
       </View>
       <Text style={[f.t(14.5, 600), { color: t.ink, textAlign: "center", marginTop: 4 }]}>{title}</Text>
       {sub ? <Text style={[f.t(12.5), { color: t.muted, textAlign: "center", lineHeight: 18 }]}>{sub}</Text> : null}
@@ -1290,8 +1322,18 @@ export function Shimmer({ height, radius = 18, style }: { height: number; radius
 }
 
 /** Small transient message at the bottom of a screen. */
-export function Toast({ message, onHide }: { message: string; onHide: () => void }) {
+export function Toast({
+  message,
+  onHide,
+  bottom: bottomProp,
+}: {
+  message: string;
+  onHide: () => void;
+  /** Defaults to just above the floating tab bar. */
+  bottom?: number;
+}) {
   const t = useJoTheme();
+  const { fabBottom } = useNavInsets();
   useEffect(() => {
     if (!message) return;
     const id = setTimeout(onHide, 1800);
@@ -1306,7 +1348,7 @@ export function Toast({ message, onHide }: { message: string; onHide: () => void
         position: "absolute",
         left: 24,
         right: 24,
-        bottom: 24,
+        bottom: bottomProp ?? fabBottom,
         paddingVertical: 12,
         paddingHorizontal: 16,
         borderRadius: 18,

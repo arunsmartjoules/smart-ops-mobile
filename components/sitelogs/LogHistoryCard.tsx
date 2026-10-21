@@ -1,34 +1,17 @@
 /**
- * Site-log history card — Claude Design "JouleOps Logs.dc.html".
+ * Site-log history row — "JouleOps App" list language: #141418 card, tinted
+ * type icon, status pill, meta line, then the readings in raised cells.
  *
- * Readings come from the app's own columns, not the mock's sample fields:
- * Temp & RH → temperature / rh, Water → pH / TDS / hardness, Chemical →
- * chemical_dosing, Chiller → the chiller_readings shape.
+ * Readings come from the app's own columns: Temp & RH → temperature / rh,
+ * Water → pH / TDS / hardness, Chemical → chemical_dosing, Chiller → the
+ * chiller_readings shape.
  */
 import React from "react";
-import { Text, TouchableOpacity, View } from "react-native";
-import {
-  Droplets,
-  FlaskRound,
-  Snowflake,
-  Thermometer,
-} from "lucide-react-native";
-import type { LucideIcon } from "lucide-react-native";
+import { Text, View } from "react-native";
+import { Bx } from "@/components/jo/Bx";
+import { Card, StatusPill, f, useJoTheme } from "@/components/jo/ui";
 import { formatIST, istRelativeDayLabel } from "@/utils/istDate";
-import { makeThemedStyles, useDs, type DsTheme } from "@/hooks/useDs";
-import { soRadius, soShadow } from "@/components/home/SiteOverview";
-
-const statusMap = (
-  ds: DsTheme,
-): Record<string, { label: string; bg: string; fg: string }> => ({
-  Pending: { label: "Open", bg: ds.flame[1000], fg: ds.flame[100] },
-  Inprogress: { label: "In progress", bg: ds.sky[1000], fg: ds.sky[100] },
-  Completed: {
-    label: "Completed",
-    bg: ds.sky[900],
-    fg: ds.sky[100],
-  },
-});
+import { statusLook, typeLook } from "@/components/sitelogs/LogsKit";
 
 /** Legacy rows use "In-progress"/"in_progress"; an empty status means logged. */
 export const normaliseLogStatus = (raw?: string | null) => {
@@ -37,16 +20,6 @@ export const normaliseLogStatus = (raw?: string | null) => {
   if (s === "inprogress") return "Inprogress";
   return "Pending";
 };
-
-/** Icon + tint per log type — shared by the Logs overview cards. */
-export const typeVisual = (
-  ds: DsTheme,
-): Record<string, { icon: LucideIcon; tint: string; color: string }> => ({
-  "Temp RH": { icon: Thermometer, tint: ds.flame[1000], color: ds.flame[100] },
-  "Chiller Logs": { icon: Snowflake, tint: ds.flame[1000], color: ds.flame[100] },
-  Water: { icon: Droplets, tint: ds.sky[1000], color: ds.sky[100] },
-  "Chemical Dosing": { icon: FlaskRound, tint: ds.sky[1000], color: ds.sky[100] },
-});
 
 interface Reading {
   label: string;
@@ -111,27 +84,14 @@ const whenLabel = (logName: string, row: any) => {
     const entry = row.entry_time ? ` · ${timeLabel(row.entry_time)}` : "";
     return `${istRelativeDayLabel(row.scheduled_date)}${entry}`;
   }
-  return row.created_at
-    ? `${istRelativeDayLabel(row.created_at)} · ${timeLabel(row.created_at)}`
-    : "—";
+  return row.created_at ? `${istRelativeDayLabel(row.created_at)} · ${timeLabel(row.created_at)}` : "—";
 };
 
 export const LogHistoryCard = React.memo(
-  ({
-    item,
-    logName,
-    onPress,
-  }: {
-    item: any;
-    logName: string;
-    onPress: () => void;
-  }) => {
-    const styles = useStyles();
-    const ds = useDs();
-    const TYPE_VISUAL = typeVisual(ds);
-    const visual = TYPE_VISUAL[logName] ?? TYPE_VISUAL["Temp RH"];
-    const Icon = visual.icon;
-    const status = statusMap(ds)[normaliseLogStatus(item.status)];
+  ({ item, logName, onPress }: { item: any; logName: string; onPress: () => void }) => {
+    const t = useJoTheme();
+    const look = typeLook(t, logName);
+    const status = statusLook(normaliseLogStatus(item.status));
     const readings = readingsFor(logName, item);
     const shift = shiftLabelToName(item.shift_label);
     const person = item.assigned_to || item.executor_id || "Unassigned";
@@ -141,33 +101,41 @@ export const LogHistoryCard = React.memo(
         : item.task_name || "Untitled point";
 
     return (
-      <TouchableOpacity onPress={onPress} activeOpacity={0.85} style={styles.card}>
-        <View style={styles.row}>
-          <View style={[styles.iconWell, { backgroundColor: visual.tint }]}>
-            <Icon size={16} color={visual.color} strokeWidth={2.1} />
+      <Card
+        onPress={onPress}
+        radius={22}
+        accessibilityLabel={`${name}, ${status.label}`}
+        style={{ paddingVertical: 14, paddingHorizontal: 14, marginBottom: 8 }}
+      >
+        <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 12 }}>
+          <View
+            style={{
+              width: 40,
+              height: 40,
+              borderRadius: 20,
+              backgroundColor: look.bg,
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            <Bx name={look.icon} size={19} color={look.fg} />
           </View>
-
-          <View style={styles.body}>
-            <View style={styles.titleRow}>
-              <Text style={styles.name} numberOfLines={1}>
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 8 }}>
+              <Text style={[f.t(14.5, 600), { color: t.ink, flex: 1, minWidth: 0 }]} numberOfLines={2}>
                 {name}
               </Text>
-              <View style={[styles.badge, { backgroundColor: status.bg }]}>
-                <Text style={[styles.badgeText, { color: status.fg }]}>
-                  {status.label}
-                </Text>
-              </View>
+              <StatusPill label={status.label} tone={status.tone} />
             </View>
-
-            <View style={styles.metaRow}>
-              <Text style={styles.when}>{whenLabel(logName, item)}</Text>
+            <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 6, marginTop: 4 }}>
+              <Text style={[f.t(11.5, 500), { color: t.ink3 }]}>{whenLabel(logName, item)}</Text>
               {shift ? (
-                <View style={styles.shiftBadge}>
-                  <Text style={styles.shiftBadgeText}>{shift}</Text>
+                <View style={{ height: 20, paddingHorizontal: 8, borderRadius: 10, backgroundColor: t.raised, justifyContent: "center" }}>
+                  <Text style={[f.t(10.5, 600), { color: t.ink2 }]}>{shift}</Text>
                 </View>
               ) : null}
-              <Text style={styles.dotSep}>·</Text>
-              <Text style={styles.person} numberOfLines={1}>
+              <Text style={[f.t(11.5), { color: t.faint }]}>·</Text>
+              <Text style={[f.t(11.5), { color: t.muted, flexShrink: 1 }]} numberOfLines={1}>
                 {person}
               </Text>
             </View>
@@ -175,21 +143,18 @@ export const LogHistoryCard = React.memo(
         </View>
 
         {readings.length > 0 ? (
-          <View style={styles.readings}>
-            {readings.map((r, i) => (
+          <View style={{ flexDirection: "row", gap: 6, marginTop: 12 }}>
+            {readings.map((r) => (
               <View
                 key={r.label}
-                style={[
-                  styles.reading,
-                  i < readings.length - 1 && styles.readingDivider,
-                ]}
+                style={{ flex: 1, minWidth: 0, borderRadius: 14, backgroundColor: t.raised, paddingVertical: 8, paddingHorizontal: 10 }}
               >
-                <Text style={styles.readingLabel}>{r.label}</Text>
+                <Text style={[f.t(11, 500), { color: t.muted }]} numberOfLines={1}>
+                  {r.label}
+                </Text>
                 <Text
-                  style={[
-                    styles.readingValue,
-                    r.value === "—" && { color: ds.carbon[800] },
-                  ]}
+                  style={[f.d(16, -0.02, 1.2), { color: r.value === "—" ? t.faint : t.ink, marginTop: 2 }]}
+                  numberOfLines={1}
                 >
                   {r.value}
                 </Text>
@@ -197,101 +162,11 @@ export const LogHistoryCard = React.memo(
             ))}
           </View>
         ) : null}
-      </TouchableOpacity>
+      </Card>
     );
   },
 );
 
 LogHistoryCard.displayName = "LogHistoryCard";
-
-const useStyles = makeThemedStyles((ds) => ({
-  card: {
-    backgroundColor: ds.white,
-    borderRadius: soRadius.card,
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-    marginBottom: 7,
-    ...soShadow,
-  },
-  row: { flexDirection: "row", alignItems: "flex-start", gap: 11 },
-  iconWell: {
-    width: 34,
-    height: 34,
-    borderRadius: soRadius.pill,
-    alignItems: "center",
-    justifyContent: "center",
-    marginTop: 1,
-  },
-  body: { flex: 1, minWidth: 0 },
-
-  titleRow: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 8,
-    marginBottom: 4,
-  },
-  name: {
-    flex: 1,
-    minWidth: 0,
-    fontSize: 12.5,
-    lineHeight: 16,
-    fontWeight: "600",
-    color: ds.carbon[100],
-  },
-  badge: { paddingVertical: 2, paddingHorizontal: 6, borderRadius: 4 },
-  badgeText: {
-    fontSize: 8.5,
-    fontWeight: "600",
-    letterSpacing: 0.68,
-    textTransform: "uppercase",
-  },
-
-  metaRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    flexWrap: "wrap",
-  },
-  when: { fontSize: 10.5, fontWeight: "500", color: ds.carbon[400] },
-  shiftBadge: {
-    paddingVertical: 2,
-    paddingHorizontal: 6,
-    borderRadius: 4,
-    backgroundColor: ds.carbon[1000],
-  },
-  shiftBadgeText: {
-    fontSize: 8.5,
-    fontWeight: "600",
-    letterSpacing: 0.68,
-    textTransform: "uppercase",
-    color: ds.carbon[400],
-  },
-  dotSep: { color: ds.carbon[800] },
-  person: { flexShrink: 1, fontSize: 10.5, color: ds.carbon[600] },
-
-  readings: {
-    flexDirection: "row",
-    marginTop: 10,
-    backgroundColor: ds.field,
-    borderRadius: soRadius.sm,
-    overflow: "hidden",
-  },
-  reading: { flex: 1, paddingVertical: 8, paddingHorizontal: 12 },
-  readingDivider: { borderRightWidth: 1, borderRightColor: ds.fieldBorder },
-  readingLabel: {
-    fontSize: 9,
-    fontWeight: "600",
-    letterSpacing: 1.08,
-    textTransform: "uppercase",
-    color: ds.carbon[600],
-    marginBottom: 3,
-  },
-  readingValue: {
-    fontSize: 13,
-    lineHeight: 13,
-    fontWeight: "700",
-    color: ds.carbon[100],
-  },
-}));
 
 export default LogHistoryCard;

@@ -152,7 +152,9 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     [theme, setTheme, isDark, accent, setAccent]
   );
 
+  // Hold the screens until the saved mode/accent are read (a few ms, behind
+  // the splash) so the default accent never flashes before the user's.
   return (
-    <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>
+    <ThemeContext.Provider value={value}>{isReady ? children : null}</ThemeContext.Provider>
   );
 }

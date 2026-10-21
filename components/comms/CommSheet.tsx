@@ -6,7 +6,7 @@
 import React from "react";
 import { KeyboardAvoidingView, Modal, Platform, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { ArrowLeft, X } from "lucide-react-native";
+import { ArrowLeft, X } from "@/components/jo/bxIcons";
 import { IconButton, f, useJoTheme } from "@/components/jo/ui";
 
 export function CommSheet({

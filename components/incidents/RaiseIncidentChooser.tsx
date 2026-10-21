@@ -1,17 +1,12 @@
 /**
- * The "Raise" FAB's first step: fill the incident in by hand, or upload the
- * RCA report and let the server draft it. Bottom sheet in the same style as
- * AttachmentField's source sheet.
+ * The "Raise" button's first step: fill the incident in by hand, or upload
+ * the RCA report and let the server draft it. Artboard bottom sheet.
  */
 import React from "react";
-import { Modal, Pressable, Text, View } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { Text, TouchableOpacity, View } from "react-native";
 import * as Haptics from "expo-haptics";
-import { ChevronRight, FileUp, PencilLine, Sparkles, WifiOff } from "lucide-react-native";
-import type { LucideIcon } from "lucide-react-native";
-import PressableScale from "@/components/PressableScale";
-import { makeThemedStyles, useDs } from "@/hooks/useDs";
-import { soRadius, soShadow } from "@/components/tickets/TicketDetailUI";
+import { Bx, type BxName } from "@/components/jo/Bx";
+import { JoSheet, f, useJoTheme } from "@/components/jo/ui";
 
 export type RaiseChoice = "manual" | "rca";
 
@@ -27,57 +22,36 @@ export default function RaiseIncidentChooser({
   onPick: (choice: RaiseChoice) => void;
   onClose: () => void;
 }) {
-  const styles = useStyles();
-  const insets = useSafeAreaInsets();
-
   const pick = (c: RaiseChoice) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     onPick(c);
   };
 
   return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="fade"
-      onRequestClose={onClose}
-      statusBarTranslucent
-      navigationBarTranslucent
-    >
-      <Pressable onPress={onClose} style={styles.backdrop} accessibilityLabel="Close">
-        <Pressable
-          onPress={() => {}}
-          style={[styles.sheet, { paddingBottom: Math.max(insets.bottom, 16) + 8 }]}
-        >
-          <View style={styles.grabber} />
-          <Text style={styles.title} accessibilityRole="header">
-            Raise an incident
-          </Text>
-          <Text style={styles.subtitle}>How would you like to start?</Text>
-
-          <ChoiceCard
-            icon={PencilLine}
-            title="Fill in manually"
-            body="Enter the incident details yourself"
-            onPress={() => pick("manual")}
-          />
-          <ChoiceCard
-            icon={FileUp}
-            accent
-            title="Upload RCA report"
-            body="We'll read the report and fill in the details for you"
-            isNew
-            note={offline ? "Needs an internet connection" : undefined}
-            onPress={() => pick("rca")}
-          />
-        </Pressable>
-      </Pressable>
-    </Modal>
+    <JoSheet visible={visible} onClose={onClose} title="Raise an incident" subtitle="How would you like to start?">
+      <View style={{ marginTop: 16, gap: 8 }}>
+        <ChoiceCard
+          icon="bx-pencil"
+          title="Fill in manually"
+          body="Enter the incident details yourself"
+          onPress={() => pick("manual")}
+        />
+        <ChoiceCard
+          icon="bx-upload"
+          accent
+          title="Upload RCA report"
+          body="We'll read the report and fill in the details for you"
+          isNew
+          note={offline ? "Needs an internet connection" : undefined}
+          onPress={() => pick("rca")}
+        />
+      </View>
+    </JoSheet>
   );
 }
 
 function ChoiceCard({
-  icon: Icon,
+  icon,
   title,
   body,
   accent,
@@ -85,7 +59,7 @@ function ChoiceCard({
   note,
   onPress,
 }: {
-  icon: LucideIcon;
+  icon: BxName;
   title: string;
   body: string;
   accent?: boolean;
@@ -93,102 +67,66 @@ function ChoiceCard({
   note?: string;
   onPress: () => void;
 }) {
-  const styles = useStyles();
-  const ds = useDs();
+  const t = useJoTheme();
   return (
-    <PressableScale
+    <TouchableOpacity
       onPress={onPress}
-      scaleTo={0.98}
-      style={[styles.card, accent && styles.cardAccent]}
+      activeOpacity={0.85}
       accessibilityRole="button"
-      accessibilityLabel={`${title}. ${body}`}
+      accessibilityLabel={`${title}. ${body}${note ? `. ${note}` : ""}`}
+      style={{
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 14,
+        minHeight: 84,
+        padding: 16,
+        borderRadius: 24,
+        borderWidth: 1,
+        borderColor: accent ? t.accent : t.lineMid,
+        backgroundColor: accent ? t.accentTint : t.sheetField,
+      }}
     >
-      <View style={[styles.iconWell, accent && { backgroundColor: ds.flame[1000] }]}>
-        <Icon size={22} color={accent ? ds.flame[100] : ds.carbon[300]} strokeWidth={2} />
+      <View
+        style={{
+          width: 44,
+          height: 44,
+          borderRadius: 22,
+          alignItems: "center",
+          justifyContent: "center",
+          backgroundColor: accent ? t.accent : t.raised,
+        }}
+      >
+        <Bx name={icon} size={21} color={accent ? t.onAccent : t.ink2} />
       </View>
       <View style={{ flex: 1, minWidth: 0 }}>
-        <View style={styles.titleRow}>
-          <Text style={styles.cardTitle}>{title}</Text>
+        <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+          <Text style={[f.t(15, 600), { color: t.ink }]}>{title}</Text>
           {isNew ? (
-            <View style={styles.newPill}>
-              <Sparkles size={10} color={ds.onAccent} strokeWidth={2.4} />
-              <Text style={styles.newText}>NEW · AI</Text>
+            <View
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                gap: 3,
+                height: 20,
+                paddingHorizontal: 7,
+                borderRadius: 10,
+                backgroundColor: t.accent,
+              }}
+            >
+              <Bx name="bxs-magic-wand" size={11} color={t.onAccent} />
+              <Text style={[f.t(10, 700), { color: t.onAccent }]}>NEW · AI</Text>
             </View>
           ) : null}
         </View>
-        <Text style={styles.cardBody}>{body}</Text>
+        <Text style={[f.t(12.5), { color: t.muted, marginTop: 3, lineHeight: 17 }]}>{body}</Text>
         {note ? (
-          <View style={styles.noteRow}>
-            <WifiOff size={12} color={ds.carbon[500]} strokeWidth={2} />
-            <Text style={styles.noteText}>{note}</Text>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 5, marginTop: 6 }}>
+            <Bx name="bx-wifi-off" size={13} color={t.warn} />
+            <Text style={[f.t(11.5, 500), { color: t.warn }]}>{note}</Text>
           </View>
         ) : null}
       </View>
-      <ChevronRight size={18} color={ds.carbon[600]} strokeWidth={2} />
-    </PressableScale>
+      <Bx name="bx-chevron-right" size={20} color={t.faint} />
+    </TouchableOpacity>
   );
 }
-
-const useStyles = makeThemedStyles((ds) => ({
-  backdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "flex-end" },
-  sheet: {
-    backgroundColor: ds.pageBg,
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    paddingTop: 10,
-    paddingHorizontal: 16,
-  },
-  grabber: {
-    alignSelf: "center",
-    width: 36,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: ds.carbon[800],
-    marginBottom: 16,
-  },
-  title: { fontSize: 18, fontWeight: "700", color: ds.carbon[100], paddingHorizontal: 4 },
-  subtitle: {
-    fontSize: 13,
-    color: ds.carbon[500],
-    marginTop: 3,
-    marginBottom: 16,
-    paddingHorizontal: 4,
-  },
-  card: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 14,
-    minHeight: 84,
-    padding: 16,
-    marginBottom: 10,
-    borderRadius: soRadius.card + 2,
-    borderWidth: 1,
-    borderColor: ds.isDark ? ds.cardBorder : ds.carbon[900],
-    backgroundColor: ds.white,
-    ...soShadow,
-  },
-  cardAccent: { borderColor: ds.flame[100], borderWidth: 1.5 },
-  iconWell: {
-    width: 46,
-    height: 46,
-    borderRadius: 23,
-    backgroundColor: ds.carbon[1000],
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  titleRow: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 8 },
-  cardTitle: { fontSize: 15.5, fontWeight: "700", color: ds.carbon[100] },
-  cardBody: { fontSize: 13, lineHeight: 18, color: ds.carbon[500], marginTop: 3 },
-  newPill: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 3,
-    paddingVertical: 2,
-    paddingHorizontal: 6,
-    borderRadius: soRadius.pill,
-    backgroundColor: ds.flame[100],
-  },
-  newText: { fontSize: 9, fontWeight: "800", letterSpacing: 0.6, color: ds.onAccent },
-  noteRow: { flexDirection: "row", alignItems: "center", gap: 5, marginTop: 6 },
-  noteText: { fontSize: 11.5, color: ds.carbon[500] },
-}));

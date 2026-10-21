@@ -1,50 +1,107 @@
 /**
  * Floating pill tab bar from the Claude Design "JouleOps App" artboard:
- * Home · three user-pinned modules · More. The active item grows into an
- * accent pill with its label; the rest are bare grey icons. More opens the
- * "All modules" drawer, where "Edit bar" re-picks the three pins.
+ * Home · three user-pinned modules · More, floating over the screen
+ * (left/right 14, bottom 18, height 66). Every item shows its icon over its
+ * title; the active one sits on an accent pill with the solid icon. More
+ * opens the "All modules" drawer, where "Edit bar" re-picks the three pins.
  *
- * The bar sits in layout flow under the scene (not over it), so screens that
- * predate this design never have their last rows hidden behind it.
+ * Modules the role can't VIEW (contexts/PermissionsContext) are never shown.
+ * Screens pad their content with useNavInsets().clearance.
  */
 import React, { useState } from "react";
 import { Modal, Pressable, StyleSheet, Text, TouchableOpacity, View } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, { FadeIn, SlideInDown } from "react-native-reanimated";
 import type { BottomTabBarProps } from "@react-navigation/bottom-tabs";
 import { router } from "expo-router";
-import { Check, Ellipsis, Pin, type LucideIcon } from "lucide-react-native";
 import {
+  DEFAULT_PINS,
   HOME,
+  MAX_PINS,
   MODULES,
   MORE_GROUPS,
+  MORE_ICON,
   moduleForTab,
   type ModuleKey,
 } from "@/components/jo/modules";
-import { togglePin, useNavPins } from "@/services/NavPins";
+import { togglePin, useNavPins, visiblePins } from "@/services/NavPins";
+import { usePermissions } from "@/contexts/PermissionsContext";
+import { useTabBarHidden } from "@/services/TabBarVisibility";
+import { requestQuickCreate, type QuickCreateKind } from "@/services/QuickCreate";
+import { useAttendanceGate } from "@/contexts/AttendanceGateContext";
+import { JoSheet, ListRow } from "@/components/jo/ui";
+import { Bx, solidOf, type BxName } from "@/components/jo/Bx";
 import { capsStyle, f } from "@/components/jo/ui";
+import { BAR_HEIGHT, useNavInsets } from "@/components/jo/navInsets";
 import { makeJoStyles, useJoTheme } from "@/hooks/useJoTheme";
 
-const BAR_HEIGHT = 66;
-
 interface BarItem {
-  key: ModuleKey | "home" | "more";
+  key: ModuleKey | "home" | "more" | "create";
   label: string;
-  icon: LucideIcon;
+  icon: BxName;
+}
+
+/** Order used to top the bar up when a pinned module is hidden by permissions. */
+const FALLBACK_PINS: ModuleKey[] = [
+  ...DEFAULT_PINS,
+  ...MORE_GROUPS.flatMap((g) => g.keys).filter((k) => !DEFAULT_PINS.includes(k)),
+];
+
+/** The quick-create menu: what it opens, and the permission + gate it needs. */
+const QUICK_CREATE: {
+  kind: QuickCreateKind;
+  module: ModuleKey;
+  label: string;
+  sub: string;
+  icon: BxName;
+  /** Technicians must be punched in (attendance gate) to raise these. */
+  gated: boolean;
+}[] = [
+  { kind: "ticket", module: "tickets", label: "Raise a ticket", sub: "Complaint or breakdown at the site", icon: "bx-receipt", gated: true },
+  { kind: "incident", module: "incidents", label: "Raise an incident", sub: "Equipment failure, with RCA to follow", icon: "bx-error-alt", gated: true },
+  { kind: "comm", module: "comms", label: "Log client communication", sub: "Escalation, request, feedback or meeting", icon: "bx-conversation", gated: false },
+];
+
+export function useModuleVisible() {
+  const { canView } = usePermissions();
+  return (key: ModuleKey) => {
+    const perm = MODULES[key].perm;
+    return !perm || canView(perm);
+  };
 }
 
 export function JouleTabBar({ state, navigation }: BottomTabBarProps) {
   const t = useJoTheme();
   const s = useStyles();
-  const insets = useSafeAreaInsets();
-  const pins = useNavPins();
+  const { barBottom } = useNavInsets();
+  const saved = useNavPins();
+  const visible = useModuleVisible();
+  const pins = visiblePins(saved, visible, FALLBACK_PINS);
   const [moreOpen, setMoreOpen] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
+  const hidden = useTabBarHidden();
+  const { canAdd } = usePermissions();
+  const { canEdit } = useAttendanceGate();
 
+  const createOptions = QUICK_CREATE.filter((o) => {
+    const perm = MODULES[o.module].perm;
+    return visible(o.module) && (!perm || canAdd(perm)) && (!o.gated || canEdit);
+  });
+
+  const pinItems: BarItem[] = pins.map((k) => ({ key: k, label: MODULES[k].label, icon: MODULES[k].icon }));
   const items: BarItem[] = [
     { key: "home", label: HOME.label, icon: HOME.icon },
-    ...pins.map((k) => ({ key: k, label: MODULES[k].label, icon: MODULES[k].icon })),
-    { key: "more", label: "More", icon: Ellipsis },
+    ...pinItems.slice(0, 1),
+    // The "+" takes the middle slot whenever the role can create something.
+    ...(createOptions.length > 0 ? [{ key: "create" as const, label: "Create", icon: "bx-plus" as BxName }] : []),
+    ...pinItems.slice(1),
+    { key: "more", label: "More", icon: MORE_ICON },
   ];
+
+  const startCreate = (kind: QuickCreateKind, module: ModuleKey) => {
+    setCreateOpen(false);
+    requestQuickCreate(kind);
+    openModule(module);
+  };
 
   const currentRoute = state.routes[state.index]?.name ?? "dashboard";
   const current = moduleForTab(currentRoute);
@@ -67,6 +124,12 @@ export function JouleTabBar({ state, navigation }: BottomTabBarProps) {
   };
 
   const onPress = (item: BarItem) => {
+    if (item.key === "create") {
+      // One option skips the menu.
+      if (createOptions.length === 1) startCreate(createOptions[0]!.kind, createOptions[0]!.module);
+      else setCreateOpen(true);
+      return;
+    }
     if (item.key === "more") {
       setMoreOpen((o) => !o);
       return;
@@ -80,16 +143,29 @@ export function JouleTabBar({ state, navigation }: BottomTabBarProps) {
     openModule(item.key);
   };
 
-  // The artboard's bottom: 18 stands in for the home indicator; on a device
-  // the real inset takes over, with a floor for hardware-button phones.
-  const bottomPad = Math.max(insets.bottom, 12) + 6;
+  if (hidden) return null;
 
   return (
-    <View style={[s.wrap, { paddingBottom: bottomPad }]}>
+    <View pointerEvents="box-none" style={[s.float, { bottom: barBottom }]}>
       <View style={s.bar}>
         {items.map((item) => {
+          if (item.key === "create") {
+            return (
+              <View key="create" style={s.createSlot}>
+                <TouchableOpacity
+                  onPress={() => onPress(item)}
+                  activeOpacity={0.85}
+                  accessibilityRole="button"
+                  accessibilityLabel="Quick create"
+                  accessibilityHint="Raise a ticket or incident, or log a client communication"
+                  style={[s.createBtn, { backgroundColor: t.accent }]}
+                >
+                  <Bx name="bx-plus" size={28} color={t.onAccent} />
+                </TouchableOpacity>
+              </View>
+            );
+          }
           const on = item.key === activeKey;
-          const Icon = item.icon;
           return (
             <TouchableOpacity
               key={item.key}
@@ -98,28 +174,51 @@ export function JouleTabBar({ state, navigation }: BottomTabBarProps) {
               accessibilityRole="button"
               accessibilityState={{ selected: on }}
               accessibilityLabel={item.label}
-              style={[
-                s.item,
-                on ? { backgroundColor: t.accent, paddingHorizontal: 15 } : null,
-              ]}
+              style={[s.item, on ? { backgroundColor: t.accent } : null]}
             >
-              <Icon size={22} color={on ? t.onAccent : t.navIdle} strokeWidth={on ? 2.4 : 2} />
-              {on ? (
-                <Text style={[f.t(13, 600), { color: t.onAccent }]} numberOfLines={1}>
-                  {item.label}
-                </Text>
-              ) : null}
+              <Bx name={on ? solidOf(item.icon) : item.icon} size={21} color={on ? t.onAccent : t.navIdle} />
+              {/* Every tab carries its title (user request) — the artboard
+                  showed it on the active pill only. */}
+              <Text
+                allowFontScaling={false}
+                style={[f.t(10.5, on ? 700 : 500), { color: on ? t.onAccent : t.navIdle }]}
+                numberOfLines={1}
+              >
+                {item.label}
+              </Text>
             </TouchableOpacity>
           );
         })}
       </View>
 
+      <JoSheet
+        visible={createOpen}
+        onClose={() => setCreateOpen(false)}
+        title="Create"
+        subtitle="Opens the full form for the selected site."
+      >
+        <View style={{ marginTop: 8 }}>
+          {createOptions.map((o, i) => (
+            <ListRow
+              key={o.kind}
+              icon={o.icon}
+              iconColor={t.accentInk}
+              label={o.label}
+              sub={o.sub}
+              divider={i > 0}
+              onPress={() => startCreate(o.kind, o.module)}
+            />
+          ))}
+        </View>
+      </JoSheet>
+
       <MoreDrawer
         visible={moreOpen}
         onClose={() => setMoreOpen(false)}
         onOpen={(k) => openModule(k)}
-        bottomOffset={bottomPad + BAR_HEIGHT + 10}
+        bottomOffset={barBottom + BAR_HEIGHT + 10}
         pins={pins}
+        isVisible={visible}
       />
     </View>
   );
@@ -133,12 +232,14 @@ function MoreDrawer({
   onOpen,
   bottomOffset,
   pins,
+  isVisible,
 }: {
   visible: boolean;
   onClose: () => void;
   onOpen: (k: ModuleKey) => void;
   bottomOffset: number;
   pins: ModuleKey[];
+  isVisible: (k: ModuleKey) => boolean;
 }) {
   const t = useJoTheme();
   const s = useStyles();
@@ -149,9 +250,16 @@ function MoreDrawer({
     onClose();
   };
 
+  const groups = MORE_GROUPS.map((g) => ({ ...g, keys: g.keys.filter(isVisible) })).filter(
+    (g) => g.keys.length > 0,
+  );
+
   return (
     <Modal visible={visible} transparent animationType="none" onRequestClose={close} statusBarTranslucent>
-      <Animated.View entering={FadeIn.duration(180)} style={[StyleSheet.absoluteFill, { backgroundColor: t.isDark ? "rgba(0,0,0,0.55)" : t.scrim }]}>
+      <Animated.View
+        entering={FadeIn.duration(180)}
+        style={[StyleSheet.absoluteFill, { backgroundColor: t.isDark ? "rgba(0,0,0,0.55)" : t.scrim }]}
+      >
         <Pressable style={StyleSheet.absoluteFill} onPress={close} accessibilityLabel="Close modules" />
       </Animated.View>
       <View style={{ flex: 1, justifyContent: "flex-end" }} pointerEvents="box-none">
@@ -166,7 +274,7 @@ function MoreDrawer({
               accessibilityState={{ selected: editing }}
               style={[s.editBtn, { backgroundColor: editing ? t.accent : t.track }]}
             >
-              {editing ? <Check size={15} color={t.onAccent} /> : <Pin size={15} color={t.ink} />}
+              <Bx name={editing ? "bx-check" : "bx-pin"} size={15} color={editing ? t.onAccent : t.ink} />
               <Text style={[f.t(12.5, 600), { color: editing ? t.onAccent : t.ink }]}>
                 {editing ? "Done" : "Edit bar"}
               </Text>
@@ -174,11 +282,11 @@ function MoreDrawer({
           </View>
           {editing ? (
             <Text style={[f.t(12), { color: t.muted, paddingTop: 6, paddingHorizontal: 4 }]}>
-              Tap to pin up to 3 modules to the bar. Home and More stay fixed.
+              Tap to pin up to {MAX_PINS} modules to the bar. Home, Create and More stay fixed.
             </Text>
           ) : null}
 
-          {MORE_GROUPS.map((g) => {
+          {groups.map((g) => {
             const rows: (ModuleKey | null)[][] = [];
             for (let i = 0; i < g.keys.length; i += 4) {
               const row: (ModuleKey | null)[] = g.keys.slice(i, i + 4);
@@ -230,7 +338,6 @@ function ModuleTile({
   const t = useJoTheme();
   const s = useStyles();
   const m = MODULES[moduleKey];
-  const Icon = m.icon;
   const lit = editing && pinned;
   return (
     <TouchableOpacity
@@ -248,14 +355,14 @@ function ModuleTile({
       ]}
     >
       <View style={[s.tileIcon, { backgroundColor: pinned ? t.accent : t.track }]}>
-        <Icon size={20} color={pinned ? t.onAccent : t.ink2} />
+        <Bx name={m.icon} size={20} color={pinned ? t.onAccent : t.ink2} />
       </View>
       <Text style={[f.t(11.5, 600), { color: t.ink, textAlign: "center", lineHeight: 14 }]} numberOfLines={2}>
         {m.label}
       </Text>
       {lit ? (
         <View style={[s.pinBadge, { backgroundColor: t.accent }]}>
-          <Pin size={11} color={t.onAccent} fill={t.onAccent} />
+          <Bx name="bxs-pin" size={11} color={t.onAccent} />
         </View>
       ) : null}
     </TouchableOpacity>
@@ -263,10 +370,15 @@ function ModuleTile({
 }
 
 const useStyles = makeJoStyles((t) => ({
-  wrap: {
-    paddingHorizontal: 14,
-    paddingTop: 8,
-    backgroundColor: t.page,
+  float: {
+    position: "absolute",
+    left: 14,
+    right: 14,
+    // Android orders siblings by elevation before draw order, and the native
+    // screen container otherwise paints the scene OVER the bar. The wrapper
+    // has no background, so this lifts it without casting a shadow.
+    zIndex: 20,
+    elevation: 20,
   },
   bar: {
     height: BAR_HEIGHT,
@@ -278,20 +390,40 @@ const useStyles = makeJoStyles((t) => ({
     alignItems: "center",
     justifyContent: "space-between",
     paddingHorizontal: 8,
+    // 0 18px 40px -12px rgba(0,0,0,.7)
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 18 },
-    shadowOpacity: t.isDark ? 0.7 : 0.12,
+    shadowOpacity: t.isDark ? 0.7 : 0.16,
     shadowRadius: 20,
-    elevation: 10,
+    elevation: 12,
   },
   item: {
-    height: 50,
-    minWidth: 46,
-    borderRadius: 25,
-    flexDirection: "row",
+    flex: 1,
+    minWidth: 0,
+    height: 52,
+    marginHorizontal: 2,
+    borderRadius: 24,
     alignItems: "center",
     justifyContent: "center",
-    gap: 7,
+    gap: 3,
+  },
+  createSlot: {
+    flex: 1,
+    minWidth: 0,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  createBtn: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    alignItems: "center",
+    justifyContent: "center",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.35,
+    shadowRadius: 10,
+    elevation: 6,
   },
   drawer: {
     marginHorizontal: 8,

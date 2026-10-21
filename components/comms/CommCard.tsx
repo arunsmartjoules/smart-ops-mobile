@@ -5,7 +5,7 @@
  */
 import React, { memo } from "react";
 import { Text, TouchableOpacity, View } from "react-native";
-import { Calendar, Check, CircleAlert, Speech } from "lucide-react-native";
+import { Calendar, Check, CircleAlert, Speech } from "@/components/jo/bxIcons";
 import { toneBg, toneFg } from "@/constants/jo";
 import { StatusPill, f, makeJoStyles, useJoTheme } from "@/components/jo/ui";
 import type { CommRow } from "@/services/CustomerCommunicationService";

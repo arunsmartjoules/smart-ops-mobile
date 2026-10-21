@@ -155,7 +155,10 @@ export const JO_DARK: JoPalette = {
   faint: "#5A5A66",
   selBg: "#F4F4F6",
   selFg: "#0A0A0C",
-  navBg: "rgba(24,24,30,0.94)",
+  // Opaque: the artboard's rgba(24,24,30,.86) relies on a 22px backdrop blur
+  // RN can't do without a native module; translucent without blur lets the
+  // text underneath show through the bar.
+  navBg: "#18181E",
   navBorder: "rgba(255,255,255,0.08)",
   navIdle: "#8A8A96",
   scrim: "rgba(0,0,0,0.6)",
@@ -201,7 +204,7 @@ export const JO_LIGHT: JoPalette = {
   faint: "#9A9AA6",
   selBg: "#0A0A0C",
   selFg: "#F4F4F6",
-  navBg: "rgba(255,255,255,0.96)",
+  navBg: "#FFFFFF",
   navBorder: "rgba(10,10,12,0.08)",
   navIdle: "#6B6B76",
   scrim: "rgba(10,10,12,0.45)",

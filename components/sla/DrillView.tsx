@@ -3,6 +3,7 @@
  * counted (cards or a wide table), the backend's worked calculation, and the
  * formula / glossary / rules. Data: GET /api/sla/:site/drilldown/:key.
  */
+import { useHideTabBar } from "@/services/TabBarVisibility";
 import React, { useMemo, useState } from "react";
 import { RefreshControl, ScrollView, Text, TouchableOpacity, View } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
@@ -19,7 +20,7 @@ import {
   Table,
   WifiOff,
   type LucideIcon,
-} from "lucide-react-native";
+} from "@/components/jo/bxIcons";
 import { Card, PrimaryButton, Shimmer, f, makeJoStyles, useJoTheme } from "@/components/jo/ui";
 import { toneBg, toneFg } from "@/constants/jo";
 import type { SlaDeliverable, SlaDrillColumn, SlaDrillDown } from "@/services/SlaService";
@@ -42,6 +43,7 @@ import {
   recordStatusTone,
   sourceModuleHref,
   sourceModuleOf,
+  prettyMonthKeys,
 } from "./lib";
 
 /** Cards shown before "Show all"; the table shows more rows per screen. */
@@ -82,6 +84,8 @@ export function DrillView({
   onDownload: (data: SlaDrillDown | null) => void;
   downloading: boolean;
 }) {
+  // The artboard draws this view full-screen, without the floating tab bar.
+  useHideTabBar(true);
   const t = useJoTheme();
   const s = useStyles();
   const [mode, setMode] = useState<"cards" | "table">("cards");
@@ -274,7 +278,7 @@ export function DrillView({
                     </Text>
                   </View>
                   {st.detail ? (
-                    <Text style={[f.m(11), { color: t.muted, lineHeight: 16, marginTop: 3 }]}>{st.detail}</Text>
+                    <Text style={[f.m(11), { color: t.muted, lineHeight: 16, marginTop: 3 }]}>{prettyMonthKeys(st.detail)}</Text>
                   ) : null}
                 </View>
               ))}

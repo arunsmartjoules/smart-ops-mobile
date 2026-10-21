@@ -1,63 +1,51 @@
+/**
+ * PM execution — artboard "JouleOps App" `r_pmExec` (app.dc.html 664–703;
+ * rules in v5Vals pxDone/pxTotal/pxOffset/pxTasks and the NEXT cycle).
+ *
+ * Logic is unchanged from the previous screen: local-first instance +
+ * checklist load with API fallback, debounced autosave through
+ * PMService.saveExecutionProgress (offline queue + attachment queue),
+ * camera-only before/after evidence, mandatory-field validation, and the
+ * signature sheet that completes the PM in the background.
+ */
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import {
-  View,
-  Text,
-  TouchableOpacity,
-  TextInput,
-  ActivityIndicator,
-  StyleSheet,
-  Alert,
-  Modal,
-  ListRenderItem,
-  Image,
-} from "react-native";
-import { FlashList } from "@shopify/flash-list";
+import { View, Alert, RefreshControl } from "react-native";
+import { FlashList, type ListRenderItem } from "@shopify/flash-list";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { router, useLocalSearchParams } from "expo-router";
-import {
-  ArrowLeft,
-  Camera,
-  Check,
-  CheckCircle2,
-  AlertCircle,
-  Info,
-  RefreshCw,
-  X,
-} from "lucide-react-native";
 import * as ImagePicker from "expo-image-picker";
 import * as Haptics from "expo-haptics";
 import PMService from "@/services/PMService";
-import { pmChecklistItems } from "@/database";
 import { useNetworkStatus } from "@/hooks/useNetworkStatus";
 import { useAttendanceGate } from "@/contexts/AttendanceGateContext";
-import SignaturePad from "@/components/SignaturePad";
-import SmartJoulesWordmark from "@/components/SmartJoulesWordmark";
 import logger from "@/utils/logger";
-import Skeleton from "@/components/Skeleton";
 import { StorageService } from "@/services/StorageService";
-import { dsRadius, dsCardShadow } from "@/constants/ds";
-import { makeThemedStyles, useDs } from "@/hooks/useDs";
-
-// Drizzle row type inferred from the schema
-type PMChecklistItemRow = typeof pmChecklistItems.$inferSelect;
+import { EmptyState, JoPage, useJoTheme } from "@/components/jo/ui";
+import {
+  PMChecklistSkeleton,
+  PMTaskRow,
+  type ChecklistImageAction,
+  type PMChecklistItemRow,
+  type PMResponse,
+  type ResponseField,
+} from "@/components/pm/PMTaskRow";
+import {
+  CfmRow,
+  CompleteFooter,
+  EvidenceRow,
+  EvidenceSlot,
+  ExecBanner,
+  ExecHint,
+  PMExecHeader,
+  PhotoPreview,
+  SignatureSheet,
+  StatusFooter,
+} from "@/components/pm/PMExecUI";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 interface ResponseMap {
-  [checklistItemId: string]: {
-    response_value: string | null;
-    readings: string | null;
-    remarks: string | null;
-    image_url: string | null;
-  };
+  [checklistItemId: string]: PMResponse;
 }
-
-// The checklist box cycles through these three states on tap, matching the
-// design: unanswered → Done → Not Done → unanswered.
-const CYCLE_NEXT: Record<string, string | null> = {
-  "": "Done",
-  Done: "Not Done",
-  "Not Done": null,
-};
 
 const isMeasureTask = (taskName?: string | null) =>
   !!taskName && taskName.toLowerCase().includes("measure");
@@ -70,367 +58,18 @@ const isMeasureTask = (taskName?: string | null) =>
 const ENFORCE_IMAGE_MANDATORY: boolean = false;
 const ENFORCE_READINGS_MANDATORY: boolean = false;
 
-/** Checklist row image: menu, direct camera/library, or null to remove */
-type ChecklistImageAction = "MENU" | "CAMERA" | "LIBRARY" | null;
-
-/**
- * Editable fields on a checklist response. `"value"` is the merged
- * reading+response used by Number/Text tasks: one box writes both columns, so
- * the row counts as answered (backend completion requires `response_value`)
- * while the server still gets its `readings` value.
- */
-type ResponseField = "response_value" | "remarks" | "readings" | "value";
-
 const INSTANCE_IMAGE_PICKER_OPTIONS = {
   mediaTypes: ["images"] as ImagePicker.MediaType[],
   allowsEditing: false,
   quality: 0.7,
 };
 
-/** "IMG_1234.jpg · queued" style caption under a task photo. */
-const photoCaption = (url: string) => {
-  const name = (url.split("?")[0] || "").split("/").pop() || "photo.jpg";
-  const trimmed = name.length > 26 ? `${name.slice(0, 23)}…` : name;
-  const isLocal = !/^https?:/i.test(url);
-  return isLocal ? `${trimmed} · queued` : trimmed;
-};
-
-// ─── Task Row – Memoized ────────────────────────────────────────────────────
-const TaskRow = React.memo(
-  ({
-    item,
-    response,
-    onResponseChange,
-    onImageChange,
-    onPreview,
-    isUploading,
-    answerLocked,
-    textLocked,
-    showRequiredErrors,
-    missingEvidenceImage,
-    missingRemarks,
-    missingResponse,
-    missingReadings,
-  }: {
-    item: PMChecklistItemRow;
-    response?: ResponseMap[string];
-    onResponseChange: (
-      itemId: string,
-      field: ResponseField,
-      value: string | null,
-    ) => void;
-    onImageChange: (itemId: string, action: ChecklistImageAction) => void;
-    onPreview: (uri: string) => void;
-    isUploading?: boolean;
-    /** Checkbox + photo are frozen (PM signed off, or edits gated off). */
-    answerLocked?: boolean;
-    /** Readings + remarks are frozen. A Completed PM leaves these editable. */
-    textLocked?: boolean;
-    showRequiredErrors?: boolean;
-    missingEvidenceImage?: boolean;
-    missingRemarks?: boolean;
-    missingResponse?: boolean;
-    missingReadings?: boolean;
-  }) => {
-    const styles = useStyles();
-    const ds = useDs();
-    const value = response?.response_value || null;
-    const fieldType = item.field_type || "Multiple Choice";
-    const isChoice = fieldType === "Multiple Choice";
-    // Free-text/number tasks have no Done/Not-Done vocabulary — the box just
-    // reflects "answered" for them.
-    const isDone = isChoice ? value === "Done" : !!value;
-    const isNotDone = isChoice && value === "Not Done";
-    // Number/Text tasks have ONE value box, and it is the reading: it writes
-    // both `readings` and `response_value` (the backend rejects completion
-    // while any row has no response_value; the server reads `readings`).
-    // Previously they rendered a second, separate response input above it, so
-    // operators saw two boxes for the same measurement and filled them
-    // inconsistently. Multiple-Choice rows keep an optional reading box,
-    // required only when the checklist marks the task readings_mandatory.
-    const readingsRequired = isChoice
-      ? Boolean(item.readings_mandatory)
-      : true;
-    // Legacy rows stored the measurement in response_value only — fall back to
-    // it so an already-answered task still shows its value in the merged box.
-    const readingsValue = isChoice
-      ? response?.readings || ""
-      : response?.readings || response?.response_value || "";
-    // Read-only rows can't be fixed, so don't paint them red.
-    const isReadingsMissing =
-      readingsRequired && !readingsValue.trim() && !textLocked;
-    const hasPhoto = !!response?.image_url;
-    const rowHasError = Boolean(
-      showRequiredErrors &&
-        (missingResponse ||
-          isReadingsMissing ||
-          missingReadings ||
-          missingRemarks ||
-          missingEvidenceImage),
-    );
-
-    // Box visuals per state — filled when Done, flame outline when Not Done,
-    // hairline carbon outline when still unanswered. The unanswered box takes
-    // the inset-field fill so it stays discernible against the task card.
-    const boxStyle = isDone
-      ? { backgroundColor: ds.controlOn, borderColor: ds.controlOn }
-      : isNotDone
-        ? { backgroundColor: ds.flame[1000], borderColor: ds.flame[100] }
-        : { backgroundColor: ds.field, borderColor: ds.carbon[800] };
-
-    // Set when the operator tried to tick the task with its required reading
-    // still blank — shows the hint until a reading is typed.
-    const [readingNudge, setReadingNudge] = useState(false);
-    const readingsInputRef = useRef<TextInput>(null);
-
-    const cycleResponse = () => {
-      if (answerLocked || !isChoice) return;
-      const nextValue = CYCLE_NEXT[value ?? ""] ?? null;
-      // A task with a mandatory reading can't be ticked Done until the reading
-      // is entered — take the operator straight to the field instead.
-      if (nextValue === "Done" && readingsRequired && !readingsValue.trim()) {
-        Haptics.notificationAsync(
-          Haptics.NotificationFeedbackType.Warning,
-        ).catch(() => {});
-        setReadingNudge(true);
-        if (!textLocked) readingsInputRef.current?.focus();
-        return;
-      }
-      onResponseChange(item.id, "response_value", nextValue);
-    };
-    const showReadingNudge =
-      readingNudge && readingsRequired && !readingsValue.trim();
-
-    return (
-      <View style={[styles.taskCard, rowHasError && styles.taskCardError]}>
-        <View style={styles.taskRow}>
-          {/* The touch target is the whole left column (full row height),
-              not just the 26px box — the box alone was too small to hit
-              reliably with gloves or on the move. */}
-          <TouchableOpacity
-            onPress={cycleResponse}
-            disabled={answerLocked || !isChoice}
-            activeOpacity={0.7}
-            hitSlop={{ top: 9, bottom: 9, left: 12 }}
-            accessibilityRole="checkbox"
-            accessibilityLabel={`${item.task_name} — ${value || "not answered"}`}
-            style={styles.taskBoxHit}
-          >
-            <View
-              style={[
-                styles.taskBox,
-                boxStyle,
-                showRequiredErrors &&
-                  missingResponse && { borderColor: ds.flame[100] },
-              ]}
-            >
-              {isNotDone ? (
-                <X size={17} color={ds.flame[100]} strokeWidth={2.4} />
-              ) : (
-                <Check
-                  size={17}
-                  color={isDone ? ds.onControl : "transparent"}
-                  strokeWidth={2.6}
-                />
-              )}
-            </View>
-          </TouchableOpacity>
-
-          <View style={styles.taskBody}>
-            {/* Tapping the task name ticks it too — a far bigger target. */}
-            <TouchableOpacity
-              onPress={cycleResponse}
-              disabled={answerLocked || !isChoice}
-              activeOpacity={0.6}
-              accessible={false}
-            >
-              <Text
-                style={[
-                  styles.taskName,
-                  { color: isDone ? ds.carbon[500] : ds.carbon[100] },
-                ]}
-              >
-                {item.task_name}
-              </Text>
-            </TouchableOpacity>
-
-            <View style={styles.inlineRow}>
-              {/* Readings — the single value box for Number/Text tasks. A
-                  required-but-empty field is outlined in red on sight, not
-                  only after a blocked completion. */}
-              <View
-                style={[
-                  styles.field,
-                  isChoice || fieldType === "Number"
-                    ? styles.readingsField
-                    : styles.readingsFieldWide,
-                  isReadingsMissing && { borderColor: ds.flame[100] },
-                ]}
-              >
-                <TextInput
-                  ref={readingsInputRef}
-                  value={readingsValue}
-                  onChangeText={(val) =>
-                    onResponseChange(item.id, isChoice ? "readings" : "value", val)
-                  }
-                  editable={!textLocked}
-                  placeholder={readingsRequired ? "Required" : "Readings"}
-                  placeholderTextColor={ds.carbon[700]}
-                  keyboardType={
-                    isChoice || fieldType === "Number"
-                      ? "decimal-pad"
-                      : "default"
-                  }
-                  style={styles.fieldInput}
-                />
-              </View>
-
-              <View
-                style={[
-                  styles.field,
-                  styles.remarksField,
-                  showRequiredErrors &&
-                    missingRemarks && { borderColor: ds.flame[100] },
-                ]}
-              >
-                <TextInput
-                  value={response?.remarks || ""}
-                  onChangeText={(val) =>
-                    onResponseChange(item.id, "remarks", val || null)
-                  }
-                  editable={!textLocked}
-                  placeholder={
-                    item.remarks_mandatory ? "Reason required" : "Remarks…"
-                  }
-                  placeholderTextColor={ds.carbon[700]}
-                  style={[styles.fieldInput, styles.remarksInput]}
-                />
-              </View>
-
-              {isUploading ? (
-                <View style={[styles.camBtn, styles.camBtnIdle]}>
-                  <ActivityIndicator size="small" color={ds.carbon[500]} />
-                </View>
-              ) : (
-                <TouchableOpacity
-                  onPress={() => {
-                    // Completed PMs are preview-only — never re-open the
-                    // add/replace menu once the instance is signed off.
-                    if (answerLocked) {
-                      if (hasPhoto) onPreview(response!.image_url!);
-                      return;
-                    }
-                    onImageChange(item.id, "MENU");
-                  }}
-                  disabled={answerLocked && !hasPhoto}
-                  activeOpacity={0.7}
-                  accessibilityLabel="Task photo"
-                  style={[
-                    styles.camBtn,
-                    hasPhoto ? styles.camBtnActive : styles.camBtnIdle,
-                    showRequiredErrors &&
-                      missingEvidenceImage && { borderColor: ds.flame[100] },
-                  ]}
-                >
-                  <Camera
-                    size={15}
-                    color={hasPhoto ? ds.sky[100] : ds.carbon[400]}
-                  />
-                </TouchableOpacity>
-              )}
-            </View>
-
-            {showReadingNudge && (
-              <Text style={[styles.readingNudge, { color: ds.flame[100] }]}>
-                Enter the reading before ticking this task.
-              </Text>
-            )}
-
-            {hasPhoto && (
-              <View style={styles.photoRow}>
-                <TouchableOpacity
-                  onPress={() => onPreview(response!.image_url!)}
-                  style={styles.photoThumbWrap}
-                  activeOpacity={0.8}
-                >
-                  <Image
-                    source={{ uri: response!.image_url! }}
-                    style={styles.photoThumb}
-                  />
-                </TouchableOpacity>
-                <Text style={styles.photoCaption} numberOfLines={1}>
-                  {photoCaption(response!.image_url!)}
-                </Text>
-                {!answerLocked && (
-                  <TouchableOpacity
-                    onPress={() => onImageChange(item.id, null)}
-                    hitSlop={10}
-                    accessibilityLabel="Remove photo"
-                  >
-                    <X size={13} color={ds.carbon[600]} />
-                  </TouchableOpacity>
-                )}
-              </View>
-            )}
-          </View>
-        </View>
-      </View>
-    );
-  },
-  (prev, next) =>
-    prev.item.id === next.item.id &&
-    prev.response?.response_value === next.response?.response_value &&
-    prev.response?.readings === next.response?.readings &&
-    prev.response?.remarks === next.response?.remarks &&
-    prev.response?.image_url === next.response?.image_url &&
-    prev.isUploading === next.isUploading &&
-    prev.answerLocked === next.answerLocked &&
-    prev.textLocked === next.textLocked &&
-    prev.showRequiredErrors === next.showRequiredErrors &&
-    prev.missingResponse === next.missingResponse &&
-    prev.missingReadings === next.missingReadings &&
-    prev.missingRemarks === next.missingRemarks &&
-    prev.missingEvidenceImage === next.missingEvidenceImage,
-);
-
-TaskRow.displayName = "TaskRow";
-
-// ─── Checklist Skeleton ─────────────────────────────────────────────────────
-const ChecklistSkeleton = () => {
-  const styles = useStyles();
-  return (
-    <View style={styles.listContent}>
-      {[1, 2, 3, 4, 5, 6, 7, 8].map((i) => (
-        <View key={i} style={styles.taskCard}>
-          <View style={styles.taskRow}>
-            <Skeleton width={26} height={26} borderRadius={dsRadius.box} />
-            <View style={[styles.taskBody, { marginLeft: 11 }]}>
-              <Skeleton width="80%" height={13} />
-              <View style={[styles.inlineRow, { marginTop: 10 }]}>
-                <Skeleton
-                  width={112}
-                  height={30}
-                  borderRadius={dsRadius.sm}
-                />
-                <Skeleton
-                  width="45%"
-                  height={30}
-                  borderRadius={dsRadius.sm}
-                />
-                <Skeleton width={32} height={30} borderRadius={dsRadius.sm} />
-              </View>
-            </View>
-          </View>
-        </View>
-      ))}
-    </View>
-  );
-};
+// Room the floating CTA (54 + paddings + optional blocked line) takes up.
+const FOOTER_CLEARANCE = 132;
 
 // ─── Main Screen ────────────────────────────────────────────────────────────
 export default function PMExecutionScreen() {
-  const styles = useStyles();
-  const ds = useDs();
+  const t = useJoTheme();
   const { instanceId } = useLocalSearchParams<{ instanceId: string }>();
   const { isConnected } = useNetworkStatus();
   const { canEdit } = useAttendanceGate();
@@ -873,8 +512,6 @@ export default function PMExecutionScreen() {
     (it) => responses[it.id]?.response_value,
   ).length;
   const total = checklistItems.length;
-  // Visual percentage for the progress bar fill
-  const progressPercent = total > 0 ? (answered / total) * 100 : 0;
 
   /**
    * Commissioning airflow for this asset, resolved server-side from
@@ -1237,12 +874,12 @@ export default function PMExecutionScreen() {
     });
     if (index < 0) {
       // Every task is done — the only gap left is the After photo, whose
-      // tile sits in the list footer.
+      // slot sits at the top of the list (artboard order).
       if (!missingMandatoryValidation.missingAfterImage) return false;
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(
         () => {},
       );
-      listRef.current?.scrollToEnd({ animated: true });
+      listRef.current?.scrollToOffset({ offset: 0, animated: true });
       return true;
     }
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(
@@ -1377,7 +1014,7 @@ export default function PMExecutionScreen() {
   // ── List setup ────────────────────────────────────────────────────────────
   const renderItem: ListRenderItem<PMChecklistItemRow> = useCallback(
     ({ item }) => (
-      <TaskRow
+      <PMTaskRow
         item={item}
         response={responses[item.id]}
         onResponseChange={handleResponseChange}
@@ -1386,6 +1023,7 @@ export default function PMExecutionScreen() {
         isUploading={uploadingItems[item.id]}
         answerLocked={instance?.status === "Completed" || !canEdit}
         textLocked={!canEdit}
+        imageRequired={ENFORCE_IMAGE_MANDATORY && Boolean(item.image_mandatory)}
         showRequiredErrors={completionAttempted}
         missingEvidenceImage={missingMandatoryValidation.byItemId[item.id]?.missingImage}
         missingRemarks={missingMandatoryValidation.byItemId[item.id]?.missingRemarks}
@@ -1407,128 +1045,6 @@ export default function PMExecutionScreen() {
 
   const keyExtractor = useCallback((item: PMChecklistItemRow) => item.id, []);
 
-  /**
-   * One large evidence tile — a thumbnail once shot, a prompt before that.
-   * A render FUNCTION, not a component: declaring a component inside render
-   * gives it a new type each pass, which remounts the tile (and re-decodes the
-   * photo) on every keystroke in the checklist above it.
-   */
-  const renderEvidenceTile = (
-    type: "before_image" | "after_image",
-    label: string,
-  ) => {
-    const uri = instance?.[type] as string | undefined;
-    // Still on-device: saved, waiting for signal to upload.
-    const isQueued = !!uri && !/^https?:/i.test(uri);
-    const isRequired = type === "after_image";
-    const showMissing =
-      isRequired &&
-      !uri &&
-      completionAttempted &&
-      instance?.status !== "Completed";
-    return (
-      <TouchableOpacity
-        key={type}
-        onPress={() => onEvidencePress(type)}
-        activeOpacity={0.85}
-        style={[
-          styles.evTile,
-          uri ? styles.evTileFilled : null,
-          showMissing && { borderColor: ds.flame[100] },
-        ]}
-        accessibilityRole="button"
-        accessibilityLabel={`${label} photo${isRequired ? ", required" : ""}. ${uri ? "Tap to preview or retake" : "Tap to take photo"}`}
-      >
-        {uri ? (
-          <Image
-            source={{ uri }}
-            style={styles.evImage}
-            resizeMode="cover"
-            onError={() => void refreshInstanceImages()}
-          />
-        ) : (
-          <View style={styles.evEmpty}>
-            <Camera
-              size={26}
-              color={showMissing ? ds.flame[100] : ds.carbon[600]}
-              strokeWidth={1.8}
-            />
-            <Text
-              style={[styles.evAdd, showMissing && { color: ds.flame[100] }]}
-            >
-              {isRequired ? "Take photo · Required" : "Take photo"}
-            </Text>
-          </View>
-        )}
-        <View style={styles.evCaption}>
-          <Text style={styles.evLabel}>{label}</Text>
-          {isQueued ? (
-            <Text style={styles.evQueued}>Queued</Text>
-          ) : uri ? (
-            <Check size={13} color={ds.sky[100]} strokeWidth={2.6} />
-          ) : null}
-        </View>
-      </TouchableOpacity>
-    );
-  };
-
-  const ListFooter = (
-    <View>
-      {/* Evidence lives at the bottom, at a size worth looking at — it used to
-          be two 14px tiles in the header, too small to read or verify. */}
-      <View style={styles.evSection}>
-        <Text style={styles.evHeading}>Photos</Text>
-        <View style={styles.evRow}>
-          {renderEvidenceTile("before_image", "Before")}
-          {renderEvidenceTile("after_image", "After")}
-        </View>
-      </View>
-
-      <View style={styles.hintRow}>
-        <Info size={14} color={ds.carbon[600]} />
-        <Text style={styles.hintText}>
-          {instance?.status === "Completed"
-            ? "This PM is signed off. Task answers and photos are locked; readings and remarks can still be corrected and save automatically."
-            : "Tap the box to cycle Done → Not Done → clear. Fields marked Required must be filled before completion."}
-        </Text>
-      </View>
-    </View>
-  );
-
-  const ListEmpty = (
-    <View style={styles.flex}>
-      {fetchingChecklist ? (
-        <ChecklistSkeleton />
-      ) : (
-        <View style={styles.emptyChecklist}>
-          <Text style={styles.emptyText}>
-            {!instance?.maintenance_id
-              ? "No checklist linked to this PM instance."
-              : checklistItems.length === 0 && !isConnected
-                ? "Checklist not cached yet.\nPlease connect to internet and sync to cache all checklists."
-                : "No checklist items found."}
-          </Text>
-          {checklistItems.length === 0 &&
-            !isConnected &&
-            instance?.maintenance_id && (
-              <TouchableOpacity
-                onPress={() => {
-                  Alert.alert(
-                    "Offline Mode",
-                    "To use PM checklists offline:\n\n1. Connect to internet\n2. Open the app and wait for sync to complete\n3. All checklists will be cached automatically\n\nAfter that, you can work offline.",
-                    [{ text: "OK" }],
-                  );
-                }}
-                style={styles.learnMoreBtn}
-              >
-                <Text style={styles.learnMoreText}>Learn More</Text>
-              </TouchableOpacity>
-            )}
-        </View>
-      )}
-    </View>
-  );
-
   const isCompleted = instance?.status === "Completed";
   const canComplete =
     total > 0 &&
@@ -1543,744 +1059,191 @@ export default function PMExecutionScreen() {
       })
     : null;
 
+  const beforeUri = instance?.before_image as string | null | undefined;
+  const afterUri = instance?.after_image as string | null | undefined;
+  const photosEditable = canEdit && !isCompleted;
+  const showMissingAfter = !afterUri && completionAttempted && !isCompleted;
+
+  // Before / after evidence leads the list, as on the artboard. Photo tiles
+  // are rendered here (not as an inline component) so typing in a task above
+  // never remounts them and re-decodes the photos.
+  const ListHeader = (
+    <View style={{ paddingBottom: 10 }}>
+      <EvidenceRow>
+        <EvidenceSlot
+          label="Before photo"
+          uri={beforeUri}
+          highlight={photosEditable && !beforeUri}
+          onPress={() => onEvidencePress("before_image")}
+          onImageError={() => void refreshInstanceImages()}
+        />
+        <EvidenceSlot
+          label="After photo"
+          uri={afterUri}
+          required
+          missing={showMissingAfter}
+          highlight={photosEditable && !!beforeUri && !afterUri}
+          onPress={() => onEvidencePress("after_image")}
+          onImageError={() => void refreshInstanceImages()}
+        />
+      </EvidenceRow>
+      {commissioningCfm != null ? <CfmRow value={commissioningCfm} /> : null}
+      {!isConnected ? (
+        <ExecBanner
+          icon="bx-wifi-off"
+          tone="warn"
+          text="Offline — answers and photos are saved on this phone and will sync automatically."
+        />
+      ) : null}
+    </View>
+  );
+
+  const ListFooter =
+    checklistItems.length > 0 ? (
+      <ExecHint
+        text={
+          isCompleted
+            ? "This PM is signed off. Task answers and photos are locked; readings and remarks can still be corrected and save automatically."
+            : "Tap the box to cycle Done → Not Done → clear. Fields marked * must be filled before completion."
+        }
+      />
+    ) : null;
+
+  const ListEmpty = fetchingChecklist ? (
+    <View style={{ marginHorizontal: -16 }}>
+      <PMChecklistSkeleton />
+    </View>
+  ) : !instance?.maintenance_id ? (
+    <EmptyState
+      icon="bx-list-check"
+      title="No checklist linked"
+      sub="This PM instance has no checklist attached. Ask an admin to link one."
+    />
+  ) : !isConnected ? (
+    <EmptyState
+      icon="bx-wifi-off"
+      title="Checklist not cached yet"
+      sub="Connect to the internet and sync once to cache all checklists for offline use."
+      action={{
+        label: "Learn more",
+        onPress: () =>
+          Alert.alert(
+            "Offline Mode",
+            "To use PM checklists offline:\n\n1. Connect to internet\n2. Open the app and wait for sync to complete\n3. All checklists will be cached automatically\n\nAfter that, you can work offline.",
+            [{ text: "OK" }],
+          ),
+      }}
+    />
+  ) : (
+    <EmptyState
+      icon="bx-list-check"
+      title="No checklist items found"
+      sub="Pull down to fetch the checklist again."
+      action={{ label: "Try again", onPress: () => void loadData(true) }}
+    />
+  );
+
   if (loading && !instance) {
     return (
-      <View style={[styles.flex, { backgroundColor: ds.pageBg }]}>
-        <View style={[styles.headerBlock, { paddingTop: insets.top + 6 }]}>
-          <View style={styles.headerRow}>
-            <TouchableOpacity
-              onPress={() => router.back()}
-              style={styles.headerTile}
-              accessibilityLabel="Go back"
-            >
-              <ArrowLeft size={20} color={ds.onChrome} />
-            </TouchableOpacity>
-            <View style={styles.headerText}>
-              <Text style={styles.headerTitle}>PM Task</Text>
-              <Text style={styles.headerSub}>Loading checklist…</Text>
-            </View>
-          </View>
-          <View style={styles.progressRow}>
-            <View style={styles.progressTrack} />
-          </View>
-        </View>
-        <ChecklistSkeleton />
-      </View>
+      <JoPage glow={false}>
+        <PMExecHeader
+          title="PM Task"
+          sub="Loading checklist…"
+          answered={0}
+          total={0}
+          onBack={() => router.back()}
+        />
+        <PMChecklistSkeleton />
+      </JoPage>
     );
   }
 
   return (
-    <View style={[styles.flex, { backgroundColor: ds.pageBg }]}>
-      {/* ── Thunder header ── */}
-      <View style={[styles.headerBlock, { paddingTop: insets.top + 6 }]}>
-        <View style={styles.headerRow}>
-          <TouchableOpacity
-            onPress={() => router.back()}
-            style={styles.headerTile}
-            accessibilityLabel="Go back"
-          >
-            <ArrowLeft size={20} color={ds.onChrome} />
-          </TouchableOpacity>
-          <View style={styles.headerText}>
-            <Text style={styles.headerTitle} numberOfLines={1}>
-              {instance?.asset_id || instance?.title || "PM Task"}
-            </Text>
-            <Text style={styles.headerSub} numberOfLines={1}>
-              {[instance?.title, instance?.asset_type]
-                .filter(Boolean)
-                .join(" · ")}
-            </Text>
-          </View>
-          {isConnected && (
-            <TouchableOpacity
-              onPress={() => loadData(true)}
-              style={styles.headerTile}
-              disabled={fetchingChecklist}
-              accessibilityLabel="Refresh checklist"
-            >
-              {fetchingChecklist ? (
-                <ActivityIndicator size="small" color={ds.onChrome} />
-              ) : (
-                <RefreshCw size={18} color={ds.onChrome} />
-              )}
-            </TouchableOpacity>
-          )}
-        </View>
+    <JoPage glow={false}>
+      <PMExecHeader
+        title={instance?.asset_id || instance?.title || "PM Task"}
+        sub={[instance?.title, instance?.asset_type].filter(Boolean).join(" · ")}
+        answered={answered}
+        total={total}
+        onBack={() => router.back()}
+      />
 
-        <View style={styles.progressRow}>
-          <View style={styles.progressTrack}>
-            <View
-              style={[styles.progressFill, { width: `${progressPercent}%` }]}
-            />
-          </View>
-          <Text style={styles.progressCount}>
-            {answered}
-            <Text style={styles.progressTotal}>/{total}</Text>
-          </Text>
-          {commissioningCfm != null && (
-            <View style={styles.cfmChip}>
-              <Text style={styles.cfmLabel}>Commissioning</Text>
-              <Text style={styles.cfmValue}>
-                {commissioningCfm}
-                <Text style={styles.cfmUnit}> CFM</Text>
-              </Text>
-            </View>
-          )}
-        </View>
-      </View>
-
-      {/* ── Task list ── */}
       {(loading || fetchingChecklist) && checklistItems.length === 0 ? (
-        <ChecklistSkeleton />
+        <PMChecklistSkeleton />
       ) : (
         <FlashList
           ref={listRef}
           data={checklistItems}
-          // @ts-ignore
           renderItem={renderItem}
           keyExtractor={keyExtractor}
+          ListHeaderComponent={ListHeader}
           ListEmptyComponent={ListEmpty}
-          ListFooterComponent={checklistItems.length > 0 ? ListFooter : null}
-          // @ts-ignore
-          estimatedItemSize={104}
-          contentContainerStyle={styles.listContent}
+          ListFooterComponent={ListFooter}
+          contentContainerStyle={{
+            paddingHorizontal: 16,
+            paddingBottom: FOOTER_CLEARANCE + Math.max(insets.bottom, 12),
+          }}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
+          refreshControl={
+            <RefreshControl
+              refreshing={fetchingChecklist && checklistItems.length > 0}
+              onRefresh={() => void loadData(true)}
+              tintColor={t.muted}
+              colors={[t.accent]}
+            />
+          }
         />
       )}
 
-      {/* ── Footer ── */}
-      {!isCompleted && canEdit && (
-        <View
-          style={[
-            styles.footer,
-            { paddingBottom: Math.max(insets.bottom, 12) + 14 },
-          ]}
-        >
-          {!!blockedMessage && (
-            <View style={styles.blockedRow}>
-              <AlertCircle size={14} color={ds.flame[100]} />
-              <Text style={styles.blockedText}>{blockedMessage}</Text>
-            </View>
-          )}
-          <TouchableOpacity
-            onPress={() => {
-              setCompletionAttempted(true);
-              if (!ctaReady) {
-                // Guide the operator straight to the first unfinished card
-                // (scrolls + flame-bordered highlight) instead of a bare count
-                // popup; fall back to the popup only if there's no specific
-                // task to point at.
-                if (!scrollToFirstIncomplete()) {
-                  showCompletionBlockedPopup();
-                }
-                return;
+      {!isCompleted && canEdit ? (
+        <CompleteFooter
+          ready={ctaReady}
+          blockedMessage={blockedMessage}
+          onPress={() => {
+            setCompletionAttempted(true);
+            if (!ctaReady) {
+              // Guide the operator straight to the first unfinished card
+              // (scrolls + BAD-bordered highlight) instead of a bare count
+              // popup; fall back to the popup only if there's no specific
+              // task to point at.
+              if (!scrollToFirstIncomplete()) {
+                showCompletionBlockedPopup();
               }
-              setShowCompletionModal(true);
-            }}
-            activeOpacity={0.85}
-            style={[
-              styles.cta,
-              { backgroundColor: ctaReady ? ds.controlOn : ds.carbon[900] },
-            ]}
-          >
-            <Text
-              style={[
-                styles.ctaText,
-                { color: ctaReady ? ds.onControl : ds.carbon[700] },
-              ]}
-            >
-              Complete &amp; Sign
-            </Text>
-          </TouchableOpacity>
-        </View>
-      )}
+              return;
+            }
+            setShowCompletionModal(true);
+          }}
+        />
+      ) : null}
 
-      {isCompleted && (
-        <View
-          style={[
-            styles.completedBanner,
-            { paddingBottom: Math.max(insets.bottom, 12) + 16 },
-          ]}
-        >
-          <CheckCircle2 size={18} color={ds.sky[100]} />
-          <Text style={styles.completedText}>
-            PM Completed{completedAt ? ` · ${completedAt}` : ""}
-          </Text>
-          {canEdit && (
-            <Text style={styles.completedSub}>· Readings & remarks editable</Text>
-          )}
-        </View>
-      )}
+      {isCompleted ? (
+        <StatusFooter
+          icon="bxs-check-circle"
+          tone="ok"
+          text={`PM completed${completedAt ? ` · ${completedAt}` : ""}${canEdit ? " · Readings & remarks editable" : ""}`}
+        />
+      ) : null}
 
-      {/* ── Signature sheet ── */}
-      <Modal
+      {!isCompleted && !canEdit ? (
+        <StatusFooter
+          icon="bx-lock-alt"
+          tone="mute"
+          text="Read-only — start your day to fill in and complete this PM."
+        />
+      ) : null}
+
+      <SignatureSheet
         visible={showCompletionModal}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setShowCompletionModal(false)}
-      >
-        <View style={styles.modalBg}>
-          <View style={styles.modalSheet}>
-            <View style={styles.modalHeader}>
-              <View style={styles.modalHeaderText}>
-                <Text style={styles.modalTitle}>Complete PM Task</Text>
-                <Text style={styles.modalSub}>
-                  Please provide the client signature below.
-                </Text>
-              </View>
-              <View style={styles.modalHeaderRight}>
-                <SmartJoulesWordmark width={118} />
-                <TouchableOpacity
-                  onPress={() => setShowCompletionModal(false)}
-                  style={styles.closeBtn}
-                  accessibilityLabel="Close"
-                >
-                  <X size={20} color={ds.carbon[500]} />
-                </TouchableOpacity>
-              </View>
-            </View>
+        onClose={() => setShowCompletionModal(false)}
+        onSign={handleComplete}
+        saving={saving}
+        doneCount={doneCount}
+        notDoneCount={notDoneCount}
+        photoCount={photoCount}
+      />
 
-            <View style={styles.chipRow}>
-              <View style={styles.chip}>
-                <Text style={styles.chipNum}>{doneCount}</Text>
-                <Text style={styles.chipLabel}>tasks done</Text>
-              </View>
-              <View style={styles.chip}>
-                <Text style={styles.chipNum}>{notDoneCount}</Text>
-                <Text style={styles.chipLabel}>not done</Text>
-              </View>
-              <View style={styles.chip}>
-                <Text style={styles.chipNum}>{photoCount}</Text>
-                <Text style={styles.chipLabel}>photos</Text>
-              </View>
-            </View>
-
-            <View style={styles.signatureContainer}>
-              <SignaturePad
-                standalone
-                onOK={handleComplete}
-                description="Sign here to confirm PM completion"
-                okText="Confirm & Complete"
-                accentColor={ds.thunder[100]}
-                clearVariant="outlined"
-              />
-            </View>
-
-            {saving && (
-              <View style={styles.savingOverlay}>
-                <ActivityIndicator size="large" color={ds.carbon[500]} />
-                <Text style={styles.savingText}>Processing completion...</Text>
-              </View>
-            )}
-          </View>
-        </View>
-      </Modal>
-
-      {/* ── Image preview ── */}
-      <Modal
-        visible={!!previewImageUrl}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setPreviewImageUrl(null)}
-      >
-        <TouchableOpacity
-          style={styles.fullScreenPreviewBg}
-          activeOpacity={1}
-          onPress={() => setPreviewImageUrl(null)}
-        >
-          <View style={styles.fullScreenPreviewContent}>
-            {previewImageUrl && (
-              <Image
-                source={{ uri: previewImageUrl }}
-                style={styles.fullScreenImage}
-                resizeMode="contain"
-              />
-            )}
-            <TouchableOpacity
-              onPress={() => setPreviewImageUrl(null)}
-              style={styles.closePreviewBtn}
-            >
-              <X size={24} color={ds.onChrome} />
-            </TouchableOpacity>
-          </View>
-        </TouchableOpacity>
-      </Modal>
-    </View>
+      <PhotoPreview uri={previewImageUrl} onClose={() => setPreviewImageUrl(null)} />
+    </JoPage>
   );
 }
-
-// ─── Styles ─────────────────────────────────────────────────────────────────
-const useStyles = makeThemedStyles((ds) => ({
-  flex: { flex: 1 },
-  listContent: {
-    paddingHorizontal: 14,
-    paddingTop: 12,
-    paddingBottom: 20,
-  },
-
-  // ── Header (thunder chrome) ──
-  headerBlock: {
-    backgroundColor: ds.thunder[100],
-  },
-  headerRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    paddingHorizontal: 18,
-    paddingBottom: 12,
-  },
-  headerTile: {
-    width: 34,
-    height: 34,
-    borderRadius: dsRadius.tile,
-    backgroundColor: "rgba(255,255,255,0.10)",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  headerText: { flex: 1, minWidth: 0 },
-  headerTitle: {
-    fontSize: 16,
-    lineHeight: 19,
-    fontWeight: "700",
-    letterSpacing: 0.16,
-    color: ds.onChrome,
-  },
-  headerSub: {
-    fontSize: 11.5,
-    lineHeight: 15,
-    color: ds.thunder[700],
-    marginTop: 1,
-  },
-  progressRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    paddingHorizontal: 18,
-    paddingBottom: 14,
-  },
-  progressTrack: {
-    flex: 1,
-    height: 5,
-    borderRadius: dsRadius.pill,
-    backgroundColor: "rgba(255,255,255,0.15)",
-    overflow: "hidden",
-  },
-  progressFill: {
-    height: "100%",
-    borderRadius: dsRadius.pill,
-    backgroundColor: ds.flame[100],
-  },
-  progressCount: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: ds.onChrome,
-  },
-  progressTotal: {
-    fontWeight: "400",
-    color: ds.thunder[700],
-  },
-  /* Commissioning CFM chip — sits where the evidence tiles used to. */
-  cfmChip: {
-    alignItems: "flex-end",
-    paddingLeft: 10,
-  },
-  cfmLabel: {
-    fontSize: 8,
-    fontWeight: "600",
-    letterSpacing: 0.96,
-    textTransform: "uppercase",
-    color: ds.sky[500],
-    marginBottom: 2,
-  },
-  cfmValue: { fontSize: 14, fontWeight: "700", color: ds.onChrome },
-  cfmUnit: { fontSize: 9, fontWeight: "600", color: ds.sky[500] },
-
-  /* Before / After evidence, at the bottom of the checklist. */
-  evSection: { paddingTop: 18, paddingBottom: 4 },
-  evHeading: {
-    fontSize: 9,
-    fontWeight: "600",
-    letterSpacing: 1.08,
-    textTransform: "uppercase",
-    color: ds.carbon[500],
-    marginBottom: 9,
-  },
-  evRow: { flexDirection: "row", gap: 10 },
-  evTile: {
-    flex: 1,
-    height: 168,
-    borderRadius: dsRadius.tile,
-    backgroundColor: ds.field,
-    borderWidth: 1,
-    borderColor: ds.carbon[900],
-    overflow: "hidden",
-    justifyContent: "flex-end",
-  },
-  evTileFilled: { borderColor: ds.sky[100] },
-  evImage: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0 },
-  evEmpty: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 7,
-  },
-  evAdd: { fontSize: 11, fontWeight: "500", color: ds.carbon[600] },
-  evCaption: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-    // Reads over both a photo and the empty fill.
-    backgroundColor: "rgba(6,20,23,0.72)",
-  },
-  evLabel: {
-    fontSize: 11,
-    fontWeight: "700",
-    letterSpacing: 0.55,
-    textTransform: "uppercase",
-    color: "#F1F4F4",
-  },
-  evQueued: {
-    fontSize: 10,
-    fontWeight: "600",
-    color: "#F1F4F4",
-    opacity: 0.75,
-  },
-
-
-  // ── Task card ──
-  taskCard: {
-    backgroundColor: ds.white,
-    borderRadius: dsRadius.base,
-    marginBottom: 6,
-    paddingVertical: 9,
-    paddingHorizontal: 12,
-    borderWidth: 1,
-    borderColor: "transparent",
-    ...dsCardShadow,
-  },
-  taskCardError: {
-    borderColor: ds.flame[100],
-  },
-  taskRow: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-  },
-  taskBoxHit: {
-    alignSelf: "stretch",
-    paddingTop: 1,
-    paddingRight: 11,
-  },
-  taskBox: {
-    width: 26,
-    height: 26,
-    borderRadius: dsRadius.box,
-    borderWidth: 1.5,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  readingNudge: {
-    fontSize: 11,
-    fontWeight: "600",
-    marginTop: 6,
-  },
-  taskBody: { flex: 1, minWidth: 0 },
-  taskName: {
-    fontSize: 13,
-    lineHeight: 17,
-    letterSpacing: 0.13,
-    marginBottom: 7,
-  },
-
-  inlineRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-  },
-  field: {
-    flexDirection: "row",
-    alignItems: "center",
-    height: 30,
-    backgroundColor: ds.pageBg,
-    borderRadius: dsRadius.sm,
-    borderWidth: 1,
-    borderColor: ds.carbon[900],
-    paddingHorizontal: 8,
-  },
-  readingsField: { width: 112, flexShrink: 0 },
-  // Text tasks share the row evenly with remarks — 112px is too tight to type
-  // a sentence into.
-  readingsFieldWide: { flex: 1, minWidth: 0 },
-  remarksField: { flex: 1, minWidth: 0 },
-  fieldInput: {
-    flex: 1,
-    minWidth: 0,
-    padding: 0,
-    fontSize: 13,
-    color: ds.carbon[100],
-  },
-  remarksInput: { fontSize: 12 },
-  camBtn: {
-    width: 32,
-    height: 30,
-    borderRadius: dsRadius.sm,
-    borderWidth: 1,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  camBtnIdle: {
-    backgroundColor: ds.carbon[1000],
-    borderColor: ds.carbon[900],
-  },
-  camBtnActive: {
-    backgroundColor: ds.sky[900],
-    borderColor: ds.sky[100],
-  },
-
-  photoRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 7,
-    marginTop: 7,
-  },
-  photoThumbWrap: {
-    width: 44,
-    height: 44,
-    borderRadius: dsRadius.sm,
-    borderWidth: 1,
-    borderColor: ds.carbon[900],
-    backgroundColor: ds.carbon[900],
-    overflow: "hidden",
-  },
-  photoThumb: { width: "100%", height: "100%" },
-  photoCaption: {
-    flex: 1,
-    fontSize: 10.5,
-    color: ds.carbon[500],
-  },
-
-  hintRow: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 7,
-    paddingHorizontal: 4,
-    paddingTop: 8,
-  },
-  hintText: {
-    flex: 1,
-    fontSize: 11,
-    lineHeight: 15.4,
-    color: ds.carbon[600],
-  },
-
-  // ── Empty state ──
-  emptyChecklist: {
-    alignItems: "center",
-    paddingTop: 60,
-    paddingBottom: 40,
-  },
-  emptyText: {
-    color: ds.carbon[600],
-    fontSize: 14,
-    lineHeight: 20,
-    textAlign: "center",
-  },
-  learnMoreBtn: {
-    marginTop: 16,
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    backgroundColor: ds.carbon[1000],
-    borderRadius: dsRadius.base,
-  },
-  learnMoreText: {
-    color: ds.carbon[400],
-    fontSize: 14,
-    fontWeight: "600",
-  },
-
-  // ── Footer ──
-  footer: {
-    backgroundColor: ds.white,
-    borderTopWidth: 1,
-    borderTopColor: ds.carbon[900],
-    paddingHorizontal: 18,
-    paddingTop: 12,
-  },
-  blockedRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    marginBottom: 8,
-  },
-  blockedText: {
-    flex: 1,
-    fontSize: 11,
-    fontWeight: "500",
-    color: ds.flame[100],
-  },
-  cta: {
-    borderRadius: dsRadius.base,
-    paddingVertical: 14,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  ctaText: {
-    fontSize: 16,
-    fontWeight: "700",
-    letterSpacing: 0.16,
-  },
-
-  completedBanner: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-    backgroundColor: ds.sky[900],
-    borderTopWidth: 1,
-    borderTopColor: ds.sky[500],
-    paddingHorizontal: 18,
-    paddingTop: 16,
-  },
-  completedText: {
-    fontSize: 15,
-    fontWeight: "700",
-    letterSpacing: 0.15,
-    color: ds.sky[100],
-  },
-  completedSub: {
-    fontSize: 12,
-    fontWeight: "500",
-    color: ds.sky[100],
-    opacity: 0.8,
-  },
-
-  // ── Signature sheet ──
-  modalBg: {
-    flex: 1,
-    backgroundColor: "rgba(25,19,18,0.5)",
-    justifyContent: "flex-end",
-  },
-  modalSheet: {
-    backgroundColor: ds.white,
-    borderTopLeftRadius: dsRadius.sheet,
-    borderTopRightRadius: dsRadius.sheet,
-    height: "86%",
-  },
-  modalHeader: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    justifyContent: "space-between",
-    paddingHorizontal: 22,
-    paddingTop: 22,
-    paddingBottom: 14,
-    gap: 12,
-  },
-  modalHeaderText: { flex: 1, minWidth: 0 },
-  modalHeaderRight: { alignItems: "flex-end", gap: 12 },
-  modalTitle: {
-    fontSize: 18,
-    lineHeight: 22,
-    fontWeight: "700",
-    letterSpacing: 0.45,
-    color: ds.carbon[100],
-    marginBottom: 4,
-  },
-  modalSub: {
-    fontSize: 13,
-    lineHeight: 18,
-    color: ds.carbon[500],
-  },
-  closeBtn: {
-    width: 34,
-    height: 34,
-    borderRadius: dsRadius.tile,
-    backgroundColor: ds.carbon[1000],
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  chipRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8,
-    marginHorizontal: 18,
-  },
-  chip: {
-    flexDirection: "row",
-    alignItems: "baseline",
-    gap: 5,
-    backgroundColor: ds.pageBg,
-    borderRadius: dsRadius.sm,
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-  },
-  chipNum: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: ds.flame[100],
-  },
-  chipLabel: {
-    fontSize: 11,
-    color: ds.carbon[500],
-  },
-  signatureContainer: {
-    flex: 1,
-    marginHorizontal: 18,
-    marginTop: 14,
-    marginBottom: 14,
-    borderRadius: dsRadius.sm,
-    overflow: "hidden",
-    borderWidth: 1,
-    borderColor: ds.carbon[900],
-  },
-  savingOverlay: {
-    ...StyleSheet.absoluteFill,
-    backgroundColor: "rgba(255,255,255,0.9)",
-    alignItems: "center",
-    justifyContent: "center",
-    zIndex: 10,
-    borderTopLeftRadius: dsRadius.sheet,
-    borderTopRightRadius: dsRadius.sheet,
-  },
-  savingText: {
-    marginTop: 12,
-    fontSize: 14,
-    fontWeight: "600",
-    color: ds.carbon[100],
-  },
-
-  // ── Full screen preview ──
-  fullScreenPreviewBg: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.95)",
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  fullScreenPreviewContent: {
-    width: "100%",
-    height: "100%",
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  fullScreenImage: {
-    width: "90%",
-    height: "80%",
-  },
-  closePreviewBtn: {
-    position: "absolute",
-    top: 60,
-    right: 20,
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: "rgba(255,255,255,0.2)",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-}));

@@ -4,53 +4,62 @@ import {
   Text,
   ScrollView,
   TouchableOpacity,
-  TextInput,
   Alert,
-  ActivityIndicator,
-  StyleSheet,
   Platform,
-  Modal,
 } from "react-native";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
-import { SafeAreaView } from "react-native-safe-area-context";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import DateTimePicker, {
   DateTimePickerAndroid,
 } from "@react-native-community/datetimepicker";
-import {
-  ChevronLeft,
-  Thermometer,
-  Activity,
-  Gauge,
-  CheckCircle2,
-  Calendar,
-  Clock,
-} from "lucide-react-native";
 import { SiteLogService } from "@/services/SiteLogService";
 import { formatAssignee, operatorLabel } from "@/utils/assignee";
 import AssetService from "@/services/AssetService";
 import AttendanceService from "@/services/AttendanceService";
 import { useAuth } from "@/contexts/AuthContext";
 import { useAttendanceGate } from "@/contexts/AttendanceGateContext";
-import { ViewOnlyEntryNotice } from "@/components/ViewOnlyEntryNotice";
 import { LogImagePicker } from "@/components/sitelogs/LogImagePicker";
-import SearchableSelect, { SelectOption } from "@/components/SearchableSelect";
-import SignaturePad from "@/components/SignaturePad";
-import { LinearGradient } from "expo-linear-gradient";
+import { SignatureSheet } from "@/components/sitelogs/SignatureSheet";
+import {
+  BottomBar,
+  CardTitle,
+  EntryHeader,
+  NumberField,
+  OptionSheet,
+  ReadOnlyEntry,
+  ReadOnlyField,
+  RemarksField,
+  SelectField,
+  type OptionItem,
+} from "@/components/sitelogs/LogsKit";
+import { Bx, type BxName } from "@/components/jo/Bx";
+import {
+  Card,
+  JoPage,
+  JoSheet,
+  PrimaryButton,
+  ProgressBar,
+  Shimmer,
+  f,
+  useJoTheme,
+} from "@/components/jo/ui";
 import { db, chillerReadings } from "@/database";
 import { eq } from "drizzle-orm";
-import Skeleton from "@/components/Skeleton";
 import { addDays } from "date-fns";
 import { formatIST, istDayStartMs, istDayEndMs } from "@/utils/istDate";
 import { consumeRouteParams } from "@/utils/routeParams";
 
 export default function ChillerEntry() {
   const { canEdit } = useAttendanceGate();
-  if (!canEdit) return <ViewOnlyEntryNotice what="chiller readings" />;
+  if (!canEdit) return <ReadOnlyEntry what="chiller readings" />;
   return <ChillerEntryContent />;
 }
 
+/** Same shape the old SearchableSelect took — value / label / description. */
+type SelectOption = OptionItem;
+
 function ChillerEntryContent() {
+  const t = useJoTheme();
   const { user } = useAuth();
   const params = useLocalSearchParams<{
     id?: string;
@@ -117,6 +126,8 @@ function ChillerEntryContent() {
   const [saving, setSaving] = useState(false);
   const [uploading] = useState(false);
   const [signatureModalVisible, setSignatureModalVisible] = useState(false);
+  // Which picker sheet is open (replaces the old SearchableSelect modals).
+  const [picker, setPicker] = useState<"site" | "chiller" | null>(null);
   const [dailyReadingCount, setDailyReadingCount] = useState(0);
   const [loadingDailyProgress, setLoadingDailyProgress] = useState(false);
   // User-controllable reading timestamp. Defaults to "now" so opening the
@@ -500,39 +511,12 @@ function ChillerEntryContent() {
   }, [assets, formData.chillerId, formData.equipmentId]);
 
   const ChillerFormSkeleton = () => (
-    <View className="py-6">
-      <View className="mb-6">
-        <Skeleton width={120} height={10} style={{ marginBottom: 8 }} />
-        <Skeleton width="100%" height={50} borderRadius={12} />
-      </View>
-
-      <View className="flex-row items-center mb-6">
-        <Skeleton width={20} height={20} borderRadius={10} />
-        <Skeleton width={150} height={15} style={{ marginLeft: 10 }} />
-      </View>
-
-      <View className="flex-row flex-wrap justify-between">
-        {[1, 2, 3, 4, 5, 6].map((i) => (
-          <View key={i} className="mb-6" style={{ width: "48%" }}>
-            <Skeleton width={80} height={10} style={{ marginBottom: 8 }} />
-            <Skeleton width="100%" height={45} borderRadius={12} />
-          </View>
-        ))}
-      </View>
-
-      <View className="flex-row items-center mt-4 mb-6">
-        <Skeleton width={20} height={20} borderRadius={10} />
-        <Skeleton width={150} height={15} style={{ marginLeft: 10 }} />
-      </View>
-
-      <View className="flex-row flex-wrap justify-between">
-        {[1, 2, 3, 4].map((i) => (
-          <View key={i} className="mb-6" style={{ width: "48%" }}>
-            <Skeleton width={80} height={10} style={{ marginBottom: 8 }} />
-            <Skeleton width="100%" height={45} borderRadius={12} />
-          </View>
-        ))}
-      </View>
+    <View style={{ gap: 10, paddingTop: 4 }}>
+      <Shimmer height={52} radius={18} />
+      <Shimmer height={52} radius={18} />
+      <Shimmer height={52} radius={18} />
+      <Shimmer height={300} radius={26} />
+      <Shimmer height={220} radius={26} />
     </View>
   );
 
@@ -885,54 +869,56 @@ function ChillerEntryContent() {
     field: string,
     placeholder: string,
     unit?: string,
-    widthClass = "w-full",
     required = false,
   ) => {
     const filled = hasValue((formData as any)[field]);
     const showError = required && !filled && showFieldErrors;
     return (
-      <View className={`mb-4 ${widthClass}`}>
-        <View className="flex-row items-center mb-1.5 ml-1">
-          <Text className="text-slate-500 dark:text-slate-400 text-[10px] font-bold uppercase tracking-widest">
-            {label}
-          </Text>
-          {required && (
-            <Text
-              className="text-red-600 dark:text-red-400 font-bold ml-1"
-              style={{ fontSize: 14, lineHeight: 14 }}
-            >
-              *
-            </Text>
-          )}
-        </View>
-        <View
-          className={`bg-white dark:bg-slate-900 rounded-xl px-3 flex-row items-center ${
-            showError
-              ? "border-2 border-red-500"
-              : "border border-slate-100 dark:border-slate-800"
-          }`}
-          style={{
-            shadowColor: "#000",
-            shadowOffset: { width: 0, height: 1 },
-            shadowOpacity: 0.03,
-            shadowRadius: 2,
-            elevation: 1,
-          }}
-        >
-          <TextInput
-            value={(formData as any)[field]}
-            onChangeText={(val) => updateField(field, val)}
-            placeholder={placeholder}
-            keyboardType="numeric"
-            className="flex-1 py-3 font-semibold text-base text-slate-900 dark:text-slate-50"
-          />
-          {unit && (
-            <Text className="text-slate-400 text-xs font-bold ml-1">{unit}</Text>
-          )}
-        </View>
+      <View key={field} style={{ width: "48.5%" }}>
+        <NumberField
+          label={label}
+          required={required}
+          value={(formData as any)[field]}
+          onChangeText={(val) => updateField(field, val)}
+          placeholder={placeholder}
+          unit={unit}
+          size="sm"
+          error={showError}
+        />
       </View>
     );
   };
+
+  /** One reading group card: tinted icon + title, then a 2-up grid. */
+  const renderSection = (
+    title: string,
+    icon: BxName,
+    tone: "bad" | "info" | "ok",
+    inputs: [label: string, field: string, placeholder: string, unit: string, required?: boolean][],
+  ) => (
+    <Card style={{ padding: 16 }}>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+        <View
+          style={{
+            width: 34,
+            height: 34,
+            borderRadius: 17,
+            backgroundColor: t[`${tone}Tint` as const],
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          <Bx name={icon} size={17} color={t[tone]} />
+        </View>
+        <CardTitle style={{ flex: 1 }}>{title}</CardTitle>
+      </View>
+      <View style={{ flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between", rowGap: 12, marginTop: 14 }}>
+        {inputs.map(([label, field, placeholder, unit, required]) =>
+          renderInput(label, field, placeholder, unit, !!required),
+        )}
+      </View>
+    </Card>
+  );
 
   // Open the platform-native date+time picker. Android chains the two
   // dialogs imperatively (matches IncidentDetailModal); iOS shows a single
@@ -981,474 +967,245 @@ function ChillerEntryContent() {
   });
   const progressDisplayCount = `${dailyReadingCount}/12`;
 
+  const siteLabel = sites.find((o) => o.value === selectedSite)?.label || selectedSite;
+  const chillerLabel =
+    assets.find((o) => o.value === formData.chillerId)?.label || formData.chillerId;
+  const canComplete = !!formData.chillerId && allMandatoryFilled;
+
   return (
-    <View className="flex-1 bg-slate-50 dark:bg-slate-950">
-      <SafeAreaView className="flex-1" edges={["top"]}>
-        {/* Header */}
-        <View className="flex-row items-center justify-between px-5 py-4 bg-white dark:bg-slate-900 border-b border-slate-100 dark:border-slate-800">
-          <TouchableOpacity
-            onPress={() => router.back()}
-            hitSlop={{ top: 20, bottom: 20, left: 20, right: 20 }}
-            className="w-10 h-10 rounded-full bg-slate-50 dark:bg-slate-800 items-center justify-center"
-          >
-            <ChevronLeft size={20} color="#0f172a" />
-          </TouchableOpacity>
-          <View className="flex-1 items-center">
-            <Text className="text-lg font-bold text-slate-900 dark:text-slate-50 text-center">
-              {isEditMode ? "Edit Chiller Reading" : "Chiller Reading"}
-            </Text>
-            <Text className="text-[10px] text-slate-400 dark:text-slate-500 font-bold uppercase tracking-widest mt-0.5">
-              {isEditMode
-                ? `ID: ${targetId.slice(-8).toUpperCase()}`
-                : `Chiller ID: ${formData.chillerId || params.chillerId}`}
-            </Text>
-          </View>
-          <View className="w-10" />
-        </View>
+    <JoPage glow={false}>
+      <KeyboardAvoidingView behavior="padding" style={{ flex: 1 }}>
+        <EntryHeader
+          title={isEditMode ? "Edit Chiller Reading" : "Chiller Reading"}
+          sub={
+            isEditMode
+              ? `ID: ${targetId.slice(-8).toUpperCase()}`
+              : `Chiller ID: ${formData.chillerId || params.chillerId || "—"}`
+          }
+          onBack={() => router.back()}
+        />
 
-        <KeyboardAvoidingView
-          behavior="padding"
-          className="flex-1"
+        <ScrollView
+          style={{ flex: 1 }}
+          contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 4, paddingBottom: 150, gap: 10 }}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
         >
-          <ScrollView
-            className="flex-1"
-            contentContainerStyle={{
-              paddingHorizontal: 20,
-              paddingBottom: 120,
-            }}
-            showsVerticalScrollIndicator={false}
-            keyboardShouldPersistTaps="handled"
-          >
-            {loading ? (
-              <ChillerFormSkeleton />
-            ) : (
-              <View className="py-6">
-                {!isEditMode && (
-                  <View className="mb-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 px-4 py-3">
-                    <View className="flex-row items-center justify-between mb-2">
-                      <Text className="text-[10px] text-slate-500 dark:text-slate-400 font-bold uppercase tracking-widest">
-                        Today Progress
-                      </Text>
-                      <Text className="text-[11px] font-bold text-slate-700 dark:text-slate-200">
-                        {loadingDailyProgress ? "Updating..." : progressDisplayCount}
-                      </Text>
-                    </View>
-                    <View className="flex-row gap-2">
-                      {progressSegments.map((progress, index) => (
-                        <View
-                          key={`progress-${index}`}
-                          className="flex-1 h-1 rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden"
-                        >
-                          <View
-                            className="h-full rounded-full bg-emerald-500"
-                            style={{ width: `${progress * 100}%` }}
-                          />
-                        </View>
-                      ))}
-                    </View>
+          {loading ? (
+            <ChillerFormSkeleton />
+          ) : (
+            <>
+              {!isEditMode && (
+                <Card style={{ padding: 16, gap: 10 }}>
+                  <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+                    <Text style={[f.t(12.5, 500), { color: t.ink3 }]}>Today&apos;s progress</Text>
+                    <Text style={[f.d(16, -0.02, 1.2), { color: t.ink }]}>
+                      {loadingDailyProgress ? "Updating…" : progressDisplayCount}
+                    </Text>
                   </View>
-                )}
+                  <View style={{ flexDirection: "row", gap: 6 }}>
+                    {progressSegments.map((progress, index) => (
+                      <ProgressBar
+                        key={`progress-${index}`}
+                        pct={progress * 100}
+                        color={t.ok}
+                        height={6}
+                        style={{ flex: 1 }}
+                      />
+                    ))}
+                  </View>
+                </Card>
+              )}
 
-                <SearchableSelect
+              <Card style={{ padding: 16, gap: 14 }}>
+                <SelectField
                   label="Site"
-                  options={sites}
-                  value={selectedSite}
-                  onChange={(val) => {
-                    setSelectedSite(val);
-                    updateField("chillerId", ""); // Clear selection when site changes
-                  }}
-                  loading={loadingSites}
+                  icon="bx-buildings"
+                  value={siteLabel}
                   placeholder="Select Site"
-                  disabled={isEditMode} // Disable site change for existing records
+                  loading={loadingSites}
+                  // Site is fixed for existing records.
+                  disabled={isEditMode}
+                  onPress={() => setPicker("site")}
                 />
-
-                <SearchableSelect
-                  label="Chiller ID *"
-                  options={assets}
-                  value={formData.chillerId}
-                  onChange={(val) => updateField("chillerId", val)}
-                  loading={loadingAssets}
+                <SelectField
+                  label="Chiller ID"
+                  required
+                  icon="bx-cloud-snow"
+                  value={chillerLabel}
                   placeholder="Select Chiller"
+                  loading={loadingAssets}
+                  onPress={() => setPicker("chiller")}
                 />
-
                 {/* Reading date & time — defaults to "now". Drives the LAM
                     due_date and task mapping on the server. */}
-                <View className="mb-4">
-                  <View className="flex-row items-center mb-1.5 ml-1">
-                    <Text className="text-slate-500 dark:text-slate-400 text-[10px] font-bold uppercase tracking-widest">
-                      Reading Date & Time
-                    </Text>
-                    <Text
-                      className="text-red-600 dark:text-red-400 font-bold ml-1"
-                      style={{ fontSize: 14, lineHeight: 14 }}
-                    >
-                      *
-                    </Text>
-                  </View>
-                  <TouchableOpacity
-                    onPress={() => openReadingTimePicker()}
-                    activeOpacity={0.7}
-                    className="bg-white dark:bg-slate-900 rounded-xl border border-slate-100 dark:border-slate-800 px-3 py-3 flex-row items-center"
-                    style={{
-                      shadowColor: "#000",
-                      shadowOffset: { width: 0, height: 1 },
-                      shadowOpacity: 0.03,
-                      shadowRadius: 2,
-                      elevation: 1,
-                    }}
-                  >
-                    <Calendar size={16} color="#0d9488" />
-                    <Text className="ml-2 flex-1 font-semibold text-base text-slate-900 dark:text-slate-50">
-                      {formatIST(new Date(readingTime), {
-                        day: "2-digit",
-                        month: "short",
-                        year: "numeric",
-                      })}
-                    </Text>
-                    <Clock size={14} color="#64748b" />
-                    <Text className="ml-1.5 font-semibold text-sm text-slate-600 dark:text-slate-300">
-                      {formatIST(new Date(readingTime), {
-                        hour: "2-digit",
-                        minute: "2-digit",
-                        hour12: true,
-                      })}
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-
+                <SelectField
+                  label="Reading date & time"
+                  required
+                  icon="bx-calendar"
+                  value={formatIST(new Date(readingTime), {
+                    day: "2-digit",
+                    month: "short",
+                    year: "numeric",
+                  })}
+                  meta={formatIST(new Date(readingTime), {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                    hour12: true,
+                  })}
+                  placeholder="Pick date & time"
+                  onPress={() => openReadingTimePicker()}
+                />
                 {isEditMode && (
-                  <View className="mb-2">
-                    <Text className="text-slate-500 dark:text-slate-400 text-[10px] font-bold uppercase tracking-widest mb-1.5 ml-1">
-                      Assigned To
-                    </Text>
-                    <View className="bg-slate-100 dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 px-3 py-3.5">
-                      <Text className="font-semibold text-base text-slate-500 dark:text-slate-400">
-                        {assignedToDisplay || "—"}
-                      </Text>
-                    </View>
-                  </View>
+                  <ReadOnlyField label="Assigned to" value={assignedToDisplay || "—"} icon="bx-user" />
                 )}
+              </Card>
 
-                {/* Temperatures Section */}
-                <View className="flex-row items-center mt-4 mb-4">
-                  <Thermometer size={18} color="#ef4444" strokeWidth={2.5} />
-                  <Text className="text-slate-900 dark:text-slate-50 font-bold text-base ml-2">
-                    Temperatures (°C)
-                  </Text>
-                </View>
-                <View className="flex-row flex-wrap justify-between">
-                  {renderInput(
-                    "Cond. Inlet",
-                    "condenserInletTemp",
-                    "0.0",
-                    "°C",
-                    "w-[48%]",
-                    true,
-                  )}
-                  {renderInput(
-                    "Cond. Outlet",
-                    "condenserOutletTemp",
-                    "0.0",
-                    "°C",
-                    "w-[48%]",
-                    true,
-                  )}
-                  {renderInput(
-                    "Evap. Inlet",
-                    "evaporatorInletTemp",
-                    "0.0",
-                    "°C",
-                    "w-[48%]",
-                    true,
-                  )}
-                  {renderInput(
-                    "Evap. Outlet",
-                    "evaporatorOutletTemp",
-                    "0.0",
-                    "°C",
-                    "w-[48%]",
-                    true,
-                  )}
-                  {renderInput(
-                    "Sat. Cond.",
-                    "saturatedCondenserTemp",
-                    "0.0",
-                    "°C",
-                    "w-[48%]",
-                    true,
-                  )}
-                  {renderInput(
-                    "Sat. Suction",
-                    "saturatedSuctionTemp",
-                    "0.0",
-                    "°C",
-                    "w-[48%]",
-                    true,
-                  )}
-                  {renderInput(
-                    "Comp. Suction",
-                    "compressorSuctionTemp",
-                    "0.0",
-                    "°C",
-                    "w-[48%]",
-                  )}
-                  {renderInput(
-                    "Motor Temp",
-                    "motorTemperature",
-                    "0.0",
-                    "°C",
-                    "w-[48%]",
-                  )}
-                  {renderInput(
-                    "Set Point",
-                    "setPointCelsius",
-                    "0.0",
-                    "°C",
-                    "w-[48%]",
-                    true,
-                  )}
-                </View>
+              {renderSection("Temperatures (°C)", "bxs-thermometer", "bad", [
+                ["Cond. Inlet", "condenserInletTemp", "0.0", "°C", true],
+                ["Cond. Outlet", "condenserOutletTemp", "0.0", "°C", true],
+                ["Evap. Inlet", "evaporatorInletTemp", "0.0", "°C", true],
+                ["Evap. Outlet", "evaporatorOutletTemp", "0.0", "°C", true],
+                ["Sat. Cond.", "saturatedCondenserTemp", "0.0", "°C", true],
+                ["Sat. Suction", "saturatedSuctionTemp", "0.0", "°C", true],
+                ["Comp. Suction", "compressorSuctionTemp", "0.0", "°C"],
+                ["Motor Temp", "motorTemperature", "0.0", "°C"],
+                ["Set Point", "setPointCelsius", "0.0", "°C", true],
+              ])}
 
-                {/* Pressures Section */}
-                <View className="flex-row items-center mt-4 mb-4">
-                  <Gauge size={18} color="#3b82f6" strokeWidth={2.5} />
-                  <Text className="text-slate-900 dark:text-slate-50 font-bold text-base ml-2">
-                    Pressures (PSI)
-                  </Text>
-                </View>
-                <View className="flex-row flex-wrap justify-between">
-                  {renderInput(
-                    "Discharge",
-                    "dischargePressure",
-                    "0.0",
-                    "PSI",
-                    "w-[48%]",
-                    true,
-                  )}
-                  {renderInput(
-                    "Main Suction",
-                    "mainSuctionPressure",
-                    "0.0",
-                    "PSI",
-                    "w-[48%]",
-                    true,
-                  )}
-                  {renderInput(
-                    "Oil Pressure",
-                    "oilPressure",
-                    "0.0",
-                    "PSI",
-                    "w-[48%]",
-                  )}
-                  {renderInput(
-                    "Oil Diff.",
-                    "oilPressureDifference",
-                    "0.0",
-                    "PSI",
-                    "w-[48%]",
-                  )}
-                  {renderInput(
-                    "Cond. Inlet P.",
-                    "condenserInletPressure",
-                    "0.0",
-                    "PSI",
-                    "w-[48%]",
-                    true,
-                  )}
-                  {renderInput(
-                    "Cond. Outlet P.",
-                    "condenserOutletPressure",
-                    "0.0",
-                    "PSI",
-                    "w-[48%]",
-                    true,
-                  )}
-                  {renderInput(
-                    "Evap. Inlet P.",
-                    "evaporatorInletPressure",
-                    "0.0",
-                    "PSI",
-                    "w-[48%]",
-                    true,
-                  )}
-                  {renderInput(
-                    "Evap. Outlet P.",
-                    "evaporatorOutletPressure",
-                    "0.0",
-                    "PSI",
-                    "w-[48%]",
-                    true,
-                  )}
-                </View>
+              {renderSection("Pressures (PSI)", "bx-tachometer", "info", [
+                ["Discharge", "dischargePressure", "0.0", "PSI", true],
+                ["Main Suction", "mainSuctionPressure", "0.0", "PSI", true],
+                ["Oil Pressure", "oilPressure", "0.0", "PSI"],
+                ["Oil Diff.", "oilPressureDifference", "0.0", "PSI"],
+                ["Cond. Inlet P.", "condenserInletPressure", "0.0", "PSI", true],
+                ["Cond. Outlet P.", "condenserOutletPressure", "0.0", "PSI", true],
+                ["Evap. Inlet P.", "evaporatorInletPressure", "0.0", "PSI", true],
+                ["Evap. Outlet P.", "evaporatorOutletPressure", "0.0", "PSI", true],
+              ])}
 
-                {/* Performance Section */}
-                <View className="flex-row items-center mt-4 mb-4">
-                  <Activity size={18} color="#10b981" strokeWidth={2.5} />
-                  <Text className="text-slate-900 dark:text-slate-50 font-bold text-base ml-2">
-                    Performance & Load
-                  </Text>
-                </View>
-                <View className="flex-row flex-wrap justify-between">
-                  {renderInput("Comp. Load", "load", "0", "%", "w-[48%]", true)}
-                  {renderInput(
-                    "BTU Meter",
-                    "inlineBtuMeter",
-                    "0.0",
-                    "TR",
-                    "w-[48%]",
-                    true,
-                  )}
-                </View>
+              {renderSection("Performance & Load", "bx-line-chart", "ok", [
+                ["Comp. Load", "load", "0", "%", true],
+                ["BTU Meter", "inlineBtuMeter", "0.0", "TR", true],
+              ])}
 
-                {/* Attachments & Remarks */}
-                <View className="mt-4 mb-6">
-                  <Text className="text-slate-900 dark:text-slate-50 font-bold text-base mb-4">
-                    Evidence & Observation
-                  </Text>
-
+              {/* Attachments & Remarks */}
+              <Card style={{ padding: 16 }}>
+                <CardTitle>Attachment</CardTitle>
+                <View style={{ marginTop: 10 }}>
                   <LogImagePicker
                     value={formData.attachment}
                     onImageChange={(url) => updateField("attachment", url || "")}
                     uploadPath={`chiller/${selectedSite}`}
+                    cta="Add photo of chiller panel"
                     disabled={uploading}
                   />
-
-                  <Text className="text-slate-500 dark:text-slate-400 text-[10px] font-bold uppercase tracking-widest mb-1.5 ml-1">
-                    Remarks
-                  </Text>
-                  <TextInput
-                    value={formData.remarks}
-                    onChangeText={(val) => updateField("remarks", val)}
-                    placeholder="Any technical observations..."
-                    multiline
-                    numberOfLines={3}
-                    textAlignVertical="top"
-                    className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-100 dark:border-slate-800 font-medium text-slate-900 dark:text-slate-50 min-h-[100px]"
-                  />
                 </View>
+                <CardTitle style={{ marginTop: 18 }}>Remarks</CardTitle>
+                <RemarksField
+                  value={formData.remarks}
+                  onChangeText={(val) => updateField("remarks", val)}
+                  placeholder="Any technical observations..."
+                  multiline
+                  style={{ marginTop: 10 }}
+                />
+              </Card>
+            </>
+          )}
+        </ScrollView>
 
-                {/* Removed Inline Signature Pad and integrated into 2-click modal flow */}
-              </View>
-            )}
-          </ScrollView>
+        {/* Complete & sign — autosave covers everything before it */}
+        <BottomBar>
+          {!loading && formData.chillerId && !allMandatoryFilled && showFieldErrors ? (
+            <Text style={[f.t(12), { color: t.bad, textAlign: "center" }]}>
+              {missingMandatoryFields.length} required reading
+              {missingMandatoryFields.length === 1 ? "" : "s"} still empty
+            </Text>
+          ) : null}
+          <PrimaryButton
+            label="Complete & sign"
+            icon={canComplete ? "bx-check" : "bx-lock-alt"}
+            onPress={() => setSignatureModalVisible(true)}
+            busy={saving}
+            disabled={!canComplete}
+          />
+        </BottomBar>
+      </KeyboardAvoidingView>
 
-          {/* Action Buttons - Fixed at Bottom */}
-          <View
-            className="px-5 py-4 bg-white dark:bg-slate-900 border-t border-slate-100 dark:border-slate-800 flex-row gap-4"
-            style={{
-              shadowColor: "#000",
-              shadowOffset: { width: 0, height: -2 },
-              shadowOpacity: 0.05,
-              shadowRadius: 4,
-              elevation: 10,
-            }}
-          >
-            {/* Removed manual Save button as autosave is implemented */}
-            
-            <TouchableOpacity
-              onPress={() => setSignatureModalVisible(true)}
-              disabled={
-                saving ||
-                !formData.chillerId ||
-                !allMandatoryFilled
-              }
-              activeOpacity={0.8}
-              className="flex-1 rounded-xl overflow-hidden"
-              style={{
-                opacity:
-                  !formData.chillerId || !allMandatoryFilled ? 0.6 : 1,
-              }}
-            >
-              <LinearGradient
-                colors={["#0d9488", "#0f766e"]}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={StyleSheet.absoluteFill}
-              />
-              <View className="py-4 flex-row items-center justify-center">
-                {saving ? (
-                  <ActivityIndicator color="white" />
-                ) : (
-                  <>
-                    <CheckCircle2
-                      size={20}
-                      color="white"
-                      style={{ marginRight: 8 }}
-                    />
-                    <Text className="text-white font-bold text-base uppercase tracking-wider">
-                      Complete & Sign
-                    </Text>
-                  </>
-                )}
-              </View>
-            </TouchableOpacity>
-          </View>
-        </KeyboardAvoidingView>
-      </SafeAreaView>
+      {/* Site / chiller pickers */}
+      <OptionSheet
+        visible={picker === "site"}
+        title="Site"
+        subtitle="Chiller readings are logged per site"
+        options={sites}
+        value={selectedSite}
+        loading={loadingSites}
+        searchPlaceholder="Search sites"
+        onClose={() => setPicker(null)}
+        onPick={(val) => {
+          setSelectedSite(val);
+          updateField("chillerId", ""); // Clear selection when site changes
+        }}
+      />
+      <OptionSheet
+        visible={picker === "chiller"}
+        title="Chiller"
+        subtitle={siteLabel || undefined}
+        options={assets}
+        value={formData.chillerId}
+        loading={loadingAssets}
+        emptyText={selectedSite ? "No chillers mapped to this site." : "Pick a site first."}
+        searchPlaceholder="Search chillers"
+        onClose={() => setPicker(null)}
+        onPick={(val) => updateField("chillerId", val)}
+      />
 
       {/* iOS reading-time picker. Android uses the imperative API above. */}
-      <Modal
+      <JoSheet
         visible={iosPickerVisible && Platform.OS === "ios"}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setIosPickerVisible(false)}
+        onClose={() => setIosPickerVisible(false)}
+        title="Reading date & time"
+        right={
+          <TouchableOpacity
+            onPress={() => setIosPickerVisible(false)}
+            accessibilityRole="button"
+            hitSlop={8}
+          >
+            <Text style={[f.t(14, 600), { color: t.accentInk }]}>Done</Text>
+          </TouchableOpacity>
+        }
       >
-        <View className="flex-1 bg-black/50 justify-end">
-          <View className="bg-white dark:bg-slate-900 rounded-t-3xl pb-8">
-            <View className="flex-row items-center justify-between px-6 py-4 border-b border-slate-100 dark:border-slate-800">
-              <Text className="text-slate-900 dark:text-slate-50 font-bold text-lg">
-                Reading Date & Time
-              </Text>
-              <TouchableOpacity onPress={() => setIosPickerVisible(false)}>
-                <Text className="text-teal-600 font-bold">Done</Text>
-              </TouchableOpacity>
-            </View>
-            <DateTimePicker
-              value={new Date(readingTime)}
-              mode="datetime"
-              display="spinner"
-              maximumDate={new Date()}
-              onChange={(_, selected) => {
-                if (!selected) return;
-                if (selected.getTime() > Date.now()) {
-                  Alert.alert(
-                    "Invalid time",
-                    "Reading time cannot be in the future.",
-                  );
-                  return;
-                }
-                setReadingTime(selected.getTime());
-              }}
-            />
-          </View>
+        <View style={{ marginTop: 12, borderRadius: 20, backgroundColor: t.sheetField, overflow: "hidden" }}>
+          <DateTimePicker
+            value={new Date(readingTime)}
+            mode="datetime"
+            display="spinner"
+            themeVariant={t.isDark ? "dark" : "light"}
+            maximumDate={new Date()}
+            onChange={(_, selected) => {
+              if (!selected) return;
+              if (selected.getTime() > Date.now()) {
+                Alert.alert(
+                  "Invalid time",
+                  "Reading time cannot be in the future.",
+                );
+                return;
+              }
+              setReadingTime(selected.getTime());
+            }}
+          />
         </View>
-      </Modal>
+      </JoSheet>
 
-      {/* Signature Modal for 2-Click Streamlined Flow */}
-      <Modal
+      {/* Sign to complete — 2-tap flow */}
+      <SignatureSheet
         visible={signatureModalVisible}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setSignatureModalVisible(false)}
-      >
-        <View className="flex-1 bg-black/50 justify-end">
-          <View className="bg-white dark:bg-slate-900 rounded-t-3xl h-[60%] overflow-hidden">
-            <View className="flex-row items-center justify-between px-6 py-4 border-b border-slate-100 dark:border-slate-800">
-              <Text className="text-slate-900 dark:text-slate-50 font-bold text-lg">
-                Sign to Complete Reading
-              </Text>
-              <TouchableOpacity onPress={() => setSignatureModalVisible(false)}>
-                <Text className="text-purple-600 font-bold">Close</Text>
-              </TouchableOpacity>
-            </View>
-            <SignaturePad
-              standalone
-              okText="Complete Reading"
-              onOK={(sig: string) => handleSubmission("Completed", sig)}
-            />
-          </View>
-        </View>
-      </Modal>
-    </View>
+        title="Sign to complete"
+        description={chillerLabel ? `Chiller reading · ${chillerLabel}` : "Chiller reading"}
+        okText="Complete reading"
+        onClose={() => setSignatureModalVisible(false)}
+        onOK={(sig: string) => handleSubmission("Completed", sig)}
+      />
+    </JoPage>
   );
 }

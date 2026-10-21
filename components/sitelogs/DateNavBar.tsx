@@ -1,8 +1,14 @@
+/**
+ * Day stepper for the log entry screens: ‹ prev · date pill · next › in the
+ * artboard's round-button language. The arrows carry a red count badge for
+ * pending tasks on the neighbouring day.
+ */
 import React, { useMemo } from "react";
 import { View, Text, TouchableOpacity, Platform } from "react-native";
-import { ChevronLeft, ChevronRight, Calendar } from "lucide-react-native";
 import { format, isToday, subDays, addDays } from "date-fns";
 import DateTimePicker from "@expo/ui/community/datetime-picker";
+import { Bx } from "@/components/jo/Bx";
+import { f, useJoTheme } from "@/components/jo/ui";
 
 interface DateNavBarProps {
   date: Date;
@@ -13,7 +19,6 @@ interface DateNavBarProps {
   prevCount?: number;
   /** Count of pending tasks on the next day */
   nextCount?: number;
-  accentColor?: string;
 }
 
 export function DateNavBar({
@@ -23,64 +28,79 @@ export function DateNavBar({
   onShowPicker,
   prevCount = 0,
   nextCount = 0,
-  accentColor = "#dc2626",
 }: DateNavBarProps) {
+  const t = useJoTheme();
   const label = useMemo(() => {
     if (isToday(date)) return "Today";
     return format(date, "dd MMM yyyy");
   }, [date]);
 
+  const arrow = (dir: "prev" | "next", count: number) => (
+    <TouchableOpacity
+      onPress={() => onDateChange(dir === "prev" ? subDays(date, 1) : addDays(date, 1))}
+      activeOpacity={0.75}
+      accessibilityRole="button"
+      accessibilityLabel={`${dir === "prev" ? "Previous" : "Next"} day${count > 0 ? `, ${count} pending` : ""}`}
+      style={{
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+        backgroundColor: t.raised,
+        borderWidth: 1,
+        borderColor: t.lineMid,
+        alignItems: "center",
+        justifyContent: "center",
+      }}
+    >
+      <Bx name={dir === "prev" ? "bx-chevron-left" : "bx-chevron-right"} size={22} color={t.ink} />
+      {count > 0 ? (
+        <View
+          style={{
+            position: "absolute",
+            top: -3,
+            right: -3,
+            minWidth: 18,
+            height: 18,
+            paddingHorizontal: 4,
+            borderRadius: 9,
+            backgroundColor: t.bad,
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          <Text style={[f.t(10, 700), { color: t.onAccent }]}>{count > 99 ? "99+" : count}</Text>
+        </View>
+      ) : null}
+    </TouchableOpacity>
+  );
+
   return (
     <>
-      <View className="flex-row items-center gap-2 mt-2">
-        {/* ‹ prev day */}
-        <TouchableOpacity
-          onPress={() => onDateChange(subDays(date, 1))}
-          className="w-9 h-9 rounded-xl bg-slate-100 dark:bg-slate-800 items-center justify-center"
-        >
-          <ChevronLeft size={18} color="#64748b" />
-          {prevCount > 0 && (
-            <View
-              className="absolute -top-1 -right-1 min-w-[14px] h-[14px] rounded-full items-center justify-center px-0.5"
-              style={{ backgroundColor: "#dc2626" }}
-            >
-              <Text className="text-white text-[8px] font-black leading-none">
-                {prevCount > 99 ? "99+" : prevCount}
-              </Text>
-            </View>
-          )}
-        </TouchableOpacity>
-
-        {/* date label — takes all remaining space */}
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+        {arrow("prev", prevCount)}
         <TouchableOpacity
           onPress={() => onShowPicker(true)}
-          className="flex-1 h-9 rounded-xl bg-slate-100 dark:bg-slate-800 flex-row items-center justify-center gap-1.5"
+          activeOpacity={0.8}
+          accessibilityRole="button"
+          accessibilityLabel={`Date: ${label}. Change date`}
+          style={{
+            flex: 1,
+            height: 40,
+            borderRadius: 20,
+            backgroundColor: t.raised,
+            borderWidth: 1,
+            borderColor: t.lineMid,
+            flexDirection: "row",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 7,
+          }}
         >
-          <Calendar size={13} color={accentColor} />
-          <Text
-            className="font-bold text-sm text-slate-900 dark:text-slate-50"
-          >
-            {label}
-          </Text>
+          <Bx name="bx-calendar" size={15} color={t.accentInk} />
+          <Text style={[f.t(13.5, 600), { color: t.ink }]}>{label}</Text>
+          <Bx name="bx-chevron-down" size={16} color={t.muted} />
         </TouchableOpacity>
-
-        {/* › next day */}
-        <TouchableOpacity
-          onPress={() => onDateChange(addDays(date, 1))}
-          className="w-9 h-9 rounded-xl bg-slate-100 dark:bg-slate-800 items-center justify-center"
-        >
-          <ChevronRight size={18} color="#64748b" />
-          {nextCount > 0 && (
-            <View
-              className="absolute -top-1 -right-1 min-w-[14px] h-[14px] rounded-full items-center justify-center px-0.5"
-              style={{ backgroundColor: "#dc2626" }}
-            >
-              <Text className="text-white text-[8px] font-black leading-none">
-                {nextCount > 99 ? "99+" : nextCount}
-              </Text>
-            </View>
-          )}
-        </TouchableOpacity>
+        {arrow("next", nextCount)}
       </View>
 
       {showPicker && (

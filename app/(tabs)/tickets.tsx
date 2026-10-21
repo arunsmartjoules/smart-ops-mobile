@@ -1,16 +1,13 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { useQuickCreate } from "@/services/QuickCreate";
 import {
-  View,
   RefreshControl,
   Alert,
   InteractionManager,
-  Text,
+  ScrollView,
 } from "react-native";
-import { Plus } from "lucide-react-native";
-import PressableScale from "@/components/PressableScale";
 import CreateTicketModal from "@/components/tickets/CreateTicketModal";
 import { FlashList } from "@shopify/flash-list";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAttendanceGate } from "@/contexts/AttendanceGateContext";
 import * as Haptics from "expo-haptics";
 
@@ -48,21 +45,27 @@ import {
   makeTicketIncidentDraft,
   type TicketIncidentDraft,
 } from "@/constants/incidentFormOptions";
-import AdvancedFilterModal from "@/components/AdvancedFilterModal";
 import { WhatsAppService } from "@/services/WhatsAppService";
 import TicketItem from "@/components/TicketItem";
-import TicketSkeleton, {
-  TicketSkeletonItem,
-} from "@/components/TicketSkeleton";
-import { useDs } from "@/hooks/useDs";
 import {
-  ListCountLine,
-  ListEmptyCard,
-  ModuleListHeader,
-  useListSlide,
-  type StatusChip,
-  SwipeTabsView,
-} from "@/components/shared/ListChrome";
+  EmptyState,
+  Fab,
+  JoPage,
+  JoSheet,
+  SheetOption,
+  f,
+  useJoTheme,
+} from "@/components/jo/ui";
+import { useNavInsets } from "@/components/jo/navInsets";
+import {
+  TicketListHeader,
+  TicketListSkeleton,
+  TicketRowSkeleton,
+  TicketSwipeTabs,
+  useTicketListSlide,
+  type TicketStatusChip,
+} from "@/components/tickets/TicketListChrome";
+import TicketFilterSheet from "@/components/tickets/TicketFilterSheet";
 
 const parseCreatedAtMs = (value: unknown) => {
   if (typeof value === "number") return value;
@@ -85,24 +88,32 @@ const toApiStartDate = (dateStr: string | null) => istDayStartIso(dateStr);
 
 const toApiEndDate = (dateStr: string | null) => istDayEndIso(dateStr);
 
-/** "1–19 Aug 2026" / "1 Jul – 19 Aug 2026" / "1 Jul 2025 – 19 Aug 2026". */
+/**
+ * "1–19 Aug" / "1 Jul – 19 Aug" (artboard date button) — the year is added
+ * only when a bound falls outside the current IST year.
+ */
 const formatDateRange = (from: string | null, to: string | null) => {
   const fromMs = istDayStartMsFromYmd(from);
   const toMs = istDayStartMsFromYmd(to);
+  const thisYear = istParts(new Date()).year;
+  const dm = (ms: number) =>
+    istParts(ms).year === thisYear ? DM : DMY;
   if (fromMs == null && toMs == null) return "All dates";
-  if (fromMs == null) return `Up to ${formatIST(toMs!, DMY)}`;
-  if (toMs == null) return `From ${formatIST(fromMs, DMY)}`;
+  if (fromMs == null) return `Up to ${formatIST(toMs!, dm(toMs!))}`;
+  if (toMs == null) return `From ${formatIST(fromMs, dm(fromMs))}`;
 
   const a = istParts(fromMs);
   const b = istParts(toMs);
   if (a.year === b.year && a.month === b.month) {
-    return `${formatIST(fromMs, { day: "numeric" })}–${formatIST(toMs, DMY)}`;
+    return `${formatIST(fromMs, { day: "numeric" })}–${formatIST(toMs, dm(toMs))}`;
   }
   if (a.year === b.year) {
-    return `${formatIST(fromMs, { day: "numeric", month: "short" })} – ${formatIST(toMs, DMY)}`;
+    return `${formatIST(fromMs, DM)} – ${formatIST(toMs, dm(toMs))}`;
   }
   return `${formatIST(fromMs, DMY)} – ${formatIST(toMs, DMY)}`;
 };
+
+const DM: Intl.DateTimeFormatOptions = { day: "numeric", month: "short" };
 
 const DMY: Intl.DateTimeFormatOptions = {
   day: "numeric",
@@ -164,7 +175,8 @@ const normalizeRealtimeTicket = (source: any): Ticket => ({
 });
 
 export default function Tickets() {
-  const ds = useDs();
+  const t = useJoTheme();
+  const { clearance } = useNavInsets();
   const { canEdit } = useAttendanceGate();
   const { user } = useAuth();
   const { isConnected } = useNetworkStatus();
@@ -182,10 +194,13 @@ export default function Tickets() {
     return `${year}-${String(month).padStart(2, "0")}-01`;
   }, []);
 
-  const insets = useSafeAreaInsets();
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  // Set when an online first-page fetch fails; drives the error + retry card
+  // when nothing (not even the local mirror) could be shown.
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [sitePickerOpen, setSitePickerOpen] = useState(false);
 
   // Safety net: never let the skeleton outlive a slow/stalled fetch.
   useEffect(() => {
@@ -209,13 +224,13 @@ export default function Tickets() {
   const [searchQuery, setSearchQuery] = useState("");
   const [searchInput, setSearchInput] = useState("");
   const [showFiltersModal, setShowFiltersModal] = useState(false);
-  const [tempSearch, setTempSearch] = useState("");
   const [fromDate, setFromDate] = useState<string | null>(defaultFromDate);
   const [toDate, setToDate] = useState<string | null>(defaultToDate);
-  const [tempFromDate, setTempFromDate] = useState<string | null>(defaultFromDate);
-  const [tempToDate, setTempToDate] = useState<string | null>(defaultToDate);
 
   const [creatingTicket, setCreatingTicket] = useState(false);
+  // Tab bar "+" → Raise ticket (only once the user may raise).
+  const openQuickTicket = useCallback(() => setCreatingTicket(true), []);
+  useQuickCreate("ticket", openQuickTicket, canEdit);
 
   // Detail Modal
   const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null);
@@ -341,14 +356,19 @@ export default function Tickets() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enrichedTickets, sortMode]);
 
-  const statusChips = useMemo<StatusChip[]>(() => {
+  // Artboard chips (All · Open · In progress · Hold · Waiting · Resolved),
+  // plus Cancelled at the end — it was reachable through the old filter
+  // modal's status list and must stay reachable.
+  const statusChips = useMemo<TicketStatusChip[]>(() => {
     const byStatus = stats?.byStatus as Record<string, number> | undefined;
     return [
+      { key: "All", label: "All", count: stats?.total },
       { key: "Open", label: "Open", count: byStatus?.Open },
       { key: "Inprogress", label: "In progress", count: byStatus?.Inprogress },
       { key: "Hold", label: "Hold", count: byStatus?.Hold },
       { key: "Waiting", label: "Waiting", count: byStatus?.Waiting },
       { key: "Resolved", label: "Resolved", count: byStatus?.Resolved },
+      { key: "Cancelled", label: "Cancelled", count: byStatus?.Cancelled },
     ];
   }, [stats]);
 
@@ -369,7 +389,7 @@ export default function Tickets() {
 
   // Direction + sequence drive the mock's slide-in when the tab changes.
   const [slide, setSlide] = useState({ seq: 0, dir: 1 });
-  const listSlideStyle = useListSlide(slide.seq, slide.dir);
+  const listSlideStyle = useTicketListSlide(slide.seq, slide.dir);
 
   const selectStatusChip = useCallback(
     (key: string) => {
@@ -763,12 +783,15 @@ export default function Tickets() {
             });
           }
           setHasMore(newTickets.length === PAGE_SIZE);
+          if (reset) setLoadFailed(false);
         } else {
           setHasMore(false);
+          if (reset) setLoadFailed(true);
         }
       } catch (error) {
         logger.warn("fetchTickets error", { module: "TICKETS", error });
         setHasMore(false);
+        if (reset) setLoadFailed(true);
       } finally {
         if (!silent) {
           setLoading(false);
@@ -1538,42 +1561,87 @@ export default function Tickets() {
     }
   };
 
-  const applyAdvancedFilters = () => {
-    setSearchQuery(tempSearch);
-    setFromDate(tempFromDate);
-    setToDate(tempToDate);
+  const applyFilters = ({
+    from,
+    to,
+    priority,
+  }: {
+    from: string | null;
+    to: string | null;
+    priority: string;
+  }) => {
+    setFromDate(from);
+    setToDate(to);
+    setPriorityFilter(priority);
     setShowFiltersModal(false);
   };
 
+  const canRefresh = isConnected !== false && !!selectedSiteCode;
+  const noSiteMapped = isConnected && !sitesLoading && sites.length === 0;
+
+  let emptyComponent: React.ReactElement;
+  if (loading) {
+    emptyComponent = <TicketListSkeleton />;
+  } else if (noSiteMapped) {
+    emptyComponent = (
+      <EmptyState
+        icon="bx-buildings"
+        title="No site is mapped to you yet"
+        sub="Ask an admin to add you to a site to see its tickets."
+      />
+    );
+  } else if (loadFailed && isConnected) {
+    emptyComponent = (
+      <EmptyState
+        icon="bx-error-circle"
+        title="Couldn't load tickets"
+        sub="Check your connection and try again."
+        action={{ label: "Try again", onPress: onRefresh }}
+      />
+    );
+  } else {
+    emptyComponent = (
+      <EmptyState
+        icon="bx-receipt"
+        title="No tickets match this filter"
+        sub={
+          searchQuery
+            ? `Nothing here matches “${searchQuery}”.`
+            : `No ${countLabel} raised ${dateRangeLabel === "All dates" ? "yet" : `in ${dateRangeLabel}`}.`
+        }
+        action={
+          searchQuery
+            ? { label: "Clear search", onPress: () => setSearchInput("") }
+            : statusFilter !== "All"
+              ? { label: "Show all tickets", onPress: () => selectStatusChip("All") }
+              : undefined
+        }
+      />
+    );
+  }
+
   return (
-    <View style={{ flex: 1, backgroundColor: ds.pageBg }}>
-      <ModuleListHeader
-        topInset={insets.top}
-        eyebrow="TICKETS"
+    <JoPage>
+      <TicketListHeader
         siteName={siteName}
-        dateLabel={dateRangeLabel}
-        onRefresh={() => {
-          if (!isConnected || !selectedSiteCode) return;
-          onRefresh();
-        }}
-        refreshDisabled={!isConnected || !selectedSiteCode}
-        onFilter={() => setShowFiltersModal(true)}
-        filterActive={!!fromDate}
+        onPickSite={sites.length > 1 ? () => setSitePickerOpen(true) : undefined}
+        onRefresh={canRefresh ? onRefresh : undefined}
         search={searchInput}
         onChangeSearch={setSearchInput}
+        dateLabel={dateRangeLabel}
+        filterNote={priorityFilter !== "All" ? `${priorityFilter} priority` : undefined}
+        onOpenFilters={() => setShowFiltersModal(true)}
         chips={statusChips}
         activeChip={statusFilter}
         onSelectChip={selectStatusChip}
-      />
-
-      <ListCountLine
         count={visibleCount}
-        label={countLabel}
+        countLabel={countLabel}
         sortLabel={sortMode}
         onSort={cycleSort}
+        notice={canEdit ? undefined : "View only · punch in to raise or update tickets"}
       />
 
-      <SwipeTabsView
+      <TicketSwipeTabs
         chips={statusChips}
         activeChip={statusFilter}
         onSelectChip={selectStatusChip}
@@ -1587,68 +1655,60 @@ export default function Tickets() {
           // wider draw distance so fast flings don't outrun cell rendering
           // and reveal blank space. See PM list for the same config.
           drawDistance={600}
-          ListEmptyComponent={
-            loading ? (
-              <TicketSkeleton />
-            ) : (
-              <ListEmptyCard
-                label={
-                  isConnected && !sitesLoading && sites.length === 0
-                    ? "No site is mapped to you yet"
-                    : "No tickets match this filter"
-                }
-              />
-            )
-          }
-          ListFooterComponent={isFetchingMore ? <TicketSkeletonItem /> : null}
+          ListEmptyComponent={emptyComponent}
+          ListFooterComponent={isFetchingMore ? <TicketRowSkeleton /> : null}
           onEndReached={handleLoadMore}
           onEndReachedThreshold={0.1}
+          keyboardShouldPersistTaps="handled"
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
               onRefresh={onRefresh}
-              tintColor={ds.carbon[500]}
+              tintColor={t.muted}
+              colors={[t.accent]}
             />
           }
           showsVerticalScrollIndicator={false}
-          contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: 24 }}
+          contentContainerStyle={{
+            paddingHorizontal: 16,
+            paddingBottom: clearance + (canEdit ? 64 : 0),
+          }}
         />
-      </SwipeTabsView>
+      </TicketSwipeTabs>
 
         {canEdit && (
-          <PressableScale
+          <Fab
+            label="Raise"
+            icon="bx-plus"
             onPress={() => {
               Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
               setCreatingTicket(true);
             }}
-            style={{
-              position: "absolute",
-              right: 22,
-              bottom: 22,
-              minWidth: 52,
-              height: 52,
-              borderRadius: 99,
-              backgroundColor: ds.controlOn,
-              flexDirection: "row",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: 7,
-              paddingHorizontal: 18,
-              shadowColor: ds.controlOn,
-              shadowOffset: { width: 0, height: 6 },
-              shadowOpacity: 0.5,
-              shadowRadius: 8,
-              elevation: 8,
-            }}
-            accessibilityRole="button"
-            accessibilityLabel="Raise a ticket"
-          >
-            <Plus color={ds.onControl} size={22} strokeWidth={2.2} />
-            <Text style={{ fontSize: 13, fontWeight: "600", letterSpacing: 0.13, color: ds.onControl }}>
-              Raise
-            </Text>
-          </PressableScale>
+          />
         )}
+
+        <JoSheet
+          visible={sitePickerOpen}
+          onClose={() => setSitePickerOpen(false)}
+          title="Site"
+          subtitle={`Applies to every module. You have access to ${sites.length} site${sites.length === 1 ? "" : "s"}.`}
+        >
+          <ScrollView style={{ marginTop: 14, maxHeight: 420 }} contentContainerStyle={{ gap: 6 }}>
+            {sites.map((site) => (
+              <SheetOption
+                key={site.site_code}
+                label={site.site_name || site.site_code}
+                meta={site.site_code}
+                metaStyle={f.m(11)}
+                selected={site.site_code === selectedSiteCode}
+                onPress={() => {
+                  setSitePickerOpen(false);
+                  if (site.site_code !== selectedSiteCode) void selectSite(site);
+                }}
+              />
+            ))}
+          </ScrollView>
+        </JoSheet>
 
         {creatingTicket && (
           <CreateTicketModal
@@ -1663,30 +1723,14 @@ export default function Tickets() {
         )}
 
         {showFiltersModal && (
-          <AdvancedFilterModal
-            visible={showFiltersModal}
+          <TicketFilterSheet
+            visible
             onClose={handleCloseFilters}
-            dateMode="date-range"
-            tempSearch={tempSearch}
-            setTempSearch={setTempSearch}
-            tempFromDate={tempFromDate}
-            setTempFromDate={setTempFromDate}
-            tempToDate={tempToDate}
-            setTempToDate={setTempToDate}
-            sites={sites}
-            selectedSiteCode={selectedSiteCode}
-            setSelectedSiteCode={(code: string) => {
-              const site = sites.find((s) => s.site_code === code);
-              if (site) selectSite(site);
-            }}
-            user={user}
-            statusFilter={statusFilter}
-            setStatusFilter={setStatusFilter}
-            priorityFilter={priorityFilter}
-            setPriorityFilter={setPriorityFilter}
-            statusOptions={["Open", "Inprogress", "Resolved", "Hold", "Waiting", "Cancelled"]}
-            defaultStatus="Open"
-            applyAdvancedFilters={applyAdvancedFilters}
+            fromDate={fromDate}
+            toDate={toDate}
+            priority={priorityFilter}
+            defaultRange={{ from: defaultFromDate, to: defaultToDate }}
+            onApply={applyFilters}
           />
         )}
 
@@ -1728,6 +1772,6 @@ export default function Tickets() {
             canEdit={canEdit}
           />
         )}
-    </View>
+    </JoPage>
   );
 }

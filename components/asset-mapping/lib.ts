@@ -1,17 +1,21 @@
 /**
- * Asset Mapping — shared vocabulary, colour maps and pure helpers.
+ * Asset Mapping — shared vocabulary, status tones and pure helpers.
  *
- * Presentation follows the other module tabs (Tickets / Incidents): the same
- * list chrome, card, detail header and badge treatment, with this flow's
- * statuses mapped onto the same DS colour roles:
- *   Pending   → neutral carbon (work to do)
- *   Review    → sky   (in progress, waiting on a manager)
- *   Approved  → teal  (key `completed`; same tone as a completed incident)
- *   Failed    → flame (needs a re-upload — the one that wants attention)
- *   No access → neutral carbon
- * These statuses are this flow's own — unrelated to the asset's status.
+ * Statuses are this flow's own (unrelated to the asset's status). The
+ * artboard's Asset Directory has four tabs — All / Mapped / Pending / No
+ * access — so the five real statuses are grouped onto them:
+ *   Mapped    = review (documented, waiting on a manager) + completed (approved)
+ *   Pending   = pending (nothing captured yet) + failed (nameplate read failed,
+ *               needs a re-upload or by-hand entry)
+ *   No access = no_access
+ * Every card still shows its exact status in its pill, and the list offers
+ * sub-chips to isolate e.g. In review or Read failed.
+ *
+ * Tones use the artboard's colour rules (constants/jo): Mapped → OK,
+ * Pending → WARN, No access → BAD; In review → INFO, Read failed → BAD.
  */
-import type { DsTheme } from "@/hooks/useDs";
+import type { BxName } from "@/components/jo/Bx";
+import type { JoTone } from "@/constants/jo";
 import { QR_CENTER_LOGO } from "@/constants/qrLogo";
 import type { MappedAsset, MappingStatus, NameplateData } from "@/services/AssetMappingService";
 
@@ -19,35 +23,63 @@ import type { MappedAsset, MappingStatus, NameplateData } from "@/services/Asset
 
 export interface Tone {
   label: string;
-  bg: string;
-  fg: string;
+  tone: JoTone;
+  /** Solid fill with dark text (the artboard's "Critical"). */
+  solid?: boolean;
 }
 
-export const mappingStatusMap = (ds: DsTheme): Record<MappingStatus, Tone> => ({
-  pending: { label: "Open", bg: ds.carbon[1000], fg: ds.carbon[300] },
-  review: { label: "Review", bg: ds.sky[1000], fg: ds.sky[100] },
-  completed: { label: "Approved", bg: ds.sky[900], fg: ds.sky[100] },
-  failed: { label: "Failed", bg: ds.flame[1000], fg: ds.flame[100] },
-  no_access: { label: "No access", bg: ds.carbon[1000], fg: ds.carbon[500] },
-});
+export const MAPPING_STATUS: Record<MappingStatus, Tone> = {
+  pending: { label: "Pending", tone: "warn" },
+  failed: { label: "Read failed", tone: "bad" },
+  review: { label: "In review", tone: "info" },
+  completed: { label: "Approved", tone: "ok" },
+  no_access: { label: "No access", tone: "bad" },
+};
 
-export const getMappingStatus = (asset: MappedAsset, ds: DsTheme): Tone =>
-  mappingStatusMap(ds)[asset.mapping_status] ?? mappingStatusMap(ds).pending;
+export const getMappingStatus = (asset: MappedAsset): Tone =>
+  MAPPING_STATUS[asset.mapping_status] ?? MAPPING_STATUS.pending;
 
-/** Extra badge while the uploaded nameplate is still being read. */
-export const processingTone = (ds: DsTheme): Tone => ({
-  label: "Reading…",
-  bg: ds.sky[1000],
-  fg: ds.sky[100],
-});
+/** The artboard's tabs. */
+export type AmTab = "all" | "mapped" | "pending" | "no_access";
 
-/** Criticality badge: Critical reads urgent (flame), anything else neutral. */
-export function criticalityTone(asset: MappedAsset, ds: DsTheme): Tone | null {
+export const AM_TABS: { key: AmTab; label: string }[] = [
+  { key: "all", label: "All" },
+  { key: "mapped", label: "Mapped" },
+  { key: "pending", label: "Pending" },
+  { key: "no_access", label: "No access" },
+];
+
+/** Which tab each real status lives under. */
+export const TAB_OF: Record<MappingStatus, Exclude<AmTab, "all">> = {
+  review: "mapped",
+  completed: "mapped",
+  pending: "pending",
+  failed: "pending",
+  no_access: "no_access",
+};
+
+/** Sub-chips inside a grouped tab, in display order. */
+export const SUB_STATUSES: Partial<Record<AmTab, { key: MappingStatus; label: string }[]>> = {
+  mapped: [
+    { key: "review", label: "In review" },
+    { key: "completed", label: "Approved" },
+  ],
+  pending: [
+    { key: "pending", label: "To do" },
+    { key: "failed", label: "Read failed" },
+  ],
+};
+
+/** Extra pill while the uploaded nameplate is still being read. */
+export const PROCESSING: Tone = { label: "Reading…", tone: "info" };
+
+/** Criticality pill: Critical is the solid BAD pill, anything else neutral. */
+export function criticalityTone(asset: MappedAsset): Tone | null {
   const value = asset.criticality?.trim();
   if (!value) return null;
   return /^critical$/i.test(value)
-    ? { label: "Critical", bg: ds.flame[1000], fg: ds.flame[100] }
-    : { label: value, bg: ds.carbon[1000], fg: ds.carbon[400] };
+    ? { label: "Critical", tone: "bad", solid: true }
+    : { label: value, tone: "mute" };
 }
 
 /** "High Side" / "Low Side" (assets.category) → "High side" / "Low side". */
@@ -58,34 +90,24 @@ export function sideLabel(asset: MappedAsset): string | null {
   return m ? `${m[1]![0]!.toUpperCase()}${m[1]!.slice(1).toLowerCase()} side` : value;
 }
 
-/**
- * The AI read's state for one equipment line item, in the same colour roles
- * as the asset statuses: none → neutral, reading → sky, read → teal,
- * not read → flame.
- */
-export function equipmentTone(
-  equipment: { nameplate_data: NameplateData | null; nameplate_photo_url: string | null },
-  ds: DsTheme,
-): Tone {
+/** The AI read's state for one equipment line item. */
+export function equipmentTone(equipment: {
+  nameplate_data: NameplateData | null;
+  nameplate_photo_url: string | null;
+}): Tone {
   switch (equipment.nameplate_data?.state) {
     case "processing":
-      return { label: "Reading…", bg: ds.sky[1000], fg: ds.sky[100] };
+      return { label: "Reading…", tone: "info" };
     case "ok":
-      return { label: "Read", bg: ds.sky[900], fg: ds.isDark ? ds.sky[100] : "#1F757D" };
+      return { label: "Read", tone: "ok" };
     case "manual":
-      return { label: "By hand", bg: ds.sky[900], fg: ds.isDark ? ds.sky[100] : "#1F757D" };
+      return { label: "By hand", tone: "ok" };
     case "failed":
-      return { label: "Not read", bg: ds.flame[1000], fg: ds.flame[100] };
+      return { label: "Not read", tone: "bad" };
     default:
-      return {
-        label: equipment.nameplate_photo_url ? "No data" : "No nameplate",
-        bg: ds.carbon[1000],
-        fg: ds.carbon[400],
-      };
+      return { label: equipment.nameplate_photo_url ? "No data" : "No nameplate", tone: "mute" };
   }
 }
-
-export type ListFilter = "all" | MappingStatus;
 
 /* ── Asset types ───────────────────────────────────────────────────────── */
 
@@ -137,56 +159,16 @@ const TYPES: TypeDef[] = [
 
 const GENERIC_SEEDS = [...IDENT, "Capacity", "Power", "Voltage / Phase", "Year of Mfg."];
 
-/* ── Type colours ──────────────────────────────────────────────────────── */
-
-/**
- * One hue per equipment type for the code badge on each card, so a site's
- * AHUs, FCUs, chillers… are told apart at a glance. Each entry is [light-mode
- * text, dark-mode text]; the badge fill is the same hue at low opacity.
- */
-const TYPE_HUES: [string, string][] = [
-  ["#1D5FC2", "#6FA8FF"], // blue
-  ["#6B3FC9", "#B39CF0"], // violet
-  ["#0B7F7A", "#4FD1C5"], // teal
-  ["#B4460C", "#F59E6B"], // orange
-  ["#B3246B", "#F28AC0"], // pink
-  ["#3F7D12", "#8BD65A"], // green
-  ["#8A6A00", "#E8C547"], // amber
-  ["#0E6FA3", "#5CC4F2"], // sky
-  ["#8C2F2F", "#F08A8A"], // red
-  ["#4B5B8C", "#A3B3E6"], // slate-indigo
-];
-
-/** Fixed hues for the common HVAC types; everything else is hashed. */
-const FIXED_HUE: Record<string, number> = {
-  AHU: 1,
-  FCU: 2,
-  CHR: 0,
-  CT: 7,
-  PMP: 4,
-  CU: 3,
-  C: 6,
+/** Artboard icon per type (Chiller → bolt, AHU / FCU → wind, CT / pump → cog). */
+const TYPE_ICON: Record<string, BxName> = {
+  CHR: "bxs-bolt",
+  AHU: "bx-wind",
+  FCU: "bx-wind",
+  CT: "bxs-cog",
+  PMP: "bxs-cog",
 };
 
-export function typeColor(abbr: string, ds: DsTheme): { bg: string; fg: string } {
-  let index = FIXED_HUE[abbr];
-  if (index === undefined) {
-    let h = 0;
-    for (let i = 0; i < abbr.length; i++) h = (h * 31 + abbr.charCodeAt(i)) >>> 0;
-    index = h % TYPE_HUES.length;
-  }
-  const [light, dark] = TYPE_HUES[index]!;
-  const fg = ds.isDark ? dark : light;
-  return { fg, bg: withAlpha(fg, ds.isDark ? 0.18 : 0.12) };
-}
-
-function withAlpha(hex: string, alpha: number): string {
-  const h = hex.replace("#", "");
-  const r = parseInt(h.slice(0, 2), 16);
-  const g = parseInt(h.slice(2, 4), 16);
-  const b = parseInt(h.slice(4, 6), 16);
-  return `rgba(${r},${g},${b},${alpha})`;
-}
+export const typeIcon = (abbr: string): BxName => TYPE_ICON[abbr] ?? "bx-cube";
 
 export interface TypeMeta {
   abbr: string;

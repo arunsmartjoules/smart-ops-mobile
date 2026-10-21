@@ -1,36 +1,25 @@
 import React, { useState, useEffect } from "react";
-import {
-  View,
-  Text,
-  ScrollView,
-  TouchableOpacity,
-  Image,
-  ActivityIndicator,
-} from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { View, Text, ScrollView, Image } from "react-native";
 import { useLocalSearchParams, router } from "expo-router";
-import {
-  ChevronLeft,
-  Info,
-  Calendar,
-  Clock,
-  User,
-  Thermometer,
-  Droplets,
-  FlaskRound,
-  Snowflake,
-  Activity,
-} from "lucide-react-native";
 import { db, siteLogs, chillerReadings } from "@/database";
 import { eq } from "drizzle-orm";
 import { format } from "date-fns";
 import { Svg, Path } from "react-native-svg";
+import { Bx } from "@/components/jo/Bx";
+import { Avatar, Card, EmptyState, JoPage, f, useJoTheme } from "@/components/jo/ui";
+import { EntryHeader, EntryLoading, typeLook } from "@/components/sitelogs/LogsKit";
 
 import { API_BASE_URL } from "../constants/api";
 
 const API_URL = API_BASE_URL;
 
+/**
+ * Read-only report for one site log / chiller reading, in the artboard's
+ * card language: type hero row, readings in raised cells, remarks,
+ * signature and executor.
+ */
 export default function SiteLogDetail() {
+  const t = useJoTheme();
   const { id, type } = useLocalSearchParams<{ id: string; type: string }>();
   const [log, setLog] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -64,6 +53,15 @@ export default function SiteLogDetail() {
 
   const renderSignature = (sig: string) => {
     if (!sig) return null;
+    const frame = {
+      height: 180,
+      width: "100%" as const,
+      borderRadius: 22,
+      backgroundColor: t.raised,
+      alignItems: "center" as const,
+      justifyContent: "center" as const,
+      overflow: "hidden" as const,
+    };
 
     if (
       sig.startsWith("/") ||
@@ -71,10 +69,10 @@ export default function SiteLogDetail() {
       sig.startsWith("file://")
     ) {
       return (
-        <View className="bg-white rounded-2xl h-48 w-full border border-slate-100 items-center justify-center overflow-hidden shadow-sm">
+        <View style={frame}>
           <Image
             source={{ uri: sig.startsWith("/") ? `${API_URL}${sig}` : sig }}
-            className="w-full h-full"
+            style={{ width: "100%", height: "100%" }}
             resizeMode="contain"
           />
         </View>
@@ -84,13 +82,13 @@ export default function SiteLogDetail() {
     try {
       const paths = sig.split(";");
       return (
-        <View className="bg-white rounded-2xl h-48 w-full border border-slate-100 items-center justify-center p-6 shadow-sm">
+        <View style={[frame, { padding: 20 }]}>
           <Svg height="100%" width="100%" viewBox="0 0 300 150">
             {paths.map((p, i) => (
               <Path
                 key={i}
                 d={p}
-                stroke="#0f172a"
+                stroke={t.ink}
                 strokeWidth={3}
                 fill="none"
                 strokeLinecap="round"
@@ -102,296 +100,168 @@ export default function SiteLogDetail() {
       );
     } catch {
       return (
-        <View className="bg-white rounded-2xl h-48 w-full border border-slate-100 items-center justify-center">
-          <Text className="text-slate-400 text-xs italic">
-            Signature display error
-          </Text>
+        <View style={frame}>
+          <Text style={[f.t(12), { color: t.muted, fontStyle: "italic" }]}>Signature display error</Text>
         </View>
       );
     }
   };
 
   if (loading) {
-    return (
-      <View className="flex-1 bg-slate-50 items-center justify-center">
-        <ActivityIndicator color="#dc2626" />
-      </View>
-    );
+    return <EntryLoading label="Loading entry…" />;
   }
 
   if (!log) {
     return (
-      <View className="flex-1 bg-slate-50 items-center justify-center p-10">
-        <Text className="text-slate-900 font-bold text-center">
-          Entry not found
-        </Text>
-        <TouchableOpacity
-          onPress={() => router.back()}
-          className="mt-6 bg-red-600 px-8 py-3 rounded-xl"
-        >
-          <Text className="text-white font-bold uppercase text-xs">
-            Go Back
-          </Text>
-        </TouchableOpacity>
-      </View>
+      <JoPage glow={false}>
+        <EntryHeader title="Log report" onBack={() => router.back()} />
+        <View style={{ paddingHorizontal: 16, paddingTop: 12 }}>
+          <EmptyState
+            icon="bx-error-circle"
+            title="Entry not found"
+            sub="It may have been removed or not synced to this device yet."
+            action={{ label: "Go back", onPress: () => router.back() }}
+          />
+        </View>
+      </JoPage>
     );
   }
 
-  const getIcon = () => {
-    switch (type) {
-      case "Temp RH":
-        return <Thermometer size={20} color="#ef4444" />;
-      case "Water":
-        return <Droplets size={20} color="#3b82f6" />;
-      case "Chemical Dosing":
-        return <FlaskRound size={20} color="#8b5cf6" />;
-      case "Chiller Logs":
-        return <Snowflake size={20} color="#0d9488" />;
-      default:
-        return <Activity size={20} color="#64748b" />;
-    }
-  };
+  const look = typeLook(t, String(type ?? ""));
 
-  const getThemeColor = () => {
-    switch (type) {
-      case "Temp RH":
-        return "#ef4444";
-      case "Water":
-        return "#3b82f6";
-      case "Chemical Dosing":
-        return "#8b5cf6";
-      case "Chiller Logs":
-        return "#0d9488";
-      default:
-        return "#64748b";
-    }
-  };
-
-  const DataRow = ({
-    label,
-    value,
-  }: {
-    label: string;
-    value: string | number;
-  }) => (
-    <View className="mb-4">
-      <Text className="text-slate-400 text-[10px] font-bold uppercase tracking-widest mb-1">
+  const DataCell = ({ label, value }: { label: string; value: string | number }) => (
+    <View
+      style={{
+        width: "48.5%",
+        borderRadius: 16,
+        backgroundColor: t.raised,
+        paddingVertical: 10,
+        paddingHorizontal: 12,
+      }}
+    >
+      <Text style={[f.t(11.5, 500), { color: t.muted }]} numberOfLines={1}>
         {label}
       </Text>
-      <Text className="text-slate-900 dark:text-slate-50 text-xl font-bold">
+      <Text style={[f.d(20, -0.02, 1.2), { color: t.ink, marginTop: 3 }]} numberOfLines={1}>
         {value ?? "--"}
       </Text>
     </View>
   );
 
   return (
-    <View className="flex-1 bg-slate-50 dark:bg-slate-950">
-      <SafeAreaView className="flex-1" edges={["top"]}>
-        {/* Header */}
-        <View className="px-5 py-4 bg-white dark:bg-slate-900 border-b border-slate-100 dark:border-slate-800 flex-row items-center justify-between">
-          <TouchableOpacity
-            onPress={() => router.back()}
-            className="w-10 h-10 rounded-full bg-slate-50 dark:bg-slate-800 items-center justify-center"
-          >
-            <ChevronLeft size={20} color="#0f172a" />
-          </TouchableOpacity>
-          <Text className="text-slate-900 dark:text-slate-50 font-bold text-lg">
-            Log Report
-          </Text>
-          <View className="w-10 h-10 rounded-full bg-slate-50 dark:bg-slate-800 items-center justify-center">
-            <Info size={18} color="#94a3b8" />
-          </View>
-        </View>
+    <JoPage glow={false}>
+      <EntryHeader title="Log report" sub={String(type ?? "")} onBack={() => router.back()} />
 
-        <ScrollView className="flex-1 p-5" showsVerticalScrollIndicator={false}>
-          {/* Summary Card */}
-          <View
-            className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-50 dark:border-slate-800 mb-6"
-            style={{
-              shadowColor: "#000",
-              shadowOffset: { width: 0, height: 1 },
-              shadowOpacity: 0.05,
-              shadowRadius: 4,
-              elevation: 2,
-            }}
-          >
-            <View className="flex-row items-center mb-6">
-              <View
-                className="w-12 h-12 rounded-xl items-center justify-center mr-4"
-                style={{ backgroundColor: `${getThemeColor()}15` }}
-              >
-                {getIcon()}
-              </View>
-              <View className="flex-1">
-                <Text className="text-slate-400 dark:text-slate-500 text-[10px] font-bold uppercase tracking-widest mb-1">
-                  Entry Type
-                </Text>
-                <Text className="text-slate-900 dark:text-slate-50 text-xl font-bold">
-                  {type}
-                </Text>
-              </View>
+      <ScrollView
+        style={{ flex: 1 }}
+        contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 4, paddingBottom: 40, gap: 10 }}
+        showsVerticalScrollIndicator={false}
+      >
+        {/* Summary */}
+        <Card style={{ padding: 16 }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+            <View
+              style={{
+                width: 46,
+                height: 46,
+                borderRadius: 23,
+                backgroundColor: look.bg,
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <Bx name={look.icon} size={22} color={look.fg} />
             </View>
-
-            <View className="flex-row items-center justify-between bg-slate-50 dark:bg-slate-800 rounded-xl p-4 border border-slate-100 dark:border-slate-700">
-              <View className="flex-row items-center">
-                <Calendar size={14} color="#94a3b8" />
-                <Text className="text-slate-500 dark:text-slate-400 font-bold text-xs ml-2">
-                  {log.created_at
-                    ? format(new Date(log.created_at), "dd MMM yyyy")
-                    : "--"}
-                </Text>
-              </View>
-              <View className="w-px h-4 bg-slate-200 dark:bg-slate-700 mx-2" />
-              <View className="flex-row items-center">
-                <Clock size={14} color="#94a3b8" />
-                <Text className="text-slate-500 dark:text-slate-400 font-bold text-xs ml-2">
-                  {log.created_at
-                    ? format(new Date(log.created_at), "hh:mm a")
-                    : "--"}
-                </Text>
-              </View>
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <Text style={[f.t(11.5), { color: t.muted }]}>Entry type</Text>
+              <Text style={[f.d(22, -0.02), { color: t.ink }]} numberOfLines={1}>
+                {type}
+              </Text>
             </View>
           </View>
+          <View style={{ flexDirection: "row", gap: 6, marginTop: 14 }}>
+            <View style={{ flex: 1, flexDirection: "row", alignItems: "center", gap: 6, height: 38, borderRadius: 19, backgroundColor: t.raised, paddingHorizontal: 12 }}>
+              <Bx name="bx-calendar" size={15} color={t.accentInk} />
+              <Text style={[f.t(12.5, 600), { color: t.ink2 }]}>
+                {log.created_at ? format(new Date(log.created_at), "dd MMM yyyy") : "--"}
+              </Text>
+            </View>
+            <View style={{ flex: 1, flexDirection: "row", alignItems: "center", gap: 6, height: 38, borderRadius: 19, backgroundColor: t.raised, paddingHorizontal: 12 }}>
+              <Bx name="bx-time-five" size={15} color={t.accentInk} />
+              <Text style={[f.t(12.5, 600), { color: t.ink2 }]}>
+                {log.created_at ? format(new Date(log.created_at), "hh:mm a") : "--"}
+              </Text>
+            </View>
+          </View>
+        </Card>
 
-          {/* Details Section */}
-          <View
-            className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-50 dark:border-slate-800 mb-6"
-            style={{
-              shadowColor: "#000",
-              shadowOffset: { width: 0, height: 1 },
-              shadowOpacity: 0.05,
-              shadowRadius: 4,
-              elevation: 2,
-            }}
-          >
-            <Text className="text-slate-900 dark:text-slate-50 font-bold text-base mb-6">
-              Technical Data
+        {/* Technical data */}
+        <Card style={{ padding: 16 }}>
+          <Text style={[f.t(15, 600), { color: t.ink }]}>Technical data</Text>
+          <View style={{ flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between", rowGap: 8, marginTop: 12 }}>
+            {type === "Temp RH" && (
+              <>
+                <DataCell label="Temperature" value={`${log.temperature}°C`} />
+                <DataCell label="Humidity" value={`${log.rh}%`} />
+              </>
+            )}
+
+            {type === "Water" && (
+              <>
+                <DataCell label="TDS reading" value={`${log.tds} ppm`} />
+                <DataCell label="pH level" value={log.ph} />
+                <DataCell label="Hardness" value={log.hardness} />
+              </>
+            )}
+
+            {type === "Chemical Dosing" && (
+              <DataCell label="Dosing details" value={log.chemical_dosing || "N/A"} />
+            )}
+
+            {type === "Chiller Logs" && (
+              <>
+                <DataCell label="Chiller ID" value={log.chiller_id || "N/A"} />
+                <DataCell label="Cond. In" value={`${log.condenser_inlet_temp}°C`} />
+                <DataCell label="Cond. Out" value={`${log.condenser_outlet_temp}°C`} />
+                <DataCell label="Evap. In" value={`${log.evaporator_inlet_temp}°C`} />
+                <DataCell label="Evap. Out" value={`${log.evaporator_outlet_temp}°C`} />
+                <DataCell label="Oil Pressure" value={`${log.oil_pressure} PSI`} />
+                <DataCell label="Load" value={`${log.compressor_load_percentage}%`} />
+              </>
+            )}
+          </View>
+
+          <View style={{ marginTop: 14, paddingTop: 14, borderTopWidth: 1, borderTopColor: t.line }}>
+            <Text style={[f.t(12.5, 500), { color: t.ink3 }]}>Remarks</Text>
+            <Text style={[f.t(14), { color: t.ink2, fontStyle: "italic", marginTop: 6, lineHeight: 20 }]}>
+              &quot;{log.remarks || "No additional remarks provided"}&quot;
             </Text>
-
-            <View className="gap-2">
-              {type === "Temp RH" && (
-                <View className="flex-row gap-8">
-                  <View className="flex-1">
-                    <DataRow
-                      label="Temperature"
-                      value={`${log.temperature}°C`}
-                    />
-                  </View>
-                  <View className="flex-1">
-                    <DataRow label="Humidity" value={`${log.rh}%`} />
-                  </View>
-                </View>
-              )}
-
-              {type === "Water" && (
-                <>
-                  <DataRow label="TDS Reading" value={`${log.tds} ppm`} />
-                  <View className="flex-row gap-8">
-                    <View className="flex-1">
-                      <DataRow label="pH Level" value={log.ph} />
-                    </View>
-                    <View className="flex-1">
-                      <DataRow label="Hardness" value={log.hardness} />
-                    </View>
-                  </View>
-                </>
-              )}
-
-              {type === "Chemical Dosing" && (
-                <DataRow
-                  label="Dosing Details"
-                  value={log.chemical_dosing || "N/A"}
-                />
-              )}
-
-              {type === "Chiller Logs" && (
-                <>
-                  <DataRow label="Chiller ID" value={log.chiller_id || "N/A"} />
-                  <View className="flex-row flex-wrap">
-                    <View className="w-1/2">
-                      <DataRow
-                        label="Cond. In"
-                        value={`${log.condenser_inlet_temp}°C`}
-                      />
-                    </View>
-                    <View className="w-1/2">
-                      <DataRow
-                        label="Cond. Out"
-                        value={`${log.condenser_outlet_temp}°C`}
-                      />
-                    </View>
-                    <View className="w-1/2">
-                      <DataRow
-                        label="Evap. In"
-                        value={`${log.evaporator_inlet_temp}°C`}
-                      />
-                    </View>
-                    <View className="w-1/2">
-                      <DataRow
-                        label="Evap. Out"
-                        value={`${log.evaporator_outlet_temp}°C`}
-                      />
-                    </View>
-                    <View className="w-1/2">
-                      <DataRow
-                        label="Oil Pressure"
-                        value={`${log.oil_pressure} PSI`}
-                      />
-                    </View>
-                    <View className="w-1/2">
-                      <DataRow
-                        label="Load"
-                        value={`${log.compressor_load_percentage}%`}
-                      />
-                    </View>
-                  </View>
-                </>
-              )}
-
-              <View className="pt-4 border-t border-slate-100 dark:border-slate-800">
-                <Text className="text-slate-400 text-[10px] font-bold uppercase tracking-widest mb-2">
-                  Remarks
-                </Text>
-                <Text className="text-slate-700 dark:text-slate-300 text-sm font-medium italic">
-                  &quot;{log.remarks || "No additional remarks provided"}&quot;
-                </Text>
-              </View>
-            </View>
           </View>
+        </Card>
 
-          {/* Signature Section */}
-          <View className="mb-10">
-            <Text className="text-slate-900 dark:text-slate-50 font-bold text-base mb-4 ml-1">
-              Technician Signature
-            </Text>
+        {/* Signature */}
+        <Card style={{ padding: 16 }}>
+          <Text style={[f.t(15, 600), { color: t.ink }]}>Technician signature</Text>
+          <View style={{ marginTop: 12 }}>
             {log.signature || log.signature_text ? (
               renderSignature(log.signature || log.signature_text)
             ) : (
-              <View className="bg-white dark:bg-slate-900 rounded-2xl p-8 border border-slate-100 dark:border-slate-800 items-center justify-center shadow-sm">
-                <Text className="text-slate-400 text-xs italic">
-                  No signature captured
-                </Text>
+              <View style={{ height: 80, borderRadius: 22, backgroundColor: t.raised, alignItems: "center", justifyContent: "center" }}>
+                <Text style={[f.t(12.5), { color: t.muted, fontStyle: "italic" }]}>No signature captured</Text>
               </View>
             )}
-
-            <View className="flex-row items-center mt-6 p-4 bg-white dark:bg-slate-900 rounded-xl border border-slate-50 dark:border-slate-800">
-              <View className="w-10 h-10 rounded-full bg-slate-50 dark:bg-slate-800 items-center justify-center mr-3 shadow-sm">
-                <User size={18} color="#64748b" />
-              </View>
-              <View>
-                <Text className="text-slate-400 text-[8px] font-bold uppercase tracking-widest mb-0.5">
-                  Executor
-                </Text>
-                <Text className="text-slate-900 dark:text-slate-50 font-bold text-sm">
-                  Technician #
-                  {(log.executor_id || "").slice(-4).toUpperCase() || "ADMIN"}
-                </Text>
-              </View>
+          </View>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 12, marginTop: 14 }}>
+            <Avatar name={log.executor_id || "Admin"} size={40} />
+            <View>
+              <Text style={[f.t(11.5), { color: t.muted }]}>Executor</Text>
+              <Text style={[f.t(14, 600), { color: t.ink }]}>
+                Technician #{(log.executor_id || "").slice(-4).toUpperCase() || "ADMIN"}
+              </Text>
             </View>
           </View>
-          <View className="h-20" />
-        </ScrollView>
-      </SafeAreaView>
-    </View>
+        </Card>
+      </ScrollView>
+    </JoPage>
   );
 }

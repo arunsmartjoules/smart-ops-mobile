@@ -9,8 +9,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, Text, View } from "react-native";
 import TicketsService, { type Ticket } from "@/services/TicketsService";
 import { formatIST } from "@/utils/istDate";
-import { useDs } from "@/hooks/useDs";
-import { ActivityRow, SectionTitle } from "./TicketDetailUI";
+import { Card, f, makeJoStyles, useJoTheme } from "@/components/jo/ui";
 
 interface LineItem {
   image_url?: string;
@@ -41,8 +40,37 @@ const when = (ms: number) => {
   )}`;
 };
 
+/** One timeline row: 10px dot on a 1.5px rail, 13/500 title, 11.5 grey meta. */
+function ActivityRow({
+  title,
+  meta,
+  dot,
+  line,
+}: {
+  title: string;
+  meta: string;
+  dot: string;
+  line: boolean;
+}) {
+  const s = useStyles();
+  return (
+    <View style={s.row}>
+      <View style={s.rail}>
+        <View style={[s.dot, { backgroundColor: dot }]} />
+        {line ? <View style={s.railLine} /> : null}
+      </View>
+      <View style={s.rowBody}>
+        <Text style={s.title}>{title}</Text>
+        <Text style={s.meta}>{meta}</Text>
+      </View>
+    </View>
+  );
+}
+
+/** Artboard "Activity" card (radius 26, padding 16) — newest first. */
 export function TicketActivity({ ticket }: { ticket: Ticket }) {
-  const ds = useDs();
+  const t = useJoTheme();
+  const s = useStyles();
   const [items, setItems] = useState<LineItem[]>([]);
   const [loading, setLoading] = useState(true);
   const ticketId = ticket.id || ticket.ticket_no;
@@ -74,7 +102,7 @@ export function TicketActivity({ ticket }: { ticket: Ticket }) {
         at: created,
         title: "Ticket raised",
         meta: [when(created), ticket.created_user].filter(Boolean).join(" · "),
-        dot: ds.flame[100],
+        dot: t.bad,
       });
     }
 
@@ -87,7 +115,7 @@ export function TicketActivity({ ticket }: { ticket: Ticket }) {
           ? `Picked up by ${ticket.assigned_to}`
           : "Work started",
         meta: when(responded),
-        dot: ds.sky[100],
+        dot: t.info,
       });
     }
 
@@ -98,7 +126,7 @@ export function TicketActivity({ ticket }: { ticket: Ticket }) {
         at: resolved,
         title: "Resolved",
         meta: when(resolved),
-        dot: ds.sky[100],
+        dot: t.ok,
       });
     }
 
@@ -113,35 +141,49 @@ export function TicketActivity({ ticket }: { ticket: Ticket }) {
           item.message_text?.trim() ||
           (item.image_url ? "Photo attached" : "Video attached"),
         meta: when(at),
-        dot: isPhoto ? ds.sky[500] : ds.carbon[900],
+        dot: isPhoto ? t.info : t.muted,
       });
     });
 
     return out.sort((a, b) => b.at - a.at);
-  }, [ticket, items, ds]);
+  }, [ticket, items, t]);
 
   return (
-    <View style={{ marginTop: 16 }}>
-      <SectionTitle>Activity</SectionTitle>
-      {loading && entries.length === 0 ? (
-        <ActivityIndicator size="small" color={ds.carbon[500]} />
-      ) : entries.length === 0 ? (
-        <Text style={{ fontSize: 12, color: ds.carbon[500] }}>
-          Nothing recorded yet
-        </Text>
-      ) : (
-        entries.map((e, i) => (
-          <ActivityRow
-            key={e.key}
-            title={e.title}
-            meta={e.meta}
-            dot={e.dot}
-            line={i < entries.length - 1}
-          />
-        ))
-      )}
-    </View>
+    <Card style={s.card}>
+      <Text style={s.cardTitle}>Activity</Text>
+      <View style={s.list}>
+        {loading && entries.length === 0 ? (
+          <ActivityIndicator size="small" color={t.muted} style={{ alignSelf: "flex-start" }} />
+        ) : entries.length === 0 ? (
+          <Text style={s.empty}>Nothing recorded yet</Text>
+        ) : (
+          entries.map((e, i) => (
+            <ActivityRow
+              key={e.key}
+              title={e.title}
+              meta={e.meta}
+              dot={e.dot}
+              line={i < entries.length - 1}
+            />
+          ))
+        )}
+      </View>
+    </Card>
   );
 }
+
+const useStyles = makeJoStyles((t) => ({
+  card: { padding: 16, marginTop: 10 },
+  cardTitle: { ...f.t(15, 600), color: t.ink },
+  list: { marginTop: 12 },
+  empty: { ...f.t(12.5), color: t.muted },
+  row: { flexDirection: "row", gap: 12 },
+  rail: { width: 12, alignItems: "center" },
+  dot: { width: 10, height: 10, borderRadius: 5, marginTop: 4 },
+  railLine: { flex: 1, width: 1.5, backgroundColor: t.track, marginVertical: 4 },
+  rowBody: { flex: 1, minWidth: 0, paddingBottom: 14 },
+  title: { ...f.t(13, 500), color: t.ink },
+  meta: { ...f.t(11.5), color: t.muted, marginTop: 2 },
+}));
 
 export default TicketActivity;

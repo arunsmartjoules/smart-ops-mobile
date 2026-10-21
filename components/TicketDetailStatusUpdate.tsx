@@ -1,39 +1,20 @@
 import React, { useMemo, useState } from "react";
-import {
-  Alert,
-  Image,
-  ScrollView,
-  Text,
-  TouchableOpacity,
-  View,
-} from "react-native";
+import { Alert, Image, ScrollView, Text, TouchableOpacity, View } from "react-native";
 import * as ImagePicker from "expo-image-picker";
-import {
-  Camera,
-  Check,
-  Clock,
-  FolderOpen,
-  ImagePlus,
-  Pause,
-  TriangleAlert,
-  Wrench,
-  X,
-} from "lucide-react-native";
-import type { LucideIcon } from "lucide-react-native";
 import { type SelectOption } from "./SearchableSelect";
-import FullscreenPicker from "./FullscreenPicker";
 import { type Ticket } from "@/services/TicketsService";
-import { makeThemedStyles, useDs } from "@/hooks/useDs";
+import { Bx, type BxName } from "@/components/jo/Bx";
+import { Card, f, makeJoStyles, useJoTheme } from "@/components/jo/ui";
 import {
-  AttachButton,
-  CardHead,
-  DetailCard,
-  Field,
-  StatusChip,
-  StatusHint,
-  ToggleRow,
-  soRadius,
-} from "@/components/tickets/TicketDetailUI";
+  BoxInput,
+  ChoiceChips,
+  FieldHead,
+  OptionSheet,
+  PhotoSlot,
+  SelectBox,
+  SwitchRow,
+  TempBox,
+} from "@/components/tickets/TicketFormParts";
 import {
   DEFAULT_TICKET_INCIDENT_DRAFT,
   FAULT_TYPE_OPTIONS,
@@ -70,10 +51,7 @@ export const ticketCategory = (ticket: Pick<Ticket, "category">): string => {
   return PLACEHOLDER_CATEGORIES.includes(category.toLowerCase()) ? "" : category;
 };
 
-const BREAKDOWN_TYPE_OPTIONS: SelectOption[] = [
-  { value: "Electrical", label: "Electrical" },
-  { value: "Mechanical", label: "Mechanical" },
-];
+const BREAKDOWN_TYPE_OPTIONS = ["Electrical", "Mechanical"] as const;
 
 /** Sentinel value for the "Others" choice in the area picker. Selecting it
  *  reveals a free-text box so operators can record an asset/area that isn't in
@@ -92,13 +70,14 @@ export const REMARKS_REQUIRED_STATUSES = [
 export const statusLabel = (s: string) =>
   s === "Inprogress" ? "In progress" : s === "Open" ? "Reopen" : s;
 
-const STATUS_HINT_ICON: Record<string, LucideIcon> = {
-  Open: FolderOpen,
-  Inprogress: Wrench,
-  Hold: Pause,
-  Waiting: Clock,
-  Resolved: Check,
-  Cancelled: X,
+/** Artboard ST_ICON, plus a glyph for Reopen. */
+const STATUS_ICON: Record<string, BxName> = {
+  Open: "bx-revision",
+  Inprogress: "bxs-wrench",
+  Hold: "bx-pause",
+  Waiting: "bx-time-five",
+  Resolved: "bx-check",
+  Cancelled: "bx-x",
 };
 
 /**
@@ -251,10 +230,16 @@ interface TicketDetailStatusUpdateProps {
   setCreateIncidentFromTicket?: (v: boolean) => void;
   incidentDraft?: TicketIncidentDraft;
   setIncidentDraft?: React.Dispatch<React.SetStateAction<TicketIncidentDraft>>;
-  /** Set once the operator has tried to submit — turns hints flame. */
+  /** Set once the operator has tried to submit — turns missing hints red. */
   attempted?: boolean;
 }
 
+/**
+ * Status update — artboard ticket detail (lines 403–459): one "Status" card
+ * holding the status option grid, the hint for what that status needs, then
+ * only the fields it needs (area/category for In progress / Resolved,
+ * temperatures, remarks, photo), followed by the "Raise an incident" switch.
+ */
 const TicketDetailStatusUpdate = ({
   ticket,
   updateStatus,
@@ -287,20 +272,9 @@ const TicketDetailStatusUpdate = ({
   setIncidentDraft,
   attempted = false,
 }: TicketDetailStatusUpdateProps) => {
-  const styles = useStyles();
-  const ds = useDs();
-  const incidentFaultTypeOptions = useMemo(
-    () => FAULT_TYPE_OPTIONS.map((value) => ({ value, label: value })),
-    [],
-  );
-  const incidentSeverityOptions = useMemo(
-    () => SEVERITY_OPTIONS.map((value) => ({ value, label: value })),
-    [],
-  );
-  const incidentOperatingOptions = useMemo(
-    () => OPERATING_CONDITION_OPTIONS.map((value) => ({ value, label: value })),
-    [],
-  );
+  const t = useJoTheme();
+  const s = useStyles();
+  const [sheet, setSheet] = useState<"area" | "category" | null>(null);
 
   // "Others" lets the operator type a free-text asset/area. While active,
   // `updateArea` holds the typed text directly (it's what gets sent as
@@ -329,20 +303,22 @@ const TicketDetailStatusUpdate = ({
     }
   };
 
+  // Artboard order (In progress, Resolved, Hold, Waiting, Cancelled); the
+  // grid wraps, so every option stays visible without reordering.
   const statuses = [
     "Inprogress",
+    "Resolved",
     "Hold",
     "Waiting",
-    "Resolved",
     "Cancelled",
     "Open",
   ];
 
-  const filteredStatuses = statuses.filter((s) => {
-    if (ticket.status === "Resolved") return s === "Open";
-    if (s === "Resolved" && ticket.status !== "Inprogress") return false;
-    if (s === "Open") return false;
-    if (s === ticket.status) return false;
+  const filteredStatuses = statuses.filter((st) => {
+    if (ticket.status === "Resolved") return st === "Open";
+    if (st === "Resolved" && ticket.status !== "Inprogress") return false;
+    if (st === "Open") return false;
+    if (st === ticket.status) return false;
     return true;
   });
 
@@ -358,6 +334,10 @@ const TicketDetailStatusUpdate = ({
     showAreaAndCategory && isTempMandatoryCategory(effectiveCategory);
   const beforeTempMissing = mandatoryTempsForCategory && !beforeTemp.trim();
   const afterTempMissing = mandatoryTempsForCategory && !afterTemp.trim();
+  const areaMissing = !(updateArea || ticket.area_asset || "").trim();
+  const categoryMissing = !effectiveCategory;
+  const breakdownMissing =
+    isBreakdownTypeCategory(effectiveCategory) && !updateBreakdownType.trim();
 
   // Temp capture follows the ticket lifecycle: Before Temp is entered while
   // the ticket is Open (tech starting work) and stays visible/editable once
@@ -476,184 +456,208 @@ const TicketDetailStatusUpdate = ({
       : "Before required"
     : "Optional";
 
-  // Selected status leads the row so it stays visible without scrolling.
-  const orderedStatuses = filteredStatuses.includes(updateStatus)
-    ? [updateStatus, ...filteredStatuses.filter((s) => s !== updateStatus)]
-    : filteredStatuses;
+  const hint = statusHintFor(updateStatus, mandatoryTempsForCategory);
 
-  const HintIcon = STATUS_HINT_ICON[updateStatus] ?? FolderOpen;
+  const areaLabel = isOtherArea
+    ? "Others"
+    : areaOptions.find((o) => o.value === updateArea)?.label || updateArea;
+  const categoryLabel =
+    categoryOptions.find((o) => o.value === updateCategory)?.label || updateCategory;
 
   return (
     <View>
-      <View style={styles.statusRow}>
-        <Text style={styles.statusLabel}>Status</Text>
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.statusChips}
-        >
-          {orderedStatuses.map((s) => (
-            <StatusChip
-              key={s}
-              label={statusLabel(s)}
-              active={updateStatus === s}
-              onPress={() => {
-                setUpdateStatus(s);
-                if (!REMARKS_REQUIRED_STATUSES.includes(s)) {
-                  setAttachmentUri("");
-                } else {
-                  setUpdateRemarks("");
-                }
-              }}
-            />
-          ))}
-        </ScrollView>
-      </View>
-      <StatusHint icon={HintIcon}>
-        {statusHintFor(updateStatus, mandatoryTempsForCategory)}
-      </StatusHint>
-
-      {/* Only the fields the chosen status actually requires. */}
-      {showAreaAndCategory && (
-        <DetailCard>
-          <CardHead label="Details" hint="Required" hintTone="muted" />
-          <FullscreenPicker
-            label="Area *"
-            placeholder="Choose an area..."
-            value={isOtherArea ? OTHER_AREA_VALUE : updateArea}
-            options={areaOptionsWithOther}
-            onChange={handleAreaChange}
-            loading={areasLoading}
-            searchPlaceholder="Search areas..."
-            emptyMessage="No areas found"
-            searchValue={areaSearchQuery}
-            onSearchChange={setAreaSearchQuery}
-            onLoadMore={loadMoreAreas}
-            hasMore={hasMoreAreas}
-            loadingMore={loadingMoreAreas}
-            remoteSearch={Boolean(setAreaSearchQuery)}
-          />
-          {isOtherArea && (
-            <Field
-              label="Other asset / area *"
-              placeholder="Enter asset / area name"
-              value={updateArea}
-              onChangeText={setUpdateArea}
-              autoFocus
-              containerStyle={{ marginBottom: 12 }}
-            />
-          )}
-          <FullscreenPicker
-            label="Category *"
-            placeholder="Choose a category..."
-            value={updateCategory}
-            options={categoryOptions}
-            onChange={setUpdateCategory}
-            searchPlaceholder="Search categories..."
-            emptyMessage="No categories found"
-          />
-          {isBreakdownTypeCategory(effectiveCategory) && (
-            <FullscreenPicker
-              label="Electrical / Mechanical *"
-              placeholder="Choose type..."
-              value={updateBreakdownType}
-              options={BREAKDOWN_TYPE_OPTIONS}
-              onChange={setUpdateBreakdownType}
-              searchPlaceholder="Search..."
-              emptyMessage="No options"
-            />
-          )}
-        </DetailCard>
-      )}
-
-      {showTempSection && (
-        <DetailCard>
-          <CardHead
-            label="Temperature"
-            hint={tempHint}
-            hintTone={
-              attempted && (beforeTempMissing || afterTempMissing)
-                ? "error"
-                : "muted"
-            }
-          />
-          <View style={styles.tempRow}>
-            {showBeforeTemp && (
-              <Field
-                label="Before"
-                unit="°C"
-                large
-                placeholder="0.0"
-                keyboardType="decimal-pad"
-                value={beforeTemp}
-                onChangeText={setBeforeTemp}
-                invalid={attempted && beforeTempMissing}
-                containerStyle={styles.tempCell}
-              />
-            )}
-            {showAfterTemp && (
-              <Field
-                label="After"
-                unit="°C"
-                large
-                placeholder="0.0"
-                keyboardType="decimal-pad"
-                value={afterTemp}
-                onChangeText={setAfterTemp}
-                invalid={attempted && afterTempMissing}
-                containerStyle={styles.tempCell}
-              />
-            )}
+      <Card style={s.card}>
+        <Text style={s.cardTitle}>Status</Text>
+        <View style={s.options} accessibilityRole="radiogroup" accessibilityLabel="New status">
+          {filteredStatuses.map((st) => {
+            const on = updateStatus === st;
+            return (
+              <TouchableOpacity
+                key={st}
+                onPress={() => {
+                  setUpdateStatus(st);
+                  if (!REMARKS_REQUIRED_STATUSES.includes(st)) {
+                    setAttachmentUri("");
+                  } else {
+                    setUpdateRemarks("");
+                  }
+                }}
+                activeOpacity={0.8}
+                accessibilityRole="radio"
+                accessibilityState={{ selected: on }}
+                style={[
+                  s.option,
+                  {
+                    backgroundColor: on ? t.accent : t.raised,
+                    borderColor: on ? t.accent : t.lineMid,
+                  },
+                ]}
+              >
+                <Bx name={STATUS_ICON[st] ?? "bx-check"} size={15} color={on ? t.onAccent : t.ink2} />
+                <Text style={[s.optionText, { color: on ? t.onAccent : t.ink2 }]}>
+                  {statusLabel(st)}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+        {hint ? (
+          <View style={s.hint}>
+            <Bx name="bx-info-circle" size={14} color={t.muted} />
+            <Text style={s.hintText}>{hint}</Text>
           </View>
-        </DetailCard>
-      )}
+        ) : null}
 
-      <DetailCard>
-        <CardHead
+        {/* Only the fields the chosen status actually requires. */}
+        {showAreaAndCategory ? (
+          <>
+            <FieldHead
+              label="Area"
+              hint="Required"
+              hintBad={attempted && areaMissing}
+              style={s.headGap}
+            />
+            <SelectBox
+              value={areaLabel}
+              placeholder="Choose an area"
+              onPress={() => setSheet("area")}
+              loading={areasLoading && areaOptions.length === 0}
+              invalid={attempted && areaMissing && !isOtherArea}
+              accessibilityLabel="Area"
+              style={s.fieldGap}
+            />
+            {isOtherArea ? (
+              <BoxInput
+                placeholder="Enter asset / area name"
+                value={updateArea}
+                onChangeText={setUpdateArea}
+                autoFocus
+                invalid={attempted && areaMissing}
+                accessibilityLabel="Other asset or area"
+                style={{ marginTop: 8 }}
+              />
+            ) : null}
+
+            <FieldHead
+              label="Category"
+              hint="Required"
+              hintBad={attempted && categoryMissing}
+              style={s.headGap}
+            />
+            <SelectBox
+              value={categoryLabel}
+              placeholder="Choose a category"
+              onPress={() => setSheet("category")}
+              invalid={attempted && categoryMissing}
+              accessibilityLabel="Category"
+              style={s.fieldGap}
+            />
+
+            {isBreakdownTypeCategory(effectiveCategory) ? (
+              <>
+                <FieldHead
+                  label="Electrical / Mechanical"
+                  hint="Required"
+                  hintBad={attempted && breakdownMissing}
+                  style={s.headGap}
+                />
+                <ChoiceChips
+                  label="Breakdown type"
+                  options={BREAKDOWN_TYPE_OPTIONS}
+                  value={updateBreakdownType}
+                  onChange={setUpdateBreakdownType}
+                  invalid={attempted && breakdownMissing}
+                  style={s.fieldGap}
+                />
+              </>
+            ) : null}
+          </>
+        ) : null}
+
+        {showTempSection ? (
+          <>
+            <FieldHead
+              label="Temperature"
+              hint={tempHint}
+              hintBad={attempted && (beforeTempMissing || afterTempMissing)}
+              style={s.headGap}
+            />
+            <View style={s.tempGrid}>
+              {showBeforeTemp ? (
+                <TempBox
+                  label="Before"
+                  value={beforeTemp}
+                  onChangeText={setBeforeTemp}
+                  emphasis={beforeTempMissing}
+                  invalid={attempted && beforeTempMissing}
+                  style={s.tempCell}
+                />
+              ) : null}
+              {showAfterTemp ? (
+                <TempBox
+                  label="After"
+                  value={afterTemp}
+                  onChangeText={setAfterTemp}
+                  emphasis={afterTempMissing}
+                  invalid={attempted && afterTempMissing}
+                  style={s.tempCell}
+                />
+              ) : (
+                <View style={s.tempCell} />
+              )}
+            </View>
+          </>
+        ) : null}
+
+        <FieldHead
           label="Remarks"
           hint={needsRemarks ? "Required" : "Optional"}
-          hintTone={attempted && remarksMissing ? "error" : "muted"}
+          hintBad={attempted && remarksMissing}
+          style={s.headGap}
         />
-        <Field
+        <BoxInput
           placeholder="What did you find and do?"
           value={updateRemarks}
           onChangeText={setUpdateRemarks}
           multiline
           maxLength={300}
-          textAlignVertical="top"
-          minHeight={56}
           invalid={attempted && remarksMissing}
+          accessibilityLabel="Remarks"
+          style={s.fieldGap}
         />
-        <View style={styles.attachRow}>
-          <AttachButton
-            icon={Camera}
-            label={attachmentUri ? "1 photo" : "Camera"}
+        <View style={s.slots}>
+          <PhotoSlot
+            icon="bx-camera"
+            iconColor={t.accentInk}
+            label={attachmentUri ? "Retake" : "Add photo"}
             active={!!attachmentUri}
             onPress={takePhoto}
           />
-          <AttachButton icon={ImagePlus} label="Gallery" onPress={pickImage} />
+          <PhotoSlot icon="bx-image" label="Gallery" onPress={pickImage} />
         </View>
         {attachmentUri ? (
-          <View style={styles.previewWrap}>
-            <Image source={{ uri: attachmentUri }} style={styles.preview} />
+          <View style={s.previewWrap}>
+            <Image source={{ uri: attachmentUri }} style={s.preview} accessibilityLabel="Attached photo" />
             <TouchableOpacity
               onPress={() => setAttachmentUri("")}
-              style={styles.previewRemove}
+              style={s.previewRemove}
+              hitSlop={8}
               accessibilityRole="button"
               accessibilityLabel="Remove photo"
             >
-              <X size={14} color={ds.onChrome} strokeWidth={2.4} />
+              <Bx name="bx-x" size={15} color={t.ink} />
             </TouchableOpacity>
           </View>
         ) : null}
-      </DetailCard>
+      </Card>
 
       {canCreateIncidentFromTicket && setCreateIncidentFromTicket ? (
-        <ToggleRow
-          icon={TriangleAlert}
+        <SwitchRow
+          icon="bx-error-alt"
           title="Raise an incident"
-          subtitle="Needs RCA follow-up"
+          sub="Needs RCA follow-up"
           value={createIncidentFromTicket}
+          style={{ marginTop: 10 }}
           onToggle={() => {
             if (createIncidentFromTicket) {
               setCreateIncidentFromTicket(false);
@@ -676,25 +680,41 @@ const TicketDetailStatusUpdate = ({
       ) : null}
 
       {canCreateIncidentFromTicket && createIncidentFromTicket && setIncidentDraft ? (
-        <DetailCard>
-          <CardHead label="Incident details" hint="Required" hintTone="muted" />
-          <Text style={styles.incidentNote}>
+        <Card style={[s.card, { marginTop: 10 }]}>
+          <View style={s.cardHeadRow}>
+            <Text style={s.cardTitle}>Incident details</Text>
+            <Text style={s.cardMeta}>Required</Text>
+          </View>
+          <Text style={s.note}>
             {"The incident uses this ticket's site, selected area and title."}
           </Text>
 
-          <FullscreenPicker
-            label="Fault Type *"
-            placeholder="Select fault type"
-            options={incidentFaultTypeOptions}
+          <FieldHead
+            label="Fault type"
+            hint="Required"
+            hintBad={attempted && !incidentDraft.fault_type}
+            style={s.headGap}
+          />
+          <ChoiceChips
+            label="Fault type"
+            options={FAULT_TYPE_OPTIONS}
             value={incidentDraft.fault_type}
             onChange={(value) =>
               setIncidentDraft((prev) => ({ ...prev, fault_type: value }))
             }
+            invalid={attempted && !incidentDraft.fault_type}
+            style={s.fieldGap}
           />
-          <FullscreenPicker
-            label="Severity *"
-            placeholder="Select severity"
-            options={incidentSeverityOptions}
+
+          <FieldHead
+            label="Severity"
+            hint="Required"
+            hintBad={attempted && !incidentDraft.severity}
+            style={s.headGap}
+          />
+          <ChoiceChips
+            label="Severity"
+            options={SEVERITY_OPTIONS}
             value={incidentDraft.severity}
             onChange={(value) =>
               setIncidentDraft((prev) => ({
@@ -702,11 +722,19 @@ const TicketDetailStatusUpdate = ({
                 severity: value as TicketIncidentDraft["severity"],
               }))
             }
+            invalid={attempted && !incidentDraft.severity}
+            style={s.fieldGap}
           />
-          <FullscreenPicker
-            label="Operating Condition *"
-            placeholder="Select operating condition"
-            options={incidentOperatingOptions}
+
+          <FieldHead
+            label="Operating condition"
+            hint="Required"
+            hintBad={attempted && !incidentDraft.operating_condition}
+            style={s.headGap}
+          />
+          <ChoiceChips
+            label="Operating condition"
+            options={OPERATING_CONDITION_OPTIONS}
             value={incidentDraft.operating_condition}
             onChange={(value) =>
               setIncidentDraft((prev) => ({
@@ -714,10 +742,17 @@ const TicketDetailStatusUpdate = ({
                 operating_condition: value,
               }))
             }
+            invalid={attempted && !incidentDraft.operating_condition}
+            style={s.fieldGap}
           />
 
-          <Field
-            label="Immediate action taken *"
+          <FieldHead
+            label="Immediate action taken"
+            hint="Required"
+            hintBad={attempted && !incidentDraft.immediate_action_taken.trim()}
+            style={s.headGap}
+          />
+          <BoxInput
             placeholder="Describe the immediate action taken"
             value={incidentDraft.immediate_action_taken}
             onChangeText={(v) =>
@@ -727,34 +762,43 @@ const TicketDetailStatusUpdate = ({
               }))
             }
             multiline
-            textAlignVertical="top"
             minHeight={72}
             invalid={attempted && !incidentDraft.immediate_action_taken.trim()}
-            containerStyle={{ marginBottom: 12 }}
+            accessibilityLabel="Immediate action taken"
+            style={s.fieldGap}
           />
 
-          <Field
-            label="Incident remarks"
+          <FieldHead label="Incident remarks" hint="Optional" style={s.headGap} />
+          <BoxInput
             placeholder="Notes stored on the incident record"
             value={incidentDraft.incidentRemarks}
             onChangeText={(v) =>
               setIncidentDraft((prev) => ({ ...prev, incidentRemarks: v }))
             }
             multiline
-            textAlignVertical="top"
             minHeight={56}
-            containerStyle={{ marginBottom: 12 }}
+            accessibilityLabel="Incident remarks"
+            style={s.fieldGap}
           />
 
-          <Text style={styles.fieldLabel}>Attachments</Text>
-          <View style={styles.attachRow}>
-            <AttachButton
-              icon={Camera}
-              label="Camera"
+          <FieldHead
+            label="Attachments"
+            hint={
+              incidentDraft.incidentAttachments.length
+                ? `${incidentDraft.incidentAttachments.length} added`
+                : "Optional"
+            }
+            style={s.headGap}
+          />
+          <View style={[s.slots, s.fieldGap]}>
+            <PhotoSlot
+              icon="bx-camera"
+              iconColor={t.accentInk}
+              label="Add photo"
               onPress={captureIncidentPhoto}
             />
-            <AttachButton
-              icon={ImagePlus}
+            <PhotoSlot
+              icon="bx-image"
               label="Gallery"
               onPress={pickIncidentAttachmentsFromGallery}
             />
@@ -768,72 +812,98 @@ const TicketDetailStatusUpdate = ({
               <View style={{ flexDirection: "row", gap: 8 }}>
                 {incidentDraft.incidentAttachments.map((uri) => (
                   <View key={uri}>
-                    <Image source={{ uri }} style={styles.incidentThumb} />
+                    <Image source={{ uri }} style={s.thumb} />
                     <TouchableOpacity
                       onPress={() => removeIncidentAttachment(uri)}
-                      style={styles.previewRemove}
+                      style={s.previewRemove}
+                      hitSlop={6}
                       accessibilityRole="button"
                       accessibilityLabel="Remove attachment"
                     >
-                      <X size={13} color={ds.onChrome} strokeWidth={2.4} />
+                      <Bx name="bx-x" size={14} color={t.ink} />
                     </TouchableOpacity>
                   </View>
                 ))}
               </View>
             </ScrollView>
           ) : null}
-        </DetailCard>
+        </Card>
       ) : null}
+
+      <OptionSheet
+        visible={sheet === "area"}
+        onClose={() => setSheet(null)}
+        title="Area"
+        subtitle="Asset or area this ticket is about"
+        options={areaOptionsWithOther}
+        value={isOtherArea ? OTHER_AREA_VALUE : updateArea}
+        onPick={handleAreaChange}
+        searchPlaceholder="Search areas"
+        searchValue={areaSearchQuery}
+        onSearchChange={setAreaSearchQuery}
+        loading={areasLoading}
+        onLoadMore={loadMoreAreas}
+        hasMore={hasMoreAreas}
+        loadingMore={loadingMoreAreas}
+        emptyMessage="No areas found"
+      />
+      <OptionSheet
+        visible={sheet === "category"}
+        onClose={() => setSheet(null)}
+        title="Category"
+        options={categoryOptions}
+        value={updateCategory}
+        onPick={setUpdateCategory}
+        searchPlaceholder="Search categories"
+        emptyMessage="No categories found"
+      />
     </View>
   );
 };
 
-const useStyles = makeThemedStyles((ds) => ({
-  statusRow: {
+const useStyles = makeJoStyles((t) => ({
+  card: { padding: 16 },
+  cardTitle: { ...f.t(15, 600), color: t.ink },
+  cardHeadRow: {
+    flexDirection: "row",
+    alignItems: "baseline",
+    justifyContent: "space-between",
+    gap: 10,
+  },
+  cardMeta: { ...f.t(11.5), color: t.muted },
+  options: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 12 },
+  option: {
+    height: 36,
+    paddingHorizontal: 13,
+    borderRadius: 18,
+    borderWidth: 1,
     flexDirection: "row",
     alignItems: "center",
-    gap: 9,
-    marginBottom: 8,
+    gap: 5,
   },
-  statusLabel: {
-    fontSize: 9,
-    fontWeight: "600",
-    letterSpacing: 1.08,
-    textTransform: "uppercase",
-    color: ds.carbon[500],
-  },
-  statusChips: { gap: 6, paddingRight: 4 },
-  tempRow: { flexDirection: "row", gap: 8 },
+  optionText: { ...f.t(12.5, 600) },
+  hint: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 11 },
+  hintText: { ...f.t(12), color: t.muted, flex: 1 },
+  headGap: { marginTop: 16 },
+  fieldGap: { marginTop: 9 },
+  tempGrid: { flexDirection: "row", gap: 8, marginTop: 9 },
   tempCell: { flex: 1, minWidth: 0 },
-  attachRow: { flexDirection: "row", gap: 7, marginTop: 10 },
+  slots: { flexDirection: "row", gap: 8, marginTop: 10 },
   previewWrap: { alignSelf: "flex-start", marginTop: 10 },
-  preview: { width: 120, height: 120, borderRadius: soRadius.sm },
+  preview: { width: 120, height: 120, borderRadius: 18 },
+  thumb: { width: 72, height: 72, borderRadius: 14 },
   previewRemove: {
     position: "absolute",
     top: 6,
     right: 6,
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: "rgba(25,19,18,0.75)",
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: t.scrim,
     alignItems: "center",
     justifyContent: "center",
   },
-  incidentThumb: { width: 72, height: 72, borderRadius: soRadius.sm },
-  incidentNote: {
-    fontSize: 11.5,
-    lineHeight: 17,
-    color: ds.carbon[400],
-    marginBottom: 12,
-  },
-  fieldLabel: {
-    fontSize: 9,
-    fontWeight: "600",
-    letterSpacing: 1.08,
-    textTransform: "uppercase",
-    color: ds.carbon[500],
-    marginBottom: 7,
-  },
+  note: { ...f.t(12), lineHeight: 17, color: t.muted, marginTop: 6 },
 }));
 
 export default TicketDetailStatusUpdate;

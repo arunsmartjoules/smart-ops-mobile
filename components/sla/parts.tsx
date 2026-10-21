@@ -5,7 +5,7 @@
  */
 import React from "react";
 import { ScrollView, Text, TouchableOpacity, View, type StyleProp, type ViewStyle } from "react-native";
-import { Check, ChevronLeft, type LucideIcon } from "lucide-react-native";
+import { Check, ChevronLeft, type LucideIcon } from "@/components/jo/bxIcons";
 import { f, useJoTheme } from "@/components/jo/ui";
 
 /** Round raised button (artboard 40/44 px) whose icon colour can be dimmed. */
@@ -149,6 +149,7 @@ export function FrozenTable({
   headerBg,
   bodyBg,
   rowBorder,
+  startAtEnd,
 }: {
   leftWidth: number;
   headerHeight: number;
@@ -159,8 +160,11 @@ export function FrozenTable({
   headerBg: string;
   bodyBg: string;
   rowBorder: string;
+  /** Open scrolled to the right edge — the trend's newest month is the selected one. */
+  startAtEnd?: boolean;
 }) {
   const t = useJoTheme();
+  const scrollRef = React.useRef<ScrollView>(null);
   const rowBase: ViewStyle = { height: rowHeight, borderTopWidth: 1, borderTopColor: rowBorder, flexDirection: "row" };
   const wrap = (r: FrozenRow, child: React.ReactNode, style: ViewStyle) =>
     r.onPress ? (
@@ -194,7 +198,14 @@ export function FrozenTable({
         {/* Column direction so a long label wraps inside the frozen width. */}
         {rows.map((r) => wrap(r, r.left, { ...rowBase, flexDirection: "column", justifyContent: "center" }))}
       </View>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flex: 1 }} nestedScrollEnabled>
+      <ScrollView
+        ref={scrollRef}
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={{ flex: 1 }}
+        nestedScrollEnabled
+        onContentSizeChange={startAtEnd ? () => scrollRef.current?.scrollToEnd({ animated: false }) : undefined}
+      >
         <View>
           <View style={{ height: headerHeight, backgroundColor: headerBg, flexDirection: "row" }}>{headerRight}</View>
           {rows.map((r) => wrap(r, r.right, rowBase))}

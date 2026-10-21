@@ -4,7 +4,7 @@
  */
 import React from "react";
 import { Text, View } from "react-native";
-import { MousePointerClick } from "lucide-react-native";
+import { MousePointerClick } from "@/components/jo/bxIcons";
 import { Card, capsStyle, f, makeJoStyles, useJoTheme } from "@/components/jo/ui";
 import { toneBg, toneFg } from "@/constants/jo";
 import type { SlaCategory, SlaReport } from "@/services/SlaService";

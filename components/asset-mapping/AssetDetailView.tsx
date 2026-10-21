@@ -1,45 +1,47 @@
 /**
- * Asset Mapping detail — laid out like the ticket detail: thunder header,
- * summary card (title, badges, meta), one card per concern, an activity
- * timeline, and the sticky action bar (Approve, for managers and admins while
+ * Asset Mapping detail — in the artboard's detail language (ticket detail /
+ * PM execution): round back button header with the QR label button on the
+ * right, status pills over a Bricolage title, three-up info tiles, one
+ * radius-26 card per concern, the "cannot access" row card, the activity
+ * timeline, and the gradient CTA bar (Approve, for managers and admins while
  * the asset is in Review).
  */
 import React, { useState } from "react";
 import { Image, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { Bx, type BxName } from "@/components/jo/Bx";
 import {
-  Ban,
-  Camera,
-  CircleAlert,
-  CircleCheck,
-  ChevronRight,
-  Hourglass,
-  IdCard,
-  Keyboard,
-  Map as MapIcon,
-  Pencil,
-  Plus,
-  QrCode,
-  Upload,
-} from "lucide-react-native";
-import type { LucideIcon } from "lucide-react-native";
-import { makeThemedStyles, useDs } from "@/hooks/useDs";
+  Card,
+  IconButton,
+  PrimaryButton,
+  ProgressBar,
+  StatusPill,
+  f,
+  makeJoStyles,
+  useJoTheme,
+} from "@/components/jo/ui";
 import { formatISTDateTime } from "@/utils/istDate";
-import {
-  ActivityRow,
-  AttachButton,
-  Badge,
-  CardHead,
-  DetailCard,
-  DetailHeader,
-  MetaBlock,
-  SectionTitle,
-  StatusHint,
-  SubmitBar,
-  soRadius,
-  soShadow,
-} from "@/components/tickets/TicketDetailUI";
 import type { MappedAsset } from "@/services/AssetMappingService";
-import { equipmentTone, getMappingStatus, processingTone, sideLabel, typeColor, typeMeta } from "./lib";
+import {
+  ActionPill,
+  BottomBar,
+  DetailTop,
+  HintRow,
+  InfoGrid,
+  RoundAction,
+  SectionCard,
+  SpecGrid,
+  Timeline,
+  bottomBarSpace,
+} from "./ui";
+import {
+  PROCESSING,
+  criticalityTone,
+  equipmentTone,
+  getMappingStatus,
+  qrValue,
+  sideLabel,
+  typeMeta,
+} from "./lib";
 
 export type PhotoSource = "camera" | "library";
 
@@ -84,9 +86,10 @@ export default function AssetDetailView({
   approving,
   onApprove,
 }: Props) {
-  const styles = useStyles();
-  const ds = useDs();
-  const status = getMappingStatus(asset, ds);
+  const s = useStyles();
+  const t = useJoTheme();
+  const status = getMappingStatus(asset);
+  const critical = criticalityTone(asset);
   const meta = typeMeta(asset);
   const noAccess = asset.mapping_status === "no_access";
   const hasNameplate = !!asset.nameplate_photo_url;
@@ -102,229 +105,201 @@ export default function AssetDetailView({
     asset.no_access_proof_url && { title: "No-access proof", url: asset.no_access_proof_url },
   ].filter(Boolean) as { title: string; url: string }[];
 
-  const activity = [
-    asset.nameplate_captured_at && {
-      title: asset.nameplate_data?.state === "failed" ? "Nameplate photo saved (not read)" : "Nameplate captured",
-      by: asset.nameplate_captured_by_name,
-      at: asset.nameplate_captured_at,
-      dot: ds.flame[100],
-    },
-    asset.location_captured_at && {
-      title: "Location photo captured",
-      by: asset.location_captured_by_name,
-      at: asset.location_captured_at,
-      dot: ds.flame[100],
-    },
-    asset.no_access_logged_at && {
-      title: "Logged as no access",
-      by: asset.no_access_logged_by_name,
-      at: asset.no_access_logged_at,
-      dot: ds.carbon[500],
-    },
-    asset.approved_at && {
-      title: "Approved",
-      by: asset.approved_by_name,
-      at: asset.approved_at,
-      dot: ds.sky[100],
-    },
-  ]
-    .filter(Boolean)
-    .sort((a: any, b: any) => Date.parse(b.at) - Date.parse(a.at)) as {
-    title: string;
-    by: string | null;
-    at: string;
-    dot: string;
-  }[];
+  const activity = (
+    [
+      asset.nameplate_captured_at && {
+        title: nameplateFailed ? "Nameplate photo saved (not read)" : "Nameplate captured",
+        by: asset.nameplate_captured_by_name,
+        at: asset.nameplate_captured_at,
+        dot: t.accent,
+      },
+      asset.location_captured_at && {
+        title: "Location photo captured",
+        by: asset.location_captured_by_name,
+        at: asset.location_captured_at,
+        dot: t.accent,
+      },
+      asset.no_access_logged_at && {
+        title: "Logged as no access",
+        by: asset.no_access_logged_by_name,
+        at: asset.no_access_logged_at,
+        dot: t.bad,
+      },
+      asset.approved_at && {
+        title: "Approved",
+        by: asset.approved_by_name,
+        at: asset.approved_at,
+        dot: t.ok,
+      },
+    ].filter(Boolean) as { title: string; by: string | null; at: string; dot: string }[]
+  ).sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
 
   return (
-    <View style={styles.screen}>
-      <DetailHeader
+    <View style={s.screen}>
+      <DetailTop
         topInset={topInset}
         title={asset.asset_id}
         subtitle={[asset.site_name || asset.site_code, meta.label].filter(Boolean).join(" · ")}
         onBack={onBack}
+        right={<IconButton icon="bx-qr" label="View QR label" onPress={onViewQr} />}
       />
 
       <ScrollView
         style={{ flex: 1 }}
-        contentContainerStyle={styles.body}
+        contentContainerStyle={[
+          s.body,
+          { paddingBottom: showApprove ? bottomBarSpace(bottomInset) : Math.max(bottomInset, 12) + 28 },
+        ]}
         showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
       >
-        {/* Summary */}
-        <DetailCard style={styles.summary}>
-          <Text style={styles.title}>{asset.asset_name}</Text>
-          <View style={styles.badgeRow}>
-            <Badge label={status.label} bg={status.bg} fg={status.fg} />
-            {asset.nameplate_processing ? <Badge {...processingTone(ds)} /> : null}
-          </View>
-          <View style={styles.metaWrap}>
-            <MetaBlock label="Floor" value={asset.floor || "—"} />
-            <MetaBlock label="Area" value={asset.location || "—"} />
-            <MetaBlock label="Type" value={meta.label} />
-            <MetaBlock label="Side" value={sideLabel(asset) || "—"} />
-            <MetaBlock label="Criticality" value={asset.criticality || "—"} />
-          </View>
-          <View style={styles.qrRow}>
-            <AttachButton icon={QrCode} label="View QR label" onPress={onViewQr} />
-          </View>
-        </DetailCard>
+        <View style={s.pills}>
+          <StatusPill label={status.label} tone={status.tone} height={24} />
+          {critical ? <StatusPill label={critical.label} tone={critical.tone} solid={critical.solid} height={24} /> : null}
+          {asset.nameplate_processing ? <StatusPill label={PROCESSING.label} tone={PROCESSING.tone} height={24} /> : null}
+        </View>
+        <Text style={s.title} selectable>
+          {asset.asset_name}
+        </Text>
 
-        {/* Review / completed state */}
+        <InfoGrid
+          items={[
+            { label: "Floor", value: asset.floor || "—" },
+            { label: "Area", value: asset.location || "—" },
+            { label: "Type", value: meta.label },
+            { label: "Side", value: sideLabel(asset) || "—" },
+            { label: "Criticality", value: asset.criticality || "—" },
+            { label: "QR", value: qrValue(asset) },
+          ]}
+        />
+
+        {/* Review / approved state */}
         {asset.mapping_status === "review" ? (
-          <DetailCard>
-            <CardHead label="Approval" hint="Waiting" />
-            <StatusHint icon={Hourglass}>
+          <SectionCard title="Approval" meta="Waiting" metaTone="info">
+            <HintRow icon="bx-hourglass">
               {canApprove
                 ? "Check the photos and nameplate data, then approve below."
                 : "Documentation is complete and waiting for a manager to approve."}
-            </StatusHint>
-          </DetailCard>
+            </HintRow>
+          </SectionCard>
         ) : null}
 
         {asset.mapping_status === "completed" ? (
-          <DetailCard>
-            <CardHead label="Approval" hint="Approved" />
-            <View style={styles.inline}>
-              <CircleCheck size={16} color={ds.sky[100]} strokeWidth={2.2} />
-              <Text style={styles.inlineText}>
-                Approved{asset.approved_by_name ? ` by ${asset.approved_by_name}` : ""}
-                {asset.approved_at ? ` · ${formatISTDateTime(asset.approved_at)}` : ""}
-              </Text>
-            </View>
-          </DetailCard>
+          <SectionCard title="Approval" meta="Approved" metaTone="ok">
+            <HintRow icon="bxs-check-circle" tone="ok">
+              {`Approved${asset.approved_by_name ? ` by ${asset.approved_by_name}` : ""}${
+                asset.approved_at ? ` · ${formatISTDateTime(asset.approved_at)}` : ""
+              }`}
+            </HintRow>
+          </SectionCard>
         ) : null}
 
         {noAccess ? (
-          <DetailCard>
-            <CardHead label="No access" hint="Logged" />
-            <Text style={styles.reason}>{asset.no_access_reason}</Text>
-            {asset.no_access_notes ? <Text style={styles.notes}>{asset.no_access_notes}</Text> : null}
-          </DetailCard>
+          <SectionCard title="No access" meta="Logged" metaTone="bad">
+            <Text style={s.reason}>{asset.no_access_reason}</Text>
+            {asset.no_access_notes ? <Text style={s.notes}>{asset.no_access_notes}</Text> : null}
+          </SectionCard>
         ) : (
-          <DetailCard>
-            <CardHead label="Documentation" hint={`${captured} of 2 captured`} />
-            <View style={styles.progressTrack}>
-              <View
-                style={[
-                  styles.progressFill,
-                  { width: `${captured * 50}%`, backgroundColor: captured === 2 ? ds.sky[100] : ds.flame[100] },
-                ]}
-              />
-            </View>
+          <SectionCard title="Documentation" meta={`${captured} of 2 captured`}>
+            <ProgressBar pct={captured * 50} color={captured === 2 ? t.ok : t.accent} />
             <DocRow
-              icon={IdCard}
+              icon="bx-id-card"
               title="Nameplate photo"
               done={hasNameplate}
               note={
                 asset.nameplate_processing
                   ? { text: "Uploaded — reading in the background", tone: "info" }
                   : nameplateFailed
-                    ? { text: "Couldn't be read — upload again", tone: "error" }
+                    ? { text: "Couldn't be read — upload again", tone: "bad" }
                     : undefined
               }
               onSource={onNameplatePhoto}
             />
-            <DocRow icon={MapIcon} title="Location photo" done={hasLocation} onSource={onLocationPhoto} last />
+            <DocRow icon="bx-map" title="Location photo" done={hasLocation} onSource={onLocationPhoto} divider />
             {nameplateFailed ? (
               <>
-                <View style={[styles.inline, { marginTop: 12, marginBottom: 10 }]}>
-                  <CircleAlert size={14} color={ds.flame[100]} strokeWidth={2.2} />
-                  <Text style={[styles.inlineText, { color: ds.flame[100] }]}>
-                    {asset.nameplate_data?.failure_reason ??
-                      "AI couldn't read the plate. Upload a clearer photo."}
-                  </Text>
-                </View>
-                <View style={{ flexDirection: "row" }}>
-                  <AttachButton icon={Keyboard} label="Enter specs by hand" onPress={onEnterSpecs} />
+                <HintRow icon="bx-error-circle" tone="bad" style={{ marginTop: 12 }}>
+                  {asset.nameplate_data?.failure_reason ?? "AI couldn't read the plate. Upload a clearer photo."}
+                </HintRow>
+                <View style={s.actionRow}>
+                  <ActionPill icon="bxs-keyboard" label="Enter specs by hand" onPress={onEnterSpecs} />
                 </View>
               </>
             ) : null}
-          </DetailCard>
+          </SectionCard>
         )}
 
         {photos.length > 0 ? (
-          <DetailCard>
-            <CardHead label="Photos" hint="Tap to preview" />
-            <View style={styles.photos}>
+          <SectionCard title="Photos" meta="Tap to preview">
+            <View style={s.photos}>
               {photos.map((ph) => (
                 <TouchableOpacity
                   key={ph.title}
                   onPress={() => onPreview(ph.url, ph.title)}
                   activeOpacity={0.85}
-                  style={styles.photo}
+                  style={s.photo}
                   accessibilityRole="imagebutton"
                   accessibilityLabel={`Preview ${ph.title}`}
                 >
-                  <Image source={{ uri: ph.url }} style={styles.photoImage} />
-                  <Text style={styles.photoLabel} numberOfLines={1}>
+                  <Image source={{ uri: ph.url }} style={s.photoImage} />
+                  <Text style={s.photoLabel} numberOfLines={1}>
                     {ph.title}
                   </Text>
                 </TouchableOpacity>
               ))}
+              {/* Keep thumbnails a third wide when there are fewer than three. */}
+              {Array.from({ length: 3 - photos.length }).map((_, i) => (
+                <View key={`pad-${i}`} style={s.photo} />
+              ))}
             </View>
-          </DetailCard>
+          </SectionCard>
         ) : null}
 
         {specs.length > 0 ? (
-          <DetailCard>
-            <CardHead
-              label="Nameplate data"
-              hint={asset.nameplate_data?.state === "manual" ? "Entered manually" : "Read by AI"}
-            />
-            <View style={styles.specGrid}>
-              {specs.map((s, i) => (
-                <View key={`${s.label}-${i}`} style={styles.specCell}>
-                  <Text style={styles.eyebrow}>{s.label}</Text>
-                  <Text style={styles.specValue} selectable>
-                    {s.value}
-                  </Text>
-                </View>
-              ))}
+          <SectionCard
+            title="Nameplate data"
+            meta={asset.nameplate_data?.state === "manual" ? "Entered manually" : "Read by AI"}
+          >
+            <SpecGrid specs={specs} />
+            <View style={s.actionRow}>
+              <ActionPill icon="bx-pencil" label="Edit details" onPress={onEditSpecs} />
             </View>
-            <View style={{ flexDirection: "row", marginTop: 12 }}>
-              <AttachButton icon={Pencil} label="Edit details" onPress={onEditSpecs} />
-            </View>
-          </DetailCard>
+          </SectionCard>
         ) : null}
 
         <EquipmentCard asset={asset} onOpen={equipment.onOpen} onAdd={equipment.onAdd} />
 
         {!noAccess ? (
-          <TouchableOpacity
-            onPress={onCannotAccess}
-            activeOpacity={0.85}
-            style={[styles.card, styles.linkRow]}
-            accessibilityRole="button"
-          >
-            <View style={styles.linkIcon}>
-              <Ban size={17} color={ds.flame[100]} strokeWidth={2.1} />
+          <Card radius={22} style={s.linkRow} onPress={onCannotAccess} accessibilityLabel="I cannot access this asset">
+            <View style={[s.linkIcon, { backgroundColor: t.badTint }]}>
+              <Bx name="bx-block" size={18} color={t.bad} />
             </View>
             <View style={{ flex: 1, minWidth: 0 }}>
-              <Text style={styles.linkTitle}>I cannot access this asset</Text>
-              <Text style={styles.linkSub}>Log it with a reason and a proof photo</Text>
+              <Text style={s.linkTitle}>I cannot access this asset</Text>
+              <Text style={s.linkSub}>Log it with a reason and a proof photo</Text>
             </View>
-            <ChevronRight size={18} color={ds.carbon[600]} strokeWidth={2} />
-          </TouchableOpacity>
+            <Bx name="bx-chevron-right" size={20} color={t.faint} />
+          </Card>
         ) : null}
 
         {activity.length > 0 ? (
-          <DetailCard>
-            <SectionTitle>Activity</SectionTitle>
-            {activity.map((a, i) => (
-              <ActivityRow
-                key={`${a.title}-${a.at}`}
-                title={a.title}
-                meta={[a.by, formatISTDateTime(a.at)].filter(Boolean).join(" · ")}
-                dot={a.dot}
-                line={i < activity.length - 1}
-              />
-            ))}
-          </DetailCard>
+          <SectionCard title="Activity">
+            <Timeline
+              items={activity.map((a) => ({
+                key: `${a.title}-${a.at}`,
+                title: a.title,
+                meta: [a.by, formatISTDateTime(a.at)].filter(Boolean).join(" · "),
+                dot: a.dot,
+              }))}
+            />
+          </SectionCard>
         ) : null}
       </ScrollView>
 
       {showApprove ? (
-        <SubmitBar label="Approve" ready busy={approving} bottomInset={bottomInset} onPress={onApprove} />
+        <BottomBar bottomInset={bottomInset}>
+          <PrimaryButton label="Approve" icon="bx-check" busy={approving} onPress={onApprove} />
+        </BottomBar>
       ) : null}
     </View>
   );
@@ -344,10 +319,11 @@ function EquipmentCard({
   onOpen: (equipmentId: string) => void;
   onAdd: (name: string) => void;
 }) {
-  const styles = useStyles();
-  const ds = useDs();
+  const s = useStyles();
+  const t = useJoTheme();
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState("");
+  const [focused, setFocused] = useState(false);
   const items = asset.equipment ?? [];
 
   const submit = () => {
@@ -359,280 +335,179 @@ function EquipmentCard({
   };
 
   return (
-    <DetailCard>
-      <CardHead label="Equipment" hint={items.length ? `${items.length}` : "None yet"} />
-      {items.map((item) => {
-        const tone = typeColor(item.name.slice(0, 3).toUpperCase(), ds);
-        const ocr = equipmentTone(item, ds);
+    <SectionCard title="Equipment" meta={items.length ? `${items.length}` : "None yet"}>
+      {items.map((item, i) => {
+        const ocr = equipmentTone(item);
         const details = item.nameplate_data?.fields?.length ?? 0;
         const note = details > 0 ? `${details} details` : "No details yet";
         return (
           <TouchableOpacity
             key={item.id}
             onPress={() => onOpen(item.id)}
-            activeOpacity={0.85}
-            style={styles.equipRow}
+            activeOpacity={0.8}
+            style={[s.equipRow, i > 0 && s.divider]}
             accessibilityRole="button"
-            accessibilityLabel={item.name}
+            accessibilityLabel={`${item.name}, ${ocr.label}`}
           >
             {item.nameplate_photo_url ? (
-              <Image source={{ uri: item.nameplate_photo_url }} style={styles.equipThumb} />
+              <Image source={{ uri: item.nameplate_photo_url }} style={s.equipThumb} />
             ) : (
-              <View style={[styles.equipThumb, { backgroundColor: tone.bg, alignItems: "center", justifyContent: "center" }]}>
-                <IdCard size={16} color={tone.fg} strokeWidth={2.1} />
+              <View style={[s.equipThumb, s.center]}>
+                <Bx name="bx-id-card" size={18} color={t.ink2} />
               </View>
             )}
             <View style={{ flex: 1, minWidth: 0 }}>
-              <View style={styles.equipTop}>
-                <Text style={styles.equipName} numberOfLines={1}>
-                  {item.name}
-                </Text>
-                {/* OCR state, same colour roles as the asset status badges. */}
-                <Badge label={ocr.label} bg={ocr.bg} fg={ocr.fg} />
-              </View>
-              <Text style={styles.equipNote} numberOfLines={1}>
-                {note}
-                {item.photos.length > 0 ? ` · ${item.photos.length} photo${item.photos.length === 1 ? "" : "s"}` : ""}
+              <Text style={s.equipName} numberOfLines={1}>
+                {item.name}
               </Text>
+              <View style={s.equipMeta}>
+                <StatusPill label={ocr.label} tone={ocr.tone} height={20} />
+                <Text style={s.equipNote} numberOfLines={1}>
+                  {note}
+                  {item.photos.length > 0 ? ` · ${item.photos.length} photo${item.photos.length === 1 ? "" : "s"}` : ""}
+                </Text>
+              </View>
             </View>
-            <ChevronRight size={18} color={ds.carbon[600]} strokeWidth={2} />
+            <Bx name="bx-chevron-right" size={20} color={t.faint} />
           </TouchableOpacity>
         );
       })}
 
       {adding ? (
-        <View style={styles.addRow}>
+        <View style={[s.addRow, items.length > 0 && { marginTop: 12 }]}>
           <TextInput
             value={name}
             onChangeText={setName}
             placeholder="Equipment name"
-            placeholderTextColor={ds.carbon[700]}
-            style={styles.addInput}
+            placeholderTextColor={t.faint}
+            style={[s.addInput, { borderColor: focused ? t.accent : "transparent" }]}
             autoFocus
             returnKeyType="done"
             onSubmitEditing={submit}
+            onFocus={() => setFocused(true)}
+            onBlur={() => setFocused(false)}
+            accessibilityLabel="Equipment name"
           />
+          <ActionPill label="Add" variant="accent" onPress={submit} disabled={!name.trim()} accessibilityLabel="Add equipment" />
           <TouchableOpacity
-            onPress={submit}
-            style={[styles.addButton, { backgroundColor: ds.controlOn }]}
+            onPress={() => {
+              setName("");
+              setAdding(false);
+            }}
+            hitSlop={8}
             accessibilityRole="button"
-            accessibilityLabel="Add equipment"
+            accessibilityLabel="Cancel adding equipment"
           >
-            <Text style={[styles.addButtonText, { color: ds.onControl }]}>Add</Text>
+            <Bx name="bx-x" size={20} color={t.muted} />
           </TouchableOpacity>
         </View>
       ) : (
-        <View style={{ flexDirection: "row", marginTop: items.length ? 12 : 4 }}>
-          <AttachButton icon={Plus} label="Add equipment" onPress={() => setAdding(true)} />
-        </View>
+        <ActionPill
+          icon="bx-plus"
+          label="Add equipment"
+          variant="dashed"
+          onPress={() => setAdding(true)}
+          style={{ marginTop: items.length ? 12 : 0 }}
+        />
       )}
-    </DetailCard>
+    </SectionCard>
   );
 }
 
 function DocRow({
-  icon: Icon,
+  icon,
   title,
   done,
   note,
   onSource,
-  last,
+  divider,
 }: {
-  icon: LucideIcon;
+  icon: BxName;
   title: string;
   done: boolean;
   /** Overrides the captured / not-captured line (reading, failed). */
-  note?: { text: string; tone: "info" | "error" };
+  note?: { text: string; tone: "info" | "bad" };
   onSource: (source: PhotoSource) => void;
-  last?: boolean;
+  divider?: boolean;
 }) {
-  const styles = useStyles();
-  const ds = useDs();
-  const noteColor = note
-    ? note.tone === "error"
-      ? ds.flame[100]
-      : ds.sky[100]
-    : done
-      ? ds.sky[100]
-      : ds.carbon[400];
+  const s = useStyles();
+  const t = useJoTheme();
+  const noteColor = note ? t[note.tone] : done ? t.ok : t.muted;
   return (
-    <View style={[styles.docRow, !last && styles.docDivider]}>
-      <View style={[styles.docIcon, { backgroundColor: done ? ds.sky[900] : ds.carbon[1000] }]}>
-        <Icon size={16} color={done ? ds.sky[100] : ds.carbon[400]} strokeWidth={2.1} />
+    <View style={[s.docRow, divider && s.divider]}>
+      <View style={[s.docIcon, { backgroundColor: done ? t.okTint : t.raised }]}>
+        <Bx name={done ? "bx-check" : icon} size={18} color={done ? t.ok : t.ink2} />
       </View>
       <View style={{ flex: 1, minWidth: 0 }}>
-        <Text style={styles.docTitle}>{title}</Text>
-        <Text style={[styles.docNote, { color: noteColor }]}>
+        <Text style={s.docTitle} numberOfLines={2}>
+          {title}
+        </Text>
+        <Text style={[s.docNote, { color: noteColor }]} numberOfLines={2}>
           {note?.text ?? (done ? "Captured" : "Not captured yet")}
         </Text>
       </View>
-      <TouchableOpacity
-        onPress={() => onSource("library")}
-        activeOpacity={0.85}
-        style={[styles.docIconButton, { borderColor: ds.carbon[900] }]}
-        accessibilityRole="button"
-        accessibilityLabel={`Upload ${title} from gallery`}
-      >
-        <Upload size={16} color={ds.carbon[200]} strokeWidth={2.1} />
-      </TouchableOpacity>
-      <TouchableOpacity
+      <RoundAction icon="bx-image" onPress={() => onSource("library")} label={`Upload ${title} from gallery`} />
+      <ActionPill
+        icon="bx-camera"
+        label={done ? "Retake" : "Capture"}
+        variant={done ? "outline" : "accent"}
         onPress={() => onSource("camera")}
-        activeOpacity={0.85}
-        style={[
-          styles.docButton,
-          done
-            ? { backgroundColor: ds.white, borderColor: ds.carbon[900] }
-            : { backgroundColor: ds.controlOn, borderColor: ds.controlOn },
-        ]}
-        accessibilityRole="button"
         accessibilityLabel={`${done ? "Retake" : "Capture"} ${title} with the camera`}
-      >
-        <Camera size={14} color={done ? ds.carbon[100] : ds.onControl} strokeWidth={2.2} />
-        <Text style={[styles.docButtonText, { color: done ? ds.carbon[100] : ds.onControl }]}>
-          {done ? "Retake" : "Capture"}
-        </Text>
-      </TouchableOpacity>
+      />
     </View>
   );
 }
 
-const useStyles = makeThemedStyles((ds) => ({
-  screen: { flex: 1, backgroundColor: ds.pageBg },
-  body: { paddingHorizontal: 20, paddingTop: 16, paddingBottom: 20 },
-  summary: { padding: 16, marginBottom: 12 },
-  title: {
-    fontSize: 16,
-    lineHeight: 22,
-    fontWeight: "600",
-    letterSpacing: 0.16,
-    color: ds.carbon[100],
-    marginBottom: 10,
-  },
-  badgeRow: { flexDirection: "row", gap: 7, marginBottom: 14 },
-  metaWrap: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    borderTopWidth: 1,
-    borderTopColor: ds.carbon[1000],
-    paddingTop: 13,
-  },
-  qrRow: { flexDirection: "row", marginTop: 12 },
-  card: {
-    backgroundColor: ds.white,
-    borderRadius: soRadius.card,
-    padding: 14,
-    marginBottom: 10,
-    ...soShadow,
-  },
-  eyebrow: {
-    fontSize: 9,
-    fontWeight: "600",
-    letterSpacing: 1.08,
-    textTransform: "uppercase",
-    color: ds.carbon[500],
-  },
-  inline: { flexDirection: "row", alignItems: "flex-start", gap: 7 },
-  inlineText: { flex: 1, fontSize: 12, lineHeight: 17, color: ds.carbon[200] },
-  reason: { fontSize: 13, lineHeight: 19, fontWeight: "500", color: ds.carbon[100] },
-  notes: { fontSize: 12, lineHeight: 18, color: ds.carbon[400], marginTop: 6 },
-  progressTrack: {
-    height: 5,
-    borderRadius: soRadius.pill,
-    backgroundColor: ds.carbon[1000],
-    overflow: "hidden",
-    marginBottom: 6,
-  },
-  progressFill: { height: 5, borderRadius: soRadius.pill },
-  docRow: { flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 11 },
-  docDivider: { borderBottomWidth: 1, borderBottomColor: ds.carbon[1000] },
-  docIcon: {
-    width: 34,
-    height: 34,
-    borderRadius: soRadius.pill,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  docTitle: { fontSize: 13, fontWeight: "500", color: ds.carbon[100] },
-  docNote: { fontSize: 10.5, color: ds.carbon[400], marginTop: 1 },
-  docButton: {
-    minHeight: 34,
-    paddingHorizontal: 12,
-    borderRadius: soRadius.pill,
-    borderWidth: 1,
-    flexDirection: "row",
-    gap: 5,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  docButtonText: { fontSize: 12, fontWeight: "600" },
-  docIconButton: {
-    width: 34,
-    height: 34,
-    borderRadius: soRadius.pill,
-    borderWidth: 1,
-    backgroundColor: ds.white,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  photos: { flexDirection: "row", gap: 10 },
-  photo: { flex: 1, minWidth: 0, maxWidth: "33%" },
+const useStyles = makeJoStyles((t) => ({
+  screen: { flex: 1, backgroundColor: t.page },
+  body: { paddingHorizontal: 16, paddingTop: 4 },
+  pills: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
+  title: { ...f.d(26, -0.025, 1.12), color: t.ink, marginTop: 10 },
+  reason: { ...f.t(14, 500), color: t.ink, lineHeight: 20 },
+  notes: { ...f.t(12.5), color: t.muted, lineHeight: 18, marginTop: 6 },
+  actionRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 12 },
+  divider: { borderTopWidth: 1, borderTopColor: t.line },
+  center: { alignItems: "center", justifyContent: "center" },
+  docRow: { flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 12 },
+  docIcon: { width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center" },
+  docTitle: { ...f.t(13.5, 600), color: t.ink },
+  docNote: { ...f.t(11.5), marginTop: 2 },
+  photos: { flexDirection: "row", gap: 8 },
+  photo: { flex: 1, minWidth: 0 },
   photoImage: {
     width: "100%",
     aspectRatio: 1,
-    borderRadius: soRadius.sm,
-    backgroundColor: ds.carbon[1000],
+    borderRadius: 16,
+    backgroundColor: t.raised,
     marginBottom: 6,
   },
-  photoLabel: { fontSize: 11, fontWeight: "500", color: ds.carbon[200] },
-  specGrid: { flexDirection: "row", flexWrap: "wrap", rowGap: 12 },
-  specCell: { width: "50%", paddingRight: 12 },
-  specValue: { fontSize: 12.5, color: ds.carbon[100], marginTop: 3 },
-  linkRow: { flexDirection: "row", alignItems: "center", gap: 12 },
-  linkIcon: {
-    width: 34,
-    height: 34,
-    borderRadius: soRadius.pill,
-    backgroundColor: ds.flame[1000],
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  equipRow: {
+  photoLabel: { ...f.t(11.5, 500), color: t.ink2 },
+  linkRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 11,
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: ds.carbon[1000],
+    gap: 12,
+    paddingVertical: 13,
+    paddingHorizontal: 14,
+    marginTop: 10,
   },
-  equipThumb: {
-    width: 38,
-    height: 38,
-    borderRadius: soRadius.sm,
-    backgroundColor: ds.carbon[1000],
-  },
-  equipTop: { flexDirection: "row", alignItems: "center", gap: 7 },
-  equipName: { flexShrink: 1, fontSize: 13, fontWeight: "500", color: ds.carbon[100] },
-  equipNote: { fontSize: 10.5, color: ds.carbon[400], marginTop: 2 },
-  addRow: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 12 },
+  linkIcon: { width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center" },
+  linkTitle: { ...f.t(13.5, 600), color: t.ink },
+  linkSub: { ...f.t(11.5), color: t.muted, marginTop: 2 },
+  equipRow: { flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 11 },
+  equipThumb: { width: 42, height: 42, borderRadius: 14, backgroundColor: t.raised },
+  equipName: { ...f.t(14, 600), color: t.ink },
+  equipMeta: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 5 },
+  equipNote: { ...f.t(11.5), color: t.muted, flexShrink: 1 },
+  addRow: { flexDirection: "row", alignItems: "center", gap: 8 },
   addInput: {
+    ...f.t(14),
     flex: 1,
-    minHeight: 40,
-    backgroundColor: ds.pageBg,
-    borderWidth: 1,
-    borderColor: ds.carbon[900],
-    borderRadius: soRadius.sm,
-    paddingHorizontal: 12,
-    fontSize: 13,
-    color: ds.carbon[100],
+    height: 44,
+    borderRadius: 18,
+    backgroundColor: t.raised,
+    borderWidth: 1.5,
+    paddingHorizontal: 14,
+    paddingVertical: 0,
+    color: t.ink,
   },
-  addButton: {
-    minHeight: 40,
-    paddingHorizontal: 16,
-    borderRadius: soRadius.sm,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  addButtonText: { fontSize: 13, fontWeight: "600" },
-  linkTitle: { fontSize: 13, fontWeight: "500", color: ds.carbon[100] },
-  linkSub: { fontSize: 10.5, color: ds.carbon[400], marginTop: 1 },
 }));

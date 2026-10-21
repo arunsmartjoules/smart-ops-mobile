@@ -21,7 +21,7 @@ import {
 import DateTimePicker from "@expo/ui/community/datetime-picker";
 import Animated, { FadeIn, SlideInDown } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { Calendar, ChevronDown, Clock, CloudOff, type LucideIcon } from "lucide-react-native";
+import { Calendar, ChevronDown, Clock, CloudOff, type LucideIcon } from "@/components/jo/bxIcons";
 import { SearchField, SheetOption, f, useJoTheme } from "@/components/jo/ui";
 import { fmtLong, hhmmToPickerDate, isoToPickerDate, nowHHMM, todayStr } from "./lib";
 

@@ -30,12 +30,11 @@ import {
   Info,
   Lock,
   LogOut,
-  MessageSquareWarning,
   Monitor,
   Moon,
   ScrollText,
   Sun,
-} from "lucide-react-native";
+} from "@/components/jo/bxIcons";
 
 import { useAuth } from "@/contexts/AuthContext";
 import { useTheme } from "@/contexts/ThemeContext";
@@ -57,6 +56,7 @@ import {
   f,
 } from "@/components/jo/ui";
 import { makeJoStyles, useJoTheme } from "@/hooks/useJoTheme";
+import { useNavInsets } from "@/components/jo/navInsets";
 
 /** Role code → display label (users.role vocabulary). */
 const ROLE_LABEL: Record<string, string> = {
@@ -92,6 +92,7 @@ function initialsFor(name: string): string {
 export default function Profile() {
   const styles = useStyles();
   const t = useJoTheme();
+  const { clearance } = useNavInsets();
   const { user, signOut, deleteAccount, refreshProfile } = useAuth();
   const { theme, accent } = useTheme();
   const { lastSyncedAt, pendingQueueCount } = useSyncStatus();
@@ -369,7 +370,7 @@ export default function Profile() {
 
   return (
     <JoPage>
-      <ScrollView contentContainerStyle={styles.body} showsVerticalScrollIndicator={false}>
+      <ScrollView contentContainerStyle={[styles.body, { paddingBottom: clearance }]} showsVerticalScrollIndicator={false}>
         <Text style={[f.d(28, -0.025), styles.title]}>Profile</Text>
 
         <Card radius={28} style={styles.identityCard}>
@@ -469,7 +470,7 @@ export default function Profile() {
             onPress={() => router.push("/appearance")}
           />
           <ListRow
-            icon={MessageSquareWarning}
+            icon="bx-bug"
             label="Report an Issue"
             divider
             onPress={() => router.push("/report-issue")}

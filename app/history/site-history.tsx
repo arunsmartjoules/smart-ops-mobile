@@ -9,30 +9,31 @@ import {
   View,
   Text,
   TouchableOpacity,
-  TextInput,
   Alert,
   RefreshControl,
   ScrollView,
 } from "react-native";
 import { FlashList } from "@shopify/flash-list";
-import { SafeAreaView } from "react-native-safe-area-context";
-import EmptyState from "@/components/EmptyState";
 import { useLocalSearchParams, router, useFocusEffect } from "expo-router";
+import { Bx } from "@/components/jo/Bx";
 import {
-  ChevronLeft,
-  Search,
-  Filter,
-  History as HistoryIcon,
-  X,
-  Plus,
-} from "lucide-react-native";
+  Chip,
+  EmptyState,
+  IconButton,
+  JoPage,
+  SearchField,
+  Shimmer,
+  f,
+  makeJoStyles,
+  useJoTheme,
+} from "@/components/jo/ui";
+import { EntryHeader } from "@/components/sitelogs/LogsKit";
 import { HistoryLogCard as HistoryItem } from "@/components/sitelogs/HistoryLogCard";
 import SiteLogService from "@/services/SiteLogService";
 import { format } from "date-fns";
 import LogFilterModal from "@/components/sitelogs/LogFilterModal";
 import AttendanceService, { type Site } from "@/services/AttendanceService";
 import { useAuth } from "@/contexts/AuthContext";
-import Skeleton from "@/components/Skeleton";
 import UserLookupService from "@/services/UserLookupService";
 import { formatAssignee } from "@/utils/assignee";
 import { setRouteParams } from "@/utils/routeParams";
@@ -40,6 +41,8 @@ import { setRouteParams } from "@/utils/routeParams";
 // Parse YYYY-MM-DD as a local-calendar date (no UTC shift) and format it.
 
 export default function SiteHistory() {
+  const t = useJoTheme();
+  const st = useStyles();
   const { user } = useAuth();
   const params = useLocalSearchParams<{
     siteCode: string;
@@ -363,244 +366,164 @@ export default function SiteHistory() {
     fetchLocalLogs();
   }, [fetchLocalLogs]);
 
+  const filterOn = !!fromDate || siteCode !== params.siteCode;
+
   return (
-    <View className="flex-1 bg-slate-50 dark:bg-slate-950">
-      <SafeAreaView className="flex-1" edges={["top"]}>
-        {/* Header content ... (same as before) */}
-        <View className="bg-white dark:bg-slate-900 px-5 pt-2 pb-4 border-b border-slate-100 dark:border-slate-800">
-          <View className="flex-row items-center justify-between mb-4">
-            <TouchableOpacity
-              onPress={() => router.back()}
-              className="w-10 h-10 items-center justify-center rounded-full bg-slate-50 dark:bg-slate-800"
-            >
-              <ChevronLeft size={20} color="#0f172a" />
-            </TouchableOpacity>
-            <View className="items-center">
-              <Text className="text-lg font-bold text-slate-900 dark:text-slate-50 text-center">
-                {params.logName} History
-              </Text>
-              <Text className="text-xs text-slate-400 dark:text-slate-500 font-bold uppercase tracking-widest">
-                {siteCode} Logs
-              </Text>
-            </View>
-            <View className="flex-row items-center">
-              {params.logName === "Chiller Logs" && (
-                <TouchableOpacity
-                  onPress={() =>
-                    router.push({
-                      pathname: "/chiller",
-                      params: { siteCode, isNew: "true" },
-                    })
-                  }
-                  className="w-10 h-10 items-center justify-center rounded-xl bg-teal-50 dark:bg-teal-900/30 mr-2"
-                >
-                  <Plus size={20} color="#0d9488" />
-                </TouchableOpacity>
-              )}
-              <TouchableOpacity
-                onPress={() => setFilterVisible(true)}
-                className={`w-10 h-10 items-center justify-center rounded-xl ${fromDate || siteCode !== params.siteCode ? "bg-red-50" : "bg-slate-50 dark:bg-slate-800"}`}
-              >
-                <Filter
-                  size={18}
-                  color={
-                    fromDate || siteCode !== params.siteCode
-                      ? "#dc2626"
-                      : "#64748b"
-                  }
-                />
-              </TouchableOpacity>
-            </View>
-          </View>
-
-          {/* Selected Filters Preview (modal filters: site, dates, shift) */}
-          {selectedPreviewItems.length > 0 && (
-            <View className="mt-2 flex-row flex-wrap gap-2">
-              {selectedPreviewItems.map((item) => (
-                <View
-                  key={item}
-                  className="px-2.5 py-1 rounded-full bg-slate-100 dark:bg-slate-800"
-                >
-                  <Text className="text-[10px] font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wide">
-                    {item}
-                  </Text>
-                </View>
-              ))}
-            </View>
-          )}
-
-          {/* Status summary cards — tap to filter; tap again to show all */}
-          <View className="mt-3 flex-row gap-2">
-            {(
-              [
-                {
-                  key: "open",
-                  label: "Open",
-                  filterValue: "Open" as const,
-                  value: statusSummary.open,
-                },
-                {
-                  key: "inprogress",
-                  label: "In progress",
-                  filterValue: "Inprogress" as const,
-                  value: statusSummary.inprogress,
-                },
-                {
-                  key: "resolved",
-                  label: "Resolved",
-                  filterValue: "Completed" as const,
-                  value: statusSummary.resolved,
-                },
-              ] as const
-            ).map((card) => {
-              const isActive = selectedStatus === card.filterValue;
-              return (
-                <TouchableOpacity
-                  key={card.key}
-                  activeOpacity={0.85}
-                  onPress={() => {
-                    setSelectedStatus((prev) =>
-                      prev === card.filterValue ? "all" : card.filterValue,
-                    );
-                  }}
-                  className={`flex-1 rounded-xl px-3 py-2.5 border ${
-                    isActive
-                      ? "bg-red-50 dark:bg-red-950/40 border-red-200 dark:border-red-900/60"
-                      : "bg-slate-50 dark:bg-slate-800 border-slate-100 dark:border-slate-700"
-                  }`}
-                >
-                  <Text className="text-lg font-bold text-slate-900 dark:text-slate-50">
-                    {card.value}
-                  </Text>
-                  <Text
-                    className={`text-[10px] font-bold uppercase tracking-wider ${
-                      isActive
-                        ? "text-red-700 dark:text-red-400"
-                        : "text-slate-500 dark:text-slate-400"
-                    }`}
-                  >
-                    {card.label}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
-
-          {/* Search — below status cards */}
-          <View className="mt-3 flex-row items-center bg-slate-50 dark:bg-slate-800 rounded-2xl px-4 py-2 border border-slate-100 dark:border-slate-800">
-            <Search size={18} color="#94a3b8" />
-            <TextInput
-              placeholder="Search by date, user, or remarks..."
-              value={searchQuery}
-              onChangeText={(t) => {
-                setSearchQuery(t);
-              }}
-              className="flex-1 ml-3 h-10 text-sm font-medium text-slate-900 dark:text-slate-50"
-              placeholderTextColor="#94a3b8"
-            />
-            {searchQuery.length > 0 && (
-              <TouchableOpacity onPress={() => setSearchQuery("")}>
-                <X size={16} color="#94a3b8" />
-              </TouchableOpacity>
+    <JoPage glow={false}>
+      <EntryHeader
+        title={`${params.logName} History`}
+        sub={`${siteCode} logs`}
+        onBack={() => router.back()}
+        right={
+          <>
+            {params.logName === "Chiller Logs" && (
+              <IconButton
+                icon="bx-plus"
+                iconSize={22}
+                label="New chiller reading"
+                onPress={() =>
+                  router.push({
+                    pathname: "/chiller",
+                    params: { siteCode, isNew: "true" },
+                  })
+                }
+              />
             )}
-          </View>
+            <TouchableOpacity
+              onPress={() => setFilterVisible(true)}
+              activeOpacity={0.75}
+              accessibilityRole="button"
+              accessibilityLabel="Filter logs"
+              accessibilityState={{ selected: filterOn }}
+              style={[st.roundBtn, filterOn && { backgroundColor: t.selBg, borderColor: t.selBg }]}
+            >
+              <Bx name="bx-slider-alt" size={19} color={filterOn ? t.selFg : t.ink} />
+            </TouchableOpacity>
+          </>
+        }
+      />
 
-          {/* Shift Quick Filters */}
-          {params.logName?.toLowerCase()?.includes("temp") && (
-            <View className="mt-3">
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={{ paddingRight: 20 }}
-              >
-                {[
-                  { label: "Shift A", value: "1/3" },
-                  { label: "Shift B", value: "2/3" },
-                  { label: "Shift C", value: "3/3" },
-                ].map((shift) => {
-                  const isActive = selectedShift === shift.value;
-                  return (
-                    <TouchableOpacity
-                      key={shift.value}
-                      onPress={() => {
-                        setSelectedShift(isActive ? "" : shift.value);
-                      }}
-                      className={`mr-2 px-4 py-2 rounded-full border ${
-                        isActive
-                          ? "bg-red-600 border-red-600"
-                          : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800"
-                      }`}
-                    >
-                      <Text
-                        className={`text-sm font-bold ${
-                          isActive ? "text-white" : "text-slate-500"
-                        }`}
-                      >
-                        {shift.label}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </ScrollView>
-            </View>
-          )}
-        </View>
-
-        {loading ? (
-          <View className="flex-1 px-5 pt-6">
-            {[1, 2, 3, 4].map((i) => (
-              <View
-                key={i}
-                className="mb-4 bg-white dark:bg-slate-900 rounded-2xl p-4"
-              >
-                <View className="flex-row justify-between mb-4">
-                  <Skeleton width={120} height={15} />
-                  <Skeleton width={60} height={15} />
-                </View>
-                <Skeleton width="100%" height={80} borderRadius={12} />
+      <View style={{ paddingHorizontal: 16, gap: 10, paddingBottom: 4 }}>
+        {/* Selected filters preview (modal filters: site, dates, shift) */}
+        {selectedPreviewItems.length > 0 && (
+          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+            {selectedPreviewItems.map((item) => (
+              <View key={item} style={st.previewTag}>
+                <Text style={[f.t(11.5, 600), { color: t.ink2 }]}>{item}</Text>
               </View>
             ))}
           </View>
-        ) : (
-          <FlashList
-            data={displayLogs}
-            keyExtractor={(item) => item.id}
-            renderItem={renderHistoryItem}
-            contentContainerStyle={{ padding: 20, paddingBottom: 150 }}
-            // @ts-ignore
-            estimatedItemSize={120}
-            refreshControl={
-              <RefreshControl
-                refreshing={refreshing}
-                onRefresh={onRefresh}
-                colors={["#dc2626"]}
-              />
-            }
-            ListEmptyComponent={
-              <EmptyState
-                icon={HistoryIcon}
-                title="No records found"
-                subtitle={
-                  searchQuery
-                    ? "Try a different search term"
-                    : "Try adjusting your filters"
-                }
-                action={{
-                  label: "Clear All Filters",
-                  onPress: () => {
-                    setSearchQuery("");
-                    setSelectedShift("");
-                    setSelectedStatus("all");
-                    setFromDate(null);
-                    setToDate(null);
-                    setSiteCode(params.siteCode || "");
-                  },
-                }}
-              />
-            }
-          />
         )}
-      </SafeAreaView>
+
+        {/* Status summary cards — tap to filter; tap again to show all */}
+        <View style={{ flexDirection: "row", gap: 8 }}>
+          {(
+            [
+              { key: "open", label: "Open", filterValue: "Open" as const, value: statusSummary.open, color: t.bad },
+              {
+                key: "inprogress",
+                label: "In progress",
+                filterValue: "Inprogress" as const,
+                value: statusSummary.inprogress,
+                color: t.info,
+              },
+              {
+                key: "resolved",
+                label: "Resolved",
+                filterValue: "Completed" as const,
+                value: statusSummary.resolved,
+                color: t.ok,
+              },
+            ] as const
+          ).map((card) => {
+            const isActive = selectedStatus === card.filterValue;
+            return (
+              <TouchableOpacity
+                key={card.key}
+                activeOpacity={0.85}
+                accessibilityRole="button"
+                accessibilityState={{ selected: isActive }}
+                accessibilityLabel={`${card.value} ${card.label}`}
+                onPress={() => {
+                  setSelectedStatus((prev) => (prev === card.filterValue ? "all" : card.filterValue));
+                }}
+                style={[st.counter, isActive && { borderColor: card.color }]}
+              >
+                <Text style={[f.t(11.5, 500), { color: t.muted }]} numberOfLines={1}>
+                  {card.label}
+                </Text>
+                <Text style={[f.d(24, -0.03, 1.1), { color: card.color }]}>{card.value}</Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+
+        {/* Search — below status cards */}
+        <SearchField
+          value={searchQuery}
+          onChangeText={setSearchQuery}
+          placeholder="Search by date, user, or remarks..."
+        />
+
+        {/* Shift quick filters */}
+        {params.logName?.toLowerCase()?.includes("temp") && (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6, paddingRight: 16 }}>
+            {[
+              { label: "Shift A", value: "1/3" },
+              { label: "Shift B", value: "2/3" },
+              { label: "Shift C", value: "3/3" },
+            ].map((shift) => {
+              const isActive = selectedShift === shift.value;
+              return (
+                <Chip
+                  key={shift.value}
+                  label={shift.label}
+                  selected={isActive}
+                  onPress={() => setSelectedShift(isActive ? "" : shift.value)}
+                />
+              );
+            })}
+          </ScrollView>
+        )}
+      </View>
+
+      {loading ? (
+        <View style={{ paddingHorizontal: 16, paddingTop: 12, gap: 8 }}>
+          {[1, 2, 3, 4].map((i) => (
+            <Shimmer key={i} height={150} radius={22} />
+          ))}
+        </View>
+      ) : (
+        <FlashList
+          data={displayLogs}
+          keyExtractor={(item) => item.id}
+          renderItem={renderHistoryItem}
+          contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 12, paddingBottom: 150 }}
+          // @ts-ignore
+          estimatedItemSize={150}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={t.muted} colors={[t.accent]} />
+          }
+          ListEmptyComponent={
+            <EmptyState
+              icon="bx-history"
+              title="No records found"
+              sub={searchQuery ? "Try a different search term" : "Try adjusting your filters"}
+              action={{
+                label: "Clear all filters",
+                onPress: () => {
+                  setSearchQuery("");
+                  setSelectedShift("");
+                  setSelectedStatus("all");
+                  setFromDate(null);
+                  setToDate(null);
+                  setSiteCode(params.siteCode || "");
+                },
+              }}
+            />
+          }
+        />
+      )}
 
       <LogFilterModal
         visible={filterVisible}
@@ -614,6 +537,37 @@ export default function SiteHistory() {
         onSiteSelect={(id) => setSiteCode(id)}
         onApply={handleApplyFilter}
       />
-    </View>
+    </JoPage>
   );
 }
+
+const useStyles = makeJoStyles((t) => ({
+  roundBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: t.input,
+    borderWidth: 1,
+    borderColor: t.lineMid,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  previewTag: {
+    height: 26,
+    paddingHorizontal: 10,
+    borderRadius: 13,
+    justifyContent: "center",
+    backgroundColor: t.raised,
+  },
+  counter: {
+    flex: 1,
+    minWidth: 0,
+    borderRadius: 22,
+    backgroundColor: t.card,
+    borderWidth: 1.5,
+    borderColor: t.cardBorder,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    gap: 4,
+  },
+}));

@@ -6,13 +6,13 @@
  * so the two apps can move independently. Keep the source-module map and the
  * history cutoff in step with web and backend when either changes.
  */
-import {
-  BadgeCheck,
-  ShieldHalf,
-  Thermometer,
-  Timer,
-  type LucideIcon,
-} from "lucide-react-native";
+import { bxIcon, type LucideIcon } from "@/components/jo/bxIcons";
+
+// The artboard's category icons (CATS).
+const Thermometer = bxIcon("bxs-thermometer");
+const BadgeCheck = bxIcon("bx-badge-check");
+const Timer = bxIcon("bx-timer");
+const ShieldHalf = bxIcon("bx-shield-quarter");
 import { JO_DARK, type JoTone } from "@/constants/jo";
 import type { JoTheme } from "@/hooks/useJoTheme";
 import type {
@@ -562,4 +562,17 @@ export function ratingCsvRows(report: SlaReport, siteName: string, siteCode: str
   rows.push(["Performance Rating", `${fmtPct(report.totals.performanceRating)}%`]);
   rows.push(["Fee Level", report.band.label]);
   return rows;
+}
+
+/**
+ * Backend fee implications are sometimes a bare share ("80%"); the artboard
+ * reads "80% of O&M fee". Longer phrasings pass through untouched.
+ */
+export function feeLabel(fee: string): string {
+  return /^\s*\d+(\.\d+)?\s*%\s*$/.test(fee) ? `${fee.trim()} of O&M fee` : fee;
+}
+
+/** Calculation-step text from the backend carries raw month keys ("2026-10") — show "Oct 2026". */
+export function prettyMonthKeys(text: string): string {
+  return text.replace(/\b(\d{4})-(0[1-9]|1[0-2])\b(?!-\d)/g, (k) => monthLabel(k));
 }
