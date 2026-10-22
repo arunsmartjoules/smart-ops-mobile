@@ -20,7 +20,7 @@ const OPTIONS: { mode: CommCreateMode; icon: BxName; title: string; description:
     mode: "ai",
     icon: "bxs-magic-wand",
     title: "Describe it",
-    description: "Type or dictate it, or attach the email / minutes — we'll fill in the entry for you",
+    description: "Type it, add a voice note or attach the email / minutes — we'll fill in the entry for you",
     isNew: true,
   },
 ];

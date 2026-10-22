@@ -13,9 +13,9 @@
  * Sub-tabs are text tabs over a hairline, the active one in ink with an
  * accent underline the width of its label. The bottom bar's "Ops" /
  * "Resources" item opens the last one used. Sub-tabs the role can't view are
- * left out. Moving between sub-tabs slides; see services/TabTransition.
+ * left out. Sub-tabs flagged `isNew` carry a small "New" badge.
  *
- * Resources (SLA · Reports · Client comms) shows the site only — SLA is
+ * Resources (SLA · Efficiency · Reports · Client comms) shows the site only — SLA is
  * monthly and Reports has its own periods, so the shared Ops range doesn't
  * apply there.
  */
@@ -27,10 +27,10 @@ import { usePermissions } from "@/contexts/PermissionsContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { useSites } from "@/hooks/useSites";
 import { SUB_TABS, rememberSubTab, type SubTabGroup } from "@/components/jo/modules";
-import { markSubTabSwitch } from "@/services/TabTransition";
 import {
   DateButton,
   JoSheet,
+  NewBadge,
   PrimaryButton,
   SheetOption,
   f,
@@ -144,13 +144,12 @@ function SubTabsHeader({ group, showDate }: { group: SubTabGroup; showDate: bool
                 key={o.key}
                 onPress={() => {
                   if (on) return;
-                  markSubTabSwitch();
                   router.navigate(o.href as any);
                 }}
                 activeOpacity={0.7}
                 accessibilityRole="tab"
                 accessibilityState={{ selected: on }}
-                accessibilityLabel={o.label}
+                accessibilityLabel={o.isNew ? `${o.label}, new` : o.label}
                 style={s.tab}
               >
                 {/* Shrink-wrapped so the underline matches the label's width. */}
@@ -164,6 +163,8 @@ function SubTabsHeader({ group, showDate }: { group: SubTabGroup; showDate: bool
                     {o.label}
                   </Text>
                   <View style={[s.underline, { backgroundColor: on ? t.accent : "transparent" }]} />
+                  {/* Out of flow, in the tab's top padding, so it never squeezes the label. */}
+                  {o.isNew ? <NewBadge style={s.newBadge} /> : null}
                 </View>
               </TouchableOpacity>
             );
@@ -298,6 +299,8 @@ const useStyles = makeJoStyles((t) => ({
     alignItems: "stretch",
     maxWidth: "100%",
   },
+  // Superscript: up in the tab's top padding, past the label's end.
+  newBadge: { position: "absolute", top: -12, right: -14 },
   underline: {
     height: 3,
     marginTop: 9,

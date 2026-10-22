@@ -492,6 +492,8 @@ export default function Profile() {
           <ListRow
             icon={ThemeIcon}
             label="Appearance"
+            badge="New"
+            badgeTone="accent"
             value={appearanceValue}
             onPress={() => router.push("/appearance")}
           />

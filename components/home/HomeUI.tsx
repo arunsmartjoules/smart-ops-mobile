@@ -4,7 +4,7 @@
  * app/(tabs)/dashboard.tsx owns the data and passes view values in.
  */
 import React from "react";
-import { ActivityIndicator, Text, TouchableOpacity, View } from "react-native";
+import { ActivityIndicator, Image, Text, TouchableOpacity, View } from "react-native";
 import Animated, {
   Easing,
   useAnimatedStyle,
@@ -34,8 +34,15 @@ export function toneColor(t: JoTheme, tone: JoTone | "ink"): string {
 
 /* ── Header ────────────────────────────────────────────────────────────── */
 
+/** web/public Jouleops-logo(-light).png, trimmed to the ink; 360×96. */
+const WORDMARK = {
+  onDark: require("@/assets/images/jouleops-wordmark-on-dark.png"),
+  onLight: require("@/assets/images/jouleops-wordmark-on-light.png"),
+};
+const WORDMARK_HEIGHT = 20;
+const WORDMARK_WIDTH = (WORDMARK_HEIGHT * 360) / 96;
+
 export function HomeHeader({
-  greeting,
   siteName,
   onSitePress,
   bellDot,
@@ -46,7 +53,6 @@ export function HomeHeader({
   onAvatar,
   avatarLabel = "Profile",
 }: {
-  greeting: string;
   siteName: string;
   onSitePress?: () => void;
   bellDot?: boolean;
@@ -61,7 +67,8 @@ export function HomeHeader({
   const s = useStyles();
   const title = (
     <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-      <Text style={[f.d(28, -0.025), { color: t.ink, flexShrink: 1 }]} numberOfLines={1}>
+      {/* Long site names ("KIMS, Mumbai – Andheri") wrap to a second line instead of truncating. */}
+      <Text style={[f.d(21, -0.02, 1.15), { color: t.ink, flexShrink: 1 }]} numberOfLines={2}>
         {siteName}
       </Text>
       {onSitePress ? <Bx name="bx-chevron-down" size={22} color={t.muted} /> : null}
@@ -70,10 +77,14 @@ export function HomeHeader({
   return (
     <View style={s.header}>
       <View style={{ flexShrink: 1, minWidth: 0 }}>
-        <Text style={[f.t(13), { color: t.muted }]} numberOfLines={1}>
-          {greeting}
-        </Text>
-        <View style={{ marginTop: 4 }}>
+        <Image
+          source={t.isDark ? WORDMARK.onDark : WORDMARK.onLight}
+          style={{ width: WORDMARK_WIDTH, height: WORDMARK_HEIGHT }}
+          resizeMode="contain"
+          accessibilityRole="image"
+          accessibilityLabel="JouleOps"
+        />
+        <View style={{ marginTop: 8 }}>
           {onSitePress ? (
             <TouchableOpacity
               onPress={onSitePress}
@@ -487,12 +498,28 @@ export interface EffItem {
   trend: "down" | "up" | null;
 }
 
-export function EfficiencyCard({ items, note }: { items: EffItem[]; note?: string | null }) {
+export function EfficiencyCard({
+  items,
+  note,
+  onPress,
+}: {
+  items: EffItem[];
+  note?: string | null;
+  /** Opens Resources › Efficiency (manager roles). */
+  onPress?: () => void;
+}) {
   const t = useJoTheme();
   return (
-    <Card style={{ marginTop: 10, paddingVertical: 16, paddingHorizontal: 18 }}>
-      <View style={{ flexDirection: "row", alignItems: "baseline", justifyContent: "space-between", gap: 10 }}>
-        <Text style={[f.t(15, 600), { color: t.ink }]}>Plant efficiency</Text>
+    <Card
+      onPress={onPress}
+      accessibilityLabel={onPress ? "Plant efficiency. Open Efficiency" : undefined}
+      style={{ marginTop: 12, paddingVertical: 16, paddingHorizontal: 18 }}
+    >
+      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 3 }}>
+          <Text style={[f.t(15, 600), { color: t.ink }]}>Plant efficiency</Text>
+          {onPress ? <Bx name="bx-chevron-right" size={19} color={t.muted} /> : null}
+        </View>
         <Text style={[f.t(11.5), { color: t.muted }]}>kW/TR · lower is better</Text>
       </View>
       <View style={{ flexDirection: "row", marginTop: 14 }}>
@@ -534,6 +561,10 @@ export function EfficiencyCard({ items, note }: { items: EffItem[]; note?: strin
 
 /* ── Technician: shift hero ────────────────────────────────────────────── */
 
+/**
+ * Compact attendance card: status line on top, the shift duration beside the
+ * date underneath, and the Start / End Day button on the right.
+ */
 export function ShiftHero({
   label,
   big,
@@ -554,23 +585,25 @@ export function ShiftHero({
   const t = useJoTheme();
   const ctaIcon = cta?.icon === "out" ? "bx-log-out-circle" : cta?.icon === "in" ? "bx-log-in-circle" : "bx-check-double";
   return (
-    <HeroCard rings={1} style={{ marginTop: 14, padding: 14 }}>
-      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-        <Text style={[capsStyle(12), { color: t.onAccent, opacity: 0.7, flexShrink: 1 }]} numberOfLines={1}>
-          {label}
-        </Text>
-        {slaTag ? (
-          <TouchableOpacity onPress={onSla} disabled={!onSla} accessibilityRole="button" accessibilityLabel={`SLA ${slaTag}`}>
-            <HeroTag label={slaTag} color={slaTagColor} />
-          </TouchableOpacity>
-        ) : null}
-      </View>
-      <View style={{ flexDirection: "row", alignItems: "flex-end", justifyContent: "space-between", gap: 10, marginTop: 8 }}>
-        <View style={{ flexShrink: 1 }}>
-          <Text style={[f.d(40, -0.045, 1), { color: t.onAccent }]}>{big}</Text>
-          <Text style={[f.t(12), { color: t.onAccent, opacity: 0.68, marginTop: 5 }]} numberOfLines={1}>
-            {sub}
-          </Text>
+    <HeroCard rings={1} style={{ marginTop: 14, paddingVertical: 11, paddingHorizontal: 14 }}>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+            <Text style={[capsStyle(10.5), { color: t.onAccent, opacity: 0.7, flexShrink: 1 }]} numberOfLines={1}>
+              {label}
+            </Text>
+            {slaTag ? (
+              <TouchableOpacity onPress={onSla} disabled={!onSla} accessibilityRole="button" accessibilityLabel={`SLA ${slaTag}`}>
+                <HeroTag label={slaTag} color={slaTagColor} />
+              </TouchableOpacity>
+            ) : null}
+          </View>
+          <View style={{ flexDirection: "row", alignItems: "baseline", gap: 8, marginTop: 4 }}>
+            <Text style={[f.d(22, -0.03, 1.1), { color: t.onAccent }]}>{big}</Text>
+            <Text style={[f.t(11.5), { color: t.onAccent, opacity: 0.68, flexShrink: 1 }]} numberOfLines={1}>
+              {sub}
+            </Text>
+          </View>
         </View>
         {cta ? (
           <TouchableOpacity
@@ -580,22 +613,22 @@ export function ShiftHero({
             accessibilityRole="button"
             accessibilityLabel={cta.label}
             style={{
-              height: 44,
-              paddingHorizontal: 16,
-              borderRadius: 22,
+              height: 38,
+              paddingHorizontal: 13,
+              borderRadius: 19,
               backgroundColor: "#0A0A0C",
               flexDirection: "row",
               alignItems: "center",
-              gap: 7,
+              gap: 6,
               flexShrink: 0,
             }}
           >
             {cta.busy ? (
               <ActivityIndicator color="#F4F4F6" size="small" />
             ) : (
-              <Bx name={ctaIcon} size={18} color="#F4F4F6" />
+              <Bx name={ctaIcon} size={17} color="#F4F4F6" />
             )}
-            <Text style={[f.t(13.5, 600), { color: "#F4F4F6" }]}>{cta.label}</Text>
+            <Text style={[f.t(13, 600), { color: "#F4F4F6" }]}>{cta.label}</Text>
           </TouchableOpacity>
         ) : null}
       </View>

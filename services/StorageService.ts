@@ -21,6 +21,16 @@ const MIME_BY_EXTENSION: Record<string, string> = {
   pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
   txt: "text/plain",
   csv: "text/csv",
+  // Voice notes (client-communication "Describe it"); all on the presign allow-list.
+  mp3: "audio/mpeg",
+  m4a: "audio/mp4",
+  wav: "audio/wav",
+  ogg: "audio/ogg",
+  opus: "audio/ogg",
+  oga: "audio/ogg",
+  webm: "audio/webm",
+  flac: "audio/flac",
+  amr: "audio/amr",
 };
 
 const getContentType = (filePathOrUri: string): string => {

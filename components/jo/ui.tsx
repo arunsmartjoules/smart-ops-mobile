@@ -645,6 +645,23 @@ export function Segmented<K extends string>({
 }
 
 /** Tinted status pill (height 22, radius 11, 11px/600). */
+/** Small "NEW" pill in the accent — flags a recently added screen or setting. */
+export function NewBadge({ style }: { style?: StyleProp<ViewStyle> }) {
+  const t = useJoTheme();
+  return (
+    <View
+      style={[
+        { height: 13, paddingHorizontal: 4, borderRadius: 7, backgroundColor: t.accent, justifyContent: "center" },
+        style,
+      ]}
+      importantForAccessibility="no-hide-descendants"
+      accessibilityElementsHidden
+    >
+      <Text style={[f.t(7.5, 700), { color: t.onAccent, lineHeight: 10 }]}>NEW</Text>
+    </View>
+  );
+}
+
 export function StatusPill({
   label,
   tone,

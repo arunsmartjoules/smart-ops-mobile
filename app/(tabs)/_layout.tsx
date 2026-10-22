@@ -1,5 +1,5 @@
 import React from "react";
-import { Dimensions, Easing, View, Text, Pressable } from "react-native";
+import { Easing, View, Text, Pressable } from "react-native";
 import type { BottomTabBarProps, BottomTabNavigationOptions } from "@react-navigation/bottom-tabs";
 
 type SceneInterpolator = NonNullable<BottomTabNavigationOptions["sceneStyleInterpolator"]>;
@@ -10,52 +10,35 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { JouleTabBar } from "@/components/JouleTabBar";
 import { SiteAccessGate } from "@/components/SiteAccessGate";
 import { useAttendanceGate } from "@/contexts/AttendanceGateContext";
-import { getTabTransition } from "@/services/TabTransition";
 import { useDs } from "@/hooks/useDs";
 
-/** ~240ms ease-out for both kinds of tab switch. */
+/** ~240ms ease-out fade-through for every tab switch. */
 const TAB_SPEC: TransitionSpec = {
   animation: "timing",
   config: { duration: 240, easing: Easing.out(Easing.cubic) },
 };
 
 /**
- * Two transitions, like Google / Material apps (services/TabTransition):
- *  - sub-tab (Ops / Resources strip): full-width horizontal slide, direction
- *    following the order of the screens below;
- *  - main tab (bottom bar, links between sections): fade-through — the old
- *    screen fades out, the new one fades in while settling from 96% scale.
+ * Fade-through for every tab switch — bottom bar and Ops / Resources sub-tabs
+ * alike: the old screen fades out, the new one fades in while settling from
+ * 96% scale.
  */
-const forTabSwitch: SceneInterpolator = ({ current }) => {
-  const sub = getTabTransition() === "sub";
-  const w = Dimensions.get("window").width;
-  // Both kinds drive the SAME three properties (only the output values
-  // differ). With the native driver, a property that drops out of the style
-  // keeps its last native value — a screen slid off by translateX would stay
-  // off-screen after a fade switch and leave a blank tab.
-  return {
-    sceneStyle: {
-      opacity: current.progress.interpolate({
-        inputRange: [-1, -0.5, 0, 0.5, 1],
-        outputRange: sub ? [1, 1, 1, 1, 1] : [0, 0, 1, 0, 0],
-      }),
-      transform: [
-        {
-          translateX: current.progress.interpolate({
-            inputRange: [-1, 0, 1],
-            outputRange: sub ? [-w, 0, w] : [0, 0, 0],
-          }),
-        },
-        {
-          scale: current.progress.interpolate({
-            inputRange: [-1, 0, 1],
-            outputRange: sub ? [1, 1, 1] : [0.96, 1, 0.96],
-          }),
-        },
-      ],
-    },
-  };
-};
+const forTabSwitch: SceneInterpolator = ({ current }) => ({
+  sceneStyle: {
+    opacity: current.progress.interpolate({
+      inputRange: [-1, -0.5, 0, 0.5, 1],
+      outputRange: [0, 0, 1, 0, 0],
+    }),
+    transform: [
+      {
+        scale: current.progress.interpolate({
+          inputRange: [-1, 0, 1],
+          outputRange: [0.96, 1, 0.96],
+        }),
+      },
+    ],
+  },
+});
 
 function TabsContent({ hideTabBar = false }: { hideTabBar?: boolean }) {
   const ds = useDs();
@@ -67,14 +50,11 @@ function TabsContent({ hideTabBar = false }: { hideTabBar?: boolean }) {
       tabBar={(props: BottomTabBarProps) => (hideTabBar ? null : <JouleTabBar {...props} />)}
       screenOptions={{
         headerShown: false,
-        // Slide between sub-tabs, fade-through between main tabs.
         sceneStyleInterpolator: forTabSwitch,
         transitionSpec: TAB_SPEC,
         sceneContainerStyle: { backgroundColor: ds.pageBg },
       }}
     >
-      {/* Order = sub-tab slide direction: Ops and Resources sub-tabs each in
-          strip order (Resources: SLA → Reports → Client comms). */}
       <Tabs.Screen name="index" options={{ href: null }} />
       <Tabs.Screen name="dashboard" options={{ title: "Home" }} />
       <Tabs.Screen name="tickets" options={{ title: "Tickets" }} />
@@ -86,6 +66,7 @@ function TabsContent({ hideTabBar = false }: { hideTabBar?: boolean }) {
       <Tabs.Screen name="incidents" options={{ title: "Incidents" }} />
       <Tabs.Screen name="asset-mapping" options={{ title: "Assets" }} />
       <Tabs.Screen name="sla" options={{ title: "SLA" }} />
+      <Tabs.Screen name="efficiency" options={{ title: "Efficiency" }} />
       <Tabs.Screen name="reports" options={{ title: "Reports" }} />
       <Tabs.Screen
         name="customer-communication"

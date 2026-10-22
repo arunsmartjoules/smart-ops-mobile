@@ -51,6 +51,8 @@ import {
   Shimmer,
   f,
 } from "@/components/jo/ui";
+// Plant SEC target, kW/TR — shared with Resources › Efficiency (and the web page).
+import { SEC_TARGET } from "@/components/efficiency/lib";
 import {
   BreachBanner,
   EfficiencyCard,
@@ -151,18 +153,8 @@ function periodRange(
   return { from: format(monday, "yyyy-MM-dd"), to: todayIso };
 }
 
-/** "Good morning / afternoon / evening" on the IST clock. */
-function greetingFor(now: Date) {
-  const h = Number(
-    new Intl.DateTimeFormat("en-GB", { hour: "numeric", hour12: false, timeZone: "Asia/Kolkata" }).format(now),
-  );
-  return h < 12 ? "Good morning" : h < 17 ? "Good afternoon" : "Good evening";
-}
-
 // ── Colour rules (artboard: cSla / cPct) ──────────────────────────────────
 
-/** Plant SEC target, kW/TR — same value the web Efficiency page flags against. */
-const SEC_TARGET = 0.85;
 /** Rows shown in "Team on site" before "View all" (artboard listLimit default). */
 const TEAM_LIMIT = 4;
 /** A full shift, for the team-row progress bar (artboard: mins / 480). */
@@ -567,7 +559,6 @@ export default function Dashboard() {
   }, [todayAttendance, currentTime]);
 
   const displayName = user?.full_name || user?.name || "JouleOps user";
-  const firstName = displayName.trim().split(/\s+/)[0] || displayName;
   const siteName = activeSite?.name || summary?.site.name || activeSiteCode || "No site assigned";
   const canSwitchSite = !isLocked && sites.length > 1;
 
@@ -722,7 +713,6 @@ export default function Dashboard() {
 
   const header = (
     <HomeHeader
-      greeting={`${greetingFor(currentTime)}, ${firstName}`}
       siteName={siteName}
       onSitePress={canSwitchSite ? () => setSheet("site") : undefined}
       bellIcon={isLocked ? "bx-file" : undefined}
@@ -749,7 +739,7 @@ export default function Dashboard() {
       return {
         label: `On shift · since ${clock(todayAttendance?.check_in_time)}`,
         big: shiftMinutes != null ? durationLabel(shiftMinutes) : dash,
-        sub: `In ${clock(todayAttendance?.check_in_time)} · ${format(currentTime, "EEE, dd MMM yyyy")}`,
+        sub: format(currentTime, "EEE, dd MMM"),
         slaTag,
         cta: { label: "End Day", icon: "out" as const, onPress: handleQuickCheckOut },
       };
@@ -758,7 +748,7 @@ export default function Dashboard() {
       return {
         label: "Day ended",
         big: shiftMinutes != null ? durationLabel(shiftMinutes) : dash,
-        sub: `${clock(todayAttendance?.check_in_time)}–${clock(todayAttendance?.check_out_time)} · ${format(currentTime, "EEE, dd MMM yyyy")}`,
+        sub: `${clock(todayAttendance?.check_in_time)}–${clock(todayAttendance?.check_out_time)} · ${format(currentTime, "EEE, dd MMM")}`,
         slaTag,
         cta: { label: "Attendance", icon: "done" as const, onPress: navigateToAttendance },
       };
@@ -766,7 +756,7 @@ export default function Dashboard() {
     return {
       label: "Not punched in",
       big: dash,
-      sub: format(currentTime, "EEE, dd MMM yyyy"),
+      sub: format(currentTime, "EEE, dd MMM"),
       slaTag,
       cta: {
         label: "Start Day",
@@ -839,6 +829,16 @@ export default function Dashboard() {
     return { ...b, pct, color: pctColor(t, pct) };
   });
 
+  // Technicians see the numbers only; other roles open Resources › Efficiency.
+  const efficiencyCard =
+    showDashboard && canView("efficiency") ? (
+      <EfficiencyCard
+        items={effItems}
+        note={effNote}
+        onPress={isOperator ? undefined : () => router.push("/(tabs)/efficiency")}
+      />
+    ) : null;
+
   return (
     <JoPage>
       <ScrollView
@@ -870,6 +870,8 @@ export default function Dashboard() {
               onSla={isLocked ? undefined : () => router.push("/(tabs)/sla")}
               cta={techHero.cta}
             />
+            {/* Technicians: plant efficiency right under the attendance card. */}
+            {efficiencyCard}
             {showDashboard ? (
               <>
                 {dataNote}
@@ -887,6 +889,8 @@ export default function Dashboard() {
           </>
         ) : showDashboard ? (
           <>
+            {/* Other roles: plant efficiency leads, above operational status. */}
+            {efficiencyCard}
             <OpsHero
               openTickets={num(s?.tickets.open)}
               breachLabel={breachTag}
@@ -941,7 +945,6 @@ export default function Dashboard() {
           </>
         ) : null}
 
-        {showDashboard && canView("efficiency") ? <EfficiencyCard items={effItems} note={effNote} /> : null}
       </ScrollView>
 
       <JoSheet

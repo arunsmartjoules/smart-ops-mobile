@@ -3,17 +3,18 @@
  * email / minutes instead of filling the form field by field. The mobile twin
  * of web/src/app/customer-communication/components/ai-intake-dialog.tsx:
  *
- *   compose (type · attach documents/photos)
+ *   compose (type · record / upload a voice note · attach documents/photos)
+ *     voice notes ─► S3 ─► POST /ai/transcripts ─► poll ─► text into the notes
  *   ─► POST /ai/drafts ─► poll GET /ai/drafts/:id (progress)
  *   ─► [up to 4 questions] ─► onDrafted → the normal form, pre-filled
  *
  * Saving that form is what creates the entry, so it goes through the same
  * validation, reference numbering and timeline as a manual one.
  *
- * Voice is deliberately not here: the web records audio in the browser, and
- * the app ships no audio recorder (adding one would be a native module, which
- * can't go over the air). The keyboard's own dictation mic types into the
- * notes box instead, so /ai/transcripts is not used on mobile.
+ * The web's live dictation (browser speech service) has no twin here — the
+ * keyboard's own mic does the same job in the notes box. Recording needs
+ * expo-audio in the installed binary (see useVoiceRecorder); uploading an
+ * existing voice note works on every build.
  *
  * Online-only. Closing the sheet (unmount) abandons any upload/poll.
  */
@@ -34,13 +35,14 @@ import CustomerCommunicationService, {
 } from "@/services/CustomerCommunicationService";
 import { DateField, FieldBlock, OfflineNotice, PickerPanel, SelectButton, TextField, type PickerItem } from "./fields";
 import { pickDocuments, pickPhotos, type PickedFile } from "./pick";
+import { MAX_RECORDING_SECONDS, useVoiceRecorder } from "./useVoiceRecorder";
 
 /** What the intake hands back: a pre-filled form. */
 export interface AiDraftOutcome {
   fields: CommDraftFields;
-  /** Uploaded documents — kept on the entry as evidence. */
+  /** Uploaded documents and voice notes — kept on the entry as evidence. */
   attachments: string[];
-  /** "document(s)" / "notes" — for the form banner and the timeline. */
+  /** "voice note", "document(s)", "notes" — for the form banner and the timeline. */
   sources: string[];
 }
 
@@ -55,8 +57,19 @@ const POLL_INTERVAL_MS = 1500;
 const DRAFT_TIMEOUT_MS = 3 * 60 * 1000;
 const POLL_MAX_MISSES = 4;
 const MSG_DRAFT_TIMEOUT = "Drafting is taking longer than expected. Please try again in a few minutes.";
+/** Transcribe can queue under load. */
+const TRANSCRIPT_TIMEOUT_MS = 5 * 60 * 1000;
+const MSG_TRANSCRIPT_TIMEOUT =
+  "Transcribing this recording is taking longer than expected. Please try again, or type the details instead.";
 const MB = 1024 * 1024;
 const UPLOAD_PREFIX = "customer-communication/ai-documents";
+const VOICE_PREFIX = "customer-communication/voice-notes";
+const MAX_VOICE_NOTES = 5;
+const MAX_AUDIO_BYTES = 20 * MB;
+
+/** Formats Amazon Transcribe reads and the presign endpoint allows (web AUDIO_MIME_BY_EXT). */
+const AUDIO_EXTS = new Set(["mp3", "m4a", "mp4", "wav", "ogg", "opus", "oga", "webm", "flac", "amr"]);
+const AUDIO_PICKER_TYPES = ["audio/*"];
 
 const DOC_EXTS = new Set(["pdf", "docx", "pptx", "jpg", "jpeg", "png", "webp"]);
 const PHOTO_EXTS = new Set(["jpg", "jpeg", "png", "webp"]);
@@ -87,6 +100,25 @@ function checkDocument(file: PickedFile): string | null {
   if (file.size != null && file.size > 15 * MB) return `"${file.name}" is larger than 15 MB. Please attach a smaller copy.`;
   return null;
 }
+
+/** Null when the recording can be uploaded, otherwise the message to show (web `checkAudio`). */
+function checkAudio(file: PickedFile): string | null {
+  if (!AUDIO_EXTS.has(file.ext)) {
+    return `"${file.name}" isn't a recording we can read. Please use MP3, M4A, WAV, OGG/OPUS (WhatsApp) or WebM.`;
+  }
+  if (file.size === 0) return `"${file.name}" is empty.`;
+  if (file.size != null && file.size > MAX_AUDIO_BYTES) {
+    return `"${file.name}" is larger than 20 MB. Please send a shorter voice note.`;
+  }
+  return null;
+}
+
+const formatDuration = (seconds: number) => {
+  const n = Math.max(0, Math.floor(seconds));
+  return `${Math.floor(n / 60)}:${String(n % 60).padStart(2, "0")}`;
+};
+
+const appendText = (current: string, text: string) => (current.trim() ? `${current.trimEnd()}\n\n${text}` : text);
 
 const isQuestionVisible = (q: CommQuestion, fl: CommDraftFields) =>
   !q.only_if || String(fl[q.only_if.field] ?? "") === q.only_if.equals;
@@ -124,7 +156,7 @@ type Step = "compose" | "progress" | "failed" | "questions";
 const HEADINGS: Record<Step, { title: string; sub: string }> = {
   compose: {
     title: "Describe the communication",
-    sub: "Type it, or attach the client's email or minutes. We'll fill in the entry — you check it before it's logged.",
+    sub: "Type it, record or upload a voice note, or attach the client's email or minutes. We'll fill in the entry — you check it before it's logged.",
   },
   progress: { title: "Drafting the entry", sub: "Hang on while we go through it." },
   failed: { title: "We couldn't draft this", sub: "Nothing has been logged." },
@@ -138,6 +170,16 @@ interface DocItem {
   id: string;
   file: PickedFile;
   state: "uploading" | "ready" | "failed";
+  url?: string;
+  error?: string;
+}
+
+interface VoiceNote {
+  id: string;
+  label: string;
+  seconds: number | null;
+  file: PickedFile;
+  state: "uploading" | "transcribing" | "done" | "failed";
   url?: string;
   error?: string;
 }
@@ -169,6 +211,27 @@ const useStyles = makeJoStyles((t) => ({
     gap: 7,
   },
   addText: { ...f.t(12.5, 600), color: t.accentInk },
+  recordBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: 10,
+    paddingVertical: 8,
+    paddingLeft: 14,
+    paddingRight: 8,
+    borderRadius: 22,
+    backgroundColor: t.badTint,
+  },
+  recordDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: t.bad },
+  recordStop: {
+    height: 34,
+    paddingHorizontal: 14,
+    borderRadius: 17,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: t.bad,
+  },
   errorBox: {
     flexDirection: "row",
     alignItems: "flex-start",
@@ -232,6 +295,8 @@ export function CommAiIntake({
   const [questionIndex, setQuestionIndex] = useState(0);
   const [picker, setPicker] = useState<null | "site" | "person">(null);
 
+  const [voice, setVoice] = useState<VoiceNote[]>([]);
+
   /** Bumped to abandon a draft run (cancel, edit-and-retry, unmount). */
   const runRef = useRef(0);
   const mounted = useRef(true);
@@ -242,6 +307,87 @@ export function CommAiIntake({
     },
     [],
   );
+
+  /* ── voice notes ────────────────────────────────────────────────────── */
+
+  const patchVoice = (id: string, patch: Partial<VoiceNote>) =>
+    setVoice((list) => list.map((v) => (v.id === id ? { ...v, ...patch } : v)));
+
+  /** Upload (unless already uploaded), transcribe, and append the words to the notes. */
+  const runVoice = async (id: string, file: PickedFile, uploadedUrl?: string) => {
+    let url = uploadedUrl;
+    if (!url) {
+      patchVoice(id, { state: "uploading", error: undefined });
+      const up = await CustomerCommunicationService.uploadFile(file, VOICE_PREFIX);
+      if (!mounted.current) return;
+      if (!up.ok) return patchVoice(id, { state: "failed", error: up.error });
+      url = up.url;
+    }
+    patchVoice(id, { state: "transcribing", url, error: undefined });
+
+    const started = await CustomerCommunicationService.startTranscript({ audio_url: url, file_name: file.name });
+    if (!mounted.current) return;
+    if (!started.ok) return patchVoice(id, { state: "failed", error: started.error });
+    let view = started.data;
+    const deadline = Date.now() + TRANSCRIPT_TIMEOUT_MS;
+    let misses = 0;
+    while (view.status === "processing") {
+      // Transcribe is slower than drafting; no point asking more often.
+      await sleep(POLL_INTERVAL_MS * 2);
+      if (!mounted.current) return;
+      if (Date.now() > deadline) return patchVoice(id, { state: "failed", error: MSG_TRANSCRIPT_TIMEOUT });
+      const next = await CustomerCommunicationService.getTranscript(view.id);
+      if (!mounted.current) return;
+      if (!next.ok) {
+        if (next.network && ++misses < POLL_MAX_MISSES) continue;
+        return patchVoice(id, { state: "failed", error: next.error });
+      }
+      misses = 0;
+      view = next.data;
+    }
+    if (view.status === "ready" && view.text) {
+      const text = view.text;
+      setNotes((n) => appendText(n, text));
+      setComposeError(null);
+      patchVoice(id, { state: "done" });
+    } else {
+      patchVoice(id, { state: "failed", error: view.error_message?.trim() || AI_MSG_GENERIC });
+    }
+  };
+
+  const recorder = useVoiceRecorder((file, seconds) => {
+    const id = newId();
+    setVoice((list) => [
+      ...list,
+      { id, label: `Voice note ${list.length + 1}`, seconds, file: { ...file }, state: "uploading" },
+    ]);
+    void runVoice(id, file);
+  });
+
+  const addVoiceFiles = (files: PickedFile[]) => {
+    if (!files.length) return;
+    if (!online) {
+      setComposeError(AI_MSG_NETWORK);
+      return;
+    }
+    setComposeError(null);
+    let room = MAX_VOICE_NOTES - voice.length;
+    for (const file of files) {
+      if (room <= 0) {
+        setComposeError(`You can add up to ${MAX_VOICE_NOTES} voice notes.`);
+        break;
+      }
+      const problem = checkAudio(file);
+      if (problem) {
+        setComposeError(problem);
+        continue;
+      }
+      room -= 1;
+      const id = newId();
+      setVoice((list) => [...list, { id, label: file.name, seconds: null, file, state: "uploading" }]);
+      void runVoice(id, file);
+    }
+  };
 
   /* ── documents ──────────────────────────────────────────────────────── */
 
@@ -283,26 +429,36 @@ export function CommAiIntake({
 
   /* ── draft ──────────────────────────────────────────────────────────── */
 
+  const busyVoice = voice.some((v) => v.state === "uploading" || v.state === "transcribing");
   const busyDocs = docs.some((d) => d.state === "uploading");
   const readyDocs = docs.filter((d): d is DocItem & { url: string } => d.state === "ready" && !!d.url);
+  const doneVoice = voice.filter((v): v is VoiceNote & { url: string } => v.state === "done" && !!v.url);
+  const recording = recorder.state !== "idle";
   const notesTooLong = notes.length > MAX_NOTES_CHARS;
   const hasInput = notes.trim().length >= MIN_NOTES_CHARS || readyDocs.length > 0;
-  const canDraft = online && !!site && hasInput && !busyDocs && !notesTooLong;
+  const canDraft = online && !!site && hasInput && !busyVoice && !busyDocs && !recording && !notesTooLong;
 
   const waitingReason = !online
     ? "You're offline. Drafting needs a connection."
-    : busyDocs
-      ? "Waiting for the documents to upload…"
-      : notesTooLong
+    : recording
+      ? "Stop the recording first."
+      : busyVoice
+        ? "Waiting for the voice note to be transcribed…"
+        : busyDocs
+          ? "Waiting for the documents to upload…"
+          : notesTooLong
         ? `Please keep the notes under ${thousands(MAX_NOTES_CHARS)} characters.`
         : !site
           ? "Choose the site first."
           : !hasInput
-            ? "Describe it in a sentence or two, or attach a document."
+            ? recorder.supported
+              ? "Describe it in a sentence or two — type or record it — or attach a document."
+              : "Describe it in a sentence or two, upload a voice note, or attach a document."
             : null;
 
   const sourcesOf = (): string[] => {
     const out: string[] = [];
+    if (doneVoice.length) out.push(doneVoice.length > 1 ? "voice notes" : "voice note");
     if (readyDocs.length) out.push(readyDocs.length > 1 ? "documents" : "document");
     if (!out.length) out.push("notes");
     return out;
@@ -310,7 +466,11 @@ export function CommAiIntake({
 
   const finish = (fl: CommDraftFields) => {
     runRef.current += 1;
-    onDrafted({ fields: fl, attachments: readyDocs.map((d) => d.url), sources: sourcesOf() });
+    onDrafted({
+      fields: fl,
+      attachments: [...readyDocs.map((d) => d.url), ...doneVoice.map((v) => v.url)],
+      sources: sourcesOf(),
+    });
   };
 
   const startQuestions = (r: CommDraftResult) => {
@@ -422,7 +582,13 @@ export function CommAiIntake({
 
   /* ── render ─────────────────────────────────────────────────────────── */
 
-  const heading = HEADINGS[step];
+  const heading =
+    step === "compose" && !recorder.supported
+      ? {
+          ...HEADINGS.compose,
+          sub: "Type it, upload a voice note, or attach the client's email or minutes. We'll fill in the entry — you check it before it's logged.",
+        }
+      : HEADINGS[step];
 
   return (
     <View style={{ flex: 1 }}>
@@ -446,7 +612,7 @@ export function CommAiIntake({
 
             <FieldBlock
               label="What was communicated?"
-              hint="Prefer to speak? Tap the mic on your keyboard and your words are typed here. Correct anything before drafting."
+              hint="Voice notes are written out here so you can correct them before drafting. You can also tap the mic on your keyboard to dictate."
             >
               <TextField
                 value={notes}
@@ -470,7 +636,59 @@ export function CommAiIntake({
               </Text>
             </FieldBlock>
 
+            {recorder.state === "recording" ? (
+              <View style={s.recordBar} accessibilityLiveRegion="polite" accessibilityRole="summary">
+                <View style={s.recordDot} />
+                <Text style={[f.m(13, 600), { color: t.bad, flex: 1 }]}>
+                  Recording {formatDuration(recorder.seconds)}
+                  <Text style={[f.m(12), { color: t.muted }]}> / {formatDuration(MAX_RECORDING_SECONDS)}</Text>
+                </Text>
+                <TouchableOpacity onPress={() => void recorder.cancel()} hitSlop={8} accessibilityRole="button">
+                  <Text style={[f.t(12.5, 600), { color: t.muted }]}>Discard</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={s.recordStop}
+                  onPress={() => void recorder.stop()}
+                  accessibilityRole="button"
+                  accessibilityLabel="Stop recording"
+                >
+                  <Bx name="bx-stop" size={16} color="#FFFFFF" />
+                  <Text style={[f.t(12.5, 600), { color: "#FFFFFF" }]}>Stop</Text>
+                </TouchableOpacity>
+              </View>
+            ) : null}
+
             <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap" }}>
+              {recorder.supported && recorder.state !== "recording" ? (
+                <TouchableOpacity
+                  style={[s.add, { opacity: voice.length >= MAX_VOICE_NOTES || !online ? 0.5 : 1 }]}
+                  disabled={voice.length >= MAX_VOICE_NOTES || !online || recorder.state === "requesting"}
+                  onPress={() => {
+                    recorder.clearError();
+                    setComposeError(null);
+                    void recorder.start();
+                  }}
+                  accessibilityRole="button"
+                  accessibilityLabel="Record voice note"
+                >
+                  {recorder.state === "requesting" ? (
+                    <ActivityIndicator size="small" color={t.accentInk} />
+                  ) : (
+                    <Bx name="bx-microphone" size={16} color={t.accentInk} />
+                  )}
+                  <Text style={s.addText}>Record voice note</Text>
+                </TouchableOpacity>
+              ) : null}
+              <TouchableOpacity
+                style={[s.add, { opacity: voice.length >= MAX_VOICE_NOTES || !online || recording ? 0.5 : 1 }]}
+                disabled={voice.length >= MAX_VOICE_NOTES || !online || recording}
+                onPress={() => void pickDocuments(AUDIO_PICKER_TYPES).then(addVoiceFiles)}
+                accessibilityRole="button"
+                accessibilityLabel="Upload voice note"
+              >
+                <Bx name="bx-upload" size={16} color={t.accentInk} />
+                <Text style={s.addText}>Upload voice note</Text>
+              </TouchableOpacity>
               <TouchableOpacity
                 style={[s.add, { opacity: docs.length >= MAX_DOCUMENTS || !online ? 0.5 : 1 }]}
                 disabled={docs.length >= MAX_DOCUMENTS || !online}
@@ -493,8 +711,57 @@ export function CommAiIntake({
               </TouchableOpacity>
             </View>
 
-            {docs.length > 0 ? (
+            {recorder.error ? <ErrorBox message={recorder.error} /> : null}
+
+            {voice.length > 0 || docs.length > 0 ? (
               <View style={{ gap: 6 }} accessibilityLiveRegion="polite">
+                {voice.map((v) => {
+                  const busy = v.state === "uploading" || v.state === "transcribing";
+                  const name = v.label + (v.seconds ? ` · ${formatDuration(v.seconds)}` : "");
+                  return (
+                    <View key={v.id} style={s.docRow}>
+                      <Bx name="bx-user-voice" size={16} color={t.muted} />
+                      <View style={{ flex: 1, minWidth: 0 }}>
+                        <Text style={[f.t(13, 500), { color: t.ink }]} numberOfLines={1}>
+                          {name}
+                        </Text>
+                        {v.state === "failed" ? (
+                          <Text style={[f.t(12), { color: t.bad, marginTop: 2 }]}>{v.error || AI_MSG_GENERIC}</Text>
+                        ) : (
+                          <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 2 }}>
+                            {busy ? (
+                              <ActivityIndicator size="small" color={t.muted} />
+                            ) : (
+                              <Bx name="bx-check-circle" size={13} color={t.ok} />
+                            )}
+                            <Text style={[f.t(12), { color: t.muted }]}>
+                              {v.state === "uploading"
+                                ? "Uploading…"
+                                : v.state === "transcribing"
+                                  ? "Converting speech to text…"
+                                  : "Added to your notes"}
+                            </Text>
+                          </View>
+                        )}
+                      </View>
+                      {v.state === "failed" ? (
+                        <TouchableOpacity onPress={() => void runVoice(v.id, v.file, v.url)} hitSlop={8} accessibilityRole="button">
+                          <Text style={[f.t(12.5, 600), { color: t.accentInk }]}>Retry</Text>
+                        </TouchableOpacity>
+                      ) : null}
+                      {!busy ? (
+                        <TouchableOpacity
+                          onPress={() => setVoice((list) => list.filter((x) => x.id !== v.id))}
+                          hitSlop={8}
+                          accessibilityRole="button"
+                          accessibilityLabel={`Remove ${name}`}
+                        >
+                          <X size={16} color={t.muted} />
+                        </TouchableOpacity>
+                      ) : null}
+                    </View>
+                  );
+                })}
                 {docs.map((d) => (
                   <View key={d.id} style={s.docRow}>
                     <FileIcon size={16} color={t.muted} />

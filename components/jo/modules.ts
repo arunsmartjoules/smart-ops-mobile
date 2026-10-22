@@ -3,7 +3,7 @@
  *
  *  Bottom bar:  Home · Ops · Resources · Settings
  *  Ops:         top sub-tabs — Tickets · PM · Site Logs · Incidents · Assets
- *  Resources:   top sub-tabs — SLA · Reports · Client comms
+ *  Resources:   top sub-tabs — SLA · Efficiency · Reports · Client comms
  *  Settings:    the Profile screen, plus a "Modules" group linking the screens
  *               that have no tab of their own (Attendance, Alerts)
  *
@@ -16,7 +16,7 @@ import type { PermissionModule } from "@/contexts/PermissionsContext";
 /* ── Sub-tabs (Ops, Resources) ─────────────────────────────────────────── */
 
 export type OpsTabKey = "tickets" | "pm" | "logs" | "incidents" | "assets";
-export type ResourceTabKey = "sla" | "reports" | "comms";
+export type ResourceTabKey = "sla" | "efficiency" | "reports" | "comms";
 export type SubTabKey = OpsTabKey | ResourceTabKey;
 export type SubTabGroup = "ops" | "resources";
 
@@ -29,6 +29,8 @@ export interface OpsTabDef {
   /** Pathname as usePathname() reports it (groups dropped). */
   path: string;
   perm: PermissionModule;
+  /** Shows a "New" badge on the sub-tab — drop the flag once it's no longer new. */
+  isNew?: boolean;
 }
 
 export const OPS_TABS: OpsTabDef[] = [
@@ -40,9 +42,10 @@ export const OPS_TABS: OpsTabDef[] = [
 ];
 
 export const RESOURCE_TABS: OpsTabDef[] = [
-  { key: "sla", label: "SLA", tab: "sla", href: "/(tabs)/sla", path: "/sla", perm: "sla" },
-  { key: "reports", label: "Reports", tab: "reports", href: "/(tabs)/reports", path: "/reports", perm: "reports" },
-  { key: "comms", label: "Client comms", tab: "customer-communication", href: "/(tabs)/customer-communication", path: "/customer-communication", perm: "customer_communication" },
+  { key: "sla", label: "SLA", tab: "sla", href: "/(tabs)/sla", path: "/sla", perm: "sla", isNew: true },
+  { key: "efficiency", label: "Efficiency", tab: "efficiency", href: "/(tabs)/efficiency", path: "/efficiency", perm: "efficiency", isNew: true },
+  { key: "reports", label: "Reports", tab: "reports", href: "/(tabs)/reports", path: "/reports", perm: "reports", isNew: true },
+  { key: "comms", label: "Client comms", tab: "customer-communication", href: "/(tabs)/customer-communication", path: "/customer-communication", perm: "customer_communication", isNew: true },
 ];
 
 export const SUB_TABS: Record<SubTabGroup, OpsTabDef[]> = { ops: OPS_TABS, resources: RESOURCE_TABS };
@@ -120,6 +123,7 @@ export const ROUTE_PERMS: ReadonlyArray<readonly [string, PermissionModule]> = [
   ["/pm-execution", "pm"],
   ["/asset-mapping", "asset"],
   ["/sla", "sla"],
+  ["/efficiency", "efficiency"],
   ["/reports", "reports"],
   ["/customer-communication", "customer_communication"],
   ["/attendance", "attendance"],

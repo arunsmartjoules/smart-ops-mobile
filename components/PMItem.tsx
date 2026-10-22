@@ -47,8 +47,9 @@ const useStyles = makeJoStyles((t) => ({
     padding: 14,
     marginBottom: 8,
   },
-  head: { flexDirection: "row", alignItems: "center", gap: 6 },
-  asset: { ...f.t(12, 600), color: t.ink, flexShrink: 1 },
+  // Pills pin to the top-right while a long asset path wraps beside them.
+  head: { flexDirection: "row", alignItems: "flex-start", gap: 6 },
+  asset: { ...f.t(12, 600), color: t.ink, flex: 1, minWidth: 0, lineHeight: 17, paddingTop: 1.5 },
   pill: {
     height: 20,
     paddingHorizontal: 8,
@@ -139,7 +140,8 @@ const PMItem = React.memo(
           .join(", ")}
       >
         <View style={s.head}>
-          <Text style={s.asset} numberOfLines={1}>
+          {/* asset_id is the full asset path (up to ~65 chars) — wrap, don't clip. */}
+          <Text style={s.asset} numberOfLines={3}>
             {instance.asset_id || "Asset"}
           </Text>
           <View style={[s.pill, { backgroundColor: toneBg(t, tone) }]}>

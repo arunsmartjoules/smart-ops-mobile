@@ -224,7 +224,8 @@ export function PMExecHeader({
     <View style={s.header}>
       <IconButton icon="bx-chevron-left" iconSize={24} label="Go back" onPress={onBack} />
       <View style={s.headText}>
-        <Text style={s.headTitle} numberOfLines={1}>
+        {/* The title is usually the asset path — let it wrap to a second line. */}
+        <Text style={s.headTitle} numberOfLines={2}>
           {title}
         </Text>
         {sub ? (

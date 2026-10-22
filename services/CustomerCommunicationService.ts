@@ -190,6 +190,17 @@ export interface CommDraftView {
   result: CommDraftResult | null;
 }
 
+/** A voice note sent for speech-to-text (server commIntakeService `TranscriptView`). */
+export interface CommTranscriptView {
+  id: string;
+  status: "processing" | "ready" | "rejected" | "failed";
+  text: string | null;
+  language: string | null;
+  error_message: string | null;
+  audio_url: string;
+  file_name: string | null;
+}
+
 export type AiCallResult<T> =
   | { ok: true; data: T }
   | { ok: false; error: string; network: boolean; status: number };
@@ -332,6 +343,16 @@ const CustomerCommunicationService = {
   /** POST /ai/drafts — start drafting an entry from notes + uploaded documents (202). */
   startDraft(body: { site_name: string; notes: string; documents: { url: string; name: string }[] }) {
     return aiCall<CommDraftView>(`${API}/ai/drafts`, { method: "POST", body: JSON.stringify(body) });
+  },
+
+  /** POST /ai/transcripts — start transcribing an uploaded voice note (202). */
+  startTranscript(body: { audio_url: string; file_name: string }) {
+    return aiCall<CommTranscriptView>(`${API}/ai/transcripts`, { method: "POST", body: JSON.stringify(body) });
+  },
+
+  /** GET /ai/transcripts/:id — poll until `status` leaves "processing"; carries the text. */
+  getTranscript(id: string) {
+    return aiCall<CommTranscriptView>(`${API}/ai/transcripts/${encodeURIComponent(id)}`);
   },
 
   /** GET /ai/drafts/:id — poll until `status` leaves "processing". */
