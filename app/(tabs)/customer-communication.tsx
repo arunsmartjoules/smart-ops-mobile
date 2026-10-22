@@ -1,25 +1,38 @@
 /**
- * Client communication — artboard "Client comms" (app.dc.html `r_comms`).
+ * Client communication — artboard "Client comms" (app.dc.html `r_comms`),
+ * brought to parity with the web workspace
+ * (web/src/app/customer-communication/page.tsx):
  *
- * Two streams like the web workspace (web/src/app/customer-communication):
- * action items (owner, closure date, open until Closed) and general feedback
- * (for the record). Counter cards toggle a filter; rows open a detail sheet
- * with status / assignment updates; "Log" opens the create form.
+ *  - three stream tabs (All · Action Items · General Feedback) with counts,
+ *    Action Items also carrying the overdue count;
+ *  - the web's five counter cards per stream — tapping one applies its status
+ *    filter (a second tap clears it) and may jump stream, exactly like
+ *    `pickCounter`; cards with no status filter only switch/reset;
+ *  - search over the web's fields, a date range (the web presets, on
+ *    `communication_date`, default This Month like the web) and CSV export of
+ *    the listed rows;
+ *  - "Log" → manual form or the AI "Describe it" intake;
+ *  - role permissions (`customer_communication` add/edit/delete/export) gate
+ *    the same actions the web gates.
  *
  * Data: the whole logger is fetched once (it is low-volume, same as web) and
  * scoped to the app-wide selected site by `site_name` — the table keys rows
  * by site NAME, so the site code is resolved to `sites.name` first and
- * matched trimmed + case-insensitively, exactly like the web.
+ * matched trimmed + case-insensitively, exactly like the web. Because the
+ * list is one site, the web's hover "by site" breakdown on the counters is
+ * not shown (it would always be a single line).
  */
 import { ChipTabs } from "@/components/jo/ChipTabs";
 import { useNavInsets } from "@/components/jo/navInsets";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { FlatList, RefreshControl, Text, TouchableOpacity, View } from "react-native";
+import { ActivityIndicator, FlatList, RefreshControl, ScrollView, Text, TouchableOpacity, View } from "react-native";
 import NetInfo from "@react-native-community/netinfo";
 import { eq } from "drizzle-orm";
+import { Bx, type BxName } from "@/components/jo/Bx";
 import { Building2, Inbox, MessagesSquare, Plus } from "@/components/jo/bxIcons";
 import { ResourcesTabs } from "@/components/jo/OpsTabs";
 import {
+  DateButton,
   EmptyState,
   Fab,
   JoPage,
@@ -31,6 +44,7 @@ import {
   useJoTheme,
 } from "@/components/jo/ui";
 import { useAuth } from "@/contexts/AuthContext";
+import { usePermissions } from "@/contexts/PermissionsContext";
 import { useAutoSync } from "@/hooks/useAutoSync";
 import { useNetworkStatus } from "@/hooks/useNetworkStatus";
 import { useSelectedSiteCode } from "@/services/SiteSelection";
@@ -41,36 +55,89 @@ import CustomerCommunicationService, {
 } from "@/services/CustomerCommunicationService";
 import { db, userSites } from "@/database";
 import logger from "@/utils/logger";
+import { saveTextFile, toCsv } from "@/utils/fileExport";
+import { CommAiIntake } from "@/components/comms/CommAiIntake";
 import { CommCard } from "@/components/comms/CommCard";
+import { CommChooser, type CommCreateMode } from "@/components/comms/CommChooser";
+import { CommDateSheet } from "@/components/comms/CommDateSheet";
 import { CommDetail } from "@/components/comms/CommDetail";
-import { CommForm, blankForm, formFromRow } from "@/components/comms/CommForm";
+import { CommForm, blankForm, formFromDraft, formFromRow, type FormState } from "@/components/comms/CommForm";
 import { CommSheet } from "@/components/comms/CommSheet";
 import { OfflineNotice } from "@/components/comms/fields";
 import {
-  closedOn,
-  isOverdue,
-  monthShort,
+  DEFAULT_DATE_PRESET,
+  EXPORT_FILENAME,
+  dateRangeLabel,
+  dayDiff,
+  exportRows,
+  resolveDateRange,
   siteKey,
   splitList,
   statusOf,
   streamOf,
   todayStr,
+  type DatePresetKey,
   type Stream,
 } from "@/components/comms/lib";
 
-type Filter = "all" | "open" | "overdue" | "closed" | "month" | "appr" | "meet";
+type StreamTab = Stream | "all";
 
 type SheetState =
   | null
   | { mode: "detail"; id: string }
-  | { mode: "form"; editingId: string | null; fromDetail: boolean };
+  | {
+      mode: "form";
+      editingId: string | null;
+      fromDetail: boolean;
+      /** The AI intake's draft, and what it was drafted from. */
+      prefill?: FormState;
+      aiSources?: string[];
+      /** Remounts the form for every new draft. */
+      nonce: number;
+    }
+  | { mode: "ai"; nonce: number };
+
+interface Counter {
+  label: string;
+  value: number;
+  unit: string;
+  note: string;
+  icon: BxName;
+  color: string;
+  /** Statuses this card narrows the list to; `null` = the card only resets. */
+  filter: string[] | null;
+  /** Tab to jump to before applying the filter. */
+  goStream?: StreamTab;
+}
 
 const useStyles = makeJoStyles((t) => ({
   top: { paddingHorizontal: 16 },
-  counters: { flexDirection: "row", gap: 6, marginTop: 10 },
-  counter: { flex: 1, minWidth: 0, borderRadius: 18, paddingVertical: 10, paddingHorizontal: 12, borderWidth: 1 },
-  counterValue: { ...f.d(22, -0.03) },
-  counterLabel: { ...f.t(11), color: t.ink3, marginTop: 4 },
+  toolbar: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 10 },
+  exportBtn: {
+    height: 36,
+    paddingHorizontal: 13,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: t.isDark ? "rgba(255,255,255,0.09)" : t.lineMid,
+    backgroundColor: t.input,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  counters: { gap: 8, paddingHorizontal: 16 },
+  counter: {
+    width: 172,
+    minHeight: 124,
+    borderRadius: 22,
+    paddingVertical: 12,
+    paddingHorizontal: 13,
+    borderWidth: 1,
+    backgroundColor: t.card,
+  },
+  counterLabel: { ...f.t(12, 500), color: t.ink3, flex: 1 },
+  counterValue: { ...f.d(26, -0.03) },
+  counterUnit: { ...f.t(11.5), color: t.muted },
+  counterNote: { ...f.t(11), color: t.muted, marginTop: 6, lineHeight: 15 },
   list: { paddingHorizontal: 16, paddingTop: 12, paddingBottom: 90 },
 }));
 
@@ -84,6 +151,14 @@ export default function ClientCommunicationScreen() {
   const userEmail = user?.email || null;
   const { isConnected } = useNetworkStatus();
   const online = isConnected !== false;
+
+  // Role permission matrix (Settings › Roles & Permissions) — UI only, same
+  // as the web `useModulePermissions`; the API authorizes every write.
+  const { can } = usePermissions();
+  const canAdd = can("customer_communication", "add");
+  const canEdit = can("customer_communication", "edit");
+  const canDelete = can("customer_communication", "delete");
+  const canExport = can("customer_communication", "export");
 
   // ── Sites (same pattern as Home: local user_sites first, then the API) ──
   // The site is picked by the pill in <ResourcesTabs /> (app-wide, broadcast);
@@ -172,103 +247,152 @@ export default function ClientCommunicationScreen() {
   }, [load, loadSites]);
 
   // ── View state ────────────────────────────────────────────────────────
-  const [stream, setStream] = useState<Stream>("action");
-  const [filter, setFilter] = useState<Filter>("all");
+  const [stream, setStream] = useState<StreamTab>("all");
+  const [statusFilter, setStatusFilter] = useState<string[]>([]);
+  /** Label of the counter card whose filter is applied ("" = none). */
+  const [activeCounter, setActiveCounter] = useState("");
   const [query, setQuery] = useState("");
+  const [preset, setPreset] = useState<DatePresetKey>(DEFAULT_DATE_PRESET);
+  const [custom, setCustom] = useState({ from: "", to: "" });
+  const [dateSheet, setDateSheet] = useState(false);
+  const [chooser, setChooser] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [sheet, setSheet] = useState<SheetState>(null);
   const [toast, setToast] = useState("");
   const hideToast = useCallback(() => setToast(""), []);
+  const nonce = useRef(0);
 
   // A counter filter belongs to the site it was set on — clear it when the
-  // site pill switches site (the old in-screen site sheet did the same).
-  // Adjusted during render (React's "store the previous value" pattern).
+  // site pill switches site. Adjusted during render (React's "store the
+  // previous value" pattern).
   const activeSiteCode = activeSite?.site_code ?? null;
   const [filterSite, setFilterSite] = useState(activeSiteCode);
   if (filterSite !== activeSiteCode) {
     setFilterSite(activeSiteCode);
-    setFilter("all");
+    setStatusFilter([]);
+    setActiveCounter("");
   }
 
   const today = todayStr();
-  const month = today.slice(0, 7);
-  const monthLabel = monthShort(today);
+  const { from: dateFrom, to: dateTo } = useMemo(
+    () => resolveDateRange(preset, custom.from, custom.to, today),
+    [preset, custom, today],
+  );
 
+  // ── Derived collections (web page.tsx, on the site-scoped rows) ────────
   const scoped = useMemo(() => {
     if (!siteName) return [];
     const key = siteKey(siteName);
     return rows.filter((r) => siteKey(r.site_name) === key);
   }, [rows, siteName]);
 
-  const byStream = useMemo(() => {
-    const action: CommRow[] = [];
-    const feedback: CommRow[] = [];
-    for (const r of scoped) (streamOf(r) === "action" ? action : feedback).push(r);
-    return { action, feedback };
-  }, [scoped]);
-
-  const counts = useMemo(() => {
-    const a = byStream.action;
-    const fb = byStream.feedback;
-    const hasType = (r: CommRow, k: string) => splitList(r.communication_type).includes(k);
+  const stats = useMemo(() => {
+    const actions = scoped.filter((e) => streamOf(e) === "action");
+    const feedback = scoped.filter((e) => streamOf(e) === "feedback");
+    const openActions = actions.filter((e) => statusOf(e) !== "Closed");
+    const overdue = openActions.filter((e) => e.expected_closure_date && dayDiff(e.expected_closure_date, today) < 0);
+    const dueSoon = openActions.filter((e) => {
+      const d = e.expected_closure_date ? dayDiff(e.expected_closure_date, today) : 99;
+      return d >= 0 && d <= 7;
+    });
+    const closedRecent = actions.filter(
+      (e) => statusOf(e) === "Closed" && e.expected_closure_date && dayDiff(e.expected_closure_date, today) > -60,
+    );
+    const noSummary = actions.filter((e) => statusOf(e) === "Closed" && !String(e.resolution_summary || "").trim());
+    const types = (e: CommRow) => splitList(e.communication_type);
     return {
-      openAction: a.filter((r) => statusOf(r) !== "Closed").length,
-      openFeedback: fb.filter((r) => statusOf(r) !== "Closed").length,
-      overdue: a.filter((r) => isOverdue(r, today)).length,
-      closedMonth: a.filter((r) => statusOf(r) === "Closed" && closedOn(r)?.startsWith(month)).length,
-      loggedMonth: fb.filter((r) => (r.communication_date || "").startsWith(month)).length,
-      appr: fb.filter((r) => hasType(r, "Appreciation")).length,
-      meet: fb.filter((r) => hasType(r, "Meeting / Review")).length,
+      actions: actions.length,
+      feedback: feedback.length,
+      openActions: openActions.length,
+      overdue: overdue.length,
+      dueSoon: dueSoon.length,
+      closedRecent: closedRecent.length,
+      noSummary: noSummary.length,
+      fbNew: feedback.filter((e) => statusOf(e) === "Logged").length,
+      fbShared: feedback.filter((e) => statusOf(e) === "Shared with team").length,
+      fbPraise: feedback.filter((e) => types(e).includes("Appreciation") || types(e).includes("Feedback")).length,
+      fbReview: feedback.filter((e) => types(e).includes("Meeting / Review") || types(e).includes("Update")).length,
     };
-  }, [byStream, today, month]);
+  }, [scoped, today]);
 
   const listed = useMemo(() => {
     const q = query.trim().toLowerCase();
-    const hasType = (r: CommRow, k: string) => splitList(r.communication_type).includes(k);
-    return byStream[stream]
-      .filter((r) => {
-        switch (filter) {
-          case "open":
-            return statusOf(r) !== "Closed";
-          case "overdue":
-            return isOverdue(r, today);
-          case "closed":
-            return statusOf(r) === "Closed" && !!closedOn(r)?.startsWith(month);
-          case "month":
-            return (r.communication_date || "").startsWith(month);
-          case "appr":
-            return hasType(r, "Appreciation");
-          case "meet":
-            return hasType(r, "Meeting / Review");
-          default:
-            return true;
+    return scoped
+      .filter((e) => {
+        if (stream !== "all" && streamOf(e) !== stream) return false;
+        if (statusFilter.length && !statusFilter.includes(statusOf(e))) return false;
+        const d = e.communication_date || "";
+        if (dateFrom && d < dateFrom) return false;
+        if (dateTo && d > dateTo) return false;
+        if (q) {
+          const hay = [e.cc_id, e.detailed_description, e.input_from, e.assignee, e.expected_action]
+            .join(" ")
+            .toLowerCase();
+          if (!hay.includes(q)) return false;
         }
-      })
-      .filter((r) => {
-        if (!q) return true;
-        return [r.cc_id, r.detailed_description, r.input_from, r.assignee, r.expected_action]
-          .join(" ")
-          .toLowerCase()
-          .includes(q);
+        return true;
       })
       .sort((a, b) => {
         const ka = (a.communication_date || "") + (a.communication_time || "");
         const kb = (b.communication_date || "") + (b.communication_time || "");
         return kb < ka ? -1 : kb > ka ? 1 : 0;
       });
-  }, [byStream, stream, filter, query, today, month]);
+  }, [scoped, stream, statusFilter, dateFrom, dateTo, query]);
 
-  const counters: { key: Filter; label: string; value: number; color: string }[] =
-    stream === "action"
+  // Web colour tokens → app tones: thunder → ink, flame → warn,
+  // danger → bad, success → ok, sky → info.
+  const counters: Counter[] =
+    stream === "feedback"
       ? [
-          { key: "open", label: "Open", value: counts.openAction, color: t.ink },
-          { key: "overdue", label: "Overdue", value: counts.overdue, color: t.bad },
-          { key: "closed", label: `Closed · ${monthLabel}`, value: counts.closedMonth, color: t.ok },
+          { label: "Feedback logged", value: stats.feedback, unit: "entries", note: "No owner, no action, no due date", icon: "bx-message-rounded", color: t.ink, filter: null },
+          { label: "Awaiting acknowledgement", value: stats.fbNew, unit: "unread", note: stats.fbNew ? "Logged but not yet acknowledged" : "Everything has been acknowledged", icon: "bx-bell", color: stats.fbNew ? t.warn : t.ok, filter: ["Logged"] },
+          { label: "Shared with team", value: stats.fbShared, unit: "circulated", note: "Read out or passed on to the site team", icon: "bx-share-alt", color: t.ok, filter: ["Shared with team"] },
+          { label: "Appreciation", value: stats.fbPraise, unit: "received", note: "Positive notes from the client side", icon: "bx-like", color: t.info, filter: null },
+          { label: "Reviews & updates", value: stats.fbReview, unit: "logged", note: "Meeting minutes and client updates on record", icon: "bx-group", color: t.ink, filter: null },
         ]
       : [
-          { key: "month", label: `Logged · ${monthLabel}`, value: counts.loggedMonth, color: t.ink },
-          { key: "appr", label: "Appreciation", value: counts.appr, color: t.ok },
-          { key: "meet", label: "Reviews", value: counts.meet, color: t.info },
+          { label: "Open action items", value: stats.openActions, unit: "live", note: "Assigned and not yet closed", icon: "bx-flag", color: t.ink, filter: ["Open", "In Progress", "Blocked"], goStream: "action" },
+          { label: "Past closure date", value: stats.overdue, unit: "overdue", note: stats.overdue ? "Owners have missed the committed date" : "Nothing past its date", icon: "bx-time-five", color: stats.overdue ? t.bad : t.ok, filter: null, goStream: "action" },
+          { label: "Due within 7 days", value: stats.dueSoon, unit: "items", note: "Closing this week", icon: "bx-calendar-exclamation", color: t.warn, filter: null, goStream: "action" },
+          { label: "Closed", value: stats.closedRecent, unit: "last 60 days", note: stats.noSummary ? `${stats.noSummary} closed without a resolution summary` : "All closures carry a summary", icon: "bx-check-circle", color: t.ok, filter: ["Closed"], goStream: "action" },
+          { label: "General feedback", value: stats.feedback, unit: "logged", note: "Kept separately — no owner, no due date", icon: "bx-message-rounded", color: t.info, filter: null, goStream: "feedback" },
         ];
+
+  const pickStream = (key: StreamTab) => {
+    setStream(key);
+    setStatusFilter([]);
+    setActiveCounter("");
+  };
+
+  /** Web `pickCounter`: a filtering card stays lit; a second tap clears it. */
+  const pickCounter = (c: Counter) => {
+    if (activeCounter === c.label) {
+      setStatusFilter([]);
+      setActiveCounter("");
+      return;
+    }
+    if (c.goStream) setStream(c.goStream);
+    setStatusFilter(c.filter ?? []);
+    setActiveCounter(c.filter ? c.label : "");
+  };
+
+  const hasFilters = Boolean(query.trim() || statusFilter.length || dateFrom || dateTo);
+  const clearFilters = () => {
+    setQuery("");
+    setStatusFilter([]);
+    setActiveCounter("");
+    setPreset("all");
+  };
+
+  // ── People for the assignee pickers (people ∪ names already in data) ──
+  const assigneePeople: CommPerson[] = useMemo(() => {
+    const roleByName = new Map(people.map((p) => [p.name, p.role]));
+    const names = new Set<string>(people.map((p) => p.name));
+    rows.forEach((r) => r.assignee && names.add(r.assignee));
+    return Array.from(names)
+      .sort((a, b) => a.localeCompare(b))
+      .map((name) => ({ name, role: roleByName.get(name) || "" }));
+  }, [people, rows]);
 
   // ── Sheet plumbing ────────────────────────────────────────────────────
   const rowById = useCallback((id: string | null) => (id ? rows.find((r) => r.id === id) ?? null : null), [rows]);
@@ -292,96 +416,141 @@ export default function ClientCommunicationScreen() {
       setToast("You're offline — logging needs a connection");
       return;
     }
-    setSheet({ mode: "form", editingId: null, fromDetail: false });
+    setChooser(true);
   };
 
-  const pickStream = (k: Stream) => {
-    setStream(k);
-    setFilter("all");
+  const pickCreateMode = (mode: CommCreateMode) => {
+    setChooser(false);
+    // Let the chooser finish closing before the full sheet presents — iOS
+    // drops the second of two modals presented at once.
+    setTimeout(() => {
+      nonce.current += 1;
+      setSheet(
+        mode === "ai"
+          ? { mode: "ai", nonce: nonce.current }
+          : { mode: "form", editingId: null, fromDetail: false, nonce: nonce.current },
+      );
+    }, 300);
+  };
+
+  const exportCsv = async () => {
+    if (exporting) return;
+    if (!listed.length) {
+      setToast("Nothing in this view to export");
+      return;
+    }
+    setExporting(true);
+    try {
+      const msg = await saveTextFile(toCsv(exportRows(listed)), EXPORT_FILENAME);
+      if (msg) setToast(`${listed.length} ${listed.length === 1 ? "entry" : "entries"} exported · ${msg}`);
+    } catch (error) {
+      logger.warn("Comms CSV export failed", { error });
+      setToast("Couldn't save the export. Please try again.");
+    } finally {
+      setExporting(false);
+    }
   };
 
   // ── Render ────────────────────────────────────────────────────────────
   const loading = !loaded || (!sitesLoaded && sites.length === 0);
   const noSite = sitesLoaded && sites.length === 0;
 
+  const overdueMeta = stats.overdue ? `${stats.actions} · ${stats.overdue} overdue` : stats.actions;
+
   const header = (
     <View style={s.top}>
-      {/* First row: search (always visible), filters the list below. */}
       <SearchField
         value={query}
         onChangeText={setQuery}
-        placeholder="Ref, description, person"
+        placeholder="Reference, description or person"
         style={{ marginTop: 12 }}
       />
 
       {/* Same chip tabs as SLA's Overall · Comfort · … */}
       <ChipTabs
         items={[
-          { key: "action" as Stream, label: "Action items", icon: "bx-flag", color: t.accentInk, meta: counts.openAction },
-          { key: "feedback" as Stream, label: "Feedback", icon: "bx-message-rounded", color: t.accentInk, meta: counts.openFeedback },
+          { key: "all" as StreamTab, label: "All communications", icon: "bx-envelope", color: t.accentInk, meta: loading ? null : scoped.length },
+          { key: "action" as StreamTab, label: "Action Items", icon: "bx-flag", color: stats.overdue ? t.bad : t.accentInk, meta: loading ? null : overdueMeta },
+          { key: "feedback" as StreamTab, label: "General Feedback", icon: "bx-message-rounded", color: t.accentInk, meta: loading ? null : stats.feedback },
         ]}
         value={stream}
         onChange={pickStream}
         style={{ marginTop: 12 }}
       />
 
-      <View style={s.counters}>
-        {counters.map((c) => {
-          const on = filter === c.key;
-          return (
-            <TouchableOpacity
-              key={c.key}
-              onPress={() => setFilter((cur) => (cur === c.key ? "all" : c.key))}
-              activeOpacity={0.8}
-              accessibilityRole="button"
-              accessibilityState={{ selected: on }}
-              accessibilityLabel={`${c.label}: ${c.value}${on ? ", filter on" : ""}`}
-              style={[
-                s.counter,
-                { backgroundColor: on ? t.line : t.card, borderColor: on ? t.accent : t.cardBorder },
-              ]}
-            >
-              <Text style={[s.counterValue, { color: c.color }]}>{loading ? "–" : c.value}</Text>
-              <Text style={s.counterLabel} numberOfLines={1}>
-                {c.label}
-              </Text>
-            </TouchableOpacity>
-          );
-        })}
-      </View>
-
-      {loadError && rows.length > 0 && !fromCache ? (
-        <OfflineNotice text={`Couldn't refresh: ${loadError}. Showing the last list.`} style={{ marginTop: 10 }} />
-      ) : fromCache || !online ? (
-        <OfflineNotice
-          text={fromCache ? "Offline · showing the last synced list. Changes need a connection." : "You're offline. Changes need a connection."}
-          style={{ marginTop: 10 }}
+      <View style={s.toolbar}>
+        <DateButton
+          label={dateRangeLabel(preset, dateFrom, dateTo)}
+          onPress={() => setDateSheet(true)}
+          style={{ flexShrink: 1 }}
         />
-      ) : null}
+        <View style={{ flex: 1 }} />
+        {canExport ? (
+          <TouchableOpacity
+            onPress={() => void exportCsv()}
+            disabled={exporting || loading}
+            style={[s.exportBtn, { opacity: exporting || loading ? 0.6 : 1 }]}
+            accessibilityRole="button"
+            accessibilityLabel={`Export ${listed.length} listed entries as CSV`}
+            accessibilityState={{ busy: exporting }}
+          >
+            {exporting ? <ActivityIndicator size="small" color={t.muted} /> : <Bx name="bx-download" size={16} color={t.accentInk} />}
+            <Text style={[f.t(13, 500), { color: t.ink }]}>Export</Text>
+          </TouchableOpacity>
+        ) : null}
+      </View>
     </View>
   );
 
-  const emptyCopy = (): { title: string; sub: string } => {
-    if (query.trim()) return { title: "No matches", sub: `Nothing in this view matches “${query.trim()}”.` };
-    switch (filter) {
-      case "open":
-        return { title: "No open action items", sub: "Everything raised at this site is closed." };
-      case "overdue":
-        return { title: "Nothing overdue", sub: "Every open item is within its closure date." };
-      case "closed":
-        return { title: `Nothing closed in ${monthLabel}`, sub: "Items closed this month show here." };
-      case "month":
-        return { title: `No feedback logged in ${monthLabel}`, sub: "Feedback logged this month shows here." };
-      case "appr":
-        return { title: "No appreciation yet", sub: "Positive notes from the client show here." };
-      case "meet":
-        return { title: "No reviews logged", sub: "Meeting and review notes show here." };
-      default:
-        return stream === "action"
-          ? { title: "No action items", sub: "Client asks that need an owner and a closure date show here. Tap Log to add one." }
-          : { title: "No feedback logged", sub: "Appreciation, updates and review notes show here. Tap Log to add one." };
-    }
-  };
+  const countersRow = (
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      style={{ marginHorizontal: -16, flexGrow: 0 }}
+      contentContainerStyle={s.counters}
+    >
+      {counters.map((c) => {
+        const on = activeCounter === c.label;
+        return (
+          <TouchableOpacity
+            key={c.label}
+            onPress={() => pickCounter(c)}
+            activeOpacity={0.8}
+            accessibilityRole="button"
+            accessibilityState={{ selected: on }}
+            accessibilityLabel={`${c.label}: ${loading ? "loading" : `${c.value} ${c.unit}`}. ${c.note}${on ? ". Filter on" : ""}`}
+            style={[s.counter, { borderColor: on ? t.accent : t.cardBorder, backgroundColor: on ? t.accentTint : t.card }]}
+          >
+            <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 7 }}>
+              <Bx name={c.icon} size={15} color={c.color} />
+              <Text style={s.counterLabel} numberOfLines={2}>
+                {c.label}
+              </Text>
+            </View>
+            <View style={{ flexDirection: "row", alignItems: "baseline", gap: 6, marginTop: 6 }}>
+              <Text style={[s.counterValue, { color: c.color }]}>{loading ? "–" : c.value}</Text>
+              <Text style={s.counterUnit} numberOfLines={1}>
+                {c.unit}
+              </Text>
+            </View>
+            <Text style={s.counterNote} numberOfLines={2}>
+              {loading ? " " : c.note}
+            </Text>
+          </TouchableOpacity>
+        );
+      })}
+    </ScrollView>
+  );
+
+  const notice =
+    loadError && rows.length > 0 && !fromCache ? (
+      <OfflineNotice text={`Couldn't refresh: ${loadError}. Showing the last list.`} style={{ marginTop: 10 }} />
+    ) : fromCache || !online ? (
+      <OfflineNotice
+        text={fromCache ? "Offline · showing the last synced list. Changes need a connection." : "You're offline. Changes need a connection."}
+        style={{ marginTop: 10 }}
+      />
+    ) : null;
 
   let body: React.ReactNode;
   if (noSite) {
@@ -393,7 +562,8 @@ export default function ClientCommunicationScreen() {
   } else if (loading) {
     body = (
       <View style={{ paddingHorizontal: 16, paddingTop: 12, gap: 8 }}>
-        {[0, 1, 2, 3].map((i) => (
+        {countersRow}
+        {[0, 1, 2].map((i) => (
           <Shimmer key={i} height={138} radius={22} />
         ))}
       </View>
@@ -410,7 +580,6 @@ export default function ClientCommunicationScreen() {
       </View>
     );
   } else {
-    const empty = emptyCopy();
     body = (
       <FlatList
         data={listed}
@@ -420,13 +589,27 @@ export default function ClientCommunicationScreen() {
         contentContainerStyle={[s.list, { paddingBottom: clearance + 64 }]}
         keyboardShouldPersistTaps="handled"
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={t.muted} colors={[t.accent]} />}
+        ListHeaderComponent={
+          <View style={{ marginBottom: 12 }}>
+            {countersRow}
+            {notice}
+          </View>
+        }
         ListEmptyComponent={
-          <EmptyState
-            icon={Inbox}
-            title={empty.title}
-            sub={empty.sub}
-            action={filter !== "all" || query ? { label: "Show all", onPress: () => { setFilter("all"); setQuery(""); } } : undefined}
-          />
+          hasFilters ? (
+            <EmptyState
+              icon={Inbox}
+              title="Nothing matches these filters"
+              sub="Try a wider date range, another tab or a different search."
+              action={{ label: "Clear filters", onPress: clearFilters }}
+            />
+          ) : (
+            <EmptyState
+              icon={Inbox}
+              title="Nothing logged yet"
+              sub={canAdd ? "Tap Log to record the first communication for this site." : "Communications logged for this site show here."}
+            />
+          )
         }
       />
     );
@@ -437,8 +620,23 @@ export default function ClientCommunicationScreen() {
       <ResourcesTabs />
       {header}
       <View style={{ flex: 1 }}>{body}</View>
-      {!noSite ? <Fab label="Log" icon={Plus} onPress={openLog} /> : null}
+      {!noSite && canAdd ? <Fab label="Log" icon={Plus} onPress={openLog} /> : null}
       {!sheet ? <Toast message={toast} onHide={hideToast} /> : null}
+
+      <CommDateSheet
+        visible={dateSheet}
+        preset={preset}
+        from={dateFrom}
+        to={dateTo}
+        onClose={() => setDateSheet(false)}
+        onPickPreset={setPreset}
+        onCustomRange={(from, to) => {
+          setCustom({ from, to });
+          setPreset("custom");
+        }}
+      />
+
+      <CommChooser visible={chooser} onClose={() => setChooser(false)} onPick={pickCreateMode} />
 
       <CommSheet
         visible={!!sheet}
@@ -449,7 +647,15 @@ export default function ClientCommunicationScreen() {
               ? editingRow.cc_id || undefined
               : siteName || undefined
         }
-        title={sheet?.mode === "detail" ? "Entry" : editingRow ? "Edit entry" : "Log communication"}
+        title={
+          sheet?.mode === "detail"
+            ? "Entry"
+            : sheet?.mode === "ai"
+              ? "Describe it"
+              : editingRow
+                ? "Edit entry"
+                : "Log communication"
+        }
         onClose={() => setSheet(null)}
         overlay={sheet ? <Toast message={toast} onHide={hideToast} /> : null}
         onBack={
@@ -470,21 +676,58 @@ export default function ClientCommunicationScreen() {
                 userEmail={userEmail}
                 online={online}
                 bottomInset={bottomInset}
+                canEdit={canEdit}
+                canDelete={canDelete}
                 onUpdated={(row, msg) => {
+                  // Converting feedback to an action follows it to its tab (web convertToAction).
+                  if (stream !== "all" && streamOf(row) !== stream) {
+                    setStream(streamOf(row));
+                    setStatusFilter([]);
+                    setActiveCounter("");
+                  }
                   upsertRow(row);
                   setToast(msg);
                 }}
-                onEdit={() => setSheet({ mode: "form", editingId: detailRow.id, fromDetail: true })}
+                onDeleted={(row) => {
+                  setRows((prev) => prev.filter((r) => r.id !== row.id));
+                  setSheet(null);
+                  setToast(`${row.cc_id || "Entry"} deleted`);
+                }}
+                onEdit={() => {
+                  nonce.current += 1;
+                  setSheet({ mode: "form", editingId: detailRow.id, fromDetail: true, nonce: nonce.current });
+                }}
               />
             ) : (
               <View style={{ padding: 16 }}>
                 <EmptyState icon={Inbox} title="Entry not found" sub="It may have been deleted. Pull to refresh the list." />
               </View>
             )
+          ) : sheet?.mode === "ai" ? (
+            <CommAiIntake
+              key={`ai-${sheet.nonce}`}
+              siteNames={sites.map((x) => x.name).filter(Boolean)}
+              defaultSite={siteName}
+              people={assigneePeople}
+              online={online}
+              bottomInset={bottomInset}
+              onCancel={() => setSheet(null)}
+              onDrafted={(outcome) => {
+                nonce.current += 1;
+                setSheet({
+                  mode: "form",
+                  editingId: null,
+                  fromDetail: false,
+                  prefill: formFromDraft(outcome, siteName),
+                  aiSources: outcome.sources,
+                  nonce: nonce.current,
+                });
+              }}
+            />
           ) : sheet?.mode === "form" ? (
             <CommForm
-              key={sheet.editingId ?? "new"}
-              initial={editingRow ? formFromRow(editingRow) : blankForm(siteName)}
+              key={`${sheet.editingId ?? "new"}-${sheet.nonce}`}
+              initial={editingRow ? formFromRow(editingRow) : sheet.prefill ?? blankForm(siteName)}
               editing={editingRow}
               rows={rows}
               siteNames={sites.map((x) => x.name).filter(Boolean)}
@@ -493,10 +736,12 @@ export default function ClientCommunicationScreen() {
               userEmail={userEmail}
               online={online}
               bottomInset={bottomInset}
+              aiSources={editingRow ? null : sheet.aiSources ?? null}
               onSaved={(row, msg) => {
                 upsertRow(row);
                 setStream(streamOf(row));
-                setFilter("all");
+                setStatusFilter([]);
+                setActiveCounter("");
                 setSheet(null);
                 setToast(msg);
               }}

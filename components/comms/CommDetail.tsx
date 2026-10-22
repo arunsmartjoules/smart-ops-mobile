@@ -2,16 +2,19 @@
  * Entry detail — the mobile twin of the web DetailDrawer
  * (web/src/app/customer-communication/page.tsx): every field, the action
  * assignment block (assignee · closure date · status · owner teams ·
- * resolution summary, saved together with one activity-trail entry), the
- * feedback record state (saves on tap) with "Convert to action item", the
- * activity trail and "Add an update".
+ * resolution summary), attachments (add / remove), all saved together with
+ * one activity-trail entry; the feedback record state (saves on tap) with
+ * "Convert to action item", the activity trail, "Add an update" and Delete.
  *
- * "Edit entry" (full form) is offered to the entry's author only, as on web.
- * Delete and attachment upload/removal are web-only.
+ * Permissions follow the web exactly: the role's `edit` grant gates Save,
+ * the record state and Convert; "Edit entry" also needs the entry's author;
+ * `delete` gates Delete. "Add an update" is ungated, as on the web. The API
+ * authorizes every write independently (site membership).
  */
 import React, { useState } from "react";
-import { Linking, ScrollView, Text, TouchableOpacity, View } from "react-native";
-import { ArrowLeftRight, Paperclip, Pencil, Send } from "@/components/jo/bxIcons";
+import { ActivityIndicator, Alert, ScrollView, Text, TouchableOpacity, View } from "react-native";
+import { Bx } from "@/components/jo/Bx";
+import { ArrowLeftRight, Pencil, Send } from "@/components/jo/bxIcons";
 import { toneBg, toneFg } from "@/constants/jo";
 import {
   Chip,
@@ -29,6 +32,7 @@ import CustomerCommunicationService, {
   type CommWrite,
 } from "@/services/CustomerCommunicationService";
 import { DateField, FieldBlock, OfflineNotice, PickerPanel, SelectButton, TextField, type PickerItem } from "./fields";
+import { CommAttachments } from "./CommAttachments";
 import {
   ACTION_STATUSES,
   FEEDBACK_STATUSES,
@@ -39,6 +43,7 @@ import {
   hhmm,
   nowStamp,
   parseTimeline,
+  points,
   priorityTone,
   splitLinks,
   splitList,
@@ -56,6 +61,7 @@ interface Draft {
   status?: string;
   resolution?: string;
   ownerTeams?: string[];
+  attachments?: string[];
 }
 
 const useStyles = makeJoStyles((t) => ({
@@ -74,15 +80,6 @@ const useStyles = makeJoStyles((t) => ({
   factSub: { ...f.t(11.5), color: t.muted, marginTop: 2 },
   chips: { flexDirection: "row", flexWrap: "wrap", gap: 7 },
   sectionHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 },
-  attach: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    borderRadius: 16,
-    backgroundColor: t.raised,
-  },
   tlRow: { flexDirection: "row", gap: 11, paddingVertical: 9, borderTopWidth: 1, borderTopColor: t.line },
   tlWhat: { ...f.t(13), color: t.ink, lineHeight: 18 },
   tlWho: { ...f.t(11.5), color: t.muted, marginTop: 3 },
@@ -106,7 +103,10 @@ export function CommDetail({
   userEmail,
   online,
   bottomInset,
+  canEdit,
+  canDelete,
   onUpdated,
+  onDeleted,
   onEdit,
 }: {
   row: CommRow;
@@ -116,7 +116,12 @@ export function CommDetail({
   userEmail: string | null;
   online: boolean;
   bottomInset: number;
+  /** Role `edit` grant for customer_communication. */
+  canEdit: boolean;
+  /** Role `delete` grant for customer_communication. */
+  canDelete: boolean;
   onUpdated: (row: CommRow, message: string) => void;
+  onDeleted: (row: CommRow) => void;
   onEdit: () => void;
 }) {
   const t = useJoTheme();
@@ -124,7 +129,8 @@ export function CommDetail({
   const today = todayStr();
   const [draft, setDraft] = useState<Draft>({});
   const [note, setNote] = useState("");
-  const [saving, setSaving] = useState<null | "save" | "status" | "convert" | "note">(null);
+  const [saving, setSaving] = useState<null | "save" | "status" | "convert" | "note" | "delete">(null);
+  const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
   const [assigneeOpen, setAssigneeOpen] = useState(false);
 
@@ -136,9 +142,10 @@ export function CommDetail({
     status: draft.status ?? statusOf(row),
     resolution: draft.resolution ?? (row.resolution_summary || ""),
     ownerTeams: draft.ownerTeams ?? splitList(row.owner),
+    attachments: draft.attachments ?? splitLinks(row.attachments),
   };
   const statusOptions = isAction ? ACTION_STATUSES : FEEDBACK_STATUSES;
-  const links = splitLinks(row.attachments);
+  const pts = points(row.detailed_description);
   const timeline = parseTimeline(row.timeline).slice().reverse();
   const open = isAction && view.status !== "Closed";
   const days = view.closureDate ? dayDiff(view.closureDate, today) : null;
@@ -153,6 +160,8 @@ export function CommDetail({
           : `Due in ${days} days`;
   const dueColor = open && days != null && days < 0 ? t.bad : open && days != null && days <= 7 ? t.warn : t.muted;
   const isOwner = !userEmail || (row.email_address || "").trim().toLowerCase() === userEmail.trim().toLowerCase();
+  // Web: the full-form edit needs the role's edit grant AND authorship.
+  const canEditEntry = canEdit && isOwner;
   const busy = saving !== null;
 
   const assigneeItems: PickerItem[] = (() => {
@@ -214,6 +223,10 @@ export function CommDetail({
       patch.owner = draft.ownerTeams.join(", ");
       changes.push("owner teams updated");
     }
+    if (draft.attachments !== undefined && draft.attachments.join("\n") !== (row.attachments || "")) {
+      patch.attachments = draft.attachments.join("\n");
+      changes.push("attachments updated");
+    }
     if (!changes.length) {
       setError("No changes to save.");
       return;
@@ -254,6 +267,32 @@ export function CommDetail({
       setNote("");
       onUpdated(updated, "Update posted to " + (row.cc_id || "entry"));
     }
+  };
+
+  const confirmDelete = () => {
+    if (busy) return;
+    if (!online) {
+      setError("You're offline. Connect to delete this entry.");
+      return;
+    }
+    Alert.alert("Delete communication", `Delete ${row.cc_id || "this entry"}? This cannot be undone.`, [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Delete",
+        style: "destructive",
+        onPress: async () => {
+          setSaving("delete");
+          setError("");
+          const res = await CustomerCommunicationService.remove(row.id);
+          setSaving(null);
+          if (!res.success) {
+            setError(res.error);
+            return;
+          }
+          onDeleted(row);
+        },
+      },
+    ]);
   };
 
   const pTone = priorityTone(row.priority);
@@ -306,7 +345,8 @@ export function CommDetail({
           </View>
           <Text style={[f.d(22, -0.02, 1.2), { color: t.ink }]}>{titleOf(row)}</Text>
           <Text style={[f.t(12.5), { color: t.muted }]}>
-            {row.site_name || "—"} · {isAction ? "Action item" : "General feedback"}
+            {row.site_name || "—"} · {isAction ? "Action item" : "General feedback"} · {pts.length} point
+            {pts.length === 1 ? "" : "s"}
           </Text>
         </View>
 
@@ -348,8 +388,9 @@ export function CommDetail({
               <FieldBlock label="Assigned to">
                 <SelectButton
                   value={view.assignee}
-                  placeholder="Search a person"
+                  placeholder={canEdit ? "Search a person" : "Unassigned"}
                   onPress={() => setAssigneeOpen(true)}
+                  disabled={!canEdit}
                   accessibilityLabel="Assigned to"
                 />
               </FieldBlock>
@@ -357,6 +398,8 @@ export function CommDetail({
                 <DateField
                   value={view.closureDate}
                   onChange={(v) => setDraft((d) => ({ ...d, closureDate: v }))}
+                  disabled={!canEdit}
+                  placeholder={canEdit ? undefined : "No closure date"}
                   accessibilityLabel="Expected closure date"
                 />
               </FieldBlock>
@@ -367,7 +410,7 @@ export function CommDetail({
                       key={st}
                       label={st}
                       selected={view.status === st}
-                      onPress={() => setDraft((d) => ({ ...d, status: st }))}
+                      onPress={canEdit ? () => setDraft((d) => ({ ...d, status: st })) : undefined}
                     />
                   ))}
                 </View>
@@ -381,11 +424,14 @@ export function CommDetail({
                         key={team}
                         label={team}
                         selected={on}
-                        onPress={() =>
-                          setDraft((d) => ({
-                            ...d,
-                            ownerTeams: on ? view.ownerTeams.filter((x) => x !== team) : [...view.ownerTeams, team],
-                          }))
+                        onPress={
+                          canEdit
+                            ? () =>
+                                setDraft((d) => ({
+                                  ...d,
+                                  ownerTeams: on ? view.ownerTeams.filter((x) => x !== team) : [...view.ownerTeams, team],
+                                }))
+                            : undefined
                         }
                       />
                     );
@@ -401,9 +447,10 @@ export function CommDetail({
                 <TextField
                   value={view.resolution}
                   onChangeText={(v) => setDraft((d) => ({ ...d, resolution: v }))}
-                  placeholder="Record what was done to close this out"
+                  placeholder={canEdit ? "Record what was done to close this out" : "No resolution summary yet."}
                   multiline
                   minHeight={90}
+                  editable={canEdit}
                   accessibilityLabel="Resolution summary"
                 />
               </FieldBlock>
@@ -414,50 +461,61 @@ export function CommDetail({
             <Text style={[f.t(12.5), { color: t.ink2, lineHeight: 18 }]}>
               Kept as general feedback — no owner, no closure date. Convert it if it turns into work.
             </Text>
-            <FieldBlock label="Record state" hint="Saves straight away.">
+            <FieldBlock
+              label="Record state"
+              hint={
+                canEdit
+                  ? "“Awaiting acknowledgement” counts entries still at Logged; “Shared with team” counts the ones passed on to the site team. Saves straight away."
+                  : undefined
+              }
+            >
               <View style={s.chips}>
                 {statusOptions.map((st) => (
                   <Chip
                     key={st}
                     label={st}
                     selected={view.status === st}
-                    onPress={() => setFeedbackStatus(st)}
+                    onPress={canEdit ? () => setFeedbackStatus(st) : undefined}
                   />
                 ))}
               </View>
             </FieldBlock>
-            <SecondaryButton
-              label="Convert to action item"
-              icon={ArrowLeftRight}
-              onPress={convertToAction}
-              busy={saving === "convert"}
-              height={46}
-            />
+            {canEdit ? (
+              <SecondaryButton
+                label="Convert to action item"
+                icon={ArrowLeftRight}
+                onPress={convertToAction}
+                busy={saving === "convert"}
+                height={46}
+              />
+            ) : null}
           </View>
         )}
 
         {/* Attachments */}
         <View style={[s.card, { gap: 8 }]}>
           <Text style={s.caption}>Attachments</Text>
-          {links.length === 0 ? (
-            <Text style={[f.t(12.5), { color: t.muted }]}>Nothing attached to this entry.</Text>
-          ) : (
-            links.map((url) => (
-              <TouchableOpacity
-                key={url}
-                style={s.attach}
-                onPress={() => Linking.openURL(url).catch(() => setError("Couldn't open that link."))}
-                accessibilityRole="link"
-                accessibilityLabel={`Open attachment ${url}`}
-              >
-                <Paperclip size={15} color={t.accentInk} />
-                <Text style={[f.t(12.5), { color: t.ink2, flex: 1 }]} numberOfLines={1}>
-                  {decodeName(url)}
-                </Text>
-                <Text style={[f.t(12, 600), { color: t.accentInk }]}>View</Text>
-              </TouchableOpacity>
-            ))
-          )}
+          <CommAttachments
+            urls={view.attachments}
+            onAdd={(urls) =>
+              setDraft((d) => ({
+                ...d,
+                attachments: [...(d.attachments ?? splitLinks(row.attachments)), ...urls],
+              }))
+            }
+            onRemove={(url) =>
+              setDraft((d) => ({
+                ...d,
+                attachments: (d.attachments ?? splitLinks(row.attachments)).filter((x) => x !== url),
+              }))
+            }
+            editable={canEdit}
+            online={online}
+            onBusyChange={setUploading}
+          />
+          {canEdit ? (
+            <Text style={[f.t(11.5), { color: t.muted }]}>Added or removed files are kept when you tap Save changes.</Text>
+          ) : null}
         </View>
 
         {/* Activity */}
@@ -519,21 +577,53 @@ export function CommDetail({
         {error ? <Text style={[s.error, { textAlign: "center" }]} accessibilityLiveRegion="polite">{error}</Text> : null}
       </ScrollView>
 
-      {isOwner || isAction ? (
+      {canEdit || canDelete ? (
         <View style={[s.footer, { paddingBottom: 12 + bottomInset }]}>
-          {isOwner ? (
-            <SecondaryButton label="Edit entry" icon={Pencil} onPress={onEdit} style={{ flex: 1 }} />
+          {canEdit ? (
+            <Text style={[f.t(11.5), { color: dirty ? t.warn : t.muted, textAlign: "center", marginBottom: 8 }]}>
+              {uploading ? "Uploading attachments…" : dirty ? "Unsaved changes on this entry" : "No unsaved changes"}
+            </Text>
           ) : null}
-          {isAction ? (
-            <PrimaryButton
-              label="Save changes"
-              onPress={saveDetail}
-              busy={saving === "save"}
-              disabled={!dirty || !online || busy}
-              height={52}
-              style={{ flex: 1 }}
-            />
-          ) : null}
+          <View style={{ flexDirection: "row", gap: 10 }}>
+            {canDelete ? (
+              <TouchableOpacity
+                onPress={confirmDelete}
+                disabled={busy}
+                accessibilityRole="button"
+                accessibilityLabel="Delete entry"
+                style={{
+                  width: 52,
+                  height: 52,
+                  borderRadius: 26,
+                  borderWidth: 1,
+                  borderColor: t.badBorder,
+                  backgroundColor: t.badWash,
+                  alignItems: "center",
+                  justifyContent: "center",
+                  opacity: busy && saving !== "delete" ? 0.5 : 1,
+                }}
+              >
+                {saving === "delete" ? (
+                  <ActivityIndicator color={t.bad} />
+                ) : (
+                  <Bx name="bx-trash" size={20} color={t.bad} />
+                )}
+              </TouchableOpacity>
+            ) : null}
+            {canEditEntry ? (
+              <SecondaryButton label="Edit entry" icon={Pencil} onPress={onEdit} style={{ flex: 1 }} />
+            ) : null}
+            {canEdit ? (
+              <PrimaryButton
+                label="Save changes"
+                onPress={saveDetail}
+                busy={saving === "save"}
+                disabled={!dirty || !online || busy || uploading}
+                height={52}
+                style={{ flex: 1 }}
+              />
+            ) : null}
+          </View>
         </View>
       ) : null}
 
@@ -549,13 +639,4 @@ export function CommDetail({
       />
     </View>
   );
-}
-
-function decodeName(url: string): string {
-  try {
-    const clean = url.split("?")[0] ?? url;
-    return decodeURIComponent(clean.split("/").pop() || url);
-  } catch {
-    return url;
-  }
 }

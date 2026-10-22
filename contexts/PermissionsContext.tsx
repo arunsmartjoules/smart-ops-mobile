@@ -5,6 +5,8 @@
  * entirely: the tab bar, the "All modules" drawer, Home's links, and a direct
  * navigation to its screen.
  *
+ * Also answers per-action checks (`can(module, "delete")` etc.).
+ *
  * Mirrors web/src/contexts/permissions-context.tsx: admin / superadmin bypass
  * the matrix, and the gate is presentational — every endpoint still
  * authorizes on the server. Unlike the web, the last good answer is cached per
@@ -43,19 +45,33 @@ export const PERMISSION_MODULES = [
 ] as const;
 export type PermissionModule = (typeof PERMISSION_MODULES)[number];
 
-type ViewMap = Record<PermissionModule, boolean>;
+export type PermissionAction = "view" | "add" | "edit" | "delete" | "export" | "import";
+const ACTIONS: PermissionAction[] = ["view", "add", "edit", "delete", "export", "import"];
+type Cell = Record<PermissionAction, boolean>;
+type ViewMap = Record<PermissionModule, Cell>;
+
+const allCell = (v: boolean): Cell =>
+  Object.fromEntries(ACTIONS.map((a) => [a, v])) as Cell;
 
 const ALL_VISIBLE: ViewMap = Object.fromEntries(
-  PERMISSION_MODULES.map((m) => [m, true]),
+  PERMISSION_MODULES.map((m) => [m, allCell(true)]),
 ) as ViewMap;
 
 const CACHE_PREFIX = "role-perms:v1:";
 
-/** API `permissions` object → view flags; a module the server omitted reads as hidden. */
+/**
+ * API `permissions` object → per-action flags; a module or action the server
+ * omitted reads as denied, and no view means nothing at all (the backend's
+ * view-gate invariant, same as web lib/permissions normalizeCell).
+ */
 export function parseViewMap(raw: unknown): ViewMap {
-  const src = (raw ?? {}) as Record<string, { view?: unknown } | undefined>;
+  const src = (raw ?? {}) as Record<string, Partial<Record<PermissionAction, unknown>> | undefined>;
   return Object.fromEntries(
-    PERMISSION_MODULES.map((m) => [m, src[m]?.view === true]),
+    PERMISSION_MODULES.map((m) => {
+      const row = src[m] ?? {};
+      if (row.view !== true) return [m, allCell(false)];
+      return [m, Object.fromEntries(ACTIONS.map((a) => [a, row[a] === true])) as Cell];
+    }),
   ) as ViewMap;
 }
 
@@ -66,12 +82,15 @@ function bypassesMatrix(role: unknown, isSuperadmin: unknown) {
 
 interface PermissionsValue {
   canView: (module: PermissionModule) => boolean;
+  /** Any action on a module (add / edit / delete / export / import). */
+  can: (module: PermissionModule, action: PermissionAction) => boolean;
   /** True once a real (or cached) answer is in. */
   resolved: boolean;
 }
 
 const PermissionsContext = createContext<PermissionsValue>({
   canView: () => true,
+  can: () => true,
   resolved: false,
 });
 
@@ -128,8 +147,12 @@ export function PermissionsProvider({ children }: { children: React.ReactNode })
   const map = bypass || !state || state.userId !== userId ? ALL_VISIBLE : state.map;
   const resolved = bypass || (!!state && state.userId === userId);
 
-  const canView = useCallback((m: PermissionModule) => map[m] !== false, [map]);
-  const value = useMemo(() => ({ canView, resolved }), [canView, resolved]);
+  const canView = useCallback((m: PermissionModule) => map[m]?.view !== false, [map]);
+  const can = useCallback(
+    (m: PermissionModule, a: PermissionAction) => map[m]?.[a] !== false,
+    [map],
+  );
+  const value = useMemo(() => ({ canView, can, resolved }), [canView, can, resolved]);
 
   return <PermissionsContext.Provider value={value}>{children}</PermissionsContext.Provider>;
 }

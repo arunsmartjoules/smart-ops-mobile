@@ -188,6 +188,7 @@ export function DateField({
   minimumDate,
   maximumDate,
   mode = "date",
+  disabled,
   style,
 }: {
   value: string;
@@ -198,6 +199,8 @@ export function DateField({
   minimumDate?: string;
   maximumDate?: string;
   mode?: "date" | "time";
+  /** Read-only: shows the value, never opens the picker. */
+  disabled?: boolean;
   style?: StyleProp<ViewStyle>;
 }) {
   const t = useJoTheme();
@@ -220,9 +223,10 @@ export function DateField({
         onPress={() => setOpen((o) => !o)}
         icon={isTime ? Clock : Calendar}
         error={error}
+        disabled={disabled}
         accessibilityLabel={accessibilityLabel}
       />
-      {open ? (
+      {open && !disabled ? (
         Platform.OS === "ios" ? (
           <View style={{ marginTop: 8, borderRadius: 20, backgroundColor: t.sheetField, paddingBottom: 6 }}>
             <DateTimePicker

@@ -3,12 +3,15 @@
  * (web/src/app/customer-communication/page.tsx `submitForm`): same fields,
  * same required rules, same POST/PUT body and activity-trail entry.
  *
- * Not ported: the AI "Describe it" intake and file uploads (a document link
- * can still be added; it lands in `attachments` like the web's link box).
+ * Attachments upload as they are picked (web `uploadFiles(files, "form")`)
+ * and are sent with the entry; a pasted document link joins the same list.
+ * When the AI intake drafted the form (`aiSources`), a banner says so and the
+ * first timeline entry records it, as on the web.
  */
 import React, { useMemo, useState } from "react";
 import { ScrollView, Text, TouchableOpacity, View } from "react-native";
-import { Flag, Link as LinkIcon, MessageCircle, Plus, X } from "@/components/jo/bxIcons";
+import { Bx } from "@/components/jo/Bx";
+import { Flag, MessageCircle, Plus } from "@/components/jo/bxIcons";
 import { toneFg } from "@/constants/jo";
 import { Chip, PrimaryButton, f, makeJoStyles, useJoTheme } from "@/components/jo/ui";
 import CustomerCommunicationService, {
@@ -25,6 +28,8 @@ import {
   TextField,
   type PickerItem,
 } from "./fields";
+import { CommAttachments } from "./CommAttachments";
+import type { AiDraftOutcome } from "./CommAiIntake";
 import {
   OWNER_TEAMS,
   PRIORITIES,
@@ -107,6 +112,29 @@ export function formFromRow(row: CommRow): FormState {
   };
 }
 
+/** The AI intake's draft, opened in this form for checking (web `applyAiDraft`). */
+export function formFromDraft(d: AiDraftOutcome, fallbackSite: string): FormState {
+  const f = d.fields;
+  const isAction = f.stream === "action";
+  return {
+    stream: f.stream,
+    site: f.site_name || fallbackSite,
+    date: f.communication_date || todayStr(),
+    time: f.communication_time || "",
+    inputFrom: f.input_from,
+    inputRole: f.role_of_person,
+    types: f.types,
+    description: f.description,
+    priority: PRIORITIES.includes(f.priority) ? f.priority : "Medium",
+    // Feedback carries no assignment — same rule as pickStream.
+    ownerTeams: isAction ? f.owner_teams : [],
+    assignee: isAction ? f.assignee : "",
+    expectedAction: isAction ? f.expected_action : "",
+    closureDate: isAction ? f.expected_closure_date : "",
+    attachments: d.attachments,
+  };
+}
+
 function validate(form: FormState): Partial<Record<FieldKey, string>> {
   const e: Partial<Record<FieldKey, string>> = {};
   if (!form.site.trim()) e.site = "Pick the site this came from.";
@@ -136,16 +164,14 @@ const useStyles = makeJoStyles((t) => ({
   streamDesc: { ...f.t(11.5), color: t.muted, lineHeight: 16 },
   chips: { flexDirection: "row", flexWrap: "wrap", gap: 7 },
   row2: { flexDirection: "row", gap: 10 },
-  linkRow: {
+  aiBanner: {
     flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    paddingVertical: 10,
-    paddingHorizontal: 14,
+    alignItems: "flex-start",
+    gap: 9,
+    padding: 13,
     borderRadius: 18,
-    backgroundColor: t.sheetField,
+    backgroundColor: t.accentTint,
   },
-  linkText: { ...f.t(12.5), color: t.ink2, flex: 1 },
   formError: { ...f.t(12.5, 500), color: t.bad, textAlign: "center", marginBottom: 10 },
   footer: {
     paddingHorizontal: 16,
@@ -166,6 +192,7 @@ export function CommForm({
   userEmail,
   online,
   bottomInset,
+  aiSources = null,
   onSaved,
 }: {
   initial: FormState;
@@ -179,6 +206,8 @@ export function CommForm({
   userEmail: string | null;
   online: boolean;
   bottomInset: number;
+  /** Set when the AI intake drafted this form: what it was drafted from. */
+  aiSources?: string[] | null;
   onSaved: (row: CommRow, message: string) => void;
 }) {
   const t = useJoTheme();
@@ -189,6 +218,7 @@ export function CommForm({
   const [submitting, setSubmitting] = useState(false);
   const [picker, setPicker] = useState<null | "site" | "assignee">(null);
   const [linkDraft, setLinkDraft] = useState("");
+  const [uploading, setUploading] = useState(false);
 
   const isAction = form.stream === "action";
   const pts = points(form.description);
@@ -239,6 +269,10 @@ export function CommForm({
 
   const submit = async () => {
     if (submitting) return;
+    if (uploading) {
+      setSubmitError("Wait for the attachments to finish uploading.");
+      return;
+    }
     const e = validate(form);
     if (Object.keys(e).length) {
       setErrors(e);
@@ -293,7 +327,9 @@ export function CommForm({
           {
             when: nowStamp(),
             who: userName,
-            what: isAction ? "Logged and assigned to " + form.assignee : "Logged as general feedback",
+            what:
+              (isAction ? "Logged and assigned to " + form.assignee : "Logged as general feedback") +
+              (aiSources ? " (drafted with AI from the " + aiSources.join(" and ") + ")" : ""),
           },
         ];
         const res = await CustomerCommunicationService.create({
@@ -331,6 +367,16 @@ export function CommForm({
         contentContainerStyle={{ padding: 16, paddingBottom: 28, gap: 18 }}
       >
         {!online ? <OfflineNotice text="You're offline. You can fill this in, but saving needs a connection." /> : null}
+
+        {aiSources ? (
+          <View style={s.aiBanner} accessibilityRole="summary">
+            <Bx name="bxs-magic-wand" size={16} color={t.accentInk} />
+            <Text style={[f.t(12.5), { color: t.ink, flex: 1, lineHeight: 18 }]}>
+              Drafted with AI from your {aiSources.join(" and ")}. Check every field before you log it — nothing is
+              saved until you do.
+            </Text>
+          </View>
+        ) : null}
 
         <View style={s.row2}>
           {streamCards.map((c) => {
@@ -520,32 +566,32 @@ export function CommForm({
               <Plus size={20} color={t.ink} />
             </TouchableOpacity>
           </View>
-          {form.attachments.map((url) => (
-            <View key={url} style={s.linkRow}>
-              <LinkIcon size={15} color={t.accentInk} />
-              <Text style={s.linkText} numberOfLines={1}>
-                {url}
-              </Text>
-              <TouchableOpacity
-                onPress={() => set("attachments", form.attachments.filter((x) => x !== url))}
-                hitSlop={8}
-                accessibilityRole="button"
-                accessibilityLabel="Remove link"
-              >
-                <X size={16} color={t.muted} />
-              </TouchableOpacity>
-            </View>
-          ))}
+        </FieldBlock>
+
+        <FieldBlock label="Attachments (optional)">
+          <CommAttachments
+            urls={form.attachments}
+            onAdd={(urls) => setForm((prev) => ({ ...prev, attachments: [...prev.attachments, ...urls] }))}
+            onRemove={(url) => setForm((prev) => ({ ...prev, attachments: prev.attachments.filter((x) => x !== url) }))}
+            editable
+            online={online}
+            onBusyChange={setUploading}
+            emptyText="Photos, mail exports, meeting minutes — attached to this entry."
+          />
         </FieldBlock>
       </ScrollView>
 
       <View style={[s.footer, { paddingBottom: 12 + bottomInset }]}>
         {submitError ? <Text style={s.formError}>{submitError}</Text> : null}
+        <Text style={[f.t(11.5), { color: t.muted, textAlign: "center", marginBottom: 8 }]} numberOfLines={1}>
+          {editing ? "Editing as " : "Logged as "}
+          {userName}
+        </Text>
         <PrimaryButton
           label={editing ? "Save changes" : isAction ? "Log action item" : "Log feedback"}
           onPress={submit}
           busy={submitting}
-          disabled={!online}
+          disabled={!online || uploading}
         />
       </View>
 

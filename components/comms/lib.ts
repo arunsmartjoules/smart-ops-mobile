@@ -18,6 +18,7 @@ import {
 } from "@/components/jo/bxIcons";
 import type { JoTone } from "@/constants/jo";
 import type { CommRow } from "@/services/CustomerCommunicationService";
+import { istParts, istTodayString } from "@/utils/istDate";
 
 export type Stream = "action" | "feedback";
 
@@ -191,19 +192,29 @@ const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "
 
 const pad = (n: number) => String(n).padStart(2, "0");
 
-/** Device-local calendar date. */
-export function todayStr(d = new Date()): string {
+/**
+ * Calendar date as `YYYY-MM-DD`. With no argument it is TODAY IN IST (the app
+ * runs in India; the device zone must not move "today"). With a Date it reads
+ * that Date's local parts — only the native pickers pass one, and they hand
+ * back the local wall-clock day the person tapped.
+ */
+export function todayStr(d?: Date): string {
+  if (!d) return istTodayString();
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
-export function nowHHMM(d = new Date()): string {
+/** "HH:MM" — IST now with no argument, else the picker Date's local time. */
+export function nowHHMM(d?: Date): string {
+  if (!d) {
+    const p = istParts(new Date());
+    return `${pad(p.hour)}:${pad(p.minute)}`;
+  }
   return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-/** Timeline stamp, same shape as the web: "YYYY-MM-DD HH:MM" (local). */
+/** Timeline stamp, same shape as the web: "YYYY-MM-DD HH:MM" (IST). */
 export function nowStamp(): string {
-  const d = new Date();
-  return `${todayStr(d)} ${nowHHMM(d)}`;
+  return `${todayStr()} ${nowHHMM()}`;
 }
 
 function parts(iso: string): [number, number, number] | null {
@@ -297,3 +308,102 @@ export function isOverdue(row: CommRow, today: string): boolean {
 
 /** Same-site test the web uses: trimmed, case-insensitive name match. */
 export const siteKey = (name?: string | null) => String(name || "").trim().toLowerCase();
+
+/* ── Attachments ───────────────────────────────────────────────────────── */
+
+/** Last path segment of an attachment URL, decoded (web `fileNameFromUrl`). */
+export function fileNameFromUrl(url: string): string {
+  try {
+    const clean = url.split("?")[0] ?? url;
+    return decodeURIComponent(clean.split("/").pop() || url);
+  } catch {
+    return url;
+  }
+}
+
+/** Lower-case extension of a file name / uri ("" when there is none). */
+export function extOf(nameOrUri?: string | null): string {
+  const clean = (String(nameOrUri || "").split("?")[0] ?? "").toLowerCase();
+  const last = clean.split("/").pop() ?? "";
+  const dot = last.lastIndexOf(".");
+  return dot > 0 ? last.slice(dot + 1) : "";
+}
+
+/* ── Date range filter (web components/date-range-filter + lib/date-presets) */
+
+export type DatePresetKey = "today" | "month" | "lastMonth" | "all" | "custom";
+
+/** The web's chip set, in its order. */
+export const DATE_PRESETS: { key: Exclude<DatePresetKey, "custom">; label: string }[] = [
+  { key: "today", label: "Today" },
+  { key: "month", label: "This Month" },
+  { key: "lastMonth", label: "Last Month" },
+  { key: "all", label: "All" },
+];
+
+/** Every web module opens on the current month. */
+export const DEFAULT_DATE_PRESET: DatePresetKey = "month";
+
+/**
+ * Preset → `{from, to}` as `YYYY-MM-DD` ("" = unbounded). Same rules as the
+ * web `resolveDateRange` with its default `monthEnd: "today"`: This Month runs
+ * from the 1st to today, Last Month is the whole previous calendar month.
+ * Pure string/UTC arithmetic — no device-timezone drift.
+ */
+export function resolveDateRange(
+  preset: DatePresetKey,
+  customFrom = "",
+  customTo = "",
+  today = todayStr(),
+): { from: string; to: string } {
+  switch (preset) {
+    case "custom":
+      return { from: customFrom, to: customTo };
+    case "today":
+      return { from: today, to: today };
+    case "month":
+      return { from: `${today.slice(0, 8)}01`, to: today };
+    case "lastMonth": {
+      const p = parts(today);
+      if (!p) return { from: "", to: "" };
+      const first = new Date(Date.UTC(p[0], p[1] - 2, 1));
+      const last = new Date(Date.UTC(p[0], p[1] - 1, 0));
+      const ymd = (d: Date) => `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
+      return { from: ymd(first), to: ymd(last) };
+    }
+    default:
+      return { from: "", to: "" };
+  }
+}
+
+/** Button label for the active range. */
+export function dateRangeLabel(preset: DatePresetKey, from: string, to: string): string {
+  if (preset !== "custom") return DATE_PRESETS.find((p) => p.key === preset)?.label ?? "All";
+  if (from && to) return from === to ? fmtLong(from) : `${fmtLong(from)} – ${fmtLong(to)}`;
+  if (from) return `From ${fmtLong(from)}`;
+  if (to) return `Until ${fmtLong(to)}`;
+  return "All";
+}
+
+/* ── CSV export (web `exportCsv`: same columns, same order) ────────────── */
+
+export const EXPORT_FILENAME = "critical-communication.csv";
+
+export function exportRows(rows: CommRow[]): (string | null | undefined)[][] {
+  const head = [
+    "Reference", "Stream", "Site Name", "Date", "Time", "Input From",
+    "Communication Type", "Detailed Description", "Priority", "Owner",
+    "Assigned To", "Status", "Expected Action", "Expected Closure Date",
+    "Resolution Summary", "Attachments", "Logged By", "Logged At",
+  ];
+  return [
+    head,
+    ...rows.map((e) => [
+      e.cc_id, streamOf(e), e.site_name, e.communication_date,
+      hhmm(e.communication_time), e.input_from, e.communication_type,
+      e.detailed_description, e.priority, e.owner, e.assignee, statusOf(e),
+      e.expected_action, e.expected_closure_date, e.resolution_summary,
+      splitLinks(e.attachments).join("; "), e.email_address, e.submitted_at,
+    ]),
+  ];
+}

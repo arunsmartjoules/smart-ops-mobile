@@ -2,20 +2,29 @@
  * One entry in the comms list — artboard `v_ccRows` card: tinted type icon,
  * type + ref, priority pill, 2-line title, "from" line, then a hairline and
  * status pill · owner · due.
+ *
+ * Also carries what the web EntryCard shows beyond the artboard: the next
+ * points of the description, when it was communicated, how many points and
+ * attachments it has. The site name is left off — the list is one site.
  */
 import React, { memo } from "react";
 import { Text, TouchableOpacity, View } from "react-native";
-import { Calendar, Check, CircleAlert, Speech } from "@/components/jo/bxIcons";
+import { Calendar, Check, CircleAlert, Clock, LayoutList, Paperclip, Speech } from "@/components/jo/bxIcons";
 import { toneBg, toneFg } from "@/constants/jo";
 import { StatusPill, f, makeJoStyles, useJoTheme } from "@/components/jo/ui";
 import type { CommRow } from "@/services/CustomerCommunicationService";
 import {
   dueOf,
+  fmtShort,
+  hhmm,
+  points,
   priorityTone,
+  splitLinks,
   splitList,
   statusOf,
   statusTone,
   streamOf,
+  stripBullet,
   titleOf,
   typeDef,
 } from "./lib";
@@ -50,6 +59,10 @@ const useStyles = makeJoStyles((t) => ({
   title: { ...f.t(14, 600), color: t.ink, lineHeight: 18.5, marginTop: 9 },
   from: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 6 },
   fromText: { ...f.t(11.5), color: t.muted, flex: 1 },
+  more: { ...f.t(12.5), color: t.ink3, lineHeight: 17, marginTop: 5 },
+  metaRow: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", columnGap: 12, rowGap: 4, marginTop: 6 },
+  meta: { flexDirection: "row", alignItems: "center", gap: 4 },
+  metaText: { ...f.t(11.5), color: t.muted },
   foot: {
     flexDirection: "row",
     alignItems: "center",
@@ -70,7 +83,8 @@ export function ownerLine(row: CommRow): string {
   const team = teams.length > 1 ? `${teams[0]} +${teams.length - 1}` : teams[0];
   const parts = [row.assignee, team].filter((x): x is string => !!x && !!x.trim());
   if (parts.length) return parts.join(" · ");
-  return streamOf(row) === "action" ? "Unassigned" : "For the record";
+  if (streamOf(row) === "action") return "Unassigned";
+  return statusOf(row) === "Logged" ? "For the record · not yet acknowledged" : "For the record";
 }
 
 export function fromLine(row: CommRow): string {
@@ -100,6 +114,13 @@ export const CommCard = memo(function CommCard({
   const dueColor = due.kind === "overdue" ? t.bad : due.kind === "soon" ? t.warn : t.muted;
   const DueIcon = due.kind === "overdue" ? CircleAlert : due.kind === "done" ? Check : Calendar;
   const title = titleOf(row);
+  const pts = points(row.detailed_description);
+  const moreText = pts.slice(1, 3).map(stripBullet).join(" · ");
+  const attachments = splitLinks(row.attachments).length;
+  // Feedback rows already show the communication date in the footer.
+  const when = (streamOf(row) === "action" ? [fmtShort(row.communication_date, today), hhmm(row.communication_time)] : [hhmm(row.communication_time)])
+    .filter((x) => x && x !== "—")
+    .join(" · ");
 
   return (
     <TouchableOpacity
@@ -127,11 +148,38 @@ export const CommCard = memo(function CommCard({
       <Text style={s.title} numberOfLines={2}>
         {title}
       </Text>
+      {moreText ? (
+        <Text style={s.more} numberOfLines={2}>
+          {moreText}
+        </Text>
+      ) : null}
       <View style={s.from}>
         <Speech size={14} color={t.muted} />
         <Text style={s.fromText} numberOfLines={1}>
           {fromLine(row)}
         </Text>
+      </View>
+      <View style={s.metaRow}>
+        {when ? (
+          <View style={s.meta}>
+            <Clock size={13} color={t.muted} />
+            <Text style={s.metaText}>{when}</Text>
+          </View>
+        ) : null}
+        {pts.length > 1 ? (
+          <View style={s.meta}>
+            <LayoutList size={13} color={t.muted} />
+            <Text style={s.metaText}>{pts.length} points</Text>
+          </View>
+        ) : null}
+        {attachments > 0 ? (
+          <View style={s.meta}>
+            <Paperclip size={13} color={t.accentInk} />
+            <Text style={[s.metaText, { color: t.accentInk }]}>
+              {attachments === 1 ? "Attachment" : `${attachments} attachments`}
+            </Text>
+          </View>
+        ) : null}
       </View>
       <View style={s.foot}>
         <StatusPill label={status} tone={statusTone(status)} />
