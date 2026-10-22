@@ -7,9 +7,10 @@
  * in em is converted to dp (em × font size). Colours come from the theme
  * (hooks/useJoTheme) — never hard-code a hex in a screen.
  */
-import React, { useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import {
   ActivityIndicator,
+  Image,
   Modal,
   Pressable,
   StyleSheet,
@@ -23,6 +24,7 @@ import {
 } from "react-native";
 import Animated, { FadeIn, SlideInDown } from "react-native-reanimated";
 import Svg, { Circle, Defs, RadialGradient, Rect, Stop } from "react-native-svg";
+import { LinearGradient } from "expo-linear-gradient";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { LucideIcon } from "lucide-react-native";
 import { Bx, type BxName } from "@/components/jo/Bx";
@@ -293,6 +295,7 @@ export function Avatar({
   ringGap,
   textSize,
   display = false,
+  photoUrl,
 }: {
   name: string;
   size?: number;
@@ -301,10 +304,22 @@ export function Avatar({
   ringGap?: string;
   textSize?: number;
   display?: boolean;
+  /** Profile photo; the initials show while it's missing or if it fails to load. */
+  photoUrl?: string | null;
 }) {
   const t = useJoTheme();
   const bg = color ?? avatarColor(t, name);
-  const inner = (
+  // Remember a URL that failed so a dead link doesn't leave an empty circle.
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  const showPhoto = !!photoUrl && photoUrl !== failedUrl;
+  const inner = showPhoto ? (
+    <Image
+      source={{ uri: photoUrl }}
+      onError={() => setFailedUrl(photoUrl)}
+      style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: bg }}
+      accessibilityIgnoresInvertColors
+    />
+  ) : (
     <View
       style={{
         width: size,
@@ -699,27 +714,86 @@ export function StatusPill({
   );
 }
 
+/** `#RRGGBB` blended toward white by `k` (0–1); other colour formats pass through. */
+export function lighten(hex: string, k: number): string {
+  const m = /^#([0-9a-f]{6})$/i.exec(hex);
+  if (!m) return hex;
+  const n = parseInt(m[1]!, 16);
+  const ch = (shift: number) => {
+    const c = (n >> shift) & 255;
+    return Math.round(c + (255 - c) * k)
+      .toString(16)
+      .padStart(2, "0");
+  };
+  return `#${ch(16)}${ch(8)}${ch(0)}`;
+}
+
 export function ProgressBar({
   pct,
   color,
   height = 4,
   style,
+  gloss = false,
 }: {
   pct: number;
   color: string;
   height?: number;
   style?: StyleProp<ViewStyle>;
+  /**
+   * "HD" fill (Home): a left-to-right gradient from a lighter tint into the
+   * colour, a soft highlight along the top edge and, in dark mode, a faint
+   * glow in the bar's own colour.
+   */
+  gloss?: boolean;
 }) {
   const t = useJoTheme();
   const w = Math.max(0, Math.min(100, Number.isFinite(pct) ? pct : 0));
+  const radius = height / 2;
+  if (!gloss) {
+    return (
+      <View style={[{ height, borderRadius: radius, backgroundColor: t.track, overflow: "hidden" }, style]}>
+        <View style={{ width: `${w}%`, height: "100%", borderRadius: radius, backgroundColor: color }} />
+      </View>
+    );
+  }
   return (
     <View
       style={[
-        { height, borderRadius: height / 2, backgroundColor: t.track, overflow: "hidden" },
+        {
+          height,
+          borderRadius: radius,
+          backgroundColor: t.track,
+          // A hairline inner edge makes the empty track read as a channel.
+          borderWidth: StyleSheet.hairlineWidth,
+          borderColor: t.isDark ? "rgba(255,255,255,0.06)" : "rgba(10,10,12,0.06)",
+        },
         style,
       ]}
     >
-      <View style={{ width: `${w}%`, height: "100%", borderRadius: height / 2, backgroundColor: color }} />
+      {w > 0 ? (
+        <View
+          style={{
+            width: `${w}%`,
+            height: "100%",
+            borderRadius: radius,
+            ...(t.isDark ? { boxShadow: `0 0 ${Math.max(4, height)}px ${color}55` } : null),
+          }}
+        >
+          <LinearGradient
+            colors={[lighten(color, 0.35), color]}
+            start={{ x: 0, y: 0.5 }}
+            end={{ x: 1, y: 0.5 }}
+            style={{ flex: 1, borderRadius: radius, overflow: "hidden" }}
+          >
+            <LinearGradient
+              colors={["rgba(255,255,255,0.38)", "rgba(255,255,255,0)"]}
+              start={{ x: 0.5, y: 0 }}
+              end={{ x: 0.5, y: 0.6 }}
+              style={StyleSheet.absoluteFill}
+            />
+          </LinearGradient>
+        </View>
+      ) : null}
     </View>
   );
 }

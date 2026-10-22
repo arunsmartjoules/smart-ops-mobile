@@ -10,6 +10,8 @@ import { ShieldAlert, RefreshCw, LogOut } from "lucide-react-native";
 import { useAuth } from "@/contexts/AuthContext";
 import { useSiteResolver } from "@/hooks/useSiteResolver";
 import { useNetworkStatus } from "@/hooks/useNetworkStatus";
+import LogoLoader from "@/components/LogoLoader";
+import { useLaunchHold } from "@/services/LaunchHold";
 
 interface SiteAccessGateProps {
   children: React.ReactNode;
@@ -19,7 +21,8 @@ interface SiteAccessGateProps {
  * Blocks access to site-scoped data screens until the SiteResolver has produced
  * a resolution result and the user has at least one authorized site.
  *
- *  - Loading            → centered spinner
+ *  - Loading            → the animated JouleOps logo (and, at launch, the
+ *                         splash simply stays up — services/LaunchHold)
  *  - Zero sites         → full-screen "No Site Access" alert with refresh + sign-out
  *  - One or more sites  → renders children
  *
@@ -43,20 +46,14 @@ export function SiteAccessGate({ children }: SiteAccessGateProps) {
     }
   }, [refresh]);
 
+  const resolving = !!userId && !initialized && loading;
+  useLaunchHold("sites", resolving);
+
   // Don't gate while auth is still establishing the user id.
   if (!userId) return <>{children}</>;
 
   // Resolution still in flight.
-  if (!initialized && loading) {
-    return (
-      <View className="flex-1 items-center justify-center bg-white dark:bg-slate-900">
-        <ActivityIndicator size="large" color="#dc2626" />
-        <Text className="mt-4 text-slate-600 dark:text-slate-300 text-sm">
-          Loading your sites…
-        </Text>
-      </View>
-    );
-  }
+  if (resolving) return <LogoLoader label="Loading your sites" />;
 
   if (sites.length === 0) {
     return (

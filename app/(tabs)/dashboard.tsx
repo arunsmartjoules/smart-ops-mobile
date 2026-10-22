@@ -21,6 +21,7 @@ import * as Location from "expo-location";
 import DateTimePicker from "@expo/ui/community/datetime-picker";
 import { router } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
+import { useLaunchHold } from "@/services/LaunchHold";
 import { addDays, format } from "date-fns";
 import { useAuth } from "@/contexts/AuthContext";
 import { useAttendanceGate } from "@/contexts/AttendanceGateContext";
@@ -47,7 +48,6 @@ import {
   JoPage,
   JoSheet,
   PrimaryButton,
-  SectionHead,
   SheetOption,
   Shimmer,
   f,
@@ -59,14 +59,13 @@ import {
   EfficiencyCard,
   HomeHeader,
   OpsHero,
-  PlannedCards,
   ProgressCard,
   ShiftHero,
   SlaScoreCard,
   TeamCard,
   TechTiles,
+  TicketCategoryCard,
   type EffItem,
-  type PlannedBar,
   type SlaKpiView,
   type TeamRow,
   type TechTile,
@@ -225,6 +224,9 @@ export default function Dashboard() {
   const [reportPickerOpen, setReportPickerOpen] = useState(false);
   const [todayAttendance, setTodayAttendance] = useState<AttendanceLog | null>(null);
   const [loadingAttendance, setLoadingAttendance] = useState(true);
+  // At launch the splash logo stays up until Home has its first data, so the
+  // skeleton below is only seen on later reloads.
+  useLaunchHold("home", loadingAttendance);
   const [validatingLocation, setValidatingLocation] = useState(false);
   const [currentTime, setCurrentTime] = useState(new Date());
   const [sites, setSites] = useState<Site[]>([]);
@@ -721,6 +723,7 @@ export default function Dashboard() {
       bellDot={!isLocked && unread > 0}
       onBell={() => (isLocked ? setReportPickerOpen(true) : router.push("/notifications"))}
       userName={displayName}
+      userPhotoUrl={user?.profile_photo_url}
       avatarLabel={isLocked ? "Sign out" : "Settings"}
       onAvatar={() => (isLocked ? confirmSignOut() : router.push("/(tabs)/profile"))}
     />
@@ -818,17 +821,16 @@ export default function Dashboard() {
     ...(canView("site_logs") ? [{ label: "Pend. logs", value: s ? String(pendingLogs) : dash }] : []),
   ];
 
-  const plannedBars: PlannedBar[] = [
-    ...(canView("pm")
-      ? [{ label: "Preventive maint.", icon: "pm" as const, done: s?.pm.completed ?? 0, total: s?.pm.planned ?? 0 }]
-      : []),
-    ...(canView("tickets")
-      ? [{ label: "Tickets resolved", icon: "tickets" as const, done: s?.tickets.resolved ?? 0, total: s?.tickets.raised ?? 0 }]
-      : []),
-  ].map((b) => {
-    const pct = pctOf(b.done, b.total);
-    return { ...b, pct, color: pctColor(t, pct) };
-  });
+  // Both roles: tickets raised in the period by category (pie ⇄ bar).
+  const categoryCard =
+    canView("tickets") && (s || summaryLoading) ? (
+      <TicketCategoryCard
+        categories={s?.ticketCategories ?? []}
+        periodLabel={periodLabel}
+        loading={!s}
+        onPress={go("/(tabs)/tickets", "tickets")}
+      />
+    ) : null;
 
   // Technicians see the numbers only; other roles open Resources › Efficiency.
   const efficiencyCard =
@@ -893,6 +895,7 @@ export default function Dashboard() {
                 ) : null}
                 {shownTiles.length > 0 ? <TechTiles tiles={shownTiles} /> : null}
                 {techBars.length > 0 ? <ProgressCard meta={periodLabel} bars={techBars} /> : null}
+                {categoryCard}
               </>
             ) : null}
           </>
@@ -935,22 +938,12 @@ export default function Dashboard() {
                 emptyNote={
                   sla?.pct != null ? null : slaLoading ? "Loading…" : "No SLA report for this month"
                 }
-                ringPct={slaScoreNum != null ? slaScoreNum / 5 : 0}
+                scoreFrac={slaScoreNum != null ? slaScoreNum / 5 : 0}
                 kpis={kpis}
                 loading={slaLoading && !sla}
               />
             ) : null}
-            {plannedBars.length > 0 ? (
-              <>
-                <SectionHead title="Planned vs completed" meta={periodLabel} />
-                <PlannedCards
-                  bars={plannedBars}
-                  onPress={(b) =>
-                    router.push(b.icon === "pm" ? "/(tabs)/preventive-maintenance" : "/(tabs)/tickets")
-                  }
-                />
-              </>
-            ) : null}
+            {categoryCard}
           </>
         ) : null}
         </ScrollView>

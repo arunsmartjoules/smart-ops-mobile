@@ -1,51 +1,72 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Image, StyleSheet, useColorScheme } from "react-native";
 import Animated, {
-  cancelAnimation,
   Easing,
   useAnimatedStyle,
   useReducedMotion,
   useSharedValue,
   withDelay,
-  withRepeat,
   withSequence,
   withTiming,
 } from "react-native-reanimated";
 import { scheduleOnRN } from "react-native-worklets";
 import * as SplashScreen from "expo-splash-screen";
 import { StatusBar } from "expo-status-bar";
+import Constants from "expo-constants";
+import LightningField from "@/components/LightningField";
 
 /**
  * Animated JS continuation of the native splash.
  *
  * The first frame is pixel-identical to the native launch screen, so the
  * handoff is invisible. These MUST stay in sync with app.json ->
- * expo-splash-screen (backgroundColor / dark.backgroundColor / imageWidth /
- * image), android/res/values{,-night}/colors.xml and the iOS
+ * expo-splash-screen (backgroundColor / dark.backgroundColor / image),
+ * android/res/values{,-night}/colors.xml and the iOS
  * SplashScreenBackground colorset + SplashScreen.storyboard.
+ *
+ * From 1.1.8 the native splash is the background only (a transparent
+ * image), so the launch opens dark and the logo fades in here while tiny gold
+ * sparks build up on it (components/LightningField). Older binaries — which
+ * still get this JS over the air — show the logo natively; there the logo
+ * "charges up" instead: it dims almost to dark, then fades back in with the
+ * lightning. Either way the splash stays (sparks crackling) until the app
+ * underneath is ready, and always lets the charge-up finish.
  *
  * The native splash follows the SYSTEM scheme, not the in-app theme override,
  * so this reads useColorScheme() rather than ThemeContext.
  */
-const SPLASH = {
+export const SPLASH = {
   light: {
     bg: "#FFFFFF",
     logo: require("@/assets/images/jouleops-splash-light.png"),
-    track: "rgba(10, 42, 51, 0.10)",
   },
   dark: {
     bg: "#060C1A",
     logo: require("@/assets/images/jouleops-splash-dark.png"),
-    track: "rgba(255, 255, 255, 0.14)",
   },
 } as const;
-const LOGO_SIZE = 180; // = expo-splash-screen imageWidth
-const ACCENT = "#C83E12"; // logo flame red
-const TRACK_W = 96;
-const BAR_W = 32;
-// Only show the loader when loading is actually slow — a fast start should
-// never flash it on and off.
-const LOADER_DELAY_MS = 600;
+export const LOGO_SIZE = 180; // = expo-splash-screen imageWidth
+/** Dim → fade back in; the lightning's build-up runs over the same span. */
+export const CHARGE_MS = 1600;
+const DIM_MS = 260;
+const DIM_TO = 0.06;
+
+/**
+ * Binaries before this version draw the logo on the native splash. The
+ * version is the binary's: runtimeVersion follows appVersion, so an OTA
+ * bundle only ever runs on a binary with the same version.
+ */
+const LOGOLESS_NATIVE_SPLASH_SINCE = "1.1.8";
+function versionAtLeast(version: string, min: string): boolean {
+  const a = version.split(".").map((n) => parseInt(n, 10) || 0);
+  const b = min.split(".").map((n) => parseInt(n, 10) || 0);
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const d = (a[i] ?? 0) - (b[i] ?? 0);
+    if (d !== 0) return d > 0;
+  }
+  return true;
+}
+const NATIVE_SPLASH_HAS_LOGO = !versionAtLeast(Constants.expoConfig?.version ?? "0", LOGOLESS_NATIVE_SPLASH_SINCE);
 // Never hold the native splash hostage if the image load event is lost.
 const NATIVE_HIDE_FALLBACK_MS = 1500;
 
@@ -64,12 +85,14 @@ export default function SplashOverlay({
   const palette = SPLASH[scheme];
   const reduceMotion = useReducedMotion();
   const [nativeHidden, setNativeHidden] = useState(false);
+  const [charged, setCharged] = useState(false);
   const hideRequested = useRef(false);
 
   const opacity = useSharedValue(1);
   const logoScale = useSharedValue(1);
-  const loaderOpacity = useSharedValue(0);
-  const barX = useSharedValue(0);
+  // Match the native splash's first frame: logo shown on older binaries,
+  // background only from 1.1.8 (with reduced motion the logo simply appears).
+  const logoOpacity = useSharedValue(NATIVE_SPLASH_HAS_LOGO || reduceMotion ? 1 : 0);
 
   // Hide the native splash only once our logo has decoded AND painted —
   // hiding earlier shows a frame of bare background (the flicker).
@@ -88,41 +111,33 @@ export default function SplashOverlay({
     return () => clearTimeout(t);
   }, [hideNative]);
 
-  // Idle animation: starts only after the handoff, so the frame the native
-  // splash hands over to is the untouched logo.
+  // Charge-up: starts only after the handoff, so the frame the native splash
+  // hands over to is the untouched logo.
   useEffect(() => {
-    if (!nativeHidden || ready || reduceMotion) return;
-    const ease = Easing.inOut(Easing.quad);
-    logoScale.set(
-      withRepeat(
-        withSequence(
-          withTiming(1.04, { duration: 900, easing: ease }),
-          withTiming(1, { duration: 900, easing: ease }),
-        ),
-        -1,
-      ),
+    // Reduced motion: no charge-up, the logo just stays (see `chargeDone`).
+    if (!nativeHidden || reduceMotion) return;
+    logoOpacity.set(
+      NATIVE_SPLASH_HAS_LOGO
+        ? withSequence(
+            withTiming(DIM_TO, { duration: DIM_MS, easing: Easing.out(Easing.quad) }),
+            withDelay(
+              120,
+              withTiming(1, { duration: CHARGE_MS - DIM_MS - 120, easing: Easing.inOut(Easing.cubic) }),
+            ),
+          )
+        : // Sparks first, then the logo emerges as they strengthen.
+          withDelay(250, withTiming(1, { duration: CHARGE_MS - 250, easing: Easing.inOut(Easing.cubic) })),
     );
-    loaderOpacity.set(
-      withDelay(LOADER_DELAY_MS, withTiming(1, { duration: 250 })),
-    );
-    barX.set(
-      withRepeat(
-        withTiming(TRACK_W - BAR_W, {
-          duration: 850,
-          easing: Easing.inOut(Easing.cubic),
-        }),
-        -1,
-        true,
-      ),
-    );
-  }, [nativeHidden, ready, reduceMotion, logoScale, loaderOpacity, barX]);
+    const t = setTimeout(() => setCharged(true), CHARGE_MS);
+    return () => clearTimeout(t);
+  }, [nativeHidden, reduceMotion, logoOpacity]);
+
+  const chargeDone = charged || reduceMotion;
 
   // Exit: cross-fade onto the first real screen, which is already mounted and
   // painted underneath, so there is never an empty frame between the two.
   useEffect(() => {
-    if (!ready || !nativeHidden) return;
-    cancelAnimation(barX);
-    loaderOpacity.set(withTiming(0, { duration: 150 }));
+    if (!ready || !nativeHidden || !chargeDone) return;
     logoScale.set(
       withTiming(reduceMotion ? 1 : 1.08, {
         duration: 320,
@@ -141,26 +156,12 @@ export default function SplashOverlay({
         ),
       ),
     );
-  }, [
-    ready,
-    nativeHidden,
-    reduceMotion,
-    onFinish,
-    opacity,
-    logoScale,
-    loaderOpacity,
-    barX,
-  ]);
+  }, [ready, nativeHidden, chargeDone, reduceMotion, onFinish, opacity, logoScale]);
 
   const containerStyle = useAnimatedStyle(() => ({ opacity: opacity.get() }));
   const logoStyle = useAnimatedStyle(() => ({
+    opacity: logoOpacity.get(),
     transform: [{ scale: logoScale.get() }],
-  }));
-  const loaderStyle = useAnimatedStyle(() => ({
-    opacity: loaderOpacity.get(),
-  }));
-  const barStyle = useAnimatedStyle(() => ({
-    transform: [{ translateX: barX.get() }],
   }));
 
   return (
@@ -176,6 +177,8 @@ export default function SplashOverlay({
       ]}
     >
       <StatusBar style={scheme === "dark" ? "light" : "dark"} />
+      {/* Only after the handoff — the first frame must match the native splash. */}
+      <LightningField active={nativeHidden} scheme={scheme} rampMs={CHARGE_MS} />
       <Animated.View style={logoStyle}>
         <Image
           source={palette.logo}
@@ -187,19 +190,6 @@ export default function SplashOverlay({
           onLoadEnd={hideNative}
         />
       </Animated.View>
-      {!reduceMotion && (
-        // Absolutely positioned so the logo stays exactly where the native
-        // splash drew it.
-        <Animated.View
-          style={[
-            styles.loader,
-            { backgroundColor: palette.track },
-            loaderStyle,
-          ]}
-        >
-          <Animated.View style={[styles.bar, barStyle]} />
-        </Animated.View>
-      )}
     </Animated.View>
   );
 }
@@ -212,19 +202,4 @@ const styles = StyleSheet.create({
     elevation: 9999,
   },
   logo: { width: LOGO_SIZE, height: LOGO_SIZE },
-  loader: {
-    position: "absolute",
-    top: "50%",
-    marginTop: 56,
-    width: TRACK_W,
-    height: 3,
-    borderRadius: 2,
-    overflow: "hidden",
-  },
-  bar: {
-    width: BAR_W,
-    height: 3,
-    borderRadius: 2,
-    backgroundColor: ACCENT,
-  },
 });

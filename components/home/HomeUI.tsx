@@ -3,15 +3,17 @@
  * `r_home_mgr` and technician home `r_home_tech`). Presentational only —
  * app/(tabs)/dashboard.tsx owns the data and passes view values in.
  */
-import React from "react";
+import React, { useState } from "react";
 import { ActivityIndicator, Image, Text, TouchableOpacity, View } from "react-native";
 import Animated, {
   Easing,
+  FadeIn,
   useAnimatedStyle,
   useSharedValue,
   withRepeat,
   withTiming,
 } from "react-native-reanimated";
+import Svg, { Circle, G } from "react-native-svg";
 import { Bx } from "@/components/jo/Bx";
 import {
   Avatar,
@@ -20,12 +22,12 @@ import {
   HeroTag,
   IconButton,
   ProgressBar,
+  Shimmer,
   type JoIcon,
-  Ring,
   capsStyle,
   f,
 } from "@/components/jo/ui";
-import { avatarColor, initials, type JoTone } from "@/constants/jo";
+import { ACCENTS, avatarColor, initials, type JoTone } from "@/constants/jo";
 import { makeJoStyles, useJoTheme, type JoTheme } from "@/hooks/useJoTheme";
 
 export function toneColor(t: JoTheme, tone: JoTone | "ink"): string {
@@ -50,6 +52,7 @@ export function HomeHeader({
   bellLabel = "Notifications",
   bellIcon = "bx-bell",
   userName,
+  userPhotoUrl,
   onAvatar,
   avatarLabel = "Profile",
 }: {
@@ -60,6 +63,8 @@ export function HomeHeader({
   bellLabel?: string;
   bellIcon?: JoIcon;
   userName: string;
+  /** users.profile_photo_url — initials when absent. */
+  userPhotoUrl?: string | null;
   onAvatar?: () => void;
   avatarLabel?: string;
 }) {
@@ -107,7 +112,15 @@ export function HomeHeader({
           accessibilityRole="button"
           accessibilityLabel={avatarLabel}
         >
-          <Avatar name={userName} size={44} color={t.avatarSelf} ring={t.accent} display textSize={15} />
+          <Avatar
+            name={userName}
+            photoUrl={userPhotoUrl}
+            size={44}
+            color={t.avatarSelf}
+            ring={t.accent}
+            display
+            textSize={15}
+          />
         </TouchableOpacity>
       </View>
     </View>
@@ -267,7 +280,7 @@ export function TeamCard({
                 <Text style={[f.t(11.5), { color: t.muted, flex: 1, minWidth: 0 }]} numberOfLines={1}>
                   {p.sub}
                 </Text>
-                <ProgressBar pct={p.pct} color={t.accent} style={{ width: 64, flexShrink: 0 }} />
+                <ProgressBar pct={p.pct} color={t.accent} height={5} gloss style={{ width: 64, flexShrink: 0 }} />
                 <Text style={[f.t(11.5), { color: t.muted, width: 44, textAlign: "right", flexShrink: 0 }]}>
                   {p.dur}
                 </Text>
@@ -322,7 +335,7 @@ export function SlaScoreCard({
   status,
   statusBg,
   pctText,
-  ringPct,
+  scoreFrac,
   kpis,
   loading,
   emptyNote,
@@ -339,7 +352,8 @@ export function SlaScoreCard({
   status: string | null;
   statusBg: string;
   pctText: string;
-  ringPct: number;
+  /** Score as a fraction of 5 (0–1). */
+  scoreFrac: number;
   kpis: SlaKpiView[];
   loading?: boolean;
   emptyNote?: string | null;
@@ -392,28 +406,40 @@ export function SlaScoreCard({
         </View>
       </View>
 
-      <View style={{ flexDirection: "row", alignItems: "center", gap: 18, marginTop: 16 }}>
-        <Ring size={116} stroke={12} radius={48} pct={ringPct} color={color}>
+      {/* Score and contract % side by side, then a five-step meter — one
+          segment per point of the 0–5 score — instead of a ring, so the only
+          round chart on Home is the ticket-category donut. */}
+      <View style={{ flexDirection: "row", alignItems: "flex-end", justifyContent: "space-between", gap: 12, marginTop: 16 }}>
+        <View style={{ minWidth: 0 }}>
           {loading ? (
-            <ActivityIndicator color={t.muted} />
+            <ActivityIndicator color={t.muted} style={{ height: 48, alignSelf: "flex-start" }} />
           ) : (
-            <>
-              <Text style={[f.d(30, -0.03, 1.05), { color: t.ink }]}>{score}</Text>
-              <Text style={[f.t(11), { color: t.muted, marginTop: 2 }]}>out of 5</Text>
-            </>
+            <View style={{ flexDirection: "row", alignItems: "baseline", gap: 4 }}>
+              <Text style={[f.d(46, -0.04, 1), { color: t.ink }]}>{score}</Text>
+              <Text style={[f.t(14, 500), { color: t.muted }]}>/ 5</Text>
+            </View>
           )}
-        </Ring>
-        <View style={{ flex: 1, minWidth: 0 }}>
           {status ? (
-            <View style={[s.statusChip, { backgroundColor: statusBg }]}>
+            <View style={[s.statusChip, { backgroundColor: statusBg, marginTop: 8 }]}>
               <Text style={[f.t(12, 600), { color }]}>{status}</Text>
             </View>
           ) : null}
-          <Text style={[f.d(26, -0.03, 1.05), { color: t.ink, marginTop: status ? 10 : 0 }]}>{pctText}</Text>
-          <Text style={[f.t(12), { color: t.muted, marginTop: 4 }]}>
+        </View>
+        <View style={{ alignItems: "flex-end", flexShrink: 1, minWidth: 0 }}>
+          <Text style={[f.d(24, -0.03, 1.05), { color: t.ink }]}>{pctText}</Text>
+          <Text style={[f.t(12), { color: t.muted, marginTop: 4, textAlign: "right" }]}>
             {emptyNote ?? "of contract commitment"}
           </Text>
         </View>
+      </View>
+
+      <View style={{ flexDirection: "row", gap: 5, marginTop: 16 }} accessibilityLabel={`Score ${score} out of 5`}>
+        {[0, 1, 2, 3, 4].map((i) => (
+          <View key={i} style={{ flex: 1 }}>
+            <ProgressBar pct={Math.max(0, Math.min(1, scoreFrac * 5 - i)) * 100} color={color} height={10} gloss />
+            <Text style={[f.m(10), { color: t.faint, marginTop: 5, textAlign: "right" }]}>{i + 1}</Text>
+          </View>
+        ))}
       </View>
 
       {kpis.length > 0 ? (
@@ -427,7 +453,7 @@ export function SlaScoreCard({
                 <Text style={[f.d(20, -0.02, 1.05), { color: k.color }]}>{k.text}</Text>
                 {k.weak ? <Bx name="bxs-error" size={14} color={t.warn} /> : null}
               </View>
-              <ProgressBar pct={k.pct} color={k.color} style={{ marginTop: 9 }} />
+              <ProgressBar pct={k.pct} color={k.color} height={6} gloss style={{ marginTop: 9 }} />
             </View>
           ))}
         </View>
@@ -436,54 +462,183 @@ export function SlaScoreCard({
   );
 }
 
-/* ── Manager: planned vs completed ─────────────────────────────────────── */
+/* ── Tickets by category (both roles) ─────────────────────────────────── */
 
-export interface PlannedBar {
-  label: string;
-  icon: "pm" | "tickets";
-  done: number;
-  total: number;
-  pct: number;
-  color: string;
+/** Slice order; "Other" (the server's folded tail) is always grey. */
+const CATEGORY_ACCENTS = ["violet", "mint", "flame", "sky", "amber", "rose", "lime"] as const;
+
+function categoryColor(t: JoTheme, name: string, i: number): string {
+  if (name === "Other") return t.isDark ? "#5A5A66" : "#A3A3AD";
+  const a = ACCENTS.find((x) => x.key === CATEGORY_ACCENTS[i % CATEGORY_ACCENTS.length])!;
+  // The pastel accents wash out on white; light mode uses their deeper ink.
+  return t.isDark ? a.color : a.ink;
 }
 
-export function PlannedCards({ bars, onPress }: { bars: PlannedBar[]; onPress?: (b: PlannedBar) => void }) {
+type CategoryChart = "pie" | "bar";
+
+/** Survives the Home screen remounting (tab switches) for this app session. */
+let lastCategoryChart: CategoryChart = "pie";
+function rememberCategoryChart(c: CategoryChart) {
+  lastCategoryChart = c;
+}
+
+export function TicketCategoryCard({
+  categories,
+  periodLabel,
+  onPress,
+  loading = false,
+}: {
+  /** Biggest first; the server folds the tail into "Other". */
+  categories: { category: string; count: number }[];
+  periodLabel: string;
+  onPress?: () => void;
+  /**
+   * The period's numbers are on their way: keep the card's footprint (a
+   * placeholder) so the page doesn't shrink and yank the scroll position.
+   */
+  loading?: boolean;
+}) {
   const t = useJoTheme();
+  const s = useStyles();
+  const [chart, setChart] = useState<CategoryChart>(lastCategoryChart);
+  const pick = (c: CategoryChart) => {
+    rememberCategoryChart(c);
+    setChart(c);
+  };
+  const rows = categories
+    .filter((c) => c.count > 0)
+    .map((c, i) => ({ ...c, color: categoryColor(t, c.category, i) }));
+  const total = rows.reduce((n, r) => n + r.count, 0);
+  const max = rows.reduce((m, r) => Math.max(m, r.count), 0);
+  const pct = (n: number) => (total ? Math.round((n / total) * 100) : 0);
+
   return (
-    <View style={{ flexDirection: "row", gap: 10 }}>
-      {bars.map((b) => {
-        return (
-          <Card
-            key={b.label}
-            onPress={onPress ? () => onPress(b) : undefined}
-            accessibilityLabel={`${b.label}: ${b.pct}%`}
-            style={{ flex: 1, padding: 16 }}
-          >
-            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-              <View
-                style={{
-                  width: 34,
-                  height: 34,
-                  borderRadius: 17,
-                  backgroundColor: t.raised,
-                  alignItems: "center",
-                  justifyContent: "center",
-                }}
-              >
-                <Bx name={b.icon === "pm" ? "bx-wrench" : "bx-check-double"} size={17} color={b.color} />
+    <Card
+      onPress={onPress}
+      accessibilityLabel={`Tickets by category, ${total} raised. Open tickets`}
+      style={{ marginTop: 12, paddingTop: 18, paddingHorizontal: 18, paddingBottom: 18 }}
+    >
+      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+        <View style={{ flexShrink: 1, minWidth: 0 }}>
+          <Text style={[f.t(15, 600), { color: t.ink }]} numberOfLines={1}>
+            Tickets by category
+          </Text>
+          <Text style={[f.t(11.5), { color: t.muted, marginTop: 3 }]} numberOfLines={1}>
+            {loading ? periodLabel : `${total} raised · ${periodLabel}`}
+          </Text>
+        </View>
+        {!loading && total > 0 ? (
+          <View style={s.chartToggle} accessibilityRole="tablist">
+            {(["pie", "bar"] as const).map((c) => {
+              const on = chart === c;
+              return (
+                <TouchableOpacity
+                  key={c}
+                  onPress={() => pick(c)}
+                  activeOpacity={0.8}
+                  accessibilityRole="tab"
+                  accessibilityState={{ selected: on }}
+                  accessibilityLabel={c === "pie" ? "Pie chart" : "Bar chart"}
+                  style={[s.chartToggleBtn, on && { backgroundColor: t.selBg }]}
+                >
+                  <Bx
+                    name={c === "pie" ? (on ? "bxs-pie-chart-alt-2" : "bx-pie-chart-alt-2") : on ? "bxs-bar-chart-alt-2" : "bx-bar-chart-alt-2"}
+                    size={16}
+                    color={on ? t.selFg : t.muted}
+                  />
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        ) : null}
+      </View>
+
+      {loading ? (
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 16, marginTop: 16 }}>
+          <Shimmer height={120} radius={60} style={{ width: 120 }} />
+          <View style={{ flex: 1, gap: 12 }}>
+            <Shimmer height={12} radius={6} />
+            <Shimmer height={12} radius={6} style={{ width: "80%" }} />
+            <Shimmer height={12} radius={6} style={{ width: "60%" }} />
+          </View>
+        </View>
+      ) : total === 0 ? (
+        <Text style={[f.t(12.5), { color: t.muted, marginTop: 16, textAlign: "center", paddingVertical: 12 }]}>
+          No tickets raised in this period.
+        </Text>
+      ) : chart === "pie" ? (
+        <Animated.View key="pie" entering={FadeIn.duration(200)} style={{ flexDirection: "row", alignItems: "center", gap: 16, marginTop: 16 }}>
+          <CategoryDonut rows={rows} total={total} />
+          <View style={{ flex: 1, minWidth: 0, gap: 9 }}>
+            {rows.map((r) => (
+              <View key={r.category} style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                <View style={{ width: 9, height: 9, borderRadius: 3, backgroundColor: r.color }} />
+                <Text style={[f.t(12.5), { color: t.ink2, flex: 1, minWidth: 0 }]} numberOfLines={1}>
+                  {r.category}
+                </Text>
+                <Text style={[f.m(12, 600), { color: t.ink }]}>{r.count}</Text>
+                <Text style={[f.m(11), { color: t.muted, width: 34, textAlign: "right" }]}>{pct(r.count)}%</Text>
               </View>
-              <Text style={[f.t(11.5), { color: t.muted }]}>
-                {b.done}/{b.total}
-              </Text>
+            ))}
+          </View>
+        </Animated.View>
+      ) : (
+        <Animated.View key="bar" entering={FadeIn.duration(200)} style={{ gap: 12, marginTop: 16 }}>
+          {rows.map((r) => (
+            <View key={r.category}>
+              <View style={{ flexDirection: "row", alignItems: "baseline", gap: 8 }}>
+                <Text style={[f.t(12.5), { color: t.ink2, flex: 1, minWidth: 0 }]} numberOfLines={1}>
+                  {r.category}
+                </Text>
+                <Text style={[f.m(12, 600), { color: t.ink }]}>{r.count}</Text>
+                <Text style={[f.m(11), { color: t.muted, width: 34, textAlign: "right" }]}>{pct(r.count)}%</Text>
+              </View>
+              {/* Scaled to the biggest category so the bars use the full width. */}
+              <ProgressBar pct={max ? (r.count / max) * 100 : 0} color={r.color} height={9} gloss style={{ marginTop: 6 }} />
             </View>
-            <Text style={[f.d(36, -0.04, 1.05), { color: b.color, marginTop: 16 }]}>{b.pct}%</Text>
-            <Text style={[f.t(12.5), { color: t.ink2, marginTop: 5 }]} numberOfLines={1}>
-              {b.label}
-            </Text>
-            <ProgressBar pct={b.pct} color={b.color} height={6} style={{ marginTop: 12 }} />
-          </Card>
-        );
-      })}
+          ))}
+        </Animated.View>
+      )}
+    </Card>
+  );
+}
+
+const DONUT = 120;
+const DONUT_STROKE = 18;
+
+/** Donut with the total in the middle; slices clockwise from 12 o'clock. */
+function CategoryDonut({ rows, total }: { rows: { category: string; count: number; color: string }[]; total: number }) {
+  const t = useJoTheme();
+  const r = (DONUT - DONUT_STROKE) / 2;
+  const circ = 2 * Math.PI * r;
+  // A hairline gap between slices; none when one category is the whole ring.
+  const gap = rows.length > 1 ? 2 : 0;
+  const lens = rows.map((row) => (row.count / total) * circ);
+  const starts = lens.map((_, i) => lens.slice(0, i).reduce((a, b) => a + b, 0));
+  return (
+    <View style={{ width: DONUT, height: DONUT, alignItems: "center", justifyContent: "center" }}>
+      <Svg width={DONUT} height={DONUT} style={{ position: "absolute" }}>
+        <G rotation={-90} origin={`${DONUT / 2}, ${DONUT / 2}`}>
+          {rows.map((row, i) => {
+            const dash = Math.max(0.5, (lens[i] ?? 0) - gap);
+            return (
+              <Circle
+                key={row.category}
+                cx={DONUT / 2}
+                cy={DONUT / 2}
+                r={r}
+                fill="none"
+                stroke={row.color}
+                strokeWidth={DONUT_STROKE}
+                strokeDasharray={`${dash} ${circ}`}
+                strokeDashoffset={-(starts[i] ?? 0)}
+              />
+            );
+          })}
+        </G>
+      </Svg>
+      <Text style={[f.d(24, -0.03, 1.05), { color: t.ink }]}>{total}</Text>
+      <Text style={[f.t(10.5), { color: t.muted, marginTop: 1 }]}>tickets</Text>
     </View>
   );
 }
@@ -743,7 +898,7 @@ export function ProgressCard({
               </View>
               <Text style={[f.d(24, -0.03, 1.05), { color: b.color }]}>{b.pct}%</Text>
             </View>
-            <ProgressBar pct={b.pct} color={b.color} height={6} style={{ marginTop: 9 }} />
+            <ProgressBar pct={b.pct} color={b.color} height={7} gloss style={{ marginTop: 9 }} />
           </View>
         ))}
       </View>
@@ -811,6 +966,23 @@ const useStyles = makeJoStyles((t) => ({
     height: 26,
     paddingHorizontal: 10,
     borderRadius: 13,
+    justifyContent: "center",
+  },
+  chartToggle: {
+    flexDirection: "row",
+    gap: 2,
+    padding: 3,
+    borderRadius: 17,
+    backgroundColor: t.raised,
+    borderWidth: 1,
+    borderColor: t.lineMid,
+    flexShrink: 0,
+  },
+  chartToggleBtn: {
+    width: 34,
+    height: 26,
+    borderRadius: 13,
+    alignItems: "center",
     justifyContent: "center",
   },
   kpi: {

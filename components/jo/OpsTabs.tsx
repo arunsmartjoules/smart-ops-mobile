@@ -288,8 +288,13 @@ const useStyles = makeJoStyles((t) => ({
     borderBottomWidth: 1,
     borderBottomColor: t.lineMid,
   },
+  // Each tab is its label's width plus an equal share of the spare room, so
+  // the gaps between labels match (flex: 1 gave every tab the same width,
+  // leaving "PM" floating in a wide box next to a tight "Incidents").
   tab: {
-    flex: 1,
+    flexGrow: 1,
+    flexShrink: 1,
+    flexBasis: "auto",
     minWidth: 0,
     alignItems: "center",
     paddingTop: 10,

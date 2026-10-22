@@ -42,6 +42,7 @@ import UpdateRequiredScreen from "@/components/UpdateRequiredScreen";
 import NotificationGate from "@/components/NotificationGate";
 import ServerStatusOverlay from "@/components/ServerStatusOverlay";
 import SplashOverlay from "@/components/SplashOverlay";
+import { useLaunchHeld } from "@/services/LaunchHold";
 import * as SplashScreen from "expo-splash-screen";
 import * as Location from "expo-location";
 import * as Notifications from "expo-notifications";
@@ -78,6 +79,19 @@ if (!globalThis.crypto) {
 // it hides the native splash itself, so the handoff is invisible. Hiding at
 // module load or first mount shows a frame of bare background (the flicker).
 SplashScreen.preventAutoHideAsync().catch(() => {});
+
+/**
+ * A signed-in launch keeps the splash up until the first screen has its data
+ * (services/LaunchHold) — but never longer than this, so a slow or failed
+ * fetch can't trap the user behind the logo.
+ */
+const LAUNCH_HOLD_CAP_MS = 10_000;
+/**
+ * The splash leaves only once "nothing is holding it" has stayed true this
+ * long: the first screen mounts a beat after auth resolves (app/index
+ * redirects into the tabs), and its hold must land before the exit starts.
+ */
+const LAUNCH_SETTLE_MS = 250;
 
 function AuthGuard({
   children,
@@ -124,17 +138,32 @@ function AuthGuard({
     }
   }, [token, isLoading, isEmailVerified, segments, router, navigatorReady]);
 
-  // The animated splash stays on top while auth resolves, then cross-fades
-  // onto the first screen — which mounts underneath it first, so the redirect
-  // above and the first paint both happen out of sight.
+  // The animated splash stays on top while auth resolves AND, when signed in,
+  // until the first screen has landed with its data (sites resolved, Home
+  // loaded), then cross-fades onto it — the redirect, the site check and the
+  // first paint all happen out of sight.
   const [splashDone, setSplashDone] = useState(false);
   const finishSplash = useCallback(() => setSplashDone(true), []);
+  const held = useLaunchHeld();
+  const [holdCapped, setHoldCapped] = useState(false);
+  useEffect(() => {
+    if (isLoading) return;
+    const id = setTimeout(() => setHoldCapped(true), LAUNCH_HOLD_CAP_MS);
+    return () => clearTimeout(id);
+  }, [isLoading]);
+  const canLeave = !isLoading && (!token || !held || holdCapped);
+  const [splashReady, setSplashReady] = useState(false);
+  useEffect(() => {
+    if (!canLeave || splashReady) return;
+    const id = setTimeout(() => setSplashReady(true), LAUNCH_SETTLE_MS);
+    return () => clearTimeout(id);
+  }, [canLeave, splashReady]);
 
   return (
     <>
       {!isLoading && children}
       {!splashDone && (
-        <SplashOverlay ready={!isLoading} onFinish={finishSplash} />
+        <SplashOverlay ready={splashReady} onFinish={finishSplash} />
       )}
     </>
   );

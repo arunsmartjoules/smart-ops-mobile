@@ -2,7 +2,7 @@
   "expo": {
     "name": "Jouleops",
     "slug": "smart-ops",
-    "version": "1.1.7",
+    "version": "1.1.8",
     "orientation": "portrait",
     "icon": "./assets/images/jouleops-icon.png",
     "scheme": "jouleops",
@@ -58,12 +58,12 @@
         "expo-splash-screen",
         {
           "backgroundColor": "#FFFFFF",
-          "image": "./assets/images/jouleops-splash-light.png",
+          "image": "./assets/images/splash-blank.png",
           "imageWidth": 180,
           "resizeMode": "contain",
           "dark": {
             "backgroundColor": "#060C1A",
-            "image": "./assets/images/jouleops-splash-dark.png"
+            "image": "./assets/images/splash-blank.png"
           }
         }
       ],
