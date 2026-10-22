@@ -19,7 +19,8 @@ export type AccentKey =
   | "mint"
   | "sky"
   | "rose"
-  | "amber";
+  | "amber"
+  | "thunder";
 
 export interface AccentDef {
   key: AccentKey;
@@ -34,6 +35,16 @@ export interface AccentDef {
   ink: string;
   /** "r,g,b" of `color`, for the glow / tint alphas. */
   rgb: string;
+  /**
+   * Text/icons ON a fill of this accent. Omitted = the palette's dark
+   * `onAccent` (every pastel accent); a dark accent needs light text.
+   */
+  onColor?: string;
+  /**
+   * Dark-mode replacements for a dark accent, which would vanish on the carbon
+   * page: a lifted fill, a light ink for text/icons, and their "r,g,b".
+   */
+  dark?: { color: string; ink: string; rgb: string };
 }
 
 /** Order = the order the Appearance picker shows them. The first four are the artboard's. */
@@ -45,6 +56,17 @@ export const ACCENTS: AccentDef[] = [
   { key: "sky", label: "Sky", color: "#7CC4FF", ink: "#1F78C8", rgb: "124,196,255" },
   { key: "rose", label: "Rose", color: "#FF8FB8", ink: "#C93670", rgb: "255,143,184" },
   { key: "amber", label: "Amber", color: "#FFC145", ink: "#A06A00", rgb: "255,193,69" },
+  // SJ Thunder — the brand teal (web ds-tokens --sj-thunder = --thunder-100).
+  // Dark mode lifts it to --thunder-300 for fills and --thunder-700 for text.
+  {
+    key: "thunder",
+    label: "Thunder",
+    color: "#072B31",
+    ink: "#072B31",
+    rgb: "7,43,49",
+    onColor: "#FFFFFF",
+    dark: { color: "#38545A", ink: "#A2A9AB", rgb: "86,104,110" },
+  },
 ];
 
 export const DEFAULT_ACCENT: AccentKey = "flame";
@@ -251,13 +273,17 @@ export function joTheme(isDark: boolean, accentKey: AccentKey): JoTheme {
   if (hit) return hit;
   const base = isDark ? JO_DARK : JO_LIGHT;
   const a = accentDef(accentKey);
+  const fill = isDark && a.dark ? a.dark.color : a.color;
+  const rgb = isDark && a.dark ? a.dark.rgb : a.rgb;
   const built: JoTheme = {
     ...base,
     accentKey: a.key,
-    accent: a.color,
-    accentInk: isDark ? a.color : a.ink,
-    accentGlow: `rgba(${a.rgb},${isDark ? (a.key === "lime" ? 0.16 : 0.2) : 0.22})`,
-    accentTint: `rgba(${a.rgb},${isDark ? (a.key === "lime" ? 0.08 : 0.1) : 0.16})`,
+    accent: fill,
+    accentInk: isDark ? (a.dark?.ink ?? a.color) : a.ink,
+    accentGlow: `rgba(${rgb},${isDark ? (a.key === "lime" ? 0.16 : 0.2) : 0.22})`,
+    accentTint: `rgba(${rgb},${isDark ? (a.key === "lime" ? 0.08 : 0.1) : 0.16})`,
+    // A dark accent carries light text, and its hero card light dividers.
+    ...(a.onColor ? { onAccent: a.onColor, heroDivider: "rgba(255,255,255,0.18)" } : null),
   };
   THEME_CACHE.set(id, built);
   return built;

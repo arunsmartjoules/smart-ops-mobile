@@ -4,17 +4,21 @@
  *
  *  - iOS: write to the cache, then open the share sheet with the file URL
  *    ("Save to Files", Mail, WhatsApp…).
- *  - Android: the share sheet only carries text, so files go into a folder
- *    picked through the Storage Access Framework. The picker opens on
- *    Downloads and the granted folder is remembered, so after the first
- *    "Use this folder" every export lands in Downloads with no prompt. If the
- *    grant is revoked (or the folder deleted) the picker simply asks again.
+ *  - Android 10+ on builds that include modules/jouleops-downloads: written
+ *    straight into the public Downloads folder through MediaStore — no picker,
+ *    no permission.
+ *  - Otherwise (older binaries, Android 9 and below): a folder picked through
+ *    the Storage Access Framework, remembered after the first "Use this
+ *    folder". The picker opens on Documents: Android 11+ refuses to grant the
+ *    Download folder itself ("Can't use this folder"). If the grant is revoked
+ *    (or the folder deleted) the picker simply asks again.
  *
  * Both helpers resolve to a short human message for a toast, or throw with
  * one when the save failed. A user cancelling the folder picker resolves with
  * `null` (nothing to report).
  */
 import { Platform, Share } from "react-native";
+import { requireOptionalNativeModule } from "expo";
 import * as FileSystem from "expo-file-system/legacy";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { getValidAuthToken } from "@/services/AuthTokenManager";
@@ -26,6 +30,13 @@ function safeName(name: string) {
 }
 
 const EXPORT_DIR_KEY = "export-dir-uri:v1";
+
+/** modules/jouleops-downloads — absent on binaries built before it existed. */
+const Downloads = Platform.OS === "android"
+  ? requireOptionalNativeModule<{
+      saveToDownloads(sourceUri: string, fileName: string, mimeType: string): Promise<string>;
+    }>("JouleOpsDownloads")
+  : null;
 
 /** "content://…/tree/primary%3ADownload" → "Download". */
 function folderLabel(dirUri: string): string {
@@ -57,7 +68,7 @@ async function writeToAndroidFolder(base64: string, filename: string, mimeType: 
     }
   }
 
-  const perm = await saf.requestDirectoryPermissionsAsync(saf.getUriForDirectoryInRoot("Download"));
+  const perm = await saf.requestDirectoryPermissionsAsync(saf.getUriForDirectoryInRoot("Documents"));
   if (!perm.granted) return null;
   await tryWrite(perm.directoryUri);
   await AsyncStorage.setItem(EXPORT_DIR_KEY, perm.directoryUri).catch(() => {});
@@ -68,6 +79,14 @@ async function deliver(localUri: string, filename: string, mimeType: string): Pr
   if (Platform.OS === "ios") {
     await Share.share({ url: localUri });
     return `${filename} ready`;
+  }
+  if (Downloads) {
+    try {
+      const saved = await Downloads.saveToDownloads(localUri, filename, mimeType);
+      return `Saved to Downloads · ${saved}`;
+    } catch {
+      // Android 9 and below, or MediaStore refused — use the folder picker.
+    }
   }
   const base64 = await FileSystem.readAsStringAsync(localUri, {
     encoding: FileSystem.EncodingType.Base64,

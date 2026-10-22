@@ -68,6 +68,8 @@ export default function AppearanceScreen() {
           <View style={s.swatchGrid}>
             {ACCENTS.map((a) => {
               const on = a.key === accent;
+              // What this accent will actually paint in the current mode.
+              const swatch = t.isDark && a.dark ? a.dark.color : a.color;
               return (
                 <TouchableOpacity
                   key={a.key}
@@ -78,10 +80,10 @@ export default function AppearanceScreen() {
                   accessibilityLabel={`${a.label} accent`}
                   style={s.swatchCell}
                 >
-                  <View style={[s.swatchRing, { borderColor: on ? a.color : "transparent" }]}>
-                    <View style={[s.swatch, { backgroundColor: a.color }]}>
-                      <GlossFill color={a.color} fg="#0A0A0C" radius={24} />
-                      {on ? <Check size={20} color="#0A0A0C" strokeWidth={2.8} /> : null}
+                  <View style={[s.swatchRing, { borderColor: on ? swatch : "transparent" }]}>
+                    <View style={[s.swatch, { backgroundColor: swatch }]}>
+                      <GlossFill color={swatch} fg={a.onColor ?? "#0A0A0C"} radius={24} />
+                      {on ? <Check size={20} color={a.onColor ?? "#0A0A0C"} strokeWidth={2.8} /> : null}
                     </View>
                   </View>
                   <Text style={[f.t(12, on ? 600 : 500), { color: on ? t.ink : t.muted, marginTop: 6 }]}>

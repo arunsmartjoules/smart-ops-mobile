@@ -37,7 +37,10 @@ function palette(isDark: boolean, accent: AccentKey): DsTheme {
   if (hit) return hit;
   const base = isDark ? dsDark : dsLight;
   // The accent's deep step: white text on it stays readable for every accent.
-  const built: DsTheme = { ...base, controlOn: accentDef(accent).ink };
+  const a = accentDef(accent);
+  // Legacy screens put white text on controlOn; a dark accent (Thunder) uses
+  // its lifted dark-mode fill there so the control still shows on dark pages.
+  const built: DsTheme = { ...base, controlOn: isDark && a.dark ? a.dark.color : a.ink };
   PALETTES.set(id, built);
   return built;
 }

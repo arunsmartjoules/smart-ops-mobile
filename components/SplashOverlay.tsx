@@ -1,32 +1,31 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Image, StyleSheet, useColorScheme } from "react-native";
+import { Image, StyleSheet, useColorScheme, View } from "react-native";
 import Animated, {
   Easing,
   useAnimatedStyle,
   useReducedMotion,
   useSharedValue,
   withDelay,
+  withRepeat,
   withTiming,
 } from "react-native-reanimated";
 import { scheduleOnRN } from "react-native-worklets";
 import * as SplashScreen from "expo-splash-screen";
 import { StatusBar } from "expo-status-bar";
-import Constants from "expo-constants";
+import { LinearGradient } from "expo-linear-gradient";
 
 /**
  * Animated JS continuation of the native splash.
  *
- * The first frame is pixel-identical to the native launch screen, so the
- * handoff is invisible. These MUST stay in sync with app.json ->
- * expo-splash-screen (backgroundColor / dark.backgroundColor / image),
- * android/res/values{,-night}/colors.xml and the iOS
- * SplashScreenBackground colorset + SplashScreen.storyboard.
+ * The first frame is pixel-identical to the native launch screen (the logo on
+ * the splash background), so the handoff is invisible. These MUST stay in
+ * sync with app.json -> expo-splash-screen (backgroundColor /
+ * dark.backgroundColor / imageWidth / image), android/res/values{,-night}/
+ * colors.xml and the iOS SplashScreenBackground colorset +
+ * SplashScreen.storyboard.
  *
- * From 1.1.8 the native splash is the background only (a transparent
- * image), so the launch opens dark and the logo fades in here; the splash
- * stays until the app underneath is ready and always lets the fade finish.
- * Older binaries — which still get this JS over the air — already show the
- * logo natively, so there it simply stays as drawn.
+ * After the handoff the logo stays put and a slim loading bar slides under it
+ * until the app underneath is ready (services/LaunchHold).
  *
  * The native splash follows the SYSTEM scheme, not the in-app theme override,
  * so this reads useColorScheme() rather than ThemeContext.
@@ -35,36 +34,62 @@ export const SPLASH = {
   light: {
     bg: "#FFFFFF",
     logo: require("@/assets/images/jouleops-splash-light.png"),
+    track: "rgba(10, 42, 51, 0.10)",
   },
   dark: {
     bg: "#060C1A",
     logo: require("@/assets/images/jouleops-splash-dark.png"),
+    track: "rgba(255, 255, 255, 0.14)",
   },
 } as const;
 export const LOGO_SIZE = 180; // = expo-splash-screen imageWidth
-/** Logo fade-in on a dark launch (1.1.8+), including its short lead-in. */
-export const CHARGE_MS = 1600;
-
-/**
- * Binaries before this version draw the logo on the native splash. The
- * version is the binary's: runtimeVersion follows appVersion, so an OTA
- * bundle only ever runs on a binary with the same version.
- */
-const LOGOLESS_NATIVE_SPLASH_SINCE = "1.1.8";
-function versionAtLeast(version: string, min: string): boolean {
-  const a = version.split(".").map((n) => parseInt(n, 10) || 0);
-  const b = min.split(".").map((n) => parseInt(n, 10) || 0);
-  for (let i = 0; i < Math.max(a.length, b.length); i++) {
-    const d = (a[i] ?? 0) - (b[i] ?? 0);
-    if (d !== 0) return d > 0;
-  }
-  return true;
-}
-const NATIVE_SPLASH_HAS_LOGO = !versionAtLeast(Constants.expoConfig?.version ?? "0", LOGOLESS_NATIVE_SPLASH_SINCE);
+/** Logo flame red — the bar's colour. */
+const ACCENT = "#C83E12";
+const ACCENT_LIGHT = "#E57A55";
+const TRACK_W = 120;
+const BAR_W = 40;
 // Never hold the native splash hostage if the image load event is lost.
 const NATIVE_HIDE_FALLBACK_MS = 1500;
 
 SplashScreen.setOptions({ fade: true, duration: 150 });
+
+/**
+ * Indeterminate loading bar under the splash logo: a short segment sliding
+ * back and forth along a faint track. Positioned like the splash logo's
+ * centre, just below it. A still, full-width bar when motion is reduced.
+ */
+export function SplashLoadingBar({ scheme, visible = true }: { scheme: "dark" | "light"; visible?: boolean }) {
+  const reduceMotion = useReducedMotion();
+  const x = useSharedValue(0);
+  const shown = useSharedValue(0);
+
+  useEffect(() => {
+    if (!visible) return;
+    shown.set(withTiming(1, { duration: 200 }));
+    if (reduceMotion) return;
+    x.set(withRepeat(withTiming(TRACK_W - BAR_W, { duration: 850, easing: Easing.inOut(Easing.cubic) }), -1, true));
+  }, [visible, reduceMotion, x, shown]);
+
+  const trackStyle = useAnimatedStyle(() => ({ opacity: shown.get() }));
+  const barStyle = useAnimatedStyle(() => ({ transform: [{ translateX: x.get() }] }));
+
+  return (
+    <Animated.View
+      style={[styles.track, { backgroundColor: SPLASH[scheme].track }, trackStyle]}
+      accessibilityRole="progressbar"
+      accessibilityLabel="Loading"
+    >
+      <Animated.View style={[reduceMotion ? { width: TRACK_W } : { width: BAR_W }, styles.bar, barStyle]}>
+        <LinearGradient
+          colors={[ACCENT_LIGHT, ACCENT]}
+          start={{ x: 0, y: 0.5 }}
+          end={{ x: 1, y: 0.5 }}
+          style={StyleSheet.absoluteFill}
+        />
+      </Animated.View>
+    </Animated.View>
+  );
+}
 
 export default function SplashOverlay({
   ready,
@@ -79,14 +104,10 @@ export default function SplashOverlay({
   const palette = SPLASH[scheme];
   const reduceMotion = useReducedMotion();
   const [nativeHidden, setNativeHidden] = useState(false);
-  const [charged, setCharged] = useState(false);
   const hideRequested = useRef(false);
 
   const opacity = useSharedValue(1);
   const logoScale = useSharedValue(1);
-  // Match the native splash's first frame: logo shown on older binaries,
-  // background only from 1.1.8 (with reduced motion the logo simply appears).
-  const logoOpacity = useSharedValue(NATIVE_SPLASH_HAS_LOGO || reduceMotion ? 1 : 0);
 
   // Hide the native splash only once our logo has decoded AND painted —
   // hiding earlier shows a frame of bare background (the flicker).
@@ -105,23 +126,10 @@ export default function SplashOverlay({
     return () => clearTimeout(t);
   }, [hideNative]);
 
-  // Fade-in: starts only after the handoff, so the frame the native splash
-  // hands over to is untouched (empty from 1.1.8).
-  const fadeIn = !NATIVE_SPLASH_HAS_LOGO && !reduceMotion;
-  useEffect(() => {
-    if (!nativeHidden || !fadeIn) return;
-    logoOpacity.set(withDelay(250, withTiming(1, { duration: CHARGE_MS - 250, easing: Easing.inOut(Easing.cubic) })));
-    const t = setTimeout(() => setCharged(true), CHARGE_MS);
-    return () => clearTimeout(t);
-  }, [nativeHidden, fadeIn, logoOpacity]);
-
-  // Nothing to wait for when the logo isn't fading in.
-  const chargeDone = charged || !fadeIn;
-
   // Exit: cross-fade onto the first real screen, which is already mounted and
   // painted underneath, so there is never an empty frame between the two.
   useEffect(() => {
-    if (!ready || !nativeHidden || !chargeDone) return;
+    if (!ready || !nativeHidden) return;
     logoScale.set(
       withTiming(reduceMotion ? 1 : 1.08, {
         duration: 320,
@@ -140,11 +148,10 @@ export default function SplashOverlay({
         ),
       ),
     );
-  }, [ready, nativeHidden, chargeDone, reduceMotion, onFinish, opacity, logoScale]);
+  }, [ready, nativeHidden, reduceMotion, onFinish, opacity, logoScale]);
 
   const containerStyle = useAnimatedStyle(() => ({ opacity: opacity.get() }));
   const logoStyle = useAnimatedStyle(() => ({
-    opacity: logoOpacity.get(),
     transform: [{ scale: logoScale.get() }],
   }));
 
@@ -172,6 +179,11 @@ export default function SplashOverlay({
           onLoadEnd={hideNative}
         />
       </Animated.View>
+      {/* Absolutely positioned so the logo stays exactly where the native
+          splash drew it; appears only after the handoff. */}
+      <View style={styles.barSlot} pointerEvents="none">
+        <SplashLoadingBar scheme={scheme} visible={nativeHidden} />
+      </View>
     </Animated.View>
   );
 }
@@ -184,4 +196,7 @@ const styles = StyleSheet.create({
     elevation: 9999,
   },
   logo: { width: LOGO_SIZE, height: LOGO_SIZE },
+  barSlot: { position: "absolute", top: "50%", marginTop: 52, alignItems: "center", left: 0, right: 0 },
+  track: { width: TRACK_W, height: 4, borderRadius: 2, overflow: "hidden" },
+  bar: { height: 4, borderRadius: 2, overflow: "hidden" },
 });

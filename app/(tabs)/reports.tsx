@@ -95,13 +95,15 @@ const MODULES: { key: ReportModuleKey; label: string; icon: LucideIcon; noun: [s
   { key: "comms", label: "Client communication", icon: MessagesSquare, noun: ["entry", "entries"] },
 ];
 
-/** Only CSV is built for module exports — no backend Excel/PDF exists for them. */
 // All three are built on the device from the same rows (utils/tableExport).
 const FORMATS = [
   { label: "Excel", available: true },
   { label: "CSV", available: true },
   { label: "PDF", available: true },
 ];
+
+/** Pre-selected on every module card until the user picks another. */
+const DEFAULT_FORMAT = "PDF";
 
 const FORMAT_FILE: Record<string, { ext: string; mime: string }> = {
   Excel: { ext: "xlsx", mime: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" },
@@ -233,7 +235,7 @@ export default function ReportsScreen() {
     const forScope = scope;
     setDownload(m.key, "busy", forKey);
     try {
-      const format = formats[m.key] ?? "CSV";
+      const format = formats[m.key] ?? DEFAULT_FORMAT;
       const file = FORMAT_FILE[format] ?? FORMAT_FILE.CSV!;
       const out = await ReportsService.exportModuleTable(m.key, forScope);
       if (out.rowCount === 0) {
@@ -385,7 +387,7 @@ export default function ReportsScreen() {
               sub={moduleSub(m)}
               subLoading={countsLoading && !offline}
               formats={FORMATS}
-              format={formats[m.key] ?? "CSV"}
+              format={formats[m.key] ?? DEFAULT_FORMAT}
               onPickFormat={(label) => {
                 setFormats((prev) => ({ ...prev, [m.key]: label }));
                 setDownloads((prev) => ({ ...prev, [m.key]: undefined }));
