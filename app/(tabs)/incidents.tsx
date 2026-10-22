@@ -1,4 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { OpsTabs } from "@/components/jo/OpsTabs";
+import { rangeForPreset, setOpsDateRange, useOpsDateRange } from "@/services/OpsDateRange";
 import {
   Alert,
   InteractionManager,
@@ -20,11 +22,8 @@ import { Bx } from "@/components/jo/Bx";
 import {
   EmptyState,
   Fab,
-  IconButton,
   JoPage,
-  JoSheet,
   SearchField,
-  SheetOption,
   Shimmer,
   f,
   makeJoStyles,
@@ -36,7 +35,6 @@ import IncidentCard from "@/components/IncidentItem";
 import RaiseIncidentChooser, { type RaiseChoice } from "@/components/incidents/RaiseIncidentChooser";
 import RcaImportModal from "@/components/incidents/RcaImportModal";
 import IncidentCreateSheet from "@/components/incidents/IncidentCreateForm";
-import IncidentFilterSheet from "@/components/incidents/IncidentFilterSheet";
 import { IncChip, Notice } from "@/components/incidents/IncFields";
 import { SwipeTabs, useListSlide } from "@/components/incidents/IncListMotion";
 import { IncidentsService } from "@/services/IncidentsService";
@@ -52,7 +50,6 @@ import { StorageService } from "@/services/StorageService";
 import { type SelectOption } from "@/components/SearchableSelect";
 import { TicketsService } from "@/services/TicketsService";
 import {
-  istTodayString,
   istParts,
   istDayStartMsFromYmd,
   istDayEndMsFromYmd,
@@ -219,7 +216,9 @@ export default function IncidentsTab() {
   const { user } = useAuth();
   const { canEdit } = useAttendanceGate();
   const { isConnected } = useNetworkStatus();
-  const { sites, selectedSite, selectSite, loading: sitesLoading } = useSites(
+  // Site + date range are picked in the shared Ops header (OpsTabs); this
+  // screen only reads them.
+  const { sites, selectedSite, loading: sitesLoading } = useSites(
     user?.user_id || user?.id,
   );
   const params = useLocalSearchParams<{
@@ -228,7 +227,6 @@ export default function IncidentsTab() {
     siteCode?: string | string[];
   }>();
   const selectedSiteCode = selectedSite?.site_code || "";
-  const siteName = selectedSite?.site_name || selectedSite?.site_code || "Select Site";
   const roleAllowsRca = ["admin", "manager"].includes(String(user?.role || "").toLowerCase());
   const canEditRca = roleAllowsRca && canEdit;
   const canEditMeta = canEditRca;
@@ -250,12 +248,6 @@ export default function IncidentsTab() {
     (Array.isArray(params.status) ? params.status[0] : params.status) === "Resolved"
       ? "Resolved"
       : "Inprogress";
-  // Default range = 1st of the current IST month → today (IST).
-  const defaultToDate = useMemo(() => istTodayString(), []);
-  const defaultFromDate = useMemo(() => {
-    const { year, month } = istParts(new Date());
-    return `${year}-${String(month).padStart(2, "0")}-01`;
-  }, []);
   const [statusFilter, setStatusFilter] = useState<IncidentStatus>(initialStatus as IncidentStatus);
   const [searchInput, setSearchInput] = useState("");
   const [sortMode, setSortMode] = useState<"Newest" | "Oldest" | "Status">(
@@ -263,14 +255,12 @@ export default function IncidentsTab() {
   );
   const [slide, setSlide] = useState({ seq: 0, dir: 1 });
   const listSlideStyle = useListSlide(slide.seq, slide.dir);
-  const [showFilter, setShowFilter] = useState(false);
-  const [searchOpen, setSearchOpen] = useState(false);
-  const [sitePickerOpen, setSitePickerOpen] = useState(false);
   // The last network refresh failed (cache may still be showing).
   const [loadFailed, setLoadFailed] = useState(false);
   const [search, setSearch] = useState("");
-  const [fromDate, setFromDate] = useState<string | null>(defaultFromDate);
-  const [toDate, setToDate] = useState<string | null>(defaultToDate);
+  // Shared Ops range: inclusive IST calendar dates, filtered against
+  // incident_created_time (list, counts, cache read and live stream alike).
+  const { from: fromDate, to: toDate, preset: datePreset } = useOpsDateRange();
   const dateRangeLabel = useMemo(
     () => formatDateRange(fromDate, toDate),
     [fromDate, toDate],
@@ -452,12 +442,6 @@ export default function IncidentsTab() {
     setRefreshing(true);
     await fetchData("refresh");
   }, [fetchData]);
-
-  const applyDateFilter = useCallback((range: { from: string | null; to: string | null }) => {
-    setFromDate(range.from);
-    setToDate(range.to);
-    setShowFilter(false);
-  }, []);
 
   const loadSiteUsers = useCallback(async (siteCode: string) => {
     if (!siteCode) {
@@ -1239,7 +1223,8 @@ export default function IncidentsTab() {
   }, []);
 
 
-  const isDefaultRange = fromDate === defaultFromDate && toDate === defaultToDate;
+  // The Ops header's default range is "This month".
+  const isDefaultRange = datePreset === "month";
   const rcaOwed = stats.Resolved || 0;
   const noSiteMapped = isConnected && !sitesLoading && sites.length === 0;
 
@@ -1279,8 +1264,8 @@ export default function IncidentsTab() {
               onPress: () => {
                 setSearchInput("");
                 setSearch("");
-                setFromDate(defaultFromDate);
-                setToDate(defaultToDate);
+                // The range is shared by every Ops tab — this resets it there too.
+                setOpsDateRange(rangeForPreset("month"));
                 selectStatusChip("All");
               },
             }
@@ -1291,55 +1276,14 @@ export default function IncidentsTab() {
 
   return (
     <JoPage>
+      {/* Ops sub-tabs: Tickets · PM · Site Logs · Incidents · Assets */}
+      <OpsTabs />
       <View style={s.top}>
-        <View style={s.head}>
-          <View style={{ flexShrink: 1, minWidth: 0 }}>
-            <TouchableOpacity
-              style={s.siteChip}
-              onPress={() => setSitePickerOpen(true)}
-              disabled={sites.length < 2}
-              activeOpacity={0.8}
-              accessibilityRole="button"
-              accessibilityLabel={`Site: ${siteName}${sites.length > 1 ? ", change" : ""}`}
-            >
-              <Bx name="bx-buildings" size={14} color={t.accentInk} />
-              <Text style={s.siteText} numberOfLines={1}>
-                {siteName}
-              </Text>
-              {sites.length > 1 ? <Bx name="bx-chevron-down" size={15} color={t.muted} /> : null}
-            </TouchableOpacity>
-            <Text style={s.title} numberOfLines={1}>
-              Incidents
-            </Text>
-          </View>
-          <View style={{ flexDirection: "row", gap: 8, marginTop: 4 }}>
-            <IconButton
-              icon={searchOpen ? "bx-x" : "bx-search"}
-              iconSize={19}
-              label={searchOpen ? "Close search" : "Search incidents"}
-              onPress={() => {
-                if (searchOpen) setSearchInput("");
-                setSearchOpen((o) => !o);
-              }}
-            />
-            <IconButton
-              icon="bx-filter-alt"
-              iconSize={19}
-              label={`Filter by date: ${dateRangeLabel}`}
-              dot={!isDefaultRange}
-              onPress={() => setShowFilter(true)}
-            />
-          </View>
-        </View>
-
-        {searchOpen ? (
-          <SearchField
-            value={searchInput}
-            onChangeText={setSearchInput}
-            placeholder="Search ID, asset or fault"
-            style={{ marginTop: 12 }}
-          />
-        ) : null}
+        <SearchField
+          value={searchInput}
+          onChangeText={setSearchInput}
+          placeholder="Search ID, asset or fault"
+        />
 
         {rcaOwed > 0 && statusFilter !== "Resolved" ? (
           <TouchableOpacity
@@ -1445,38 +1389,6 @@ export default function IncidentsTab() {
         />
       ) : null}
 
-      <JoSheet
-        visible={sitePickerOpen}
-        onClose={() => setSitePickerOpen(false)}
-        title="Site"
-        subtitle={`You have access to ${sites.length} site${sites.length === 1 ? "" : "s"}.`}
-      >
-        <ScrollView style={{ marginTop: 14 }} contentContainerStyle={{ gap: 6 }}>
-          {sites.map((site) => (
-            <SheetOption
-              key={site.site_code}
-              label={site.site_name || site.site_code}
-              meta={site.site_code}
-              metaStyle={f.m(11)}
-              selected={site.site_code === selectedSiteCode}
-              onPress={() => {
-                setSitePickerOpen(false);
-                if (site.site_code !== selectedSiteCode) selectSite(site);
-              }}
-            />
-          ))}
-        </ScrollView>
-      </JoSheet>
-
-      <IncidentFilterSheet
-        visible={showFilter}
-        onClose={() => setShowFilter(false)}
-        from={fromDate}
-        to={toDate}
-        defaultRange={{ from: defaultFromDate, to: defaultToDate }}
-        onApply={applyDateFilter}
-      />
-
       <RaiseIncidentChooser
         visible={chooserOpen}
         offline={isConnected === false}
@@ -1563,33 +1475,9 @@ export default function IncidentsTab() {
   );
 }
 
-/** Artboard r_incidents: site chip + 28 Bricolage title, RCA-due banner, chips, count line. */
+/** Artboard r_incidents under the shared Ops header: search, RCA-due banner, chips, count line. */
 const useStyles = makeJoStyles((t) => ({
-  top: { paddingHorizontal: 16 },
-  head: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    justifyContent: "space-between",
-    gap: 12,
-    paddingTop: 12,
-    paddingHorizontal: 4,
-  },
-  siteChip: {
-    alignSelf: "flex-start",
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 5,
-    height: 28,
-    paddingLeft: 8,
-    paddingRight: 9,
-    borderRadius: 14,
-    backgroundColor: t.input,
-    borderWidth: 1,
-    borderColor: t.isDark ? "rgba(255,255,255,0.09)" : t.lineMid,
-    maxWidth: 240,
-  },
-  siteText: { ...f.t(12.5, 500), color: t.ink2, flexShrink: 1 },
-  title: { ...f.d(28, -0.025), color: t.ink, marginTop: 4 },
+  top: { paddingHorizontal: 16, paddingTop: 12 },
   banner: {
     flexDirection: "row",
     alignItems: "center",

@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { OpsTabs } from "@/components/jo/OpsTabs";
 import {
   RefreshControl,
   Alert,
   InteractionManager,
-  ScrollView,
 } from "react-native";
 import CreateTicketModal from "@/components/tickets/CreateTicketModal";
 import { FlashList } from "@shopify/flash-list";
@@ -24,14 +24,12 @@ import { eq, desc } from "drizzle-orm";
 import logger from "@/utils/logger";
 import { slaDueFromMs } from "@/utils/ticketSla";
 import {
-  istTodayString,
-  istParts,
   istDayStartMsFromYmd,
   istDayEndMsFromYmd,
   istDayStartIso,
   istDayEndIso,
-  formatIST,
 } from "@/utils/istDate";
+import { formatOpsRange, useOpsDateRange } from "@/services/OpsDateRange";
 import cacheManager from "@/services/CacheManager";
 import { v4 as uuidv4 } from "uuid";
 import TicketDetailModal from "@/components/TicketDetailModal";
@@ -50,9 +48,6 @@ import {
   EmptyState,
   Fab,
   JoPage,
-  JoSheet,
-  SheetOption,
-  f,
   useJoTheme,
 } from "@/components/jo/ui";
 import { useNavInsets } from "@/components/jo/navInsets";
@@ -86,39 +81,6 @@ const getLocalDayEndMs = (dateStr: string | null) =>
 const toApiStartDate = (dateStr: string | null) => istDayStartIso(dateStr);
 
 const toApiEndDate = (dateStr: string | null) => istDayEndIso(dateStr);
-
-/**
- * "1–19 Aug" / "1 Jul – 19 Aug" (artboard date button) — the year is added
- * only when a bound falls outside the current IST year.
- */
-const formatDateRange = (from: string | null, to: string | null) => {
-  const fromMs = istDayStartMsFromYmd(from);
-  const toMs = istDayStartMsFromYmd(to);
-  const thisYear = istParts(new Date()).year;
-  const dm = (ms: number) =>
-    istParts(ms).year === thisYear ? DM : DMY;
-  if (fromMs == null && toMs == null) return "All dates";
-  if (fromMs == null) return `Up to ${formatIST(toMs!, dm(toMs!))}`;
-  if (toMs == null) return `From ${formatIST(fromMs, dm(fromMs))}`;
-
-  const a = istParts(fromMs);
-  const b = istParts(toMs);
-  if (a.year === b.year && a.month === b.month) {
-    return `${formatIST(fromMs, { day: "numeric" })}–${formatIST(toMs, dm(toMs))}`;
-  }
-  if (a.year === b.year) {
-    return `${formatIST(fromMs, DM)} – ${formatIST(toMs, dm(toMs))}`;
-  }
-  return `${formatIST(fromMs, DMY)} – ${formatIST(toMs, DMY)}`;
-};
-
-const DM: Intl.DateTimeFormatOptions = { day: "numeric", month: "short" };
-
-const DMY: Intl.DateTimeFormatOptions = {
-  day: "numeric",
-  month: "short",
-  year: "numeric",
-};
 
 const AREA_PAGE_SIZE = 50;
 
@@ -184,14 +146,11 @@ export default function Tickets() {
   const userId = user?.user_id || user?.id;
   const { sites, selectedSite, selectSite, loading: sitesLoading } = useSites(userId);
   const selectedSiteCode = selectedSite?.site_code ?? "";
-  const siteName = selectedSite?.site_name ?? selectedSite?.site_code ?? "Select Site";
 
-  // Default range = 1st of the current IST month → today (IST).
-  const defaultToDate = useMemo(() => istTodayString(), []);
-  const defaultFromDate = useMemo(() => {
-    const { year, month } = istParts(new Date());
-    return `${year}-${String(month).padStart(2, "0")}-01`;
-  }, []);
+  // Raised-date window = the shared Ops range picked above the sub-tabs
+  // (inclusive IST calendar dates). It filters on created_at, turned into IST
+  // day bounds for both the local mirror and the API.
+  const { from: fromDate, to: toDate } = useOpsDateRange();
 
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [loading, setLoading] = useState(true);
@@ -199,7 +158,6 @@ export default function Tickets() {
   // Set when an online first-page fetch fails; drives the error + retry card
   // when nothing (not even the local mirror) could be shown.
   const [loadFailed, setLoadFailed] = useState(false);
-  const [sitePickerOpen, setSitePickerOpen] = useState(false);
 
   // Safety net: never let the skeleton outlive a slow/stalled fetch.
   useEffect(() => {
@@ -223,8 +181,6 @@ export default function Tickets() {
   const [searchQuery, setSearchQuery] = useState("");
   const [searchInput, setSearchInput] = useState("");
   const [showFiltersModal, setShowFiltersModal] = useState(false);
-  const [fromDate, setFromDate] = useState<string | null>(defaultFromDate);
-  const [toDate, setToDate] = useState<string | null>(defaultToDate);
 
   const [creatingTicket, setCreatingTicket] = useState(false);
 
@@ -399,7 +355,7 @@ export default function Tickets() {
   );
 
   const dateRangeLabel = useMemo(
-    () => formatDateRange(fromDate, toDate),
+    () => formatOpsRange(fromDate, toDate),
     [fromDate, toDate],
   );
 
@@ -1557,17 +1513,7 @@ export default function Tickets() {
     }
   };
 
-  const applyFilters = ({
-    from,
-    to,
-    priority,
-  }: {
-    from: string | null;
-    to: string | null;
-    priority: string;
-  }) => {
-    setFromDate(from);
-    setToDate(to);
+  const applyFilters = ({ priority }: { priority: string }) => {
     setPriorityFilter(priority);
     setShowFiltersModal(false);
   };
@@ -1603,7 +1549,7 @@ export default function Tickets() {
         sub={
           searchQuery
             ? `Nothing here matches “${searchQuery}”.`
-            : `No ${countLabel} raised ${dateRangeLabel === "All dates" ? "yet" : `in ${dateRangeLabel}`}.`
+            : `No ${countLabel} raised in ${dateRangeLabel}.`
         }
         action={
           searchQuery
@@ -1618,13 +1564,12 @@ export default function Tickets() {
 
   return (
     <JoPage>
+      {/* Ops sub-tabs: Tickets · PM · Site Logs · Incidents · Assets */}
+      <OpsTabs />
       <TicketListHeader
-        siteName={siteName}
-        onPickSite={sites.length > 1 ? () => setSitePickerOpen(true) : undefined}
         onRefresh={canRefresh ? onRefresh : undefined}
         search={searchInput}
         onChangeSearch={setSearchInput}
-        dateLabel={dateRangeLabel}
         filterNote={priorityFilter !== "All" ? `${priorityFilter} priority` : undefined}
         onOpenFilters={() => setShowFiltersModal(true)}
         chips={statusChips}
@@ -1683,29 +1628,6 @@ export default function Tickets() {
           />
         )}
 
-        <JoSheet
-          visible={sitePickerOpen}
-          onClose={() => setSitePickerOpen(false)}
-          title="Site"
-          subtitle={`Applies to every module. You have access to ${sites.length} site${sites.length === 1 ? "" : "s"}.`}
-        >
-          <ScrollView style={{ marginTop: 14, maxHeight: 420 }} contentContainerStyle={{ gap: 6 }}>
-            {sites.map((site) => (
-              <SheetOption
-                key={site.site_code}
-                label={site.site_name || site.site_code}
-                meta={site.site_code}
-                metaStyle={f.m(11)}
-                selected={site.site_code === selectedSiteCode}
-                onPress={() => {
-                  setSitePickerOpen(false);
-                  if (site.site_code !== selectedSiteCode) void selectSite(site);
-                }}
-              />
-            ))}
-          </ScrollView>
-        </JoSheet>
-
         {creatingTicket && (
           <CreateTicketModal
             visible
@@ -1722,10 +1644,7 @@ export default function Tickets() {
           <TicketFilterSheet
             visible
             onClose={handleCloseFilters}
-            fromDate={fromDate}
-            toDate={toDate}
             priority={priorityFilter}
-            defaultRange={{ from: defaultFromDate, to: defaultToDate }}
             onApply={applyFilters}
           />
         )}

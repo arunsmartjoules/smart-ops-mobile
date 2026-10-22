@@ -1,5 +1,7 @@
 /**
- * Profile — Claude Design "JouleOps App.dc.html" (`r_profile`).
+ * Settings (bottom tab) — the Profile screen of Claude Design "JouleOps
+ * App.dc.html" (`r_profile`), plus a "Modules" group for Attendance and
+ * Alerts, which have no bottom tab.
  *
  * Big "Profile" title over an identity card (avatar with the accent ring,
  * name, role, presence pill, read-only details), then the "Account" and
@@ -57,6 +59,8 @@ import {
 } from "@/components/jo/ui";
 import { makeJoStyles, useJoTheme } from "@/hooks/useJoTheme";
 import { useNavInsets } from "@/components/jo/navInsets";
+import { SETTINGS_MODULES } from "@/components/jo/modules";
+import { usePermissions } from "@/contexts/PermissionsContext";
 
 /** Role code → display label (users.role vocabulary). */
 const ROLE_LABEL: Record<string, string> = {
@@ -93,6 +97,9 @@ export default function Profile() {
   const styles = useStyles();
   const t = useJoTheme();
   const { clearance } = useNavInsets();
+  const { canView } = usePermissions();
+  // Screens without a bottom tab of their own live here.
+  const moduleLinks = SETTINGS_MODULES.filter((m) => !m.perm || canView(m.perm));
   const { user, signOut, deleteAccount, refreshProfile } = useAuth();
   const { theme, accent } = useTheme();
   const { lastSyncedAt, pendingQueueCount } = useSyncStatus();
@@ -371,7 +378,7 @@ export default function Profile() {
   return (
     <JoPage>
       <ScrollView contentContainerStyle={[styles.body, { paddingBottom: clearance }]} showsVerticalScrollIndicator={false}>
-        <Text style={[f.d(28, -0.025), styles.title]}>Profile</Text>
+        <Text style={[f.d(28, -0.025), styles.title]}>Settings</Text>
 
         <Card radius={28} style={styles.identityCard}>
           <View style={styles.identityRow}>
@@ -434,6 +441,25 @@ export default function Profile() {
             ))}
           </View>
         </Card>
+
+        {moduleLinks.length > 0 ? (
+          <>
+            <SectionCaption>Modules</SectionCaption>
+            <Card style={styles.group}>
+              {moduleLinks.map((m, i) => (
+                <ListRow
+                  key={m.key}
+                  icon={m.icon}
+                  iconColor={t.accentInk}
+                  label={m.label}
+                  sub={m.sub}
+                  divider={i > 0}
+                  onPress={() => router.push(m.href as any)}
+                />
+              ))}
+            </Card>
+          </>
+        ) : null}
 
         <SectionCaption>Account</SectionCaption>
         <Card style={styles.group}>

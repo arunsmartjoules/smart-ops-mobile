@@ -1,7 +1,8 @@
 /**
  * SLA — Claude Design "JouleOps App" artboard, SLA route (r_sla).
  *
- * Main view (site + month pickers, Overall / KPI / Compare tabs), a
+ * Main view (Resources sub-tabs on top — their site pill is the app-wide site
+ * — then month picker + export, Overall / KPI / Compare tabs), a
  * deliverable drill-down and the rating calculation breakup, all on
  * GET /api/sla/:siteCode/summary + /drilldown/:key (backend services/sla).
  * Mirrors the web module (web/src/app/sla): same scores, bands, trend window,
@@ -35,8 +36,10 @@ import {
 } from "@/components/jo/bxIcons";
 import { EmptyState, JoPage, JoSheet, Shimmer, Toast, f, makeJoStyles, useJoTheme } from "@/components/jo/ui";
 import { useNavInsets } from "@/components/jo/navInsets";
+import { ResourcesTabs } from "@/components/jo/OpsTabs";
 import { useAuth } from "@/contexts/AuthContext";
 import { useSelectedSiteCode } from "@/services/SiteSelection";
+import { useSites } from "@/hooks/useSites";
 import AttendanceService, { getISTDateString } from "@/services/AttendanceService";
 import { db, userSites } from "@/database";
 import logger from "@/utils/logger";
@@ -59,7 +62,6 @@ import {
   catColor,
   drillCsvRows,
   excludeDevOnlySlaSites,
-  fmtPct,
   fmtScore,
   isCategoryApplicable,
   monthLabel,
@@ -82,7 +84,7 @@ type View_ =
   | { kind: "drill"; key: string; from: "main" | "rating" }
   | { kind: "rating"; site: string };
 
-type SheetKind = null | "site" | "month" | "export";
+type SheetKind = null | "month" | "export";
 type ExportKind = "pdf" | "xlsx" | "csv";
 
 const TREND_MONTHS = 6;
@@ -99,7 +101,12 @@ export default function SlaScreen() {
   // ── Sites (JouleCool only — same source as Home) ──────────────────────
   const [sites, setSites] = useState<SiteOpt[]>([]);
   const [sitesLoaded, setSitesLoaded] = useState(false);
-  const [selectedSiteCode, setSelectedSiteCode] = useSelectedSiteCode(userId);
+  const [storedSiteCode, setSelectedSiteCode] = useSelectedSiteCode(userId);
+  // The Resources site pill shows useSites' pick, which falls back to the
+  // first authorized site when nothing is stored — follow it so the pill and
+  // the scored site agree.
+  const { selectedSite: pillSite } = useSites(userId || undefined);
+  const selectedSiteCode = storedSiteCode ?? pillSite?.site_code ?? null;
 
   const loadSites = useCallback(async () => {
     if (!userId) return;
@@ -128,10 +135,14 @@ export default function SlaScreen() {
   // Focus + foreground refresh, the same hook Home uses for its site list.
   useAutoSync(loadSites, [userId], { interval: 10 * 60_000 });
 
+  // SLA only scores JouleCool sites; the pill lists every assigned site. A
+  // non-JouleCool pick gets an explicit empty state rather than silently
+  // showing another site's SLA under that pill.
   const activeSite = useMemo(
-    () => sites.find((x) => x.site_code === selectedSiteCode) ?? sites[0] ?? null,
+    () => (selectedSiteCode ? sites.find((x) => x.site_code === selectedSiteCode) ?? null : sites[0] ?? null),
     [sites, selectedSiteCode],
   );
+  const notSlaSite = selectedSiteCode != null && sites.length > 0 && !activeSite;
   const siteCode = activeSite?.site_code ?? null;
   const siteName = activeSite?.name || siteCode || "";
 
@@ -173,8 +184,7 @@ export default function SlaScreen() {
   const neededKeys = useMemo(() => {
     const keys = new Set<string>();
     if (siteCode) trendMonths.forEach((m) => keys.add(summaryKey(siteCode, m)));
-    // Other sites are fetched only for Compare (the site sheet shows a
-    // site's rating only once it has been loaded there).
+    // Other sites are fetched only for Compare.
     if (pickedTab === "compare") compareSites.forEach((x) => keys.add(summaryKey(x.site_code, month)));
     if (ratingSite) keys.add(summaryKey(ratingSite, month));
     return Array.from(keys);
@@ -263,14 +273,6 @@ export default function SlaScreen() {
     });
     return () => sub.remove();
   }, [view.kind, back]);
-
-  const pickSite = useCallback(
-    (code: string) => {
-      setSelectedSiteCode(code);
-      setSheet(null);
-    },
-    [setSelectedSiteCode],
-  );
 
   // ── Exports ───────────────────────────────────────────────────────────
   const runSave = useCallback(async (kind: NonNullable<typeof busy>, job: () => Promise<string | null>) => {
@@ -442,45 +444,31 @@ export default function SlaScreen() {
 
   return (
     <JoPage>
-      {/* ── Header ── */}
+      <ResourcesTabs />
+
+      {/* ── Month + export ── */}
       <View style={{ paddingHorizontal: 16 }}>
         <View style={s.header}>
-          <View style={{ flex: 1, minWidth: 0 }}>
-            <TouchableOpacity
-              onPress={() => sites.length > 0 && setSheet("site")}
-              disabled={sites.length === 0}
-              activeOpacity={0.7}
-              accessibilityRole="button"
-              accessibilityLabel={`Site: ${siteName || "none"}. Change site`}
-              style={s.siteBtn}
-            >
-              <Text style={[f.t(13), { color: t.muted, flexShrink: 1 }]} numberOfLines={1}>
-                {siteName || (sitesLoaded ? "No site" : "Loading sites…")}
-              </Text>
-              <ChevronDown size={16} color={t.muted} />
-            </TouchableOpacity>
-            <Text style={[f.d(28, -0.025), { color: t.ink, marginTop: 4 }]}>SLA</Text>
-          </View>
-          <View style={s.headerRight}>
-            <TouchableOpacity
-              onPress={() => setSheet("month")}
-              activeOpacity={0.8}
-              accessibilityRole="button"
-              accessibilityLabel={`SLA month ${monthLabel(month)}. Change month`}
-              style={s.monthBtn}
-            >
-              <Calendar size={15} color={t.accentInk} />
-              <Text style={[f.t(12.5, 600), { color: t.ink }]}>{monthLabel(month)}</Text>
-              <ChevronDown size={16} color={t.muted} />
-            </TouchableOpacity>
-            <RoundButton
-              icon={Share}
-              iconSize={19}
-              label="Export SLA report"
-              onPress={siteCode ? () => setSheet("export") : undefined}
-              disabled={!siteCode || busy === "pdf" || busy === "xlsx" || busy === "csv"}
-            />
-          </View>
+          <TouchableOpacity
+            onPress={() => setSheet("month")}
+            activeOpacity={0.8}
+            accessibilityRole="button"
+            accessibilityLabel={`SLA month ${monthLabel(month)}. Change month`}
+            style={s.monthBtn}
+          >
+            <Calendar size={15} color={t.accentInk} />
+            <Text style={[f.t(12.5, 600), { color: t.ink, flexShrink: 1 }]} numberOfLines={1}>
+              {monthLabel(month)}
+            </Text>
+            <ChevronDown size={16} color={t.muted} />
+          </TouchableOpacity>
+          <RoundButton
+            icon={Share}
+            iconSize={19}
+            label="Export SLA report"
+            onPress={siteCode ? () => setSheet("export") : undefined}
+            disabled={!siteCode || busy === "pdf" || busy === "xlsx" || busy === "csv"}
+          />
         </View>
 
         {report ? (
@@ -569,6 +557,12 @@ export default function SlaScreen() {
       >
         {!userId ? null : !sitesLoaded && sites.length === 0 ? (
           <LoadingBlocks />
+        ) : notSlaSite ? (
+          <EmptyState
+            icon={Building2}
+            title="SLA isn't scored for this site"
+            sub="SLA covers JouleCool sites only. Pick one from the site selector at the top."
+          />
         ) : !siteCode ? (
           <EmptyState
             icon={Building2}
@@ -617,26 +611,6 @@ export default function SlaScreen() {
       </View>
 
       {/* ── Sheets ── */}
-      <JoSheet visible={sheet === "site"} onClose={() => setSheet(null)} title="Site" subtitle="SLA is scored per site">
-        <ScrollView style={s.sheetList} contentContainerStyle={{ gap: 6 }}>
-          {sites.map((x) => {
-            const r = entries[summaryKey(x.site_code, month)]?.data;
-            const pct = r ? r.totals.performanceRating * 100 : null;
-            return (
-              <SheetRow
-                key={x.site_code}
-                label={x.name}
-                sub={x.site_code}
-                meta={pct != null ? `${fmtPct(pct / 100)}%` : undefined}
-                metaColor={pct != null ? t[ratingTone(pct)] : undefined}
-                selected={x.site_code === siteCode}
-                onPress={() => pickSite(x.site_code)}
-              />
-            );
-          })}
-        </ScrollView>
-      </JoSheet>
-
       <JoSheet
         visible={sheet === "month"}
         onClose={() => setSheet(null)}
@@ -724,15 +698,14 @@ function formatSynced(iso: string): string {
 const useStyles = makeJoStyles((t) => ({
   header: {
     flexDirection: "row",
-    alignItems: "flex-start",
+    alignItems: "center",
     justifyContent: "space-between",
     gap: 10,
-    paddingTop: 10,
-    paddingHorizontal: 4,
+    paddingTop: 12,
   },
-  siteBtn: { flexDirection: "row", alignItems: "center", gap: 4, alignSelf: "flex-start", maxWidth: "100%" },
-  headerRight: { flexDirection: "row", gap: 8, flexShrink: 0, marginTop: 6 },
   monthBtn: {
+    flexShrink: 1,
+    minWidth: 0,
     height: 40,
     paddingHorizontal: 12,
     borderRadius: 20,
@@ -743,7 +716,7 @@ const useStyles = makeJoStyles((t) => ({
     alignItems: "center",
     gap: 6,
   },
-  metaRow: { flexDirection: "row", alignItems: "center", gap: 6, paddingTop: 8, paddingHorizontal: 4, overflow: "hidden" },
+  metaRow: { flexDirection: "row", alignItems: "center", gap: 6, paddingTop: 8, paddingHorizontal: 2, overflow: "hidden" },
   tabsScroll: { marginTop: 12, marginHorizontal: -16, flexGrow: 0 },
   tab: {
     height: 36,

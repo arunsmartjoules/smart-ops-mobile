@@ -1,8 +1,9 @@
 /**
- * Asset Directory — artboard `r_assets`: "Equipment Register" kicker over the
- * "Asset Directory" title with the site chip, four count tiles (Total in the
- * accent, then Mapped / Pending / No access), the search field with the QR
- * scan icon, the four-way segmented tabs and the asset cards.
+ * Asset Directory — artboard `r_assets`, under the shared Ops header (site
+ * picker + sub-tabs; no date range — assets have no date dimension): four
+ * count tiles (Total in the accent, then Mapped / Pending / No access), the
+ * search field with the QR scan icon, the four-way segmented tabs and the
+ * asset cards.
  *
  * Status grouping onto the tabs is documented in ./lib (TAB_OF). Inside a
  * grouped tab, sub-chips isolate one real status (In review / Approved,
@@ -11,9 +12,10 @@
  * Kept from the old list: live keyword search (asset name + equipment type),
  * QR scan narrowing the list to one asset (and opening it when it's the only
  * hit), the type / side / criticality / floor filters and the sort (filter
- * icon in the search field → sheet), site switching (site chip → sheet),
- * swipe between tabs, and pull to refresh.
+ * icon in the search field → sheet), swipe between tabs, and pull to
+ * refresh. The site is picked in the Ops header.
  */
+import { OpsTabs } from "@/components/jo/OpsTabs";
 import React, { useCallback, useMemo, useRef, useState } from "react";
 import { RefreshControl, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { FlashList } from "@shopify/flash-list";
@@ -22,9 +24,7 @@ import {
   Chip,
   EmptyState,
   JoPage,
-  JoSheet,
   Segmented,
-  SheetOption,
   Shimmer,
   f,
   makeJoStyles,
@@ -57,10 +57,8 @@ function optionsFrom(values: (string | null | undefined)[], format?: (v: string)
 }
 
 interface Props {
-  siteName: string;
   sites: Site[];
   siteCode: string;
-  onSelectSite: (site: Site) => void;
   assets: MappedAsset[];
   loading: boolean;
   error: string | null;
@@ -71,10 +69,8 @@ interface Props {
 }
 
 export default function AssetListView({
-  siteName,
   sites,
   siteCode,
-  onSelectSite,
   assets,
   loading,
   error,
@@ -97,9 +93,18 @@ export default function AssetListView({
 
   const [showFilters, setShowFilters] = useState(false);
   const [draft, setDraft] = useState<FieldFilters>(NO_FIELD_FILTERS);
-  const [showSites, setShowSites] = useState(false);
   const [slide, setSlide] = useState({ seq: 0, dir: 1 });
   const slideStyle = useListSlide(slide.seq, slide.dir);
+
+  // Site switched (from the Ops header): a scanned asset and the field
+  // filters belong to the old site's list. Reset during render so the new
+  // list never paints filtered by them.
+  const [filtersSite, setFiltersSite] = useState(siteCode);
+  if (filtersSite !== siteCode) {
+    setFiltersSite(siteCode);
+    setQrAsset(null);
+    setFields(NO_FIELD_FILTERS);
+  }
 
   const counts = useMemo(() => {
     const c: Record<MappingStatus, number> = { pending: 0, review: 0, completed: 0, failed: 0, no_access: 0 };
@@ -270,32 +275,9 @@ export default function AssetListView({
 
   return (
     <JoPage>
+      {/* Ops sub-tabs: Tickets · PM · Site Logs · Incidents · Assets */}
+      <OpsTabs showDate={false} />
       <View style={s.top}>
-        <View style={s.head}>
-          <View style={{ flexShrink: 1, minWidth: 0 }}>
-            <Text style={s.kicker} numberOfLines={1}>
-              Equipment Register
-            </Text>
-            <Text style={s.title} numberOfLines={1}>
-              Asset Directory
-            </Text>
-          </View>
-          <TouchableOpacity
-            onPress={() => setShowSites(true)}
-            disabled={sites.length === 0}
-            activeOpacity={0.8}
-            style={s.siteChip}
-            accessibilityRole="button"
-            accessibilityLabel={`Site: ${siteName}, change`}
-          >
-            <Bx name="bx-buildings" size={16} color={t.accentInk} />
-            <Text style={s.siteText} numberOfLines={1}>
-              {siteName}
-            </Text>
-            <Bx name="bx-chevron-down" size={16} color={t.muted} />
-          </TouchableOpacity>
-        </View>
-
         <View style={s.tiles}>
           {tiles.map((c) => (
             <View
@@ -414,8 +396,11 @@ export default function AssetListView({
           <EmptyState
             icon="bx-buildings"
             title={sites.length ? "Pick a site" : "No site assigned"}
-            sub={sites.length ? "Choose the site to walk." : "Ask an admin to add you to a site to map its assets."}
-            action={sites.length ? { label: "Choose site", onPress: () => setShowSites(true) } : undefined}
+            sub={
+              sites.length
+                ? "Choose the site to walk from the header above."
+                : "Ask an admin to add you to a site to map its assets."
+            }
           />
         </View>
       ) : (
@@ -439,33 +424,6 @@ export default function AssetListView({
           />
         </SwipeTabs>
       )}
-
-      <JoSheet
-        visible={showSites}
-        onClose={() => setShowSites(false)}
-        title="Site"
-        subtitle={`You have access to ${sites.length} site${sites.length === 1 ? "" : "s"}.`}
-      >
-        <ScrollView style={{ marginTop: 14 }} contentContainerStyle={{ gap: 6 }}>
-          {sites.map((site) => (
-            <SheetOption
-              key={site.site_code}
-              label={site.site_name || site.name || site.site_code}
-              meta={site.site_code}
-              metaStyle={f.m(11)}
-              selected={site.site_code === siteCode}
-              onPress={() => {
-                setShowSites(false);
-                if (site.site_code !== siteCode) {
-                  setQrAsset(null);
-                  setFields(NO_FIELD_FILTERS);
-                  onSelectSite(site);
-                }
-              }}
-            />
-          ))}
-        </ScrollView>
-      </JoSheet>
 
       <AssetFilterSheet
         visible={showFilters}
@@ -492,32 +450,7 @@ export default function AssetListView({
 
 const useStyles = makeJoStyles((t) => ({
   top: { paddingHorizontal: 16 },
-  head: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    justifyContent: "space-between",
-    gap: 12,
-    paddingTop: 12,
-    paddingHorizontal: 4,
-  },
-  kicker: { ...f.t(13), color: t.muted },
-  title: { ...f.d(28, -0.025), color: t.ink, marginTop: 4 },
-  siteChip: {
-    height: 40,
-    marginTop: 6,
-    paddingHorizontal: 12,
-    borderRadius: 20,
-    backgroundColor: t.input,
-    borderWidth: 1,
-    borderColor: t.lineMid,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    flexShrink: 0,
-    maxWidth: 170,
-  },
-  siteText: { ...f.t(12.5, 600), color: t.ink, flexShrink: 1 },
-  tiles: { flexDirection: "row", gap: 6, marginTop: 14 },
+  tiles: { flexDirection: "row", gap: 6, marginTop: 12 },
   tile: {
     flex: 1,
     minWidth: 0,

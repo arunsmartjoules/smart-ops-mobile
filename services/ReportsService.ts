@@ -252,6 +252,13 @@ async function fetchAll(def: ModuleDef, scope: ModuleScope): Promise<{ rows: Row
   return { rows: def.keep ? rows.filter((r) => def.keep!(r, scope)) : rows, truncated: true };
 }
 
+export interface ModuleTable {
+  table: (string | number | null | undefined)[][];
+  rowCount: number;
+  /** Hit the page cap — the table holds the first PAGE_SIZE × MAX_PAGES rows. */
+  truncated: boolean;
+}
+
 export interface ModuleExport {
   csv: string;
   rowCount: number;
@@ -270,11 +277,17 @@ const ReportsService = {
     return res.total ?? res.rows.length;
   },
 
-  async exportModuleCsv(key: ReportModuleKey, scope: ModuleScope): Promise<ModuleExport> {
+  /** The module's rows for the scope as a table (header row first) — feeds CSV, Excel and PDF. */
+  async exportModuleTable(key: ReportModuleKey, scope: ModuleScope): Promise<ModuleTable> {
     const def = MODULES[key];
     const { rows, truncated } = await fetchAll(def, scope);
     const table = [def.columns.map((c) => c.label), ...rows.map((r) => def.columns.map((c) => c.get(r)))];
-    return { csv: toCsv(table), rowCount: rows.length, truncated };
+    return { table, rowCount: rows.length, truncated };
+  },
+
+  async exportModuleCsv(key: ReportModuleKey, scope: ModuleScope): Promise<ModuleExport> {
+    const { table, rowCount, truncated } = await ReportsService.exportModuleTable(key, scope);
+    return { csv: toCsv(table), rowCount, truncated };
   },
 
   dailyPdf(date: string) {

@@ -1,5 +1,7 @@
 /**
- * Reports — the artboard's three-tab Reports screen.
+ * Reports — the artboard's three-tab Reports screen, shown as the "Reports"
+ * sub-tab of Resources. The shared ResourcesTabs header owns the site pill
+ * (app-wide selection); this screen only reads the selected site.
  *
  *  - Modules: per-module export for the selected site and period. Rows come
  *    from each module's list endpoint and are written to CSV on the device;
@@ -8,12 +10,14 @@
  *    web Reports page and the scheduled emails produce). The card shows their
  *    headline numbers; "Download PDF" fetches the backend-rendered PDF.
  */
+import { ChipTabs } from "@/components/jo/ChipTabs";
+import type { BxName } from "@/components/jo/Bx";
 import { useNavInsets } from "@/components/jo/navInsets";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { RefreshControl, ScrollView, Text, View } from "react-native";
 import { useFocusEffect } from "expo-router";
+import { ResourcesTabs } from "@/components/jo/OpsTabs";
 import { useNetInfo } from "@react-native-community/netinfo";
-import { eq } from "drizzle-orm";
 import {
   Building2,
   Calendar,
@@ -44,8 +48,6 @@ import {
   DocCardSkeleton,
   DownloadBar,
   ModuleCard,
-  ReportTabs,
-  SitePill,
   type DownloadState,
 } from "@/components/reports/ReportsUI";
 import {
@@ -64,25 +66,24 @@ import {
   type RangePreset,
 } from "@/components/reports/dates";
 import { useAuth } from "@/contexts/AuthContext";
-import { useSelectedSiteCode } from "@/services/SiteSelection";
-import AttendanceService, { type Site } from "@/services/AttendanceService";
+import { useSites } from "@/hooks/useSites";
 import ReportsService, {
   type DocSummary,
   type Loaded,
   type ModuleScope,
   type ReportModuleKey,
 } from "@/services/ReportsService";
-import { db, userSites } from "@/database";
 import { istTodayString } from "@/utils/istDate";
-import { saveBackendFile, saveTextFile } from "@/utils/fileExport";
+import { saveBackendFile, saveBase64File, saveTextFile, toCsv } from "@/utils/fileExport";
+import { tableToPdfBase64, tableToXlsxBase64 } from "@/utils/tableExport";
 import logger from "@/utils/logger";
 
 type Tab = "module" | "daily" | "monthly";
 
-const TABS: { key: Tab; label: string }[] = [
-  { key: "module", label: "Modules" },
-  { key: "daily", label: "Daily" },
-  { key: "monthly", label: "MTD" },
+const TABS: { key: Tab; label: string; icon: BxName }[] = [
+  { key: "module", label: "Modules", icon: "bx-export" },
+  { key: "daily", label: "Daily", icon: "bx-calendar" },
+  { key: "monthly", label: "MTD", icon: "bx-bar-chart-alt-2" },
 ];
 
 const MODULES: { key: ReportModuleKey; label: string; icon: LucideIcon; noun: [string, string] }[] = [
@@ -95,11 +96,18 @@ const MODULES: { key: ReportModuleKey; label: string; icon: LucideIcon; noun: [s
 ];
 
 /** Only CSV is built for module exports — no backend Excel/PDF exists for them. */
+// All three are built on the device from the same rows (utils/tableExport).
 const FORMATS = [
-  { label: "Excel", available: false },
+  { label: "Excel", available: true },
   { label: "CSV", available: true },
-  { label: "PDF", available: false },
+  { label: "PDF", available: true },
 ];
+
+const FORMAT_FILE: Record<string, { ext: string; mime: string }> = {
+  Excel: { ext: "xlsx", mime: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" },
+  CSV: { ext: "csv", mime: "text/csv" },
+  PDF: { ext: "pdf", mime: "application/pdf" },
+};
 
 /** Strip length for the Daily / MTD pickers (the artboard's five). */
 const STRIP = 5;
@@ -123,39 +131,21 @@ export default function ReportsScreen() {
   const [tick, setTick] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
   const [toast, setToast] = useState("");
-  const [sheet, setSheet] = useState<null | "site" | "range">(null);
+  const [sheet, setSheet] = useState<null | "range">(null);
 
   // ── Sites ───────────────────────────────────────────────────────────
-  const [sites, setSites] = useState<Site[]>([]);
-  const [sitesLoading, setSitesLoading] = useState(true);
-  const [selectedSiteCode, setSelectedSiteCode] = useSelectedSiteCode(userId);
-  const activeSite = useMemo(
-    () => sites.find((x) => x.site_code === selectedSiteCode) ?? sites[0] ?? null,
-    [sites, selectedSiteCode],
-  );
-
+  // Exactly the site in the shared Resources header (module exports work for
+  // any assigned site; Daily / MTD cover the whole portfolio). Reading the
+  // same hook as the header means an export can never quietly fall back to a
+  // different site than the one shown at the top.
+  const { selectedSite: activeSite, loading: sitesLoading, refresh: refreshSites } = useSites(userId);
   const loadSites = useCallback(async () => {
-    if (!userId) return;
     try {
-      // Cached assignments first for an instant render, then the server's.
-      const local = await db
-        .select()
-        .from(userSites)
-        .where(eq(userSites.user_id, userId))
-        .catch(() => [] as { site_code: string; site_name: string }[]);
-      const cached: Site[] = local.map((row: { site_code: string; site_name: string }) => ({
-        site_code: row.site_code,
-        name: row.site_name,
-      }));
-      if (cached.length > 0) setSites(cached);
-      const fresh = await AttendanceService.getUserSites(userId, "JouleCool").catch(() => [] as Site[]);
-      if (fresh.length > 0) setSites(fresh);
+      await refreshSites();
     } catch (error) {
-      logger.warn("Reports: site load failed", { error });
-    } finally {
-      setSitesLoading(false);
+      logger.warn("Reports: site refresh failed", { error });
     }
-  }, [userId]);
+  }, [refreshSites]);
 
   // On every visit: re-read the site list, and re-anchor "today" — the IST day
   // can roll over while the app sits in the background.
@@ -182,7 +172,7 @@ export default function ReportsScreen() {
       activeSite
         ? {
             siteCode: activeSite.site_code,
-            siteName: activeSite.name || activeSite.site_name || "",
+            siteName: activeSite.site_name || activeSite.site_code,
             from: range.from,
             to: range.to,
           }
@@ -243,15 +233,27 @@ export default function ReportsScreen() {
     const forScope = scope;
     setDownload(m.key, "busy", forKey);
     try {
-      const out = await ReportsService.exportModuleCsv(m.key, forScope);
+      const format = formats[m.key] ?? "CSV";
+      const file = FORMAT_FILE[format] ?? FORMAT_FILE.CSV!;
+      const out = await ReportsService.exportModuleTable(m.key, forScope);
       if (out.rowCount === 0) {
         setDownload(m.key, "idle", forKey);
         setToast(`No ${m.noun[1]} for ${fmtRange(forScope.from, forScope.to)}`);
         return;
       }
       const site = shortSiteName(forScope.siteName || forScope.siteCode);
-      const filename = `${m.label}_${site}_${forScope.from}_to_${forScope.to}.csv`;
-      const msg = await saveTextFile(out.csv, filename, "text/csv");
+      const filename = `${m.label}_${site}_${forScope.from}_to_${forScope.to}.${file.ext}`;
+      let msg: string | null;
+      if (format === "Excel") {
+        msg = await saveBase64File(tableToXlsxBase64(out.table, m.label), filename, file.mime);
+      } else if (format === "PDF") {
+        const subtitle = `${forScope.siteName || forScope.siteCode} · ${fmtRange(forScope.from, forScope.to)} · ${out.rowCount} records${
+          out.truncated ? " (first rows only)" : ""
+        }`;
+        msg = await saveBase64File(await tableToPdfBase64(out.table, m.label, subtitle), filename, file.mime);
+      } else {
+        msg = await saveTextFile(toCsv(out.table), filename, file.mime);
+      }
       if (!msg) {
         setDownload(m.key, "idle", forKey); // picker cancelled
         return;
@@ -325,7 +327,6 @@ export default function ReportsScreen() {
   };
 
   // ── Render ──────────────────────────────────────────────────────────
-  const siteLabel = activeSite ? activeSite.name || activeSite.site_code : sitesLoading ? "Loading sites…" : "No site";
   const rangeShort = fmtRange(range.from, range.to, false);
 
   const moduleSub = (m: (typeof MODULES)[number]): string => {
@@ -358,7 +359,7 @@ export default function ReportsScreen() {
     }
     return (
       <>
-        <View style={{ flexDirection: "row", gap: 8 }}>
+        <View style={{ flexDirection: "row" }}>
           <ControlPill
             grow
             icon={Calendar}
@@ -367,13 +368,6 @@ export default function ReportsScreen() {
             chevron
             onPress={() => setSheet("range")}
             a11yLabel={`Period: ${fmtRange(range.from, range.to)}. Change period`}
-          />
-          <ControlPill
-            icon={Building2}
-            iconColor={t.muted}
-            label={shortSiteName(activeSite.name || activeSite.site_code)}
-            onPress={sites.length > 1 ? () => setSheet("site") : undefined}
-            a11yLabel={`Site: ${activeSite.name || activeSite.site_code}`}
           />
         </View>
         {offline ? (
@@ -465,14 +459,11 @@ export default function ReportsScreen() {
 
   return (
     <JoPage>
-      <View style={{ paddingHorizontal: 16, zIndex: 1 }}>
-        <View style={{ paddingTop: 12, paddingHorizontal: 4 }}>
-          <SitePill label={siteLabel} onPress={sites.length > 1 ? () => setSheet("site") : undefined} />
-          <Text style={[f.d(28, -0.025), { color: t.ink, marginTop: 4 }]} accessibilityRole="header">
-            Reports
-          </Text>
-        </View>
-        <ReportTabs items={TABS} value={tab} onChange={setTab} />
+      {/* Resources sub-tabs: SLA · Reports · Client comms (+ the app-wide site pill) */}
+      <ResourcesTabs />
+      <View style={{ paddingHorizontal: 16, paddingTop: 12, zIndex: 1 }}>
+        {/* Same chip tabs as SLA's Overall · Comfort · … */}
+        <ChipTabs items={TABS.map((x) => ({ ...x, color: t.accentInk }))} value={tab} onChange={setTab} />
       </View>
 
       <ScrollView
@@ -490,27 +481,6 @@ export default function ReportsScreen() {
 
       {/* Lifted above the Download PDF bar on the document tabs. */}
       <Toast message={toast} onHide={() => setToast("")} bottom={isDoc ? fabBottom + 62 : fabBottom} />
-
-      <JoSheet
-        visible={sheet === "site"}
-        onClose={() => setSheet(null)}
-        title="Choose site"
-        subtitle="Switches the site across the app."
-      >
-        <ScrollView style={{ maxHeight: 420, marginTop: 16 }} contentContainerStyle={{ gap: 8 }}>
-          {sites.map((x) => (
-            <SheetOption
-              key={x.site_code}
-              label={x.name || x.site_code}
-              selected={x.site_code === activeSite?.site_code}
-              onPress={() => {
-                setSelectedSiteCode(x.site_code);
-                setSheet(null);
-              }}
-            />
-          ))}
-        </ScrollView>
-      </JoSheet>
 
       <JoSheet visible={sheet === "range"} onClose={() => setSheet(null)} title="Period">
         <View style={{ gap: 8, marginTop: 16 }}>

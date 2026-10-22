@@ -1,78 +1,111 @@
 /**
- * App modules as the floating bar and the "All modules" drawer know them
- * (artboard MODULES / MORE_GROUPS). Inventory and Efficiency are in the
- * artboard's drawer but have no mobile screen, so they are left out.
+ * App navigation map.
+ *
+ *  Bottom bar:  Home · Ops · Resources · Settings
+ *  Ops:         top sub-tabs — Tickets · PM · Site Logs · Incidents · Assets
+ *  Resources:   top sub-tabs — SLA · Reports · Client comms
+ *  Settings:    the Profile screen, plus a "Modules" group linking the screens
+ *               that have no tab of their own (Attendance, Alerts)
+ *
+ * Every entry carries the role-permission module that gates VIEW
+ * (contexts/PermissionsContext); entries without one are always shown.
  */
 import type { BxName } from "@/components/jo/Bx";
-
 import type { PermissionModule } from "@/contexts/PermissionsContext";
 
-export type ModuleKey =
-  | "tickets"
-  | "incidents"
-  | "logs"
-  | "pm"
-  | "assets"
-  | "sla"
-  | "reports"
-  | "comms"
-  | "attendance"
-  | "notifications"
-  | "profile"
-  | "settings";
+/* ── Sub-tabs (Ops, Resources) ─────────────────────────────────────────── */
 
-export interface ModuleDef {
-  key: ModuleKey;
+export type OpsTabKey = "tickets" | "pm" | "logs" | "incidents" | "assets";
+export type ResourceTabKey = "sla" | "reports" | "comms";
+export type SubTabKey = OpsTabKey | ResourceTabKey;
+export type SubTabGroup = "ops" | "resources";
+
+export interface OpsTabDef {
+  key: SubTabKey;
   label: string;
-  /** Boxicons class name, as the artboard (MODULES) names it. */
-  icon: BxName;
-  /** expo-router path to open. */
+  /** (tabs) route name. */
+  tab: string;
   href: string;
-  /** Route name inside the (tabs) navigator, when the module is a tab. */
-  tab?: string;
-  /** Role-permission module gating VIEW (contexts/PermissionsContext); none = always shown. */
+  /** Pathname as usePathname() reports it (groups dropped). */
+  path: string;
+  perm: PermissionModule;
+}
+
+export const OPS_TABS: OpsTabDef[] = [
+  { key: "tickets", label: "Tickets", tab: "tickets", href: "/(tabs)/tickets", path: "/tickets", perm: "tickets" },
+  { key: "pm", label: "PM", tab: "preventive-maintenance", href: "/(tabs)/preventive-maintenance", path: "/preventive-maintenance", perm: "pm" },
+  { key: "logs", label: "Site Logs", tab: "site-logs", href: "/(tabs)/site-logs", path: "/site-logs", perm: "site_logs" },
+  { key: "incidents", label: "Incidents", tab: "incidents", href: "/(tabs)/incidents", path: "/incidents", perm: "incidents" },
+  { key: "assets", label: "Assets", tab: "asset-mapping", href: "/(tabs)/asset-mapping", path: "/asset-mapping", perm: "asset" },
+];
+
+export const RESOURCE_TABS: OpsTabDef[] = [
+  { key: "sla", label: "SLA", tab: "sla", href: "/(tabs)/sla", path: "/sla", perm: "sla" },
+  { key: "reports", label: "Reports", tab: "reports", href: "/(tabs)/reports", path: "/reports", perm: "reports" },
+  { key: "comms", label: "Client comms", tab: "customer-communication", href: "/(tabs)/customer-communication", path: "/customer-communication", perm: "customer_communication" },
+];
+
+export const SUB_TABS: Record<SubTabGroup, OpsTabDef[]> = { ops: OPS_TABS, resources: RESOURCE_TABS };
+
+/** The sub-tab last opened per group — the bottom bar item returns to it. */
+const lastSubTab: Record<SubTabGroup, SubTabKey> = { ops: "tickets", resources: "sla" };
+
+export function rememberSubTab(group: SubTabGroup, key: SubTabKey) {
+  lastSubTab[group] = key;
+}
+
+export function getLastSubTab(group: SubTabGroup): SubTabKey {
+  return lastSubTab[group];
+}
+
+/* ── Bottom bar ────────────────────────────────────────────────────────── */
+
+export type BottomKey = "home" | "ops" | "resources" | "settings";
+
+export interface BottomDef {
+  key: BottomKey;
+  label: string;
+  icon: BxName;
+  /** (tabs) route it opens — Ops / Resources resolve to their last sub-tab instead. */
+  tab: string;
   perm?: PermissionModule;
 }
 
-export const MODULES: Record<ModuleKey, ModuleDef> = {
-  tickets: { key: "tickets", label: "Tickets", icon: "bx-receipt", href: "/(tabs)/tickets", tab: "tickets", perm: "tickets" },
-  incidents: { key: "incidents", label: "Incidents", icon: "bx-error-alt", href: "/(tabs)/incidents", tab: "incidents", perm: "incidents" },
-  logs: { key: "logs", label: "Site logs", icon: "bx-clipboard", href: "/(tabs)/site-logs", tab: "site-logs", perm: "site_logs" },
-  pm: { key: "pm", label: "PM", icon: "bx-calendar-check", href: "/(tabs)/preventive-maintenance", tab: "preventive-maintenance", perm: "pm" },
-  assets: { key: "assets", label: "Assets", icon: "bx-qr-scan", href: "/(tabs)/asset-mapping", tab: "asset-mapping", perm: "asset" },
-  sla: { key: "sla", label: "SLA", icon: "bx-medal", href: "/(tabs)/sla", tab: "sla", perm: "sla" },
-  reports: { key: "reports", label: "Reports", icon: "bx-bar-chart-alt-2", href: "/(tabs)/reports", tab: "reports", perm: "reports" },
-  comms: { key: "comms", label: "Comms", icon: "bx-conversation", href: "/(tabs)/customer-communication", tab: "customer-communication", perm: "customer_communication" },
-  attendance: { key: "attendance", label: "Attendance", icon: "bx-time-five", href: "/(tabs)/attendance", tab: "attendance", perm: "attendance" },
-  notifications: { key: "notifications", label: "Alerts", icon: "bx-bell", href: "/notifications" },
-  profile: { key: "profile", label: "Profile", icon: "bx-user", href: "/(tabs)/profile", tab: "profile" },
-  settings: { key: "settings", label: "Settings", icon: "bx-cog", href: "/appearance" },
-};
-
-export const MORE_GROUPS: { label: string; keys: ModuleKey[] }[] = [
-  { label: "Operations", keys: ["tickets", "incidents", "logs", "pm", "assets"] },
-  { label: "Insights", keys: ["sla", "reports", "comms"] },
-  { label: "Team & account", keys: ["attendance", "notifications", "profile", "settings"] },
+export const BOTTOM_TABS: BottomDef[] = [
+  { key: "home", label: "Home", icon: "bx-home-alt-2", tab: "dashboard" },
+  { key: "ops", label: "Ops", icon: "bx-grid-alt", tab: "tickets" },
+  { key: "resources", label: "Resources", icon: "bx-collection", tab: "sla" },
+  { key: "settings", label: "Settings", icon: "bx-cog", tab: "profile" },
 ];
 
-export const HOME = { label: "Home", icon: "bx-home-alt-2" as BxName, tab: "dashboard", href: "/(tabs)/dashboard" } as const;
-export const MORE_ICON: BxName = "bx-dots-horizontal-rounded";
-
-export const DEFAULT_PINS: ModuleKey[] = ["tickets", "pm", "logs"];
-export const MAX_PINS = 3;
-
-/** (tabs) route name → the module that owns it (detail tabs map to their parent). */
-export function moduleForTab(routeName: string): ModuleKey | "home" | null {
-  if (routeName === "dashboard" || routeName === "index") return "home";
-  const hit = (Object.values(MODULES) as ModuleDef[]).find((m) => m.tab === routeName);
-  return hit ? hit.key : null;
+/** (tabs) route name → the bottom item that owns it. */
+export function bottomKeyForRoute(routeName: string): BottomKey {
+  if (OPS_TABS.some((o) => o.tab === routeName)) return "ops";
+  if (RESOURCE_TABS.some((o) => o.tab === routeName)) return "resources";
+  if (routeName === "profile" || routeName === "attendance") return "settings";
+  // dashboard, index
+  return "home";
 }
 
-export function isModuleKey(v: unknown): v is ModuleKey {
-  return typeof v === "string" && v in MODULES;
+/* ── Settings › Modules ────────────────────────────────────────────────── */
+
+export interface LinkDef {
+  key: string;
+  label: string;
+  sub: string;
+  icon: BxName;
+  href: string;
+  perm?: PermissionModule;
 }
 
-/** Path prefixes owned by each permission module — the route guard's map. */
+export const SETTINGS_MODULES: LinkDef[] = [
+  { key: "attendance", label: "Attendance", sub: "Shift history and punch status", icon: "bx-time-five", href: "/(tabs)/attendance", perm: "attendance" },
+  { key: "alerts", label: "Alerts", sub: "Notifications feed", icon: "bx-bell", href: "/notifications" },
+];
+
+/* ── Route guard ───────────────────────────────────────────────────────── */
+
+/** Path prefixes owned by each permission module. */
 export const ROUTE_PERMS: ReadonlyArray<readonly [string, PermissionModule]> = [
   ["/tickets", "tickets"],
   ["/incidents", "incidents"],
@@ -93,6 +126,8 @@ export const ROUTE_PERMS: ReadonlyArray<readonly [string, PermissionModule]> = [
 ];
 
 export function permForPath(pathname: string): PermissionModule | null {
-  const hit = ROUTE_PERMS.find(([prefix]) => pathname === prefix || pathname.startsWith(prefix + "/") || pathname.startsWith(prefix + "-"));
+  const hit = ROUTE_PERMS.find(
+    ([prefix]) => pathname === prefix || pathname.startsWith(prefix + "/") || pathname.startsWith(prefix + "-"),
+  );
   return hit ? hit[1] : null;
 }

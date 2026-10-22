@@ -1,104 +1,68 @@
 /**
- * Floating pill tab bar from the Claude Design "JouleOps App" artboard:
- * Home · three user-pinned modules · More, floating over the screen
- * (left/right 14, bottom 18, height 66). Every item shows its icon over its
- * title; the active one sits on an accent pill with the solid icon. More
- * opens the "All modules" drawer, where "Edit bar" re-picks the three pins.
+ * Floating pill tab bar (Claude Design "JouleOps App" artboard styling):
+ * Home · Ops · Resources · Settings, floating over the screen (left/right
+ * 14, bottom 18, height 66). Every item shows its icon over its title; the
+ * active one sits on an accent pill with the solid icon.
  *
- * Modules the role can't VIEW (contexts/PermissionsContext) are never shown.
+ * "Ops" groups Tickets / PM / Site Logs / Incidents / Assets and "Resources"
+ * groups SLA / Reports / Client comms; each switches via the sub-tab strip at
+ * the top of its screens (components/jo/OpsTabs) and the bar opens the last
+ * one used. Items the role can't view are not shown.
  * Screens pad their content with useNavInsets().clearance.
  */
-import React, { useState } from "react";
-import { Modal, Pressable, StyleSheet, Text, TouchableOpacity, View } from "react-native";
-import Animated, { FadeIn, SlideInDown } from "react-native-reanimated";
+import React from "react";
+import { Text, TouchableOpacity, View } from "react-native";
 import type { BottomTabBarProps } from "@react-navigation/bottom-tabs";
-import { router } from "expo-router";
 import {
-  DEFAULT_PINS,
-  HOME,
-  MAX_PINS,
-  MODULES,
-  MORE_GROUPS,
-  MORE_ICON,
-  moduleForTab,
-  type ModuleKey,
+  BOTTOM_TABS,
+  SUB_TABS,
+  bottomKeyForRoute,
+  getLastSubTab,
+  type BottomKey,
 } from "@/components/jo/modules";
-import { togglePin, useNavPins, visiblePins } from "@/services/NavPins";
 import { usePermissions } from "@/contexts/PermissionsContext";
 import { useTabBarHidden } from "@/services/TabBarVisibility";
-import { Bx, solidOf, type BxName } from "@/components/jo/Bx";
-import { capsStyle, f } from "@/components/jo/ui";
+import { Bx, solidOf } from "@/components/jo/Bx";
+import { f } from "@/components/jo/ui";
 import { BAR_HEIGHT, useNavInsets } from "@/components/jo/navInsets";
 import { makeJoStyles, useJoTheme } from "@/hooks/useJoTheme";
-
-interface BarItem {
-  key: ModuleKey | "home" | "more";
-  label: string;
-  icon: BxName;
-}
-
-/** Order used to top the bar up when a pinned module is hidden by permissions. */
-const FALLBACK_PINS: ModuleKey[] = [
-  ...DEFAULT_PINS,
-  ...MORE_GROUPS.flatMap((g) => g.keys).filter((k) => !DEFAULT_PINS.includes(k)),
-];
-
-export function useModuleVisible() {
-  const { canView } = usePermissions();
-  return (key: ModuleKey) => {
-    const perm = MODULES[key].perm;
-    return !perm || canView(perm);
-  };
-}
 
 export function JouleTabBar({ state, navigation }: BottomTabBarProps) {
   const t = useJoTheme();
   const s = useStyles();
   const { barBottom } = useNavInsets();
-  const saved = useNavPins();
-  const visible = useModuleVisible();
-  const pins = visiblePins(saved, visible, FALLBACK_PINS);
-  const [moreOpen, setMoreOpen] = useState(false);
+  const { canView } = usePermissions();
   const hidden = useTabBarHidden();
 
-  const items: BarItem[] = [
-    { key: "home", label: HOME.label, icon: HOME.icon },
-    ...pins.map((k) => ({ key: k, label: MODULES[k].label, icon: MODULES[k].icon })),
-    { key: "more", label: "More", icon: MORE_ICON },
-  ];
+  const opsTabs = SUB_TABS.ops.filter((o) => canView(o.perm));
+  const resourceTabs = SUB_TABS.resources.filter((o) => canView(o.perm));
+  const items = BOTTOM_TABS.filter((b) =>
+    b.key === "ops"
+      ? opsTabs.length > 0
+      : b.key === "resources"
+        ? resourceTabs.length > 0
+        : !b.perm || canView(b.perm),
+  );
 
   const currentRoute = state.routes[state.index]?.name ?? "dashboard";
-  const current = moduleForTab(currentRoute);
-  // A module that isn't on the bar lights up "More", as in the artboard.
-  const activeKey =
-    moreOpen ? "more" : current && items.some((i) => i.key === current) ? current : "more";
+  const activeKey = bottomKeyForRoute(currentRoute);
 
-  const openModule = (key: ModuleKey | "home") => {
-    setMoreOpen(false);
-    if (key === "home") {
-      navigation.navigate(HOME.tab);
-      return;
+  /** Bottom item → the (tabs) route it opens. */
+  const routeFor = (key: BottomKey): string => {
+    if (key === "ops" || key === "resources") {
+      const group = key === "ops" ? opsTabs : resourceTabs;
+      const last = group.find((o) => o.key === getLastSubTab(key)) ?? group[0];
+      return last?.tab ?? "dashboard";
     }
-    const m = MODULES[key];
-    if (m.tab && state.routes.some((r) => r.name === m.tab)) {
-      navigation.navigate(m.tab);
-    } else {
-      router.push(m.href as any);
-    }
+    return BOTTOM_TABS.find((b) => b.key === key)?.tab ?? "dashboard";
   };
 
-  const onPress = (item: BarItem) => {
-    if (item.key === "more") {
-      setMoreOpen((o) => !o);
-      return;
-    }
-    const tab = item.key === "home" ? HOME.tab : MODULES[item.key].tab;
-    const route = tab ? state.routes.find((r) => r.name === tab) : undefined;
-    if (route) {
-      const event = navigation.emit({ type: "tabPress", target: route.key, canPreventDefault: true });
-      if (event.defaultPrevented) return;
-    }
-    openModule(item.key);
+  const onPress = (key: BottomKey) => {
+    const name = routeFor(key);
+    const route = state.routes.find((r) => r.name === name);
+    if (!route) return;
+    const event = navigation.emit({ type: "tabPress", target: route.key, canPreventDefault: true });
+    if (!event.defaultPrevented && state.routes[state.index]?.name !== name) navigation.navigate(name);
   };
 
   if (hidden) return null;
@@ -111,7 +75,7 @@ export function JouleTabBar({ state, navigation }: BottomTabBarProps) {
           return (
             <TouchableOpacity
               key={item.key}
-              onPress={() => onPress(item)}
+              onPress={() => onPress(item.key)}
               activeOpacity={0.8}
               accessibilityRole="button"
               accessibilityState={{ selected: on }}
@@ -119,12 +83,13 @@ export function JouleTabBar({ state, navigation }: BottomTabBarProps) {
               style={[s.item, on ? { backgroundColor: t.accent } : null]}
             >
               <Bx name={on ? solidOf(item.icon) : item.icon} size={21} color={on ? t.onAccent : t.navIdle} />
-              {/* Every tab carries its title (user request) — the artboard
-                  showed it on the active pill only. */}
               <Text
                 allowFontScaling={false}
                 style={[f.t(10.5, on ? 700 : 500), { color: on ? t.onAccent : t.navIdle }]}
                 numberOfLines={1}
+                // Six items: long titles ("Client comms") shrink a touch on narrow phones.
+                adjustsFontSizeToFit
+                minimumFontScale={0.8}
               >
                 {item.label}
               </Text>
@@ -132,161 +97,7 @@ export function JouleTabBar({ state, navigation }: BottomTabBarProps) {
           );
         })}
       </View>
-
-      <MoreDrawer
-        visible={moreOpen}
-        onClose={() => setMoreOpen(false)}
-        onOpen={(k) => openModule(k)}
-        bottomOffset={barBottom + BAR_HEIGHT + 10}
-        pins={pins}
-        isVisible={visible}
-      />
     </View>
-  );
-}
-
-/* ── All modules drawer ────────────────────────────────────────────────── */
-
-function MoreDrawer({
-  visible,
-  onClose,
-  onOpen,
-  bottomOffset,
-  pins,
-  isVisible,
-}: {
-  visible: boolean;
-  onClose: () => void;
-  onOpen: (k: ModuleKey) => void;
-  bottomOffset: number;
-  pins: ModuleKey[];
-  isVisible: (k: ModuleKey) => boolean;
-}) {
-  const t = useJoTheme();
-  const s = useStyles();
-  const [editing, setEditing] = useState(false);
-
-  const close = () => {
-    setEditing(false);
-    onClose();
-  };
-
-  const groups = MORE_GROUPS.map((g) => ({ ...g, keys: g.keys.filter(isVisible) })).filter(
-    (g) => g.keys.length > 0,
-  );
-
-  return (
-    <Modal visible={visible} transparent animationType="none" onRequestClose={close} statusBarTranslucent>
-      <Animated.View
-        entering={FadeIn.duration(180)}
-        style={[StyleSheet.absoluteFill, { backgroundColor: t.isDark ? "rgba(0,0,0,0.55)" : t.scrim }]}
-      >
-        <Pressable style={StyleSheet.absoluteFill} onPress={close} accessibilityLabel="Close modules" />
-      </Animated.View>
-      <View style={{ flex: 1, justifyContent: "flex-end" }} pointerEvents="box-none">
-        <Animated.View entering={SlideInDown.duration(240)} style={[s.drawer, { marginBottom: bottomOffset }]}>
-          <View style={s.grabber} />
-          <View style={s.drawerHead}>
-            <Text style={[f.d(22, -0.02), { color: t.ink }]}>All modules</Text>
-            <TouchableOpacity
-              onPress={() => setEditing((e) => !e)}
-              activeOpacity={0.8}
-              accessibilityRole="button"
-              accessibilityState={{ selected: editing }}
-              style={[s.editBtn, { backgroundColor: editing ? t.accent : t.track }]}
-            >
-              <Bx name={editing ? "bx-check" : "bx-pin"} size={15} color={editing ? t.onAccent : t.ink} />
-              <Text style={[f.t(12.5, 600), { color: editing ? t.onAccent : t.ink }]}>
-                {editing ? "Done" : "Edit bar"}
-              </Text>
-            </TouchableOpacity>
-          </View>
-          {editing ? (
-            <Text style={[f.t(12), { color: t.muted, paddingTop: 6, paddingHorizontal: 4 }]}>
-              Tap to pin up to {MAX_PINS} modules to the bar. Home and More stay fixed.
-            </Text>
-          ) : null}
-
-          {groups.map((g) => {
-            const rows: (ModuleKey | null)[][] = [];
-            for (let i = 0; i < g.keys.length; i += 4) {
-              const row: (ModuleKey | null)[] = g.keys.slice(i, i + 4);
-              while (row.length < 4) row.push(null);
-              rows.push(row);
-            }
-            return (
-              <View key={g.label}>
-                <Text style={[capsStyle(11.5, 0.06), s.groupLabel, { color: t.muted }]}>{g.label}</Text>
-                <View style={{ gap: 6 }}>
-                  {rows.map((row, ri) => (
-                    <View key={ri} style={{ flexDirection: "row", gap: 6 }}>
-                      {row.map((k, ci) =>
-                        k ? (
-                          <ModuleTile
-                            key={k}
-                            moduleKey={k}
-                            pinned={pins.includes(k)}
-                            editing={editing}
-                            onPress={() => (editing ? togglePin(k) : onOpen(k))}
-                          />
-                        ) : (
-                          <View key={`pad-${ci}`} style={{ flex: 1 }} />
-                        ),
-                      )}
-                    </View>
-                  ))}
-                </View>
-              </View>
-            );
-          })}
-        </Animated.View>
-      </View>
-    </Modal>
-  );
-}
-
-function ModuleTile({
-  moduleKey,
-  pinned,
-  editing,
-  onPress,
-}: {
-  moduleKey: ModuleKey;
-  pinned: boolean;
-  editing: boolean;
-  onPress: () => void;
-}) {
-  const t = useJoTheme();
-  const s = useStyles();
-  const m = MODULES[moduleKey];
-  const lit = editing && pinned;
-  return (
-    <TouchableOpacity
-      onPress={onPress}
-      activeOpacity={0.8}
-      accessibilityRole="button"
-      accessibilityLabel={editing ? `${pinned ? "Unpin" : "Pin"} ${m.label}` : m.label}
-      accessibilityState={editing ? { selected: pinned } : undefined}
-      style={[
-        s.tile,
-        {
-          backgroundColor: lit ? (t.isDark ? "rgba(255,255,255,0.06)" : t.accentTint) : t.raised,
-          borderColor: lit ? t.accent : t.isDark ? "rgba(255,255,255,0.05)" : t.line,
-        },
-      ]}
-    >
-      <View style={[s.tileIcon, { backgroundColor: pinned ? t.accent : t.track }]}>
-        <Bx name={m.icon} size={20} color={pinned ? t.onAccent : t.ink2} />
-      </View>
-      <Text style={[f.t(11.5, 600), { color: t.ink, textAlign: "center", lineHeight: 14 }]} numberOfLines={2}>
-        {m.label}
-      </Text>
-      {lit ? (
-        <View style={[s.pinBadge, { backgroundColor: t.accent }]}>
-          <Bx name="bxs-pin" size={11} color={t.onAccent} />
-        </View>
-      ) : null}
-    </TouchableOpacity>
   );
 }
 
@@ -309,8 +120,7 @@ const useStyles = makeJoStyles((t) => ({
     borderColor: t.navBorder,
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 8,
+    paddingHorizontal: 6,
     // 0 18px 40px -12px rgba(0,0,0,.7)
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 18 },
@@ -322,80 +132,11 @@ const useStyles = makeJoStyles((t) => ({
     flex: 1,
     minWidth: 0,
     height: 52,
-    marginHorizontal: 2,
+    marginHorizontal: 1,
+    paddingHorizontal: 2,
     borderRadius: 24,
     alignItems: "center",
     justifyContent: "center",
     gap: 3,
-  },
-  drawer: {
-    marginHorizontal: 8,
-    backgroundColor: t.input,
-    borderWidth: 1,
-    borderColor: t.lineMid,
-    borderRadius: 34,
-    paddingTop: 12,
-    paddingHorizontal: 16,
-    paddingBottom: 16,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: -10 },
-    shadowOpacity: 0.5,
-    shadowRadius: 20,
-    elevation: 12,
-  },
-  grabber: {
-    width: 40,
-    height: 5,
-    borderRadius: 3,
-    backgroundColor: t.handle,
-    alignSelf: "center",
-    marginBottom: 14,
-  },
-  drawerHead: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 4,
-  },
-  editBtn: {
-    height: 32,
-    paddingHorizontal: 12,
-    borderRadius: 16,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 5,
-  },
-  groupLabel: {
-    paddingTop: 16,
-    paddingHorizontal: 4,
-    paddingBottom: 8,
-  },
-  tile: {
-    flex: 1,
-    minWidth: 0,
-    borderRadius: 20,
-    borderWidth: 1,
-    paddingTop: 12,
-    paddingHorizontal: 4,
-    paddingBottom: 10,
-    alignItems: "center",
-    gap: 7,
-  },
-  tileIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  pinBadge: {
-    position: "absolute",
-    top: 7,
-    left: 7,
-    width: 18,
-    height: 18,
-    borderRadius: 9,
-    alignItems: "center",
-    justifyContent: "center",
   },
 }));

@@ -4,8 +4,11 @@
  *
  *  - iOS: write to the cache, then open the share sheet with the file URL
  *    ("Save to Files", Mail, WhatsApp…).
- *  - Android: the share sheet only carries text, so ask for a folder via the
- *    Storage Access Framework once per save and write the file into it.
+ *  - Android: the share sheet only carries text, so files go into a folder
+ *    picked through the Storage Access Framework. The picker opens on
+ *    Downloads and the granted folder is remembered, so after the first
+ *    "Use this folder" every export lands in Downloads with no prompt. If the
+ *    grant is revoked (or the folder deleted) the picker simply asks again.
  *
  * Both helpers resolve to a short human message for a toast, or throw with
  * one when the save failed. A user cancelling the folder picker resolves with
@@ -13,6 +16,7 @@
  */
 import { Platform, Share } from "react-native";
 import * as FileSystem from "expo-file-system/legacy";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { getValidAuthToken } from "@/services/AuthTokenManager";
 import { API_BASE_URL } from "@/constants/api";
 import { APP_VERSION } from "@/constants/version";
@@ -21,24 +25,61 @@ function safeName(name: string) {
   return name.replace(/[^A-Za-z0-9._ -]/g, "_").replace(/\s+/g, "_");
 }
 
+const EXPORT_DIR_KEY = "export-dir-uri:v1";
+
+/** "content://…/tree/primary%3ADownload" → "Download". */
+function folderLabel(dirUri: string): string {
+  const decoded = decodeURIComponent(dirUri);
+  const tail = decoded.slice(decoded.lastIndexOf(":") + 1);
+  const name = tail.split("/").filter(Boolean).pop() || "the chosen folder";
+  return name === "Download" ? "Downloads" : name;
+}
+
+/** Write base64 bytes into the remembered Android folder, asking for one if needed. */
+async function writeToAndroidFolder(base64: string, filename: string, mimeType: string): Promise<string | null> {
+  const saf = FileSystem.StorageAccessFramework;
+  const dot = filename.lastIndexOf(".");
+  const stem = dot > 0 ? filename.slice(0, dot) : filename;
+
+  const tryWrite = async (dirUri: string) => {
+    const target = await saf.createFileAsync(dirUri, stem, mimeType);
+    await FileSystem.writeAsStringAsync(target, base64, { encoding: FileSystem.EncodingType.Base64 });
+  };
+
+  const saved = await AsyncStorage.getItem(EXPORT_DIR_KEY).catch(() => null);
+  if (saved) {
+    try {
+      await tryWrite(saved);
+      return `Saved to ${folderLabel(saved)} · ${filename}`;
+    } catch {
+      // Grant revoked or folder gone — fall through and ask again.
+      await AsyncStorage.removeItem(EXPORT_DIR_KEY).catch(() => {});
+    }
+  }
+
+  const perm = await saf.requestDirectoryPermissionsAsync(saf.getUriForDirectoryInRoot("Download"));
+  if (!perm.granted) return null;
+  await tryWrite(perm.directoryUri);
+  await AsyncStorage.setItem(EXPORT_DIR_KEY, perm.directoryUri).catch(() => {});
+  return `Saved to ${folderLabel(perm.directoryUri)} · ${filename}`;
+}
+
 async function deliver(localUri: string, filename: string, mimeType: string): Promise<string | null> {
   if (Platform.OS === "ios") {
     await Share.share({ url: localUri });
     return `${filename} ready`;
   }
-  const saf = FileSystem.StorageAccessFramework;
-  const perm = await saf.requestDirectoryPermissionsAsync();
-  if (!perm.granted) return null;
   const base64 = await FileSystem.readAsStringAsync(localUri, {
     encoding: FileSystem.EncodingType.Base64,
   });
-  const dot = filename.lastIndexOf(".");
-  const stem = dot > 0 ? filename.slice(0, dot) : filename;
-  const target = await saf.createFileAsync(perm.directoryUri, stem, mimeType);
-  await FileSystem.writeAsStringAsync(target, base64, {
-    encoding: FileSystem.EncodingType.Base64,
-  });
-  return `Saved ${filename}`;
+  return writeToAndroidFolder(base64, filename, mimeType);
+}
+
+/** Save bytes the app built itself (XLSX / PDF), given as base64. */
+export async function saveBase64File(base64: string, filename: string, mimeType: string): Promise<string | null> {
+  const local = `${FileSystem.cacheDirectory}${safeName(filename)}`;
+  await FileSystem.writeAsStringAsync(local, base64, { encoding: FileSystem.EncodingType.Base64 });
+  return deliver(local, filename, mimeType);
 }
 
 /**

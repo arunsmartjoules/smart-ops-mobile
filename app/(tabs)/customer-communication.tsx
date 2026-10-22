@@ -11,21 +11,19 @@
  * by site NAME, so the site code is resolved to `sites.name` first and
  * matched trimmed + case-insensitively, exactly like the web.
  */
+import { ChipTabs } from "@/components/jo/ChipTabs";
 import { useNavInsets } from "@/components/jo/navInsets";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { FlatList, RefreshControl, ScrollView, Text, TouchableOpacity, View } from "react-native";
+import { FlatList, RefreshControl, Text, TouchableOpacity, View } from "react-native";
 import NetInfo from "@react-native-community/netinfo";
 import { eq } from "drizzle-orm";
-import { Building2, ChevronDown, Inbox, MessagesSquare, Plus, Search, X } from "@/components/jo/bxIcons";
+import { Building2, Inbox, MessagesSquare, Plus } from "@/components/jo/bxIcons";
+import { ResourcesTabs } from "@/components/jo/OpsTabs";
 import {
   EmptyState,
   Fab,
-  IconButton,
   JoPage,
-  JoSheet,
   SearchField,
-  Segmented,
-  SheetOption,
   Shimmer,
   Toast,
   f,
@@ -69,30 +67,6 @@ type SheetState =
 
 const useStyles = makeJoStyles((t) => ({
   top: { paddingHorizontal: 16 },
-  head: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    justifyContent: "space-between",
-    gap: 12,
-    paddingTop: 12,
-    paddingHorizontal: 4,
-  },
-  siteChip: {
-    alignSelf: "flex-start",
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 5,
-    height: 28,
-    paddingLeft: 8,
-    paddingRight: 9,
-    borderRadius: 14,
-    backgroundColor: t.input,
-    borderWidth: 1,
-    borderColor: t.isDark ? "rgba(255,255,255,0.09)" : t.lineMid,
-    maxWidth: 260,
-  },
-  siteText: { ...f.t(12.5, 500), color: t.ink2, flexShrink: 1 },
-  title: { ...f.d(28, -0.025), color: t.ink, marginTop: 4 },
   counters: { flexDirection: "row", gap: 6, marginTop: 10 },
   counter: { flex: 1, minWidth: 0, borderRadius: 18, paddingVertical: 10, paddingHorizontal: 12, borderWidth: 1 },
   counterValue: { ...f.d(22, -0.03) },
@@ -112,10 +86,11 @@ export default function ClientCommunicationScreen() {
   const online = isConnected !== false;
 
   // ── Sites (same pattern as Home: local user_sites first, then the API) ──
+  // The site is picked by the pill in <ResourcesTabs /> (app-wide, broadcast);
+  // this screen only follows it.
   const [sites, setSites] = useState<Site[]>([]);
   const [sitesLoaded, setSitesLoaded] = useState(false);
-  const [siteCode, setSiteCode] = useSelectedSiteCode(userId);
-  const [sitePickerOpen, setSitePickerOpen] = useState(false);
+  const [siteCode] = useSelectedSiteCode(userId);
 
   const loadSites = useCallback(async () => {
     if (!userId) return;
@@ -199,11 +174,20 @@ export default function ClientCommunicationScreen() {
   // ── View state ────────────────────────────────────────────────────────
   const [stream, setStream] = useState<Stream>("action");
   const [filter, setFilter] = useState<Filter>("all");
-  const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [sheet, setSheet] = useState<SheetState>(null);
   const [toast, setToast] = useState("");
   const hideToast = useCallback(() => setToast(""), []);
+
+  // A counter filter belongs to the site it was set on — clear it when the
+  // site pill switches site (the old in-screen site sheet did the same).
+  // Adjusted during render (React's "store the previous value" pattern).
+  const activeSiteCode = activeSite?.site_code ?? null;
+  const [filterSite, setFilterSite] = useState(activeSiteCode);
+  if (filterSite !== activeSiteCode) {
+    setFilterSite(activeSiteCode);
+    setFilter("all");
+  }
 
   const today = todayStr();
   const month = today.slice(0, 7);
@@ -322,56 +306,23 @@ export default function ClientCommunicationScreen() {
 
   const header = (
     <View style={s.top}>
-      <View style={s.head}>
-        <View style={{ minWidth: 0, flexShrink: 1 }}>
-          <TouchableOpacity
-            style={s.siteChip}
-            onPress={() => setSitePickerOpen(true)}
-            disabled={sites.length < 2}
-            activeOpacity={0.8}
-            accessibilityRole="button"
-            accessibilityLabel={`Site: ${siteName || "none"}${sites.length > 1 ? ", change" : ""}`}
-          >
-            <Building2 size={14} color={t.accentInk} />
-            <Text style={s.siteText} numberOfLines={1}>
-              {siteName || (sitesLoaded ? "No site" : "Loading…")}
-            </Text>
-            {sites.length > 1 ? <ChevronDown size={15} color={t.muted} /> : null}
-          </TouchableOpacity>
-          <Text style={s.title} numberOfLines={1}>
-            Client comms
-          </Text>
-        </View>
-        <View style={{ marginTop: 4 }}>
-          <IconButton
-            icon={searchOpen ? X : Search}
-            label={searchOpen ? "Close search" : "Search"}
-            onPress={() => {
-              if (searchOpen) setQuery("");
-              setSearchOpen((o) => !o);
-            }}
-          />
-        </View>
-      </View>
+      {/* First row: search (always visible), filters the list below. */}
+      <SearchField
+        value={query}
+        onChangeText={setQuery}
+        placeholder="Ref, description, person"
+        style={{ marginTop: 12 }}
+      />
 
-      {searchOpen ? (
-        <SearchField
-          value={query}
-          onChangeText={setQuery}
-          placeholder="Ref, description, person"
-          style={{ marginTop: 12 }}
-        />
-      ) : null}
-
-      <Segmented
+      {/* Same chip tabs as SLA's Overall · Comfort · … */}
+      <ChipTabs
         items={[
-          { key: "action" as Stream, label: "Action items", count: counts.openAction },
-          { key: "feedback" as Stream, label: "Feedback", count: counts.openFeedback },
+          { key: "action" as Stream, label: "Action items", icon: "bx-flag", color: t.accentInk, meta: counts.openAction },
+          { key: "feedback" as Stream, label: "Feedback", icon: "bx-message-rounded", color: t.accentInk, meta: counts.openFeedback },
         ]}
         value={stream}
         onChange={pickStream}
-        height={40}
-        style={{ marginTop: 14 }}
+        style={{ marginTop: 12 }}
       />
 
       <View style={s.counters}>
@@ -483,34 +434,11 @@ export default function ClientCommunicationScreen() {
 
   return (
     <JoPage>
+      <ResourcesTabs />
       {header}
       <View style={{ flex: 1 }}>{body}</View>
       {!noSite ? <Fab label="Log" icon={Plus} onPress={openLog} /> : null}
       {!sheet ? <Toast message={toast} onHide={hideToast} /> : null}
-
-      <JoSheet
-        visible={sitePickerOpen}
-        onClose={() => setSitePickerOpen(false)}
-        title="Site"
-        subtitle={`Applies to every module. You have access to ${sites.length} site${sites.length === 1 ? "" : "s"}.`}
-      >
-        <ScrollView style={{ marginTop: 14 }} contentContainerStyle={{ gap: 6 }}>
-          {sites.map((site) => (
-            <SheetOption
-              key={site.site_code}
-              label={site.name || site.site_code}
-              meta={site.site_code}
-              metaStyle={f.m(11)}
-              selected={site.site_code === activeSite?.site_code}
-              onPress={() => {
-                setSiteCode(site.site_code);
-                setFilter("all");
-                setSitePickerOpen(false);
-              }}
-            />
-          ))}
-        </ScrollView>
-      </JoSheet>
 
       <CommSheet
         visible={!!sheet}

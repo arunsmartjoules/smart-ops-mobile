@@ -5,7 +5,6 @@
 import React from "react";
 import { ActivityIndicator, Text, TouchableOpacity, View } from "react-native";
 import {
-  Building2,
   Check,
   ChevronDown,
   Download,
@@ -27,37 +26,6 @@ export function toneColor(t: JoTheme, tone: DocTone): string {
 }
 
 const useStyles = makeJoStyles((t) => ({
-  sitePill: {
-    alignSelf: "flex-start",
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 5,
-    height: 28,
-    paddingLeft: 8,
-    paddingRight: 9,
-    borderRadius: 14,
-    backgroundColor: t.input,
-    borderWidth: 1,
-    borderColor: hair(t, 0.09, t.lineMid),
-    maxWidth: "100%",
-  },
-  tabs: {
-    flexDirection: "row",
-    gap: 4,
-    marginTop: 14,
-    padding: 4,
-    borderRadius: 22,
-    backgroundColor: t.card,
-    borderWidth: 1,
-    borderColor: t.cardBorder,
-  },
-  tab: {
-    flex: 1,
-    height: 38,
-    borderRadius: 18,
-    alignItems: "center",
-    justifyContent: "center",
-  },
   control: {
     height: 42,
     flexDirection: "row",
@@ -137,67 +105,9 @@ const useStyles = makeJoStyles((t) => ({
   },
 }));
 
-/* ── Header ──────────────────────────────────────────────────────────── */
-
-/** Site switcher above the title: buildings icon in accent · name · chevron. */
-export function SitePill({ label, onPress }: { label: string; onPress?: () => void }) {
-  const t = useJoTheme();
-  const st = useStyles();
-  return (
-    <TouchableOpacity
-      onPress={onPress}
-      disabled={!onPress}
-      activeOpacity={0.8}
-      accessibilityRole="button"
-      accessibilityLabel={`Site: ${label}. Change site`}
-      style={st.sitePill}
-    >
-      <Building2 size={14} color={t.accentInk} />
-      <Text style={[f.t(12.5, 500), { color: t.ink2, flexShrink: 1 }]} numberOfLines={1}>
-        {label}
-      </Text>
-      <ChevronDown size={15} color={t.muted} />
-    </TouchableOpacity>
-  );
-}
-
-export function ReportTabs<K extends string>({
-  items,
-  value,
-  onChange,
-}: {
-  items: { key: K; label: string }[];
-  value: K;
-  onChange: (k: K) => void;
-}) {
-  const t = useJoTheme();
-  const st = useStyles();
-  return (
-    <View style={st.tabs} accessibilityRole="tablist">
-      {items.map((it) => {
-        const on = it.key === value;
-        return (
-          <TouchableOpacity
-            key={it.key}
-            onPress={() => onChange(it.key)}
-            activeOpacity={0.8}
-            accessibilityRole="tab"
-            accessibilityState={{ selected: on }}
-            style={[st.tab, { backgroundColor: on ? t.selBg : "transparent" }]}
-          >
-            <Text style={[f.t(12.5, 600), { color: on ? t.selFg : t.muted }]} numberOfLines={1}>
-              {it.label}
-            </Text>
-          </TouchableOpacity>
-        );
-      })}
-    </View>
-  );
-}
-
 /* ── Modules tab ─────────────────────────────────────────────────────── */
 
-/** 42-high rounded control (period / site) above the module list. */
+/** 42-high rounded control (the period picker) above the module list. */
 export function ControlPill({
   icon: Icon,
   iconColor,

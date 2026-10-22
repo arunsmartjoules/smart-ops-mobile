@@ -1,6 +1,7 @@
 /**
- * Tickets list chrome — artboard "tickets" (lines 364–402): site pill over a
- * 28px "Tickets" title with a refresh button, search + date button, the
+ * Tickets list chrome — artboard "tickets" (lines 364–402), under the shared
+ * Ops header (components/jo/OpsTabs owns the site pill, date range and the
+ * sub-tab that names the screen): search + priority-filter + refresh row, the
  * horizontally scrolling status chips with counts, and the "N tickets ·
  * Newest" line. Also the swipe-between-tabs wrapper and the loading
  * skeleton. Local to Tickets (it used to share components/shared/ListChrome).
@@ -110,12 +111,9 @@ export function TicketSwipeTabs({
 /* ── Header ─────────────────────────────────────────────────────────────── */
 
 export function TicketListHeader({
-  siteName,
-  onPickSite,
   onRefresh,
   search,
   onChangeSearch,
-  dateLabel,
   filterNote,
   onOpenFilters,
   chips,
@@ -127,15 +125,11 @@ export function TicketListHeader({
   onSort,
   notice,
 }: {
-  siteName: string;
-  /** Undefined when there is nothing to switch to. */
-  onPickSite?: () => void;
   /** Undefined while offline / without a site — the button greys out. */
   onRefresh?: () => void;
   search: string;
   onChangeSearch: (v: string) => void;
-  dateLabel: string;
-  /** Extra active filter shown after the dates (e.g. a priority). */
+  /** Active non-date filter (e.g. a priority) — lights the filter button's dot. */
   filterNote?: string;
   onOpenFilters: () => void;
   chips: TicketStatusChip[];
@@ -161,31 +155,6 @@ export function TicketListHeader({
 
   return (
     <View style={s.wrap}>
-      <View style={s.head}>
-        <View style={s.headLead}>
-          <TouchableOpacity
-            onPress={onPickSite}
-            disabled={!onPickSite}
-            activeOpacity={0.8}
-            style={s.site}
-            accessibilityRole="button"
-            accessibilityLabel={`Site: ${siteName}${onPickSite ? ", change" : ""}`}
-          >
-            <Bx name="bx-buildings" size={14} color={t.accentInk} />
-            <Text style={s.siteText} numberOfLines={1}>
-              {siteName}
-            </Text>
-            {onPickSite ? <Bx name="bx-chevron-down" size={15} color={t.muted} /> : null}
-          </TouchableOpacity>
-          <Text style={s.title} accessibilityRole="header">
-            Tickets
-          </Text>
-        </View>
-        <View style={[s.headRight, !onRefresh && { opacity: 0.45 }]}>
-          <IconButton icon="bx-refresh" iconSize={21} label="Refresh tickets" onPress={onRefresh} />
-        </View>
-      </View>
-
       <View style={s.searchRow}>
         <SearchField
           value={search}
@@ -196,16 +165,16 @@ export function TicketListHeader({
         <TouchableOpacity
           onPress={onOpenFilters}
           activeOpacity={0.8}
-          style={s.dateBtn}
+          style={s.roundBtn}
           accessibilityRole="button"
-          accessibilityLabel={`Filters: ${dateLabel}${filterNote ? `, ${filterNote}` : ""}`}
+          accessibilityLabel={`Filter by priority${filterNote ? `: ${filterNote}` : ""}`}
         >
-          <Bx name="bx-calendar" size={15} color={t.accentInk} />
-          <Text style={s.dateText} numberOfLines={1}>
-            {dateLabel}
-          </Text>
+          <Bx name="bx-filter-alt" size={20} color={filterNote ? t.accentInk : t.ink} />
           {filterNote ? <View style={s.dot} /> : null}
         </TouchableOpacity>
+        <View style={!onRefresh && { opacity: 0.45 }}>
+          <IconButton icon="bx-refresh" iconSize={21} label="Refresh tickets" onPress={onRefresh} />
+        </View>
       </View>
 
       {notice ? (
@@ -294,47 +263,29 @@ export function TicketRowSkeleton() {
 
 const useStyles = makeJoStyles((t) => ({
   wrap: { paddingHorizontal: 16 },
-  head: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    justifyContent: "space-between",
-    gap: 12,
-    paddingTop: 12,
-    paddingHorizontal: 4,
-  },
-  headLead: { flexShrink: 1, minWidth: 0 },
-  headRight: { marginTop: 4, flexShrink: 0 },
-  site: {
-    alignSelf: "flex-start",
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 5,
-    height: 28,
-    paddingLeft: 8,
-    paddingRight: 9,
-    borderRadius: 14,
-    backgroundColor: t.input,
-    borderWidth: 1,
-    borderColor: t.isDark ? "rgba(255,255,255,0.09)" : t.lineMid,
-    maxWidth: 260,
-  },
-  siteText: { ...f.t(12.5, 500), color: t.ink2, flexShrink: 1 },
-  title: { ...f.d(28, -0.025), color: t.ink, marginTop: 4 },
-  searchRow: { flexDirection: "row", gap: 8, marginTop: 14 },
-  dateBtn: {
+  searchRow: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 12 },
+  // Same footprint as IconButton (44 round) so the two sit as a pair.
+  roundBtn: {
+    width: 44,
     height: 44,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    paddingHorizontal: 13,
     borderRadius: 22,
+    alignItems: "center",
+    justifyContent: "center",
     backgroundColor: t.input,
     borderWidth: 1,
     borderColor: t.isDark ? "rgba(255,255,255,0.07)" : t.lineMid,
-    maxWidth: 170,
   },
-  dateText: { ...f.t(12.5, 500), color: t.ink, flexShrink: 1 },
-  dot: { width: 7, height: 7, borderRadius: 4, backgroundColor: t.accent },
+  dot: {
+    position: "absolute",
+    top: 10,
+    right: 10,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: t.accent,
+    borderWidth: 1.5,
+    borderColor: t.input,
+  },
   notice: {
     flexDirection: "row",
     alignItems: "center",

@@ -7,6 +7,7 @@
  * when online, server stats for the counts, live pm_changed events while
  * focused, and the before-photo Start sheet that moves a PM to In-progress.
  */
+import { OpsTabs } from "@/components/jo/OpsTabs";
 import React, {
   useState,
   useCallback,
@@ -17,6 +18,7 @@ import React, {
 } from "react";
 import {
   View,
+  Text,
   ActivityIndicator,
   RefreshControl,
   ScrollView,
@@ -40,6 +42,7 @@ import {
   EmptyState,
   JoPage,
   JoSheet,
+  PrimaryButton,
   SheetOption,
   Shimmer,
   f,
@@ -58,8 +61,6 @@ import {
 import { useAutoSync } from "@/hooks/useAutoSync";
 import { useSites } from "@/hooks/useSites";
 import { pmInstances } from "@/database";
-import type { Site } from "@/services/AttendanceService";
-import { addDays } from "date-fns";
 import {
   istDateString,
   istParts,
@@ -68,7 +69,11 @@ import {
   istDayEndMsFromYmd,
   formatIST,
 } from "@/utils/istDate";
-import AdvancedFilterModal from "@/components/AdvancedFilterModal";
+import {
+  rangeForPreset,
+  setOpsDateRange,
+  useOpsDateRange,
+} from "@/services/OpsDateRange";
 import QRScannerModal, { type QRScannerRef } from "@/components/QRScannerModal";
 import logger from "@/utils/logger";
 
@@ -85,14 +90,12 @@ const CHIP_ORDER: PmChipKey[] = [
   "Completed",
 ];
 
-// The advanced filter's status picker uses the same keys as the chip strip.
-const STATUS_OPTIONS: string[] = CHIP_ORDER;
-
-// The PM list date-range filter can target either the due date (default)
-// or the completed date — the advanced filter exposes this as a selector.
-const PM_DATE_FIELD_OPTIONS = [
-  { value: "due_date", label: "Due Date" },
-  { value: "completed_date", label: "Completed Date" },
+// The shared Ops date range can target either the due date (default) or the
+// completed date — the filter sheet exposes this as a selector.
+type PmDateField = "due_date" | "completed_date";
+const PM_DATE_FIELD_OPTIONS: { value: PmDateField; label: string }[] = [
+  { value: "due_date", label: "Due date" },
+  { value: "completed_date", label: "Completed date" },
 ];
 
 const STATUS_RANK: Record<PmStatusKey, number> = {
@@ -103,22 +106,13 @@ const STATUS_RANK: Record<PmStatusKey, number> = {
   Skipped: 5,
 };
 
-// IST month bounds as "YYYY-MM-DD" (timezone-pure arithmetic — no DST in IST).
-const istMonthStart = () => {
-  const { year, month } = istParts(new Date());
-  return `${year}-${String(month).padStart(2, "0")}-01`;
-};
-const istMonthEnd = () => {
-  const { year, month } = istParts(new Date());
-  const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
-  return `${year}-${String(month).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
-};
-
-const useStyles = makeJoStyles(() => ({
+const useStyles = makeJoStyles((t) => ({
   list: { paddingHorizontal: 16 },
   skeleton: { paddingHorizontal: 16, gap: 8 },
   pad: { paddingHorizontal: 16 },
   footerLoader: { paddingVertical: 20, alignItems: "center" },
+  sheetCaption: { ...f.t(12, 600), color: t.muted, marginTop: 16, marginBottom: 8 },
+  sheetGroup: { gap: 6 },
 }));
 
 // Fills the list area so a slow cold load reads as "loading", sized like the
@@ -157,7 +151,7 @@ export default function PreventiveMaintenance() {
   const [sortMode, setSortMode] = useState<"Due date" | "Status">("Due date");
   const [slide, setSlide] = useState({ seq: 0, dir: 1 });
   const listSlideStyle = useListSlide(slide.seq, slide.dir);
-  const [showFiltersModal, setShowFiltersModal] = useState(false);
+  const [filterSheetOpen, setFilterSheetOpen] = useState(false);
   const [serverStats, setServerStats] = useState<any>(null);
 
   // Safety net: never let the skeleton outlive a slow/stalled fetch.
@@ -174,24 +168,17 @@ export default function PreventiveMaintenance() {
 
   // ── Clean sites hook ──────────────────────────────────────────────────────
   const userId = user?.user_id || user?.id;
-  const {
-    sites,
-    selectedSite,
-    selectSite,
-    loading: sitesLoading,
-  } = useSites(userId);
+  // The site is picked in the shared Ops header; this only reads it.
+  const { sites, selectedSite, loading: sitesLoading } = useSites(userId);
   const siteCode = selectedSite?.site_code ?? "";
-  const siteName =
-    selectedSite?.site_name ??
-    selectedSite?.name ??
-    selectedSite?.site_code ??
-    "Select site";
 
-  // Date handling — default to the current month (1st → last day)
-  const [currentDate, setCurrentDate] = useState(istMonthStart());
-  const [toDate, setToDate] = useState(istMonthEnd());
+  // The shared Ops date range (header above the sub-tabs), inclusive IST
+  // calendar dates "YYYY-MM-DD", default this month (1st → last day). Kept
+  // under the old window names: the stats call, the API pull, the window
+  // reconcile and the local filter below all read these unchanged, and a new
+  // range re-runs loadPMData exactly as the old local window did.
+  const { from: currentDate, to: toDate } = useOpsDateRange();
 
-  const [tempSearch, setTempSearch] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   // Deferred copy for the expensive per-row filter below. The TextInput stays
   // bound to searchQuery (instant echo), but filteredInstances — which runs an
@@ -199,15 +186,9 @@ export default function PreventiveMaintenance() {
   // — reads the deferred value, so typing no longer stutters on mid-range
   // Android with a few hundred instances cached.
   const deferredSearchQuery = useDeferredValue(searchQuery);
-  const [tempFromDate, setTempFromDate] = useState<string | null>(
-    istMonthStart(),
-  );
-  const [tempToDate, setTempToDate] = useState<string | null>(istMonthEnd());
 
-  // Which date column the date-range filter applies to. `dateField` is the
-  // applied value; `tempDateField` is the pending choice inside the modal.
-  const [dateField, setDateField] = useState("due_date");
-  const [tempDateField, setTempDateField] = useState("due_date");
+  // Which date column the shared range applies to.
+  const [dateField, setDateField] = useState<PmDateField>("due_date");
 
   // QR filter state
   const qrScannerRef = useRef<QRScannerRef>(null);
@@ -227,15 +208,6 @@ export default function PreventiveMaintenance() {
   useEffect(() => {
     allInstancesRef.current = allInstances;
   }, [allInstances]);
-
-  // Sync temp dates when modal opens
-  useEffect(() => {
-    if (showFiltersModal) {
-      setTempFromDate(currentDate);
-      setTempToDate(toDate);
-      setTempDateField(dateField);
-    }
-  }, [showFiltersModal, currentDate, toDate, dateField]);
 
   // ── High-Performance Data Loader ──────────────────────────────────────────
   const loadPMData = useCallback(
@@ -756,26 +728,18 @@ export default function PreventiveMaintenance() {
     }
   }, [startModalInstance, startBeforeImage, starting, user]);
 
-  const applyAdvancedFilters = useCallback(() => {
-    setSearchQuery(tempSearch);
-    if (tempFromDate) setCurrentDate(tempFromDate);
-    if (tempToDate) setToDate(tempToDate);
-    setDateField(tempDateField);
-    setShowFiltersModal(false);
-  }, [tempSearch, tempFromDate, tempToDate, tempDateField]);
-
+  // A scan scopes the asset's PMs to this month, as before — now by moving
+  // the shared Ops range, so the header shows the window being applied.
   const handleQRAssetFound = useCallback((assetName: string) => {
-    setCurrentDate(istMonthStart());
-    setToDate(istMonthEnd());
+    setOpsDateRange(rangeForPreset("month"));
     setQrAssetFilter(assetName);
     setSearchQuery("");
   }, []);
 
+  // Clearing the scan leaves the shared range alone: it now belongs to every
+  // Ops tab, so it is only changed from the header (or by a scan above).
   const clearQRFilter = useCallback(() => {
     setQrAssetFilter(null);
-    // ±30 days around today, expressed as IST calendar days.
-    setCurrentDate(istDateString(addDays(new Date(), -30)));
-    setToDate(istDateString(addDays(new Date(), 30)));
   }, []);
 
   const statusChips = useMemo<PMChip[]>(
@@ -816,12 +780,6 @@ export default function PreventiveMaintenance() {
     },
     [statusFilter],
   );
-
-  // The advanced filter writes its status choice straight through.
-  const setStatusFromFilter = useCallback((key: string) => {
-    const next = CHIP_ORDER.find((k) => k === key);
-    if (next) setStatusFilter(next);
-  }, []);
 
   const cycleSort = useCallback(() => {
     setSortMode((m) => (m === "Due date" ? "Status" : "Due date"));
@@ -919,33 +877,6 @@ export default function PreventiveMaintenance() {
     );
   }, [loadingMore, s.footerLoader, t.accent]);
 
-  // "1–31 Oct" — the year only appears when the range leaves this year.
-  const dateRangeLabel = useMemo(() => {
-    const prefix = dateField === "completed_date" ? "Done " : "";
-    const fromMs = istDayStartMsFromYmd(currentDate);
-    const toMs = istDayStartMsFromYmd(toDate);
-    if (fromMs == null || toMs == null) return `${prefix}All dates`;
-    const a = istParts(fromMs);
-    const b = istParts(toMs);
-    const thisYear = istParts(new Date()).year;
-    const end: Intl.DateTimeFormatOptions =
-      a.year === thisYear && b.year === thisYear
-        ? { day: "numeric", month: "short" }
-        : { day: "numeric", month: "short", year: "numeric" };
-    if (a.year === b.year && a.month === b.month) {
-      if (a.day === b.day) return `${prefix}${formatIST(toMs, end)}`;
-      return `${prefix}${formatIST(fromMs, { day: "numeric" })}–${formatIST(toMs, end)}`;
-    }
-    if (a.year === b.year) {
-      return `${prefix}${formatIST(fromMs, { day: "numeric", month: "short" })} – ${formatIST(toMs, end)}`;
-    }
-    const full: Intl.DateTimeFormatOptions = { day: "numeric", month: "short", year: "numeric" };
-    return `${prefix}${formatIST(fromMs, full)} – ${formatIST(toMs, full)}`;
-  }, [currentDate, toDate, dateField]);
-
-  const [sitePickerOpen, setSitePickerOpen] = useState(false);
-  const siteLabel = (site: Site) => site.site_name || site.name || site.site_code;
-
   let body: React.ReactNode;
   if (!siteCode && sitesLoading) {
     body = <PMSkeleton />;
@@ -957,13 +888,8 @@ export default function PreventiveMaintenance() {
           title={sites.length ? "Pick a site" : "No site assigned"}
           sub={
             sites.length
-              ? "Choose a site to see its preventive maintenance."
+              ? "Choose a site at the top to see its preventive maintenance."
               : "Ask an admin to add you to a site to see its PMs."
-          }
-          action={
-            sites.length
-              ? { label: "Choose site", onPress: () => setSitePickerOpen(true) }
-              : undefined
           }
         />
       </View>
@@ -1006,14 +932,14 @@ export default function PreventiveMaintenance() {
 
   return (
     <JoPage>
+      {/* Ops sub-tabs: Tickets · PM · Site Logs · Incidents · Assets */}
+      <OpsTabs />
       <PMListHeader
-        siteName={siteName}
-        onSitePress={sites.length > 1 ? () => setSitePickerOpen(true) : null}
         search={searchQuery}
         onChangeSearch={setSearchQuery}
         onScanPress={() => qrScannerRef.current?.open()}
-        dateLabel={dateRangeLabel}
-        onDatePress={() => setShowFiltersModal(true)}
+        onFilterPress={() => setFilterSheetOpen(true)}
+        filterActive={dateField !== "due_date"}
         chips={statusChips}
         activeChip={statusFilter}
         onSelectChip={selectStatusChip}
@@ -1027,34 +953,6 @@ export default function PreventiveMaintenance() {
       />
 
       <View style={{ flex: 1 }}>{body}</View>
-
-      <AdvancedFilterModal
-        visible={showFiltersModal}
-        onClose={() => setShowFiltersModal(false)}
-        title="Filter PM Tasks"
-        dateMode="date-range"
-        statusOptions={STATUS_OPTIONS}
-        defaultStatus="All"
-        tempSearch={tempSearch}
-        setTempSearch={setTempSearch}
-        tempFromDate={tempFromDate}
-        setTempFromDate={setTempFromDate}
-        tempToDate={tempToDate}
-        setTempToDate={setTempToDate}
-        sites={sites}
-        selectedSiteCode={siteCode}
-        setSelectedSiteCode={(code) => {
-          const site = sites.find((x) => x.site_code === code);
-          if (site) selectSite(site);
-        }}
-        user={user}
-        statusFilter={statusFilter}
-        setStatusFilter={setStatusFromFilter}
-        dateFieldOptions={PM_DATE_FIELD_OPTIONS}
-        selectedDateField={tempDateField}
-        setSelectedDateField={setTempDateField}
-        applyAdvancedFilters={applyAdvancedFilters}
-      />
 
       <QRScannerModal
         ref={qrScannerRef}
@@ -1074,27 +972,49 @@ export default function PreventiveMaintenance() {
         onConfirm={() => void handleConfirmStart()}
       />
 
+      {/* Non-date filters. The site and the period are set in the Ops header
+          above the sub-tabs; this picks which date column that period
+          applies to, plus the status (same keys as the chip strip). */}
       <JoSheet
-        visible={sitePickerOpen}
-        onClose={() => setSitePickerOpen(false)}
-        title="Site"
-        subtitle={`Applies to every module. You have access to ${sites.length} site${sites.length === 1 ? "" : "s"}.`}
+        visible={filterSheetOpen}
+        onClose={() => setFilterSheetOpen(false)}
+        title="Filter PM tasks"
+        subtitle="Site and period are set at the top of Ops."
       >
-        <ScrollView style={{ marginTop: 14 }} contentContainerStyle={{ gap: 6 }}>
-          {sites.map((site) => (
-            <SheetOption
-              key={site.site_code}
-              label={siteLabel(site)}
-              meta={site.site_code}
-              metaStyle={f.m(11)}
-              selected={site.site_code === siteCode}
-              onPress={() => {
-                void selectSite(site);
-                setSitePickerOpen(false);
-              }}
-            />
-          ))}
+        {/* Seven rows + captions outgrow a small phone; scroll inside. */}
+        <ScrollView style={{ maxHeight: 440 }}>
+          <Text style={s.sheetCaption} accessibilityRole="header">
+            Period applies to
+          </Text>
+          <View style={s.sheetGroup} accessibilityRole="radiogroup">
+            {PM_DATE_FIELD_OPTIONS.map((opt) => (
+              <SheetOption
+                key={opt.value}
+                label={opt.label}
+                selected={dateField === opt.value}
+                onPress={() => setDateField(opt.value)}
+              />
+            ))}
+          </View>
+          <Text style={s.sheetCaption} accessibilityRole="header">
+            Status
+          </Text>
+          <View style={s.sheetGroup} accessibilityRole="radiogroup">
+            {CHIP_ORDER.map((key) => (
+              <SheetOption
+                key={key}
+                label={key}
+                selected={statusFilter === key}
+                onPress={() => selectStatusChip(key)}
+              />
+            ))}
+          </View>
         </ScrollView>
+        <PrimaryButton
+          label="Done"
+          style={{ marginTop: 16 }}
+          onPress={() => setFilterSheetOpen(false)}
+        />
       </JoSheet>
     </JoPage>
   );

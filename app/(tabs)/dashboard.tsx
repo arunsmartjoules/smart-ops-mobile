@@ -730,7 +730,7 @@ export default function Dashboard() {
       bellDot={!isLocked && unread > 0}
       onBell={() => (isLocked ? setReportPickerOpen(true) : router.push("/notifications"))}
       userName={displayName}
-      avatarLabel={isLocked ? "Sign out" : "Profile"}
+      avatarLabel={isLocked ? "Sign out" : "Settings"}
       onAvatar={() => (isLocked ? confirmSignOut() : router.push("/(tabs)/profile"))}
     />
   );

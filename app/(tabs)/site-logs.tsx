@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { OpsTabs } from "@/components/jo/OpsTabs";
 import {
   View,
   Text,
@@ -40,7 +41,6 @@ import {
   JoSheet,
   PrimaryButton,
   SecondaryButton,
-  SheetOption,
   Shimmer,
   StatusPill,
   f,
@@ -64,10 +64,14 @@ import {
   DEFAULT_HISTORY_FILTERS,
   LogHistoryFilterSheet,
   filtersActive,
-  rangeLabel,
   type HistoryFilters,
-  type HistoryRange,
 } from "@/components/sitelogs/LogHistoryFilterSheet";
+import {
+  PRESET_LABEL,
+  addDaysIso,
+  formatOpsRange,
+  useOpsDateRange,
+} from "@/services/OpsDateRange";
 
 /** Inverse of uiShiftToLabel: "1/3" → "A". */
 const labelToUiShift = (label?: string | null): "A" | "B" | "C" | null => {
@@ -99,7 +103,7 @@ const tabFor = (key: LogKey): LogTab => LOG_TABS.find((t) => t.key === key)!;
 /**
  * Overview window — today back one week. Today drives the counts; the week
  * catches an in-progress log left open to turn Start into Continue. The
- * history panel loads its own window from its date filter.
+ * history panel loads the shared Ops date range (services/OpsDateRange).
  */
 const OVERVIEW_DAYS = 7;
 
@@ -137,6 +141,22 @@ const CHILLER_READINGS_PER_DAY_BY_SITE: Record<string, number> = {
 const chillerTargetFor = (siteCode: string | null) =>
   (siteCode && CHILLER_READINGS_PER_DAY_BY_SITE[siteCode]) ||
   CHILLER_READINGS_PER_DAY;
+
+/**
+ * "YYYY-MM-DD" → epoch ms of that day's device-local 00:00 / 23:59:59.999,
+ * built from the parts (never `new Date("YYYY-MM-DD")`, which is UTC). The
+ * local site-log read turns epoch bounds back into a calendar day with local
+ * date parts, so local bounds round-trip to exactly these days; this matches
+ * the startOfDay/endOfDay window the history panel used before.
+ */
+const localDayStartMs = (ymd: string) => {
+  const [y, m, d] = ymd.split("-").map(Number);
+  return new Date(y ?? 1970, (m ?? 1) - 1, d ?? 1).getTime();
+};
+const localDayEndMs = (ymd: string) => {
+  const [y, m, d] = ymd.split("-").map(Number);
+  return new Date(y ?? 1970, (m ?? 1) - 1, d ?? 1, 23, 59, 59, 999).getTime();
+};
 
 const isCompleted = (row: any) => normaliseLogStatus(row?.status) === "Completed";
 
@@ -184,6 +204,8 @@ export default function SiteLogs() {
   // History panel — null while the overview is showing.
   const [historyKey, setHistoryKey] = useState<LogKey | null>(null);
   const [filters, setFilters] = useState<HistoryFilters>(DEFAULT_HISTORY_FILTERS);
+  // The panel's date window is the shared Ops range (inclusive IST days).
+  const { from: rangeFrom, to: rangeTo, preset: rangePreset } = useOpsDateRange();
   const [filterOpen, setFilterOpen] = useState(false);
   // The panel's own rows for its date window — null while the first read runs.
   const [historyRows, setHistoryRows] = useState<any[] | null>(null);
@@ -192,13 +214,23 @@ export default function SiteLogs() {
   const [startSheet, setStartSheet] = useState<StartSheet>(null);
   const [editRow, setEditRow] = useState<any | null>(null);
   const [savingEdit, setSavingEdit] = useState(false);
-  const [sitePickerVisible, setSitePickerVisible] = useState(false);
 
+  // The site is picked in the Ops header (app-wide); this screen only reads it.
   const userId = user?.user_id || user?.id;
-  const { sites: availableSites, selectedSite, selectSite } = useSites(userId);
+  const { selectedSite } = useSites(userId);
   const siteCode = selectedSite?.site_code ?? null;
   const siteName =
     selectedSite?.site_name ?? selectedSite?.site_code ?? "Select Site";
+
+  // Site switched (from the header): drop every cached bucket — they belong
+  // to the old site — and close the history panel. Adjusted during render so
+  // the old site's counts never paint under the new site.
+  const [rowsSite, setRowsSite] = useState(siteCode);
+  if (rowsSite !== siteCode) {
+    setRowsSite(siteCode);
+    setRowsByType({});
+    setHistoryKey(null);
+  }
 
   const todayLabel = useMemo(
     () =>
@@ -284,12 +316,17 @@ export default function SiteLogs() {
    * type changed meanwhile) are dropped.
    */
   const loadHistory = useCallback(
-    async (key: LogKey, range: HistoryRange, opts?: { force?: boolean }) => {
+    async (
+      key: LogKey,
+      range: { from: string; to: string },
+      opts?: { force?: boolean },
+    ) => {
       if (!siteCode) return;
       const req = ++historyReqRef.current;
-      const from = startOfDay(range.from);
-      const to = endOfDay(range.to);
-      const localRange = { fromDate: from.getTime(), toDate: to.getTime() };
+      const localRange = {
+        fromDate: localDayStartMs(range.from),
+        toDate: localDayEndMs(range.to),
+      };
       const read = () =>
         siteLogService
           .getLogsByType(siteCode, key, localRange)
@@ -299,7 +336,7 @@ export default function SiteLogs() {
         const local = await read();
         if (req === historyReqRef.current) setHistoryRows(local);
 
-        const cacheKey = `${siteCode}:${key}:${from.getTime()}:${to.getTime()}`;
+        const cacheKey = `${siteCode}:${key}:${range.from}:${range.to}`;
         const now = Date.now();
         const last = lastSyncRef.current[cacheKey] ?? 0;
         const stale = opts?.force || now - last > 1000 * 60 * 5;
@@ -309,8 +346,8 @@ export default function SiteLogs() {
           await siteLogService.pullChillerReadings(siteCode, localRange);
         } else {
           await siteLogService.pullSiteLogs(siteCode, {
-            fromDate: istDateString(from),
-            toDate: istDateString(to),
+            fromDate: range.from,
+            toDate: range.to,
             logName: key,
           });
         }
@@ -338,8 +375,8 @@ export default function SiteLogs() {
   useAutoSync(() => {
     if (!siteCode) return;
     void loadAll();
-    if (historyKey) void loadHistory(historyKey, filters.range);
-  }, [siteCode, historyKey, filters.range]);
+    if (historyKey) void loadHistory(historyKey, { from: rangeFrom, to: rangeTo });
+  }, [siteCode, historyKey, rangeFrom, rangeTo]);
 
   // Coming back from an entry screen: re-read every bucket so the counts
   // reflect what was just submitted. useAutoSync's focus hook is throttled
@@ -349,17 +386,18 @@ export default function SiteLogs() {
     useCallback(() => {
       if (!siteCode) return;
       void loadAll();
-      if (historyKey) void loadHistory(historyKey, filters.range);
-    }, [siteCode, historyKey, filters.range, loadAll, loadHistory]),
+      if (historyKey) void loadHistory(historyKey, { from: rangeFrom, to: rangeTo });
+    }, [siteCode, historyKey, rangeFrom, rangeTo, loadAll, loadHistory]),
   );
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     // In the history panel only its own type + window needs the forced pull.
-    if (historyKey) await loadHistory(historyKey, filters.range, { force: true });
+    if (historyKey)
+      await loadHistory(historyKey, { from: rangeFrom, to: rangeTo }, { force: true });
     else await loadAll({ force: true });
     setRefreshing(false);
-  }, [historyKey, filters.range, loadHistory, loadAll]);
+  }, [historyKey, rangeFrom, rangeTo, loadHistory, loadAll]);
 
   // ── Overview: today's counts per type ────────────────────────────────────
   const today = istTodayString();
@@ -426,7 +464,7 @@ export default function SiteLogs() {
   // The focus effect above loads the panel whenever its type or window changes.
   const openHistory = useCallback((key: LogKey) => {
     Haptics.selectionAsync().catch(() => {});
-    setFilters(DEFAULT_HISTORY_FILTERS());
+    setFilters(DEFAULT_HISTORY_FILTERS);
     setHistoryRows(null);
     setHistoryKey(key);
   }, []);
@@ -473,16 +511,8 @@ export default function SiteLogs() {
       const target = chillerTargetFor(siteCode);
       // Days in the window up to today — future days owe nothing yet.
       const days: string[] = [];
-      for (
-        let d = startOfDay(filters.range.from);
-        d.getTime() <= filters.range.to.getTime();
-        d = addDays(d, 1)
-      ) {
-        const noon = new Date(d);
-        noon.setHours(12);
-        const ymd = istDateString(noon);
-        if (ymd > today) break;
-        days.push(ymd);
+      for (let d = rangeFrom; d <= rangeTo && d <= today; d = addDaysIso(d, 1)) {
+        days.push(d);
       }
       const perDay: Record<string, number> = {};
       for (const r of shiftScopedRows) {
@@ -503,7 +533,7 @@ export default function SiteLogs() {
       completed,
       pending: shiftScopedRows.length - completed,
     };
-  }, [historyKey, siteCode, filters.range, shiftScopedRows, today]);
+  }, [historyKey, siteCode, rangeFrom, rangeTo, shiftScopedRows, today]);
 
   /** Temp & RH: pending/done per shift over the window (status-agnostic). */
   const historyShiftCounts = useMemo(() => {
@@ -520,11 +550,16 @@ export default function SiteLogs() {
     });
   }, [historyTab, historyRows]);
 
+  // The Ops header (where the range is set) is covered by the panel, so the
+  // panel names the window it shows: "This month · 01–31 Oct · 12 entries".
   const historyLabel = useMemo(() => {
     if (!historyKey) return "";
     const n = visibleRows.length;
-    return `${rangeLabel(filters.range)} · ${n} ${n === 1 ? "entry" : "entries"}`;
-  }, [historyKey, filters.range, visibleRows.length]);
+    const range = formatOpsRange(rangeFrom, rangeTo);
+    const windowLabel =
+      rangePreset === "custom" ? range : `${PRESET_LABEL[rangePreset]} · ${range}`;
+    return `${windowLabel} · ${n} ${n === 1 ? "entry" : "entries"}`;
+  }, [historyKey, rangeFrom, rangeTo, rangePreset, visibleRows.length]);
 
   const historyLoading = historyKey !== null && historyRows === null;
 
@@ -600,7 +635,7 @@ export default function SiteLogs() {
         );
         setEditRow(null);
         void loadType(key, { force: true });
-        void loadHistory(key, filters.range, { force: true });
+        void loadHistory(key, { from: rangeFrom, to: rangeTo }, { force: true });
       } catch (e) {
         loggerUtil.warn("Site log update failed", {
           module: "SITE_LOGS_SCREEN",
@@ -610,7 +645,7 @@ export default function SiteLogs() {
         setSavingEdit(false);
       }
     },
-    [editRow, historyKey, loadType, loadHistory, filters.range],
+    [editRow, historyKey, loadType, loadHistory, rangeFrom, rangeTo],
   );
 
   /**
@@ -678,39 +713,33 @@ export default function SiteLogs() {
 
   return (
     <JoPage>
+      {/* Ops sub-tabs: Tickets · PM · Site Logs · Incidents · Assets */}
+      <OpsTabs />
       <ScrollView
         contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: clearance }}
         showsVerticalScrollIndicator={false}
         refreshControl={refreshControl}
       >
-        {/* Title block — site pill + date, "Today's logs", refresh */}
-        <View style={s.titleRow}>
-          <View style={{ flex: 1, minWidth: 0 }}>
-            <View style={s.siteRow}>
-              <TouchableOpacity
-                onPress={() => setSitePickerVisible(true)}
-                disabled={availableSites.length === 0}
-                activeOpacity={0.75}
-                accessibilityRole="button"
-                accessibilityLabel={`Site: ${siteName}. Change site`}
-                style={s.sitePill}
-              >
-                <Bx name="bx-buildings" size={14} color={t.accentInk} />
-                <Text style={[f.t(12.5, 500), { color: t.ink2, flexShrink: 1 }]} numberOfLines={1}>
-                  {siteName}
-                </Text>
-                <Bx name="bx-chevron-down" size={15} color={t.muted} />
-              </TouchableOpacity>
-              <Text style={[f.t(12.5), { color: t.muted }]} numberOfLines={1}>
-                {todayLabel}
-              </Text>
-            </View>
-            <Text style={[f.d(28, -0.025), { color: t.ink, marginTop: 4 }]}>Today&apos;s logs</Text>
+        {/* Caption — the cards below are TODAY's to-do (the Ops header's
+            date range only drives the history panel). Refresh stays here. */}
+        <View style={s.captionRow}>
+          <View style={s.captionText}>
+            <Text style={[f.t(13, 600), { color: t.ink, flexShrink: 1 }]} numberOfLines={1}>
+              Today · {todayLabel}
+            </Text>
+            {siteCode && anyLoaded ? (
+              <NoticePill
+                tone={totalPending > 0 ? "bad" : "ok"}
+                text={totalPending > 0 ? `${totalPending} pending` : "Nothing pending"}
+                style={s.captionPill}
+              />
+            ) : null}
           </View>
-          <View style={{ marginTop: 4, opacity: canRefresh ? 1 : 0.45 }}>
+          <View style={{ opacity: canRefresh ? 1 : 0.45 }}>
             <IconButton
               icon="bx-refresh"
-              iconSize={21}
+              size={38}
+              iconSize={19}
               label={canRefresh ? "Refresh logs" : "Refresh unavailable offline"}
               onPress={canRefresh ? () => void onRefresh() : undefined}
             />
@@ -722,38 +751,25 @@ export default function SiteLogs() {
             <EmptyState
               icon="bx-buildings"
               title="Select a site"
-              sub="Pick a site to see today's logs."
-              action={
-                availableSites.length > 0
-                  ? { label: "Choose site", onPress: () => setSitePickerVisible(true) }
-                  : undefined
-              }
+              sub="Pick a site from the header above to see today's logs."
             />
           </View>
         ) : (
           <>
-            <View style={{ gap: 8, marginTop: 12, marginLeft: 4, marginBottom: 4 }}>
-              {anyLoaded ? (
-                <NoticePill
-                  tone={totalPending > 0 ? "bad" : "ok"}
-                  text={
-                    totalPending > 0
-                      ? `${totalPending} pending across ${LOG_TABS.length} log types`
-                      : `Nothing pending across ${LOG_TABS.length} log types`
-                  }
-                />
-              ) : null}
-              {!canEdit ? (
-                <NoticePill
-                  tone="warn"
-                  icon="bx-lock-alt"
-                  text="View only — start your day to log readings"
-                />
-              ) : null}
-              {!isConnected ? (
-                <NoticePill tone="mute" icon="bx-wifi-off" text="Offline — showing logs saved on this device" />
-              ) : null}
-            </View>
+            {!canEdit || !isConnected ? (
+              <View style={{ gap: 8, marginTop: 10, marginLeft: 4 }}>
+                {!canEdit ? (
+                  <NoticePill
+                    tone="warn"
+                    icon="bx-lock-alt"
+                    text="View only — start your day to log readings"
+                  />
+                ) : null}
+                {!isConnected ? (
+                  <NoticePill tone="mute" icon="bx-wifi-off" text="Offline — showing logs saved on this device" />
+                ) : null}
+              </View>
+            ) : null}
 
             <View style={{ gap: 10, marginTop: 10 }}>
               {!anyLoaded
@@ -795,9 +811,18 @@ export default function SiteLogs() {
               <Text style={[f.t(15, 600), { color: t.ink }]} numberOfLines={1}>
                 {historyTab.label} log
               </Text>
-              <Text style={[f.t(11.5), { color: t.muted, marginTop: 2 }]} numberOfLines={1}>
-                {historyLabel}
-              </Text>
+              {/* Read-only: the range is set in the Ops header, which this
+                  full-screen panel covers. */}
+              <View
+                style={{ flexDirection: "row", alignItems: "center", gap: 4, marginTop: 2 }}
+                accessible
+                accessibilityLabel={`Showing ${historyLabel}`}
+              >
+                <Bx name="bx-calendar" size={12} color={t.muted} />
+                <Text style={[f.t(11.5), { color: t.muted, flexShrink: 1 }]} numberOfLines={1}>
+                  {historyLabel}
+                </Text>
+              </View>
             </View>
             <TouchableOpacity
               onPress={() => setFilterOpen(true)}
@@ -865,11 +890,7 @@ export default function SiteLogs() {
                   filtersActive(filters)
                     ? {
                         label: "Reset filters",
-                        onPress: () => {
-                          const next = DEFAULT_HISTORY_FILTERS();
-                          if (next.range.preset !== filters.range.preset) setHistoryRows(null);
-                          setFilters(next);
-                        },
+                        onPress: () => setFilters(DEFAULT_HISTORY_FILTERS),
                       }
                     : undefined
                 }
@@ -902,7 +923,6 @@ export default function SiteLogs() {
           onApply={(next) => {
             setFilterOpen(false);
             setFilters(next);
-            if (next.range !== filters.range) setHistoryRows(null);
           }}
         />
       ) : null}
@@ -1001,58 +1021,27 @@ export default function SiteLogs() {
         ) : null}
       </JoSheet>
 
-      {/* Site picker */}
-      <JoSheet
-        visible={sitePickerVisible}
-        onClose={() => setSitePickerVisible(false)}
-        title="Site"
-        subtitle="Logs are recorded per site"
-      >
-        <ScrollView style={{ maxHeight: 420, marginTop: 14 }} contentContainerStyle={{ gap: 6 }}>
-          {availableSites.map((s2) => (
-            <SheetOption
-              key={s2.site_code}
-              label={s2.site_name || s2.site_code}
-              meta={s2.site_name ? s2.site_code : undefined}
-              selected={s2.site_code === siteCode}
-              onPress={() => {
-                selectSite(s2);
-                setSitePickerVisible(false);
-                // Drop every cached bucket — they belong to the old site.
-                setRowsByType({});
-                setHistoryKey(null);
-              }}
-            />
-          ))}
-        </ScrollView>
-      </JoSheet>
     </JoPage>
   );
 }
 
 const useStyles = makeJoStyles((t) => ({
-  titleRow: {
+  captionRow: {
     flexDirection: "row",
-    alignItems: "flex-start",
+    alignItems: "center",
     justifyContent: "space-between",
-    gap: 12,
+    gap: 10,
     paddingTop: 12,
     paddingHorizontal: 4,
   },
-  siteRow: { flexDirection: "row", alignItems: "center", gap: 8 },
-  sitePill: {
-    flexShrink: 1,
+  captionText: {
+    flex: 1,
+    minWidth: 0,
     flexDirection: "row",
     alignItems: "center",
-    gap: 5,
-    height: 28,
-    paddingLeft: 8,
-    paddingRight: 9,
-    borderRadius: 14,
-    backgroundColor: t.input,
-    borderWidth: 1,
-    borderColor: t.lineMid,
+    gap: 8,
   },
+  captionPill: { alignSelf: "center", minHeight: 26, paddingVertical: 3, paddingHorizontal: 10 },
   roundBtn: {
     width: 44,
     height: 44,

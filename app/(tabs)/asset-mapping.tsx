@@ -115,8 +115,8 @@ export default function AssetMappingTab() {
     loading: sitesLoading,
     initialized: sitesReady,
   } = useSites(user?.user_id || user?.id);
+  // The site is picked in the Ops header (app-wide); this screen reads it.
   const siteCode = selectedSite?.site_code || "";
-  const siteName = selectedSite?.site_name || selectedSite?.site_code || "Select site";
   const params = useLocalSearchParams<{ assetId?: string | string[]; siteCode?: string | string[] }>();
 
   /* ── data ── */
@@ -188,6 +188,15 @@ export default function AssetMappingTab() {
   const [libraryUpload, setLibraryUpload] = useState(false);
   const [equipmentId, setEquipmentId] = useState<string | null>(null);
   const canApprove = canApproveMapping(user);
+
+  // Site switched (from the Ops header): forget the selected asset — it
+  // belongs to the old site's list. A deep link selects its asset only after
+  // the switch, so it is unaffected.
+  const [selectionSite, setSelectionSite] = useState(siteCode);
+  if (selectionSite !== siteCode) {
+    setSelectionSite(siteCode);
+    setSelectedId(null);
+  }
 
   // The detail modal is open while an asset is selected (and still listed).
   const asset = assets.find((a) => a.asset_id === selectedId) ?? null;
@@ -530,13 +539,8 @@ export default function AssetMappingTab() {
   return (
     <View style={{ flex: 1, backgroundColor: t.page }}>
       <AssetListView
-        siteName={siteName}
         sites={sites}
         siteCode={siteCode}
-        onSelectSite={(site) => {
-          setSelectedId(null);
-          void selectSite(site);
-        }}
         assets={assets}
         // Still resolving the user's sites counts as loading, not "no site".
         loading={siteCode ? !current : sitesLoading || !sitesReady}

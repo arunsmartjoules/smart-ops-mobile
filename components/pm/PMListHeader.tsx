@@ -1,7 +1,8 @@
 /**
  * Preventive-maintenance list chrome — artboard `r_pm` (app.dc.html 625–663):
- * site pill over the 28px title, search + period button, the status chip
- * strip with counts, and the "N PMs · sort" line.
+ * search + filter button, the status chip strip with counts, and the
+ * "N PMs · sort" line. The site, the date range and the screen name live in
+ * the shared Ops header (<OpsTabs />) above this.
  *
  * Features the artboard doesn't draw are presented in the same language:
  * the asset-QR scan sits inside the search field, an active QR filter is a
@@ -21,38 +22,18 @@ export interface PMChip {
 
 const useStyles = makeJoStyles((t) => ({
   top: { paddingHorizontal: 16 },
-  head: { paddingTop: 12, paddingHorizontal: 4 },
-  siteChip: {
-    alignSelf: "flex-start",
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 5,
-    height: 28,
-    paddingLeft: 8,
-    paddingRight: 9,
-    borderRadius: 14,
-    backgroundColor: t.input,
-    borderWidth: 1,
-    borderColor: t.lineMid,
-    maxWidth: 280,
-  },
-  siteText: { ...f.t(12.5, 500), color: t.ink2, flexShrink: 1 },
-  title: { ...f.d(28, -0.025), color: t.ink, marginTop: 4 },
-  searchRow: { flexDirection: "row", gap: 8, marginTop: 14 },
-  dateBtn: {
+  searchRow: { flexDirection: "row", gap: 8, marginTop: 12 },
+  filterBtn: {
+    width: 44,
     height: 44,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    paddingHorizontal: 13,
     borderRadius: 22,
     backgroundColor: t.input,
     borderWidth: 1,
     borderColor: t.lineMid,
-    maxWidth: 170,
+    alignItems: "center",
+    justifyContent: "center",
     flexShrink: 0,
   },
-  dateText: { ...f.t(12.5, 500), color: t.ink, flexShrink: 1 },
   chips: { marginTop: 12, marginHorizontal: -16 },
   chipsInner: { paddingHorizontal: 16, gap: 6 },
   countRow: {
@@ -126,13 +107,11 @@ export function PMNotice({
 }
 
 export function PMListHeader({
-  siteName,
-  onSitePress,
   search,
   onChangeSearch,
   onScanPress,
-  dateLabel,
-  onDatePress,
+  onFilterPress,
+  filterActive,
   chips,
   activeChip,
   onSelectChip,
@@ -144,14 +123,13 @@ export function PMListHeader({
   offline,
   readOnly,
 }: {
-  siteName: string;
-  /** Null when there is nothing to switch to (one site). */
-  onSitePress: (() => void) | null;
   search: string;
   onChangeSearch: (v: string) => void;
   onScanPress: () => void;
-  dateLabel: string;
-  onDatePress: () => void;
+  /** Opens the PM filter sheet (which date column, status). */
+  onFilterPress: () => void;
+  /** True when a non-default filter is applied — the button fills. */
+  filterActive: boolean;
   chips: PMChip[];
   activeChip: string;
   onSelectChip: (key: string) => void;
@@ -168,28 +146,6 @@ export function PMListHeader({
 
   return (
     <View style={s.top}>
-      <View style={s.head}>
-        <TouchableOpacity
-          style={s.siteChip}
-          onPress={onSitePress ?? undefined}
-          disabled={!onSitePress}
-          activeOpacity={0.8}
-          accessibilityRole="button"
-          accessibilityLabel={`Site: ${siteName}${onSitePress ? ", change" : ""}`}
-        >
-          <Bx name="bx-buildings" size={14} color={t.accentInk} />
-          <Text style={s.siteText} numberOfLines={1}>
-            {siteName}
-          </Text>
-          {onSitePress ? (
-            <Bx name="bx-chevron-down" size={15} color={t.muted} />
-          ) : null}
-        </TouchableOpacity>
-        <Text style={s.title} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
-          Preventive maintenance
-        </Text>
-      </View>
-
       <View style={s.searchRow}>
         <SearchField
           value={search}
@@ -208,16 +164,21 @@ export function PMListHeader({
           }
         />
         <TouchableOpacity
-          style={s.dateBtn}
-          onPress={onDatePress}
-          activeOpacity={0.8}
+          style={[
+            s.filterBtn,
+            filterActive && { backgroundColor: t.selBg, borderColor: t.selBg },
+          ]}
+          onPress={onFilterPress}
+          activeOpacity={0.75}
           accessibilityRole="button"
-          accessibilityLabel={`Period ${dateLabel}. Opens filters`}
+          accessibilityLabel={`Filter PM tasks${filterActive ? ", filters applied" : ""}`}
+          accessibilityState={{ selected: filterActive }}
         >
-          <Bx name="bx-calendar" size={15} color={t.accentInk} />
-          <Text style={s.dateText} numberOfLines={1}>
-            {dateLabel}
-          </Text>
+          <Bx
+            name="bx-slider-alt"
+            size={19}
+            color={filterActive ? t.selFg : t.ink}
+          />
         </TouchableOpacity>
       </View>
 
