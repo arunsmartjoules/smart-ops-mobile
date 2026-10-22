@@ -20,6 +20,7 @@ import NetInfo from "@react-native-community/netinfo";
 import * as Location from "expo-location";
 import DateTimePicker from "@expo/ui/community/datetime-picker";
 import { router } from "expo-router";
+import { LinearGradient } from "expo-linear-gradient";
 import { addDays, format } from "date-fns";
 import { useAuth } from "@/contexts/AuthContext";
 import { useAttendanceGate } from "@/contexts/AttendanceGateContext";
@@ -841,15 +842,10 @@ export default function Dashboard() {
 
   return (
     <JoPage>
-      <ScrollView
-        contentContainerStyle={[styles.body, { paddingBottom: isLocked ? 32 : clearance }]}
-        showsVerticalScrollIndicator={false}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={t.muted} />
-        }
-      >
+      {/* Pinned: logo, site, bell/avatar and the period filter stay put while
+          the cards scroll underneath. */}
+      <View style={styles.top}>
         {header}
-
         {showDashboard ? (
           <DateButton
             label={periodLabel}
@@ -858,6 +854,19 @@ export default function Dashboard() {
             style={{ marginTop: 14, marginLeft: 4 }}
           />
         ) : null}
+      </View>
+
+      <View style={{ flex: 1 }}>
+        {/* Cards slide under a short fade instead of a hard edge (same as SLA). */}
+        <LinearGradient pointerEvents="none" colors={[t.page, `${t.page}00`]} style={styles.fade} />
+        <ScrollView
+          style={{ flex: 1 }}
+          contentContainerStyle={[styles.body, { paddingBottom: isLocked ? 32 : clearance }]}
+          showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={t.muted} />
+          }
+        >
 
         {isOperator ? (
           <>
@@ -944,8 +953,8 @@ export default function Dashboard() {
             ) : null}
           </>
         ) : null}
-
-      </ScrollView>
+        </ScrollView>
+      </View>
 
       <JoSheet
         visible={sheet === "period"}
@@ -1050,7 +1059,9 @@ export default function Dashboard() {
 }
 
 const useStyles = makeJoStyles((t) => ({
+  top: { paddingHorizontal: 16, paddingBottom: 2 },
   body: { paddingHorizontal: 16 },
+  fade: { position: "absolute", top: 0, left: 0, right: 0, height: 20, zIndex: 2 },
   note: { ...f.t(11), color: t.muted, marginTop: 10, paddingHorizontal: 4 },
   options: { gap: 6, marginTop: 16 },
   rangeRow: { flexDirection: "row", gap: 8, marginTop: 16 },
