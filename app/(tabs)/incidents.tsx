@@ -1,5 +1,4 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useQuickCreate } from "@/services/QuickCreate";
 import {
   Alert,
   InteractionManager,
@@ -279,9 +278,6 @@ export default function IncidentsTab() {
   const [creating, setCreating] = useState(false);
   // The Raise FAB first asks: fill in manually, or upload the RCA report.
   const [chooserOpen, setChooserOpen] = useState(false);
-  // Tab bar "+" → Raise incident chooser (only once the user may raise).
-  const openQuickIncident = useCallback(() => setChooserOpen(true), []);
-  useQuickCreate("incident", openQuickIncident, canEdit);
   const [rcaImportOpen, setRcaImportOpen] = useState(false);
   // New key per open → the import screen always starts fresh.
   const [rcaImportSession, setRcaImportSession] = useState(0);

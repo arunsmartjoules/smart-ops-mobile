@@ -17,16 +17,16 @@ function lastSaved(): unknown {
 }
 
 describe("NavPins.togglePin", () => {
-  beforeEach(() => setPins(["tickets", "pm"]));
+  beforeEach(() => setPins(["tickets", "pm", "logs"]));
 
-  it("pinning a third module drops the oldest pin", () => {
+  it("pinning a fourth module drops the oldest pin", () => {
     togglePin("sla");
-    expect(lastSaved()).toEqual(["pm", "sla"]);
+    expect(lastSaved()).toEqual(["pm", "logs", "sla"]);
   });
 
   it("tapping a pinned module unpins it", () => {
     togglePin("pm");
-    expect(lastSaved()).toEqual(["tickets"]);
+    expect(lastSaved()).toEqual(["tickets", "logs"]);
   });
 
   it("never unpins the last remaining module", () => {
@@ -41,15 +41,11 @@ describe("visiblePins", () => {
 
   it("drops pins the role can't view and tops up from the fallback order", () => {
     const allowed = (k: string) => k !== "pm";
-    expect(visiblePins(["tickets", "pm"], allowed, fallback)).toEqual(["tickets", "logs"]);
+    expect(visiblePins(["tickets", "pm", "logs"], allowed, fallback)).toEqual(["tickets", "logs", "incidents"]);
   });
 
-  it("shows fewer pins when fewer modules are viewable", () => {
+  it("shows fewer than three when fewer modules are viewable", () => {
     const allowed = (k: string) => k === "sla";
-    expect(visiblePins(["tickets", "pm"], allowed, fallback)).toEqual(["sla"]);
-  });
-
-  it("trims pins saved under the old three-pin bar", () => {
-    expect(visiblePins(["tickets", "pm", "logs"], () => true, fallback)).toEqual(["tickets", "pm"]);
+    expect(visiblePins(["tickets", "pm", "logs"], allowed, fallback)).toEqual(["sla"]);
   });
 });

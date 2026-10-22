@@ -58,12 +58,8 @@ export const MORE_GROUPS: { label: string; keys: ModuleKey[] }[] = [
 export const HOME = { label: "Home", icon: "bx-home-alt-2" as BxName, tab: "dashboard", href: "/(tabs)/dashboard" } as const;
 export const MORE_ICON: BxName = "bx-dots-horizontal-rounded";
 
-export const DEFAULT_PINS: ModuleKey[] = ["tickets", "pm"];
-/**
- * Two pins: the bar is Home · pin · Quick create (+) · pin · More, so the
- * "+" sits in the true centre. (The artboard had three pins and no "+".)
- */
-export const MAX_PINS = 2;
+export const DEFAULT_PINS: ModuleKey[] = ["tickets", "pm", "logs"];
+export const MAX_PINS = 3;
 
 /** (tabs) route name → the module that owns it (detail tabs map to their parent). */
 export function moduleForTab(routeName: string): ModuleKey | "home" | null {

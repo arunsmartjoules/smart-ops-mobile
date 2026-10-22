@@ -26,16 +26,13 @@ import {
 import { togglePin, useNavPins, visiblePins } from "@/services/NavPins";
 import { usePermissions } from "@/contexts/PermissionsContext";
 import { useTabBarHidden } from "@/services/TabBarVisibility";
-import { requestQuickCreate, type QuickCreateKind } from "@/services/QuickCreate";
-import { useAttendanceGate } from "@/contexts/AttendanceGateContext";
-import { JoSheet, ListRow } from "@/components/jo/ui";
 import { Bx, solidOf, type BxName } from "@/components/jo/Bx";
 import { capsStyle, f } from "@/components/jo/ui";
 import { BAR_HEIGHT, useNavInsets } from "@/components/jo/navInsets";
 import { makeJoStyles, useJoTheme } from "@/hooks/useJoTheme";
 
 interface BarItem {
-  key: ModuleKey | "home" | "more" | "create";
+  key: ModuleKey | "home" | "more";
   label: string;
   icon: BxName;
 }
@@ -44,21 +41,6 @@ interface BarItem {
 const FALLBACK_PINS: ModuleKey[] = [
   ...DEFAULT_PINS,
   ...MORE_GROUPS.flatMap((g) => g.keys).filter((k) => !DEFAULT_PINS.includes(k)),
-];
-
-/** The quick-create menu: what it opens, and the permission + gate it needs. */
-const QUICK_CREATE: {
-  kind: QuickCreateKind;
-  module: ModuleKey;
-  label: string;
-  sub: string;
-  icon: BxName;
-  /** Technicians must be punched in (attendance gate) to raise these. */
-  gated: boolean;
-}[] = [
-  { kind: "ticket", module: "tickets", label: "Raise a ticket", sub: "Complaint or breakdown at the site", icon: "bx-receipt", gated: true },
-  { kind: "incident", module: "incidents", label: "Raise an incident", sub: "Equipment failure, with RCA to follow", icon: "bx-error-alt", gated: true },
-  { kind: "comm", module: "comms", label: "Log client communication", sub: "Escalation, request, feedback or meeting", icon: "bx-conversation", gated: false },
 ];
 
 export function useModuleVisible() {
@@ -77,31 +59,13 @@ export function JouleTabBar({ state, navigation }: BottomTabBarProps) {
   const visible = useModuleVisible();
   const pins = visiblePins(saved, visible, FALLBACK_PINS);
   const [moreOpen, setMoreOpen] = useState(false);
-  const [createOpen, setCreateOpen] = useState(false);
   const hidden = useTabBarHidden();
-  const { canAdd } = usePermissions();
-  const { canEdit } = useAttendanceGate();
 
-  const createOptions = QUICK_CREATE.filter((o) => {
-    const perm = MODULES[o.module].perm;
-    return visible(o.module) && (!perm || canAdd(perm)) && (!o.gated || canEdit);
-  });
-
-  const pinItems: BarItem[] = pins.map((k) => ({ key: k, label: MODULES[k].label, icon: MODULES[k].icon }));
   const items: BarItem[] = [
     { key: "home", label: HOME.label, icon: HOME.icon },
-    ...pinItems.slice(0, 1),
-    // The "+" takes the middle slot whenever the role can create something.
-    ...(createOptions.length > 0 ? [{ key: "create" as const, label: "Create", icon: "bx-plus" as BxName }] : []),
-    ...pinItems.slice(1),
+    ...pins.map((k) => ({ key: k, label: MODULES[k].label, icon: MODULES[k].icon })),
     { key: "more", label: "More", icon: MORE_ICON },
   ];
-
-  const startCreate = (kind: QuickCreateKind, module: ModuleKey) => {
-    setCreateOpen(false);
-    requestQuickCreate(kind);
-    openModule(module);
-  };
 
   const currentRoute = state.routes[state.index]?.name ?? "dashboard";
   const current = moduleForTab(currentRoute);
@@ -124,12 +88,6 @@ export function JouleTabBar({ state, navigation }: BottomTabBarProps) {
   };
 
   const onPress = (item: BarItem) => {
-    if (item.key === "create") {
-      // One option skips the menu.
-      if (createOptions.length === 1) startCreate(createOptions[0]!.kind, createOptions[0]!.module);
-      else setCreateOpen(true);
-      return;
-    }
     if (item.key === "more") {
       setMoreOpen((o) => !o);
       return;
@@ -149,22 +107,6 @@ export function JouleTabBar({ state, navigation }: BottomTabBarProps) {
     <View pointerEvents="box-none" style={[s.float, { bottom: barBottom }]}>
       <View style={s.bar}>
         {items.map((item) => {
-          if (item.key === "create") {
-            return (
-              <View key="create" style={s.createSlot}>
-                <TouchableOpacity
-                  onPress={() => onPress(item)}
-                  activeOpacity={0.85}
-                  accessibilityRole="button"
-                  accessibilityLabel="Quick create"
-                  accessibilityHint="Raise a ticket or incident, or log a client communication"
-                  style={[s.createBtn, { backgroundColor: t.accent }]}
-                >
-                  <Bx name="bx-plus" size={28} color={t.onAccent} />
-                </TouchableOpacity>
-              </View>
-            );
-          }
           const on = item.key === activeKey;
           return (
             <TouchableOpacity
@@ -190,27 +132,6 @@ export function JouleTabBar({ state, navigation }: BottomTabBarProps) {
           );
         })}
       </View>
-
-      <JoSheet
-        visible={createOpen}
-        onClose={() => setCreateOpen(false)}
-        title="Create"
-        subtitle="Opens the full form for the selected site."
-      >
-        <View style={{ marginTop: 8 }}>
-          {createOptions.map((o, i) => (
-            <ListRow
-              key={o.kind}
-              icon={o.icon}
-              iconColor={t.accentInk}
-              label={o.label}
-              sub={o.sub}
-              divider={i > 0}
-              onPress={() => startCreate(o.kind, o.module)}
-            />
-          ))}
-        </View>
-      </JoSheet>
 
       <MoreDrawer
         visible={moreOpen}
@@ -282,7 +203,7 @@ function MoreDrawer({
           </View>
           {editing ? (
             <Text style={[f.t(12), { color: t.muted, paddingTop: 6, paddingHorizontal: 4 }]}>
-              Tap to pin up to {MAX_PINS} modules to the bar. Home, Create and More stay fixed.
+              Tap to pin up to {MAX_PINS} modules to the bar. Home and More stay fixed.
             </Text>
           ) : null}
 
@@ -406,24 +327,6 @@ const useStyles = makeJoStyles((t) => ({
     alignItems: "center",
     justifyContent: "center",
     gap: 3,
-  },
-  createSlot: {
-    flex: 1,
-    minWidth: 0,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  createBtn: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
-    alignItems: "center",
-    justifyContent: "center",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.35,
-    shadowRadius: 10,
-    elevation: 6,
   },
   drawer: {
     marginHorizontal: 8,

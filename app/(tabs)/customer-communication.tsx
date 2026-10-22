@@ -11,7 +11,6 @@
  * by site NAME, so the site code is resolved to `sites.name` first and
  * matched trimmed + case-insensitively, exactly like the web.
  */
-import { useQuickCreate } from "@/services/QuickCreate";
 import { useNavInsets } from "@/components/jo/navInsets";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FlatList, RefreshControl, ScrollView, Text, TouchableOpacity, View } from "react-native";
@@ -304,13 +303,13 @@ export default function ClientCommunicationScreen() {
 
   const openRow = useCallback((row: CommRow) => setSheet({ mode: "detail", id: row.id }), []);
 
-  const openLog = useCallback(() => {
+  const openLog = () => {
     if (!online) {
       setToast("You're offline — logging needs a connection");
       return;
     }
     setSheet({ mode: "form", editingId: null, fromDetail: false });
-  }, [online]);
+  };
 
   const pickStream = (k: Stream) => {
     setStream(k);
@@ -320,8 +319,6 @@ export default function ClientCommunicationScreen() {
   // ── Render ────────────────────────────────────────────────────────────
   const loading = !loaded || (!sitesLoaded && sites.length === 0);
   const noSite = sitesLoaded && sites.length === 0;
-  // Tab bar "+" → Log a client communication.
-  useQuickCreate("comm", openLog, sitesLoaded && !noSite);
 
   const header = (
     <View style={s.top}>

@@ -43,26 +43,19 @@ export const PERMISSION_MODULES = [
 ] as const;
 export type PermissionModule = (typeof PERMISSION_MODULES)[number];
 
-type Cell = { view: boolean; add: boolean };
-type ViewMap = Record<PermissionModule, Cell>;
+type ViewMap = Record<PermissionModule, boolean>;
 
 const ALL_VISIBLE: ViewMap = Object.fromEntries(
-  PERMISSION_MODULES.map((m) => [m, { view: true, add: true }]),
+  PERMISSION_MODULES.map((m) => [m, true]),
 ) as ViewMap;
 
 const CACHE_PREFIX = "role-perms:v1:";
 
-/**
- * API `permissions` object → view/add flags; a module the server omitted reads
- * as hidden, and no view means no add (the backend's view-gate invariant).
- */
+/** API `permissions` object → view flags; a module the server omitted reads as hidden. */
 export function parseViewMap(raw: unknown): ViewMap {
-  const src = (raw ?? {}) as Record<string, { view?: unknown; add?: unknown } | undefined>;
+  const src = (raw ?? {}) as Record<string, { view?: unknown } | undefined>;
   return Object.fromEntries(
-    PERMISSION_MODULES.map((m) => {
-      const view = src[m]?.view === true;
-      return [m, { view, add: view && src[m]?.add === true }];
-    }),
+    PERMISSION_MODULES.map((m) => [m, src[m]?.view === true]),
   ) as ViewMap;
 }
 
@@ -73,15 +66,12 @@ function bypassesMatrix(role: unknown, isSuperadmin: unknown) {
 
 interface PermissionsValue {
   canView: (module: PermissionModule) => boolean;
-  /** May create records in the module (drives the quick-create menu). */
-  canAdd: (module: PermissionModule) => boolean;
   /** True once a real (or cached) answer is in. */
   resolved: boolean;
 }
 
 const PermissionsContext = createContext<PermissionsValue>({
   canView: () => true,
-  canAdd: () => true,
   resolved: false,
 });
 
@@ -138,9 +128,8 @@ export function PermissionsProvider({ children }: { children: React.ReactNode })
   const map = bypass || !state || state.userId !== userId ? ALL_VISIBLE : state.map;
   const resolved = bypass || (!!state && state.userId === userId);
 
-  const canView = useCallback((m: PermissionModule) => map[m]?.view !== false, [map]);
-  const canAdd = useCallback((m: PermissionModule) => map[m]?.add !== false, [map]);
-  const value = useMemo(() => ({ canView, canAdd, resolved }), [canView, canAdd, resolved]);
+  const canView = useCallback((m: PermissionModule) => map[m] !== false, [map]);
+  const value = useMemo(() => ({ canView, resolved }), [canView, resolved]);
 
   return <PermissionsContext.Provider value={value}>{children}</PermissionsContext.Provider>;
 }

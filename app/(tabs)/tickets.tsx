@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { useQuickCreate } from "@/services/QuickCreate";
 import {
   RefreshControl,
   Alert,
@@ -228,9 +227,6 @@ export default function Tickets() {
   const [toDate, setToDate] = useState<string | null>(defaultToDate);
 
   const [creatingTicket, setCreatingTicket] = useState(false);
-  // Tab bar "+" → Raise ticket (only once the user may raise).
-  const openQuickTicket = useCallback(() => setCreatingTicket(true), []);
-  useQuickCreate("ticket", openQuickTicket, canEdit);
 
   // Detail Modal
   const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null);
