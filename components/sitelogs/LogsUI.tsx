@@ -6,7 +6,7 @@
 import React from "react";
 import { Text, TouchableOpacity, View } from "react-native";
 import { Bx } from "@/components/jo/Bx";
-import { Card, f, useJoTheme } from "@/components/jo/ui";
+import { GlossFill, Card, f, useJoTheme } from "@/components/jo/ui";
 import { ShiftCells, typeLook, type ShiftCount } from "@/components/sitelogs/LogsKit";
 
 export type { ShiftCount };
@@ -112,6 +112,7 @@ export function LogTypeCard({
             accessibilityRole="button"
             accessibilityLabel={`${continuing ? "Continue" : "Start"} ${label} log`}
           >
+            {hasPending ? <GlossFill color={t.accent} fg={t.onAccent} radius={21} /> : null}
             <Bx
               name={continuing ? "bx-right-arrow-alt" : "bx-plus"}
               size={17}
@@ -251,6 +252,7 @@ export function FilterChip({
         borderColor: on ? t.selBg : t.lineMid,
       }}
     >
+      {on ? <GlossFill color={t.selBg} fg={t.selFg} radius={17} bleed={1} /> : null}
       <Text style={[f.t(12.5, 600), { color: on ? t.selFg : t.ink2 }]} numberOfLines={1}>
         {label}
       </Text>

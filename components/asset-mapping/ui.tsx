@@ -26,7 +26,7 @@ import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import * as Haptics from "expo-haptics";
 import { LinearGradient } from "expo-linear-gradient";
 import { Bx, type BxName } from "@/components/jo/Bx";
-import { Card, IconButton, f, useJoTheme } from "@/components/jo/ui";
+import { GlossFill, Card, IconButton, f, useJoTheme } from "@/components/jo/ui";
 import { toneBg, toneFg, type JoTone } from "@/constants/jo";
 
 /* ── Detail chrome ─────────────────────────────────────────────────────── */
@@ -322,6 +322,7 @@ export function ActionPill({
         style,
       ]}
     >
+      {accent ? <GlossFill color={t.accent} fg={t.onAccent} radius={20} /> : null}
       {icon ? <Bx name={icon} size={17} color={iconColor} /> : null}
       <Text style={[f.t(13, 600), { color: fg }]} numberOfLines={1}>
         {label}

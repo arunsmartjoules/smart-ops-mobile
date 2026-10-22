@@ -31,6 +31,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { router } from "expo-router";
 import { Bx, type BxName } from "@/components/jo/Bx";
 import {
+  GlossFill,
   IconButton,
   JoPage,
   JoSheet,
@@ -456,6 +457,7 @@ export function DoseChoice({
               opacity: disabled ? 0.6 : 1,
             }}
           >
+            {on ? <GlossFill color={t.accent} fg={fg} radius={22} bleed={1.5} /> : null}
             <Bx name={o.icon} size={20} color={fg} />
             <Text style={[f.t(15, 700), { color: fg }]} numberOfLines={1}>
               {o.label}
@@ -604,6 +606,7 @@ export function AttachmentSlot({
             justifyContent: "center",
           }}
         >
+          <GlossFill color={t.bad} fg={t.onAccent} radius={18} />
           <Bx name="bx-trash" size={17} color={t.onAccent} />
         </TouchableOpacity>
       </View>
@@ -690,6 +693,7 @@ export function ShiftCells({
         const dot = sc.pending > 0 ? t.bad : sc.completed > 0 ? t.ok : t.track;
         const body = (
           <>
+            {on ? <GlossFill color={t.selBg} fg={t.selFg} radius={14} /> : null}
             <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 6 }}>
               <Text style={[f.t(11.5, on ? 600 : 400), { color: on ? t.selFg : t.ink3 }]} numberOfLines={1}>
                 {sc.label}

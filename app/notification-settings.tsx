@@ -33,6 +33,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import logger from "@/utils/logger";
 import { formatISTDateTime } from "@/utils/istDate";
 import cacheManager from "@/services/CacheManager";
+import { GlossFill } from "@/components/jo/ui";
 
 // Push notifications are MANDATORY for everyone EXCEPT admins/superadmins, who
 // may toggle each category from their phone. (Devices are shared and SLA alerts
@@ -273,6 +274,7 @@ export default function NotificationSettingsPage() {
                         disabled={requesting}
                         className="bg-amber-500 rounded-xl px-4 py-2.5 self-start"
                       >
+                        <GlossFill color="#F59E0B" fg="#FFFFFF" radius={12} />
                         <Text className="text-white font-semibold text-sm">
                           {requesting ? "Requesting…" : "Enable Notifications"}
                         </Text>

@@ -7,7 +7,7 @@
 import React, { useState } from "react";
 import { ActivityIndicator, Image, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { Bx } from "@/components/jo/Bx";
-import { StatusPill, f, makeJoStyles, useJoTheme } from "@/components/jo/ui";
+import { GlossFill, StatusPill, f, makeJoStyles, useJoTheme } from "@/components/jo/ui";
 import { formatISTDateTime } from "@/utils/istDate";
 import type { MappedAsset, MappingEquipment } from "@/services/AssetMappingService";
 import type { PhotoSource } from "./AssetDetailView";
@@ -209,6 +209,7 @@ export default function EquipmentDetailView({
                     accessibilityRole="button"
                     accessibilityLabel={`Remove photo ${i + 1}`}
                   >
+                    <GlossFill color={t.bad} fg={t.onAccent} radius={13} />
                     <Bx name="bx-trash" size={14} color={t.onAccent} />
                   </TouchableOpacity>
                 </View>

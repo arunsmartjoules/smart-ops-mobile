@@ -37,6 +37,7 @@ import {
 import type { LucideIcon } from "lucide-react-native";
 import { makeThemedStyles, useDs, type DsTheme } from "@/hooks/useDs";
 import { soRadius, soShadow } from "@/components/home/SiteOverview";
+import { GlossFill } from "@/components/jo/ui";
 
 export { soRadius, soShadow };
 
@@ -319,7 +320,9 @@ export function UnderlineTabs({
         </View>
         <Animated.View
           style={[styles.tabBar, { backgroundColor: activeTone.indicator }, barStyle]}
-        />
+        >
+          <GlossFill color={activeTone.indicator} radius={soRadius.pill} />
+        </Animated.View>
       </View>
     </ScrollView>
   );
@@ -446,6 +449,7 @@ export function ModuleListHeader({
             accessibilityLabel="Filters"
             accessibilityState={{ selected: !!filterActive }}
           >
+            {filterActive ? <GlossFill color={ds.controlOn} fg={ds.onControl} radius={19} bleed={1} /> : null}
             <Filter
               size={17}
               color={filterActive ? ds.onControl : ds.carbon[100]}

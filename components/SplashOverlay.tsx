@@ -6,14 +6,12 @@ import Animated, {
   useReducedMotion,
   useSharedValue,
   withDelay,
-  withSequence,
   withTiming,
 } from "react-native-reanimated";
 import { scheduleOnRN } from "react-native-worklets";
 import * as SplashScreen from "expo-splash-screen";
 import { StatusBar } from "expo-status-bar";
 import Constants from "expo-constants";
-import LightningField from "@/components/LightningField";
 
 /**
  * Animated JS continuation of the native splash.
@@ -25,12 +23,10 @@ import LightningField from "@/components/LightningField";
  * SplashScreenBackground colorset + SplashScreen.storyboard.
  *
  * From 1.1.8 the native splash is the background only (a transparent
- * image), so the launch opens dark and the logo fades in here while tiny gold
- * sparks build up on it (components/LightningField). Older binaries — which
- * still get this JS over the air — show the logo natively; there the logo
- * "charges up" instead: it dims almost to dark, then fades back in with the
- * lightning. Either way the splash stays (sparks crackling) until the app
- * underneath is ready, and always lets the charge-up finish.
+ * image), so the launch opens dark and the logo fades in here; the splash
+ * stays until the app underneath is ready and always lets the fade finish.
+ * Older binaries — which still get this JS over the air — already show the
+ * logo natively, so there it simply stays as drawn.
  *
  * The native splash follows the SYSTEM scheme, not the in-app theme override,
  * so this reads useColorScheme() rather than ThemeContext.
@@ -46,10 +42,8 @@ export const SPLASH = {
   },
 } as const;
 export const LOGO_SIZE = 180; // = expo-splash-screen imageWidth
-/** Dim → fade back in; the lightning's build-up runs over the same span. */
+/** Logo fade-in on a dark launch (1.1.8+), including its short lead-in. */
 export const CHARGE_MS = 1600;
-const DIM_MS = 260;
-const DIM_TO = 0.06;
 
 /**
  * Binaries before this version draw the logo on the native splash. The
@@ -111,28 +105,18 @@ export default function SplashOverlay({
     return () => clearTimeout(t);
   }, [hideNative]);
 
-  // Charge-up: starts only after the handoff, so the frame the native splash
-  // hands over to is the untouched logo.
+  // Fade-in: starts only after the handoff, so the frame the native splash
+  // hands over to is untouched (empty from 1.1.8).
+  const fadeIn = !NATIVE_SPLASH_HAS_LOGO && !reduceMotion;
   useEffect(() => {
-    // Reduced motion: no charge-up, the logo just stays (see `chargeDone`).
-    if (!nativeHidden || reduceMotion) return;
-    logoOpacity.set(
-      NATIVE_SPLASH_HAS_LOGO
-        ? withSequence(
-            withTiming(DIM_TO, { duration: DIM_MS, easing: Easing.out(Easing.quad) }),
-            withDelay(
-              120,
-              withTiming(1, { duration: CHARGE_MS - DIM_MS - 120, easing: Easing.inOut(Easing.cubic) }),
-            ),
-          )
-        : // Sparks first, then the logo emerges as they strengthen.
-          withDelay(250, withTiming(1, { duration: CHARGE_MS - 250, easing: Easing.inOut(Easing.cubic) })),
-    );
+    if (!nativeHidden || !fadeIn) return;
+    logoOpacity.set(withDelay(250, withTiming(1, { duration: CHARGE_MS - 250, easing: Easing.inOut(Easing.cubic) })));
     const t = setTimeout(() => setCharged(true), CHARGE_MS);
     return () => clearTimeout(t);
-  }, [nativeHidden, reduceMotion, logoOpacity]);
+  }, [nativeHidden, fadeIn, logoOpacity]);
 
-  const chargeDone = charged || reduceMotion;
+  // Nothing to wait for when the logo isn't fading in.
+  const chargeDone = charged || !fadeIn;
 
   // Exit: cross-fade onto the first real screen, which is already mounted and
   // painted underneath, so there is never an empty frame between the two.
@@ -177,8 +161,6 @@ export default function SplashOverlay({
       ]}
     >
       <StatusBar style={scheme === "dark" ? "light" : "dark"} />
-      {/* Only after the handoff — the first frame must match the native splash. */}
-      <LightningField active={nativeHidden} scheme={scheme} rampMs={CHARGE_MS} />
       <Animated.View style={logoStyle}>
         <Image
           source={palette.logo}

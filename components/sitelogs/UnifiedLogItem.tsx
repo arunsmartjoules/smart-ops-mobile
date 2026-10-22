@@ -9,7 +9,7 @@ import React from "react";
 import { Text, TextInput, TouchableOpacity, View } from "react-native";
 import { TaskItem } from "@/services/SiteConfigService";
 import { Bx } from "@/components/jo/Bx";
-import { Card, f, useJoTheme } from "@/components/jo/ui";
+import { GlossFill, Card, f, useJoTheme } from "@/components/jo/ui";
 import { LogImagePicker } from "./LogImagePicker";
 import { NumberField, RemarksField, Tag } from "./LogsKit";
 
@@ -75,6 +75,7 @@ export const UnifiedLogItem = React.memo(
                 borderColor: dosed ? t.accent : t.disabled,
               }}
             >
+              {dosed ? <GlossFill color={t.accent} fg={t.onAccent} radius={9} bleed={2} /> : null}
               {dosed ? <Bx name="bx-check" size={20} color={t.onAccent} /> : null}
             </View>
             <View style={{ flex: 1, minWidth: 0 }}>

@@ -131,6 +131,56 @@ const HomeDashboardService = {
     );
   },
 
+  /**
+   * A site's attendance log for a date range, newest day first, one page at a
+   * time (the manager Home's "View attendance"). Page 1 is kept as the
+   * offline fallback, like the other Home calls.
+   */
+  async getSiteAttendance(
+    userId: string,
+    siteCode: string,
+    from: string,
+    to: string,
+    page: number,
+    limit = 100,
+  ): Promise<
+    | { success: true; rows: TeamAttendanceRow[]; total: number; isFromCache?: boolean }
+    | { success: false; error: string }
+  > {
+    const qs = new URLSearchParams({
+      site_code: siteCode,
+      date_from: from,
+      date_to: to,
+      page: String(page),
+      limit: String(limit),
+      sortBy: "date",
+      sortOrder: "desc",
+    });
+    const cacheKey = `${userId}:${siteCode}:attendance:${from}:${to}`;
+    try {
+      const res = await centralApiFetch(`${API_BASE_URL}/api/attendance?${qs.toString()}`);
+      const body = await res.json().catch(() => null);
+      if (res.ok && body?.success && Array.isArray(body.data)) {
+        const total = Number(body.pagination?.total);
+        const result = {
+          rows: body.data as TeamAttendanceRow[],
+          total: Number.isFinite(total) ? total : body.data.length,
+        };
+        if (page === 1) writeCache(cacheKey, result);
+        return { success: true, ...result };
+      }
+      if (res.status < 500) return { success: false, error: body?.error || `HTTP ${res.status}` };
+      logger.warn("Site attendance server error", { status: res.status });
+    } catch (error) {
+      logger.warn("Site attendance fetch failed", { error });
+    }
+    if (page === 1) {
+      const cached = await readCache<{ rows: TeamAttendanceRow[]; total: number }>(cacheKey);
+      if (cached) return { success: true, ...cached, isFromCache: true };
+    }
+    return { success: false, error: "Unable to load attendance" };
+  },
+
   getSummary(userId: string, siteCode: string, from: string, to: string) {
     const qs = new URLSearchParams({ site_code: siteCode, from, to });
     return load<HomeSummary>(

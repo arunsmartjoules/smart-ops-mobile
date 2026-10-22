@@ -6,7 +6,7 @@
 import React from "react";
 import { ScrollView, Text, TouchableOpacity, View, type StyleProp, type ViewStyle } from "react-native";
 import { Check, ChevronLeft, type LucideIcon } from "@/components/jo/bxIcons";
-import { f, useJoTheme } from "@/components/jo/ui";
+import { GlossFill, f, useJoTheme } from "@/components/jo/ui";
 
 /** Round raised button (artboard 40/44 px) whose icon colour can be dimmed. */
 export function RoundButton({
@@ -299,6 +299,7 @@ export function SheetRow({
             borderColor: selected ? t.accent : t.disabled,
           }}
         >
+          {selected ? <GlossFill color={t.accent} fg={t.onAccent} radius={11} bleed={1.5} /> : null}
           {selected ? <Check size={15} color={t.onAccent} /> : null}
         </View>
       )}

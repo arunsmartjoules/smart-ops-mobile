@@ -2,7 +2,7 @@ import React, { useCallback } from "react";
 import { Text, TouchableOpacity, View } from "react-native";
 import { type Ticket } from "@/services/TicketsService";
 import { Bx } from "@/components/jo/Bx";
-import { Avatar, f, makeJoStyles, useJoTheme } from "@/components/jo/ui";
+import { GlossFill, Avatar, f, makeJoStyles, useJoTheme } from "@/components/jo/ui";
 import {
   formatTicketAge,
   formatTicketCreated,
@@ -72,11 +72,14 @@ const TicketItem = React.memo(
             </View>
             {priority ? (
               <View style={[s.pill, { backgroundColor: priority.bg }]}>
+                {/* Only the solid "Very high" fill glosses; the tints are translucent and render nothing. */}
+                <GlossFill color={priority.bg} fg={priority.fg} radius={10} />
                 <Text style={[s.pillText, { color: priority.fg }]}>{priority.label}</Text>
               </View>
             ) : null}
             {slaBreached ? (
               <View style={[s.pill, s.slaPill, { backgroundColor: t.bad }]}>
+                <GlossFill color={t.bad} fg={t.onAccent} radius={10} />
                 <Bx name="bx-error" size={11} color={t.onAccent} />
                 <Text style={[s.pillText, { color: t.onAccent }]}>SLA breached</Text>
               </View>

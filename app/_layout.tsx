@@ -348,6 +348,7 @@ export default function RootLayout() {
                   <Stack.Screen name="privacy-security" />
                   <Stack.Screen name="app-settings" />
                   <Stack.Screen name="appearance" />
+                  <Stack.Screen name="attendance-logs" />
                   <Stack.Screen name="notification-settings" />
                   <Stack.Screen name="notifications" />
                   <Stack.Screen name="sitelog-detail" />

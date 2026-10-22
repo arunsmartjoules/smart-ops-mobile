@@ -5,7 +5,7 @@
 import React, { useCallback } from "react";
 import { Text, TouchableOpacity, View } from "react-native";
 import { Bx } from "@/components/jo/Bx";
-import { f, makeJoStyles, useJoTheme } from "@/components/jo/ui";
+import { GlossFill, f, makeJoStyles, useJoTheme } from "@/components/jo/ui";
 import { avatarColor, initials } from "@/constants/jo";
 import {
   formatAge,
@@ -114,7 +114,9 @@ const IncidentItem = React.memo(({ item, assignee, onPress, showRcaPending }: In
           {stage.label}
         </Text>
         <View style={s.track}>
-          <View style={{ height: "100%", borderRadius: 2, width: `${stage.pct}%`, backgroundColor: stage.color }} />
+          <View style={{ height: "100%", borderRadius: 2, width: `${stage.pct}%`, backgroundColor: stage.color }}>
+            <GlossFill color={stage.color} radius={2} />
+          </View>
         </View>
       </View>
 

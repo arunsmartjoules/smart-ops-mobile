@@ -31,7 +31,7 @@ import {
 } from "react-native";
 import { CameraView, useCameraPermissions, type FocusMode } from "expo-camera";
 import { Bx } from "@/components/jo/Bx";
-import { PrimaryButton, f, useJoTheme } from "@/components/jo/ui";
+import { GlossFill, PrimaryButton, f, useJoTheme } from "@/components/jo/ui";
 import { joTheme, type JoTheme } from "@/constants/jo";
 
 export type CaptureMode = "nameplate" | "location" | "proof";
@@ -244,6 +244,7 @@ export default function CaptureCamera({
             accessibilityState={{ checked: torch }}
             accessibilityLabel="Flash"
           >
+            {torch ? <GlossFill color={accent} fg={dk.onAccent} radius={26} /> : null}
             <Bx name={torch ? "bxs-zap" : "bx-bolt-circle"} size={22} color={torch ? dk.onAccent : dk.ink} />
           </TouchableOpacity>
           <TouchableOpacity
@@ -254,7 +255,9 @@ export default function CaptureCamera({
             accessibilityRole="button"
             accessibilityLabel="Take photo"
           >
-            <View style={[styles.shutterInner, { backgroundColor: accent }]} />
+            <View style={[styles.shutterInner, { backgroundColor: accent }]}>
+              <GlossFill color={accent} radius={29} />
+            </View>
           </TouchableOpacity>
           {/* Focus: released by default, locked where the operator tapped. */}
           <TouchableOpacity
@@ -272,6 +275,7 @@ export default function CaptureCamera({
             accessibilityRole="button"
             accessibilityLabel={autofocus === "on" ? "Release focus" : "Focus on the centre"}
           >
+            {autofocus === "on" ? <GlossFill color={accent} fg={dk.onAccent} radius={26} /> : null}
             <Bx name="bx-target-lock" size={22} color={autofocus === "on" ? dk.onAccent : dk.ink} />
           </TouchableOpacity>
         </View>

@@ -23,7 +23,7 @@ import {
 import { usePermissions } from "@/contexts/PermissionsContext";
 import { useTabBarHidden } from "@/services/TabBarVisibility";
 import { Bx, solidOf } from "@/components/jo/Bx";
-import { f } from "@/components/jo/ui";
+import { GlossFill, f } from "@/components/jo/ui";
 import { BAR_HEIGHT, useNavInsets } from "@/components/jo/navInsets";
 import { makeJoStyles, useJoTheme } from "@/hooks/useJoTheme";
 
@@ -82,6 +82,7 @@ export function JouleTabBar({ state, navigation }: BottomTabBarProps) {
               accessibilityLabel={item.label}
               style={[s.item, on ? { backgroundColor: t.accent } : null]}
             >
+              {on ? <GlossFill color={t.accent} fg={t.onAccent} radius={24} glow={10} /> : null}
               <Bx name={on ? solidOf(item.icon) : item.icon} size={21} color={on ? t.onAccent : t.navIdle} />
               <Text
                 allowFontScaling={false}

@@ -18,7 +18,7 @@ import { v4 as uuidv4 } from "uuid";
 import PressableScale from "@/components/PressableScale";
 import type { SelectOption } from "@/components/SearchableSelect";
 import { Bx, type BxName } from "@/components/jo/Bx";
-import { Card, f, makeJoStyles, useJoTheme } from "@/components/jo/ui";
+import { GlossFill, Card, f, makeJoStyles, useJoTheme } from "@/components/jo/ui";
 import { FieldLabel, IncHeader, IncPicker, Panel } from "./IncFields";
 import { StorageService } from "@/services/StorageService";
 import { TicketsService } from "@/services/TicketsService";
@@ -867,6 +867,7 @@ function UploadStep({
             accessibilityState={{ disabled: offline }}
           >
             <View style={styles.dropIcon}>
+              <GlossFill color={t.accent} fg={t.onAccent} radius={28} />
               <Bx name="bx-cloud-upload" size={26} color={t.onAccent} />
             </View>
             <Text style={styles.dropTitle}>Choose file</Text>

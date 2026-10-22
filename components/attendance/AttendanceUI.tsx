@@ -24,6 +24,7 @@ import Animated, { FadeIn, SlideInDown } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Bx, type BxName } from "@/components/jo/Bx";
 import {
+  GlossFill,
   Card,
   Chip,
   HeroCard,
@@ -139,6 +140,7 @@ export function AttendanceHero({
             opacity: punch.busy ? 0.8 : 1,
           }}
         >
+          <GlossFill color={ON_BLACK.page} fg={ON_BLACK.ink} radius={24} />
           {punch.busy ? (
             <ActivityIndicator size="small" color={ON_BLACK.ink} />
           ) : (
@@ -220,6 +222,7 @@ export function WeekStrip({ cells }: { cells: WeekCell[] }) {
                 borderColor: col.bd,
               }}
             >
+              {c.kind === "today" ? <GlossFill color={col.bg} fg={col.fg} radius={16} bleed={1.5} /> : null}
               <Text style={[f.t(12.5, 600), { color: col.fg }]}>{c.day}</Text>
             </View>
           </View>

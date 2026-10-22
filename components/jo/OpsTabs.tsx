@@ -29,6 +29,7 @@ import { useSites } from "@/hooks/useSites";
 import { SUB_TABS, rememberSubTab, type SubTabGroup } from "@/components/jo/modules";
 import {
   DateButton,
+  GlossFill,
   JoSheet,
   NewBadge,
   PrimaryButton,
@@ -162,7 +163,9 @@ function SubTabsHeader({ group, showDate }: { group: SubTabGroup; showDate: bool
                   >
                     {o.label}
                   </Text>
-                  <View style={[s.underline, { backgroundColor: on ? t.accent : "transparent" }]} />
+                  <View style={[s.underline, { backgroundColor: on ? t.accent : "transparent" }]}>
+                    {on ? <GlossFill color={t.accent} radius={{ topLeft: 2, topRight: 2 }} /> : null}
+                  </View>
                   {/* Out of flow, in the tab's top padding, so it never squeezes the label. */}
                   {o.isNew ? <NewBadge style={s.newBadge} /> : null}
                 </View>

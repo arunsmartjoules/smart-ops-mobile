@@ -35,6 +35,7 @@ import {
 import type { LucideIcon } from "lucide-react-native";
 import { makeThemedStyles, useDs, type DsTheme } from "@/hooks/useDs";
 import { soRadius } from "@/components/home/SiteOverview";
+import { GlossFill } from "@/components/jo/ui";
 
 /** Mock-only tints with no design-system token. */
 const mock = (ds: DsTheme) => ({
@@ -412,6 +413,7 @@ export function SignupFooter({
         accessibilityRole="button"
         accessibilityLabel={ctaLabel}
       >
+        {ready ? <GlossFill color={ds.flame[100]} fg={ds.onAccent} radius={14} /> : null}
         {busy ? (
           <ActivityIndicator size="small" color={ds.onChrome} />
         ) : (
@@ -632,6 +634,7 @@ export function SignupSheet({
               style={styles.sheetDone}
               accessibilityRole="button"
             >
+              <GlossFill color={ds.thunder[100]} fg={ds.white} radius={14} />
               <Text style={styles.sheetDoneText}>
                 {chosen.size > 0 ? `${doneLabel} (${chosen.size})` : doneLabel}
               </Text>

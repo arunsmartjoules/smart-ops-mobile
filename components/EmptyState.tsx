@@ -1,6 +1,7 @@
 import React from "react";
 import { View, Text, TouchableOpacity } from "react-native";
 import type { LucideIcon } from "lucide-react-native";
+import { GlossFill } from "@/components/jo/ui";
 
 interface EmptyStateAction {
   label: string;
@@ -43,6 +44,7 @@ export function EmptyState({
           activeOpacity={0.85}
           className="mt-4 bg-red-600 px-5 py-2.5 rounded-xl"
         >
+          <GlossFill color="#D43535" fg="#FFFFFF" radius={12} />
           <Text className="text-white font-bold text-sm">{action.label}</Text>
         </TouchableOpacity>
       ) : null}

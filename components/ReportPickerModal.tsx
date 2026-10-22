@@ -21,6 +21,7 @@ import {
   useAttendanceGate,
   ReadOnlyDomain,
 } from "@/contexts/AttendanceGateContext";
+import { GlossFill, useJoTheme } from "@/components/jo/ui";
 
 interface ReportPickerModalProps {
   visible: boolean;
@@ -199,6 +200,7 @@ function ConfirmStep({
   onBack: () => void;
   onConfirm: () => void;
 }) {
+  const { isDark } = useJoTheme();
   return (
     <>
       <View className="flex-row items-center px-5 pb-3">
@@ -232,6 +234,12 @@ function ConfirmStep({
           onPress={onConfirm}
           className="mt-6 bg-slate-900 dark:bg-white rounded-xl py-4 flex-row items-center justify-center"
         >
+          {/* bg-slate-900 / dark:bg-white with text-white / dark:text-slate-900 (tailwind.config.js values). */}
+          <GlossFill
+            color={isDark ? "#FFFFFF" : "#141418"}
+            fg={isDark ? "#141418" : "#FFFFFF"}
+            radius={12}
+          />
           <Eye size={18} color="#fff" style={{ marginRight: 8 }} />
           <Text className="text-white dark:text-slate-900 font-semibold text-base">
             Continue to {option.label}

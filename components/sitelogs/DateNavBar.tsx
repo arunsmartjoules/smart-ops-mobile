@@ -8,7 +8,7 @@ import { View, Text, TouchableOpacity, Platform } from "react-native";
 import { format, isToday, subDays, addDays } from "date-fns";
 import DateTimePicker from "@expo/ui/community/datetime-picker";
 import { Bx } from "@/components/jo/Bx";
-import { f, useJoTheme } from "@/components/jo/ui";
+import { GlossFill, f, useJoTheme } from "@/components/jo/ui";
 
 interface DateNavBarProps {
   date: Date;
@@ -68,6 +68,7 @@ export function DateNavBar({
             justifyContent: "center",
           }}
         >
+          <GlossFill color={t.bad} fg={t.onAccent} radius={9} />
           <Text style={[f.t(10, 700), { color: t.onAccent }]}>{count > 99 ? "99+" : count}</Text>
         </View>
       ) : null}

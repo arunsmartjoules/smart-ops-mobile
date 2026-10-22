@@ -17,7 +17,7 @@ import {
   type ViewStyle,
 } from "react-native";
 import { Bx, type BxName } from "@/components/jo/Bx";
-import { JoSheet, SearchField, f, useJoTheme } from "@/components/jo/ui";
+import { GlossFill, JoSheet, SearchField, f, useJoTheme } from "@/components/jo/ui";
 import type { SelectOption } from "@/components/SearchableSelect";
 
 /* ── Field head ─────────────────────────────────────────────────────────── */
@@ -304,6 +304,7 @@ export function ChoiceChips({
               borderColor: on ? t.selBg : invalid ? t.bad : t.lineMid,
             }}
           >
+            {on ? <GlossFill color={t.selBg} fg={t.selFg} radius={18} bleed={1} /> : null}
             <Text style={[f.t(12.5, 600), { color: on ? t.selFg : t.ink2 }]}>{o}</Text>
           </TouchableOpacity>
         );
@@ -375,6 +376,7 @@ export function SwitchRow({
         <Text style={[f.t(11.5), { color: t.muted, marginTop: 2 }]}>{sub}</Text>
       </View>
       <View style={{ width: 46, height: 28, borderRadius: 14, backgroundColor: value ? t.accent : t.track }}>
+        {value ? <GlossFill color={t.accent} radius={14} /> : null}
         <View
           style={{
             position: "absolute",
@@ -446,6 +448,7 @@ function OptionRow({
           borderColor: selected ? t.accent : t.disabled,
         }}
       >
+        {selected ? <GlossFill color={t.accent} fg={t.onAccent} radius={11} bleed={1.5} /> : null}
         {selected ? <Bx name="bx-check" size={15} color={t.onAccent} /> : null}
       </View>
     </TouchableOpacity>

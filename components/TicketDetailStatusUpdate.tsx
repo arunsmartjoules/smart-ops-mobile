@@ -4,7 +4,7 @@ import * as ImagePicker from "expo-image-picker";
 import { type SelectOption } from "./SearchableSelect";
 import { type Ticket } from "@/services/TicketsService";
 import { Bx, type BxName } from "@/components/jo/Bx";
-import { Card, f, makeJoStyles, useJoTheme } from "@/components/jo/ui";
+import { GlossFill, Card, f, makeJoStyles, useJoTheme } from "@/components/jo/ui";
 import {
   BoxInput,
   ChoiceChips,
@@ -493,6 +493,7 @@ const TicketDetailStatusUpdate = ({
                   },
                 ]}
               >
+                {on ? <GlossFill color={t.accent} fg={t.onAccent} radius={18} bleed={1} /> : null}
                 <Bx name={STATUS_ICON[st] ?? "bx-check"} size={15} color={on ? t.onAccent : t.ink2} />
                 <Text style={[s.optionText, { color: on ? t.onAccent : t.ink2 }]}>
                   {statusLabel(st)}

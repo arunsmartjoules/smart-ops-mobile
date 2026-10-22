@@ -22,7 +22,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { ActivityIndicator, ScrollView, Text, TouchableOpacity, View } from "react-native";
 import { Bx } from "@/components/jo/Bx";
 import { Camera, File as FileIcon, Paperclip, Search, X } from "@/components/jo/bxIcons";
-import { PrimaryButton, SecondaryButton, f, makeJoStyles, useJoTheme } from "@/components/jo/ui";
+import { GlossFill, PrimaryButton, SecondaryButton, f, makeJoStyles, useJoTheme } from "@/components/jo/ui";
 import CustomerCommunicationService, {
   AI_MSG_GENERIC,
   AI_MSG_NETWORK,
@@ -652,6 +652,7 @@ export function CommAiIntake({
                   accessibilityRole="button"
                   accessibilityLabel="Stop recording"
                 >
+                  <GlossFill color={t.bad} fg="#FFFFFF" radius={17} />
                   <Bx name="bx-stop" size={16} color="#FFFFFF" />
                   <Text style={[f.t(12.5, 600), { color: "#FFFFFF" }]}>Stop</Text>
                 </TouchableOpacity>

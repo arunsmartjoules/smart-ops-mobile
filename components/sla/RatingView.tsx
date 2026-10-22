@@ -8,7 +8,7 @@ import React, { useState } from "react";
 import { ActivityIndicator, ScrollView, Text, TouchableOpacity, View } from "react-native";
 import Animated, { FadeInRight } from "react-native-reanimated";
 import { Building2, ChevronDown, ChevronUp, Download, Receipt } from "@/components/jo/bxIcons";
-import { Card, f, makeJoStyles, useJoTheme } from "@/components/jo/ui";
+import { GlossFill, Card, f, makeJoStyles, useJoTheme } from "@/components/jo/ui";
 import { toneFg } from "@/constants/jo";
 import type { SlaReport } from "@/services/SlaService";
 import { SubHeader } from "./parts";
@@ -98,6 +98,7 @@ export function RatingView({
 
         <View style={s.tiles}>
           <View style={[s.tile, { backgroundColor: t.accent }]}>
+            <GlossFill color={t.accent} fg={t.onAccent} radius={18} />
             <Text style={[f.t(11, 500), { color: t.onAccent, opacity: 0.7 }]}>Performance rating</Text>
             <Text style={[f.d(28, -0.03, 1.1), { color: t.onAccent, marginTop: 5 }]}>
               {fmtPct(report.totals.performanceRating)}%
@@ -225,6 +226,7 @@ export function RatingView({
             accessibilityLabel="Download raw data CSV"
             style={s.rawBtn}
           >
+            <GlossFill color={t.accent} fg={t.onAccent} radius={22} />
             {downloading ? <ActivityIndicator color={t.onAccent} /> : <Download size={20} color={t.onAccent} />}
           </TouchableOpacity>
         </View>

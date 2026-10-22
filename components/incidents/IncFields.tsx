@@ -28,7 +28,7 @@ import DateTimePicker, { DateTimePickerAndroid } from "@react-native-community/d
 import { LinearGradient } from "expo-linear-gradient";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Bx, type BxName } from "@/components/jo/Bx";
-import { IconButton, PrimaryButton, SearchField, f, useJoTheme } from "@/components/jo/ui";
+import { GlossFill, IconButton, PrimaryButton, SearchField, f, useJoTheme } from "@/components/jo/ui";
 import type { SelectOption } from "@/components/SearchableSelect";
 import { formatIST } from "@/utils/istDate";
 
@@ -514,6 +514,7 @@ export function IncPicker({
                             borderColor: on ? t.accent : t.disabled,
                           }}
                         >
+                          {on ? <GlossFill color={t.accent} fg={t.onAccent} radius={11} bleed={1.5} /> : null}
                           {on ? <Bx name="bx-check" size={15} color={t.onAccent} /> : null}
                         </View>
                       </TouchableOpacity>
@@ -810,6 +811,7 @@ export function IncChip({
         borderColor: selected ? t.selBg : t.lineMid,
       }}
     >
+      {selected ? <GlossFill color={t.selBg} fg={t.selFg} radius={17} bleed={1} /> : null}
       <Text style={[f.t(12.5, 600), { color: selected ? t.selFg : t.ink2 }]} numberOfLines={1}>
         {label}
       </Text>

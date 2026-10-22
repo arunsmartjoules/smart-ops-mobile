@@ -30,6 +30,7 @@ import {
 } from "@/services/NotificationService";
 import { navigateFromNotificationData } from "@/utils/notificationDeepLink";
 import logger from "@/utils/logger";
+import { GlossFill, useJoTheme } from "@/components/jo/ui";
 
 const PAGE_SIZE = 30;
 
@@ -165,6 +166,7 @@ const NotificationRow = memo(function NotificationRow({
 });
 
 export default function NotificationsPage() {
+  const { isDark } = useJoTheme();
   const [items, setItems] = useState<FeedItem[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [hasMore, setHasMore] = useState(false);
@@ -320,6 +322,11 @@ export default function NotificationsPage() {
             onPress={() => load("refresh")}
             className="mt-5 px-5 py-2.5 rounded-xl bg-slate-900 dark:bg-slate-100"
           >
+            <GlossFill
+              color={isDark ? "#F4F4F6" : "#141418"}
+              fg={isDark ? "#141418" : "#FFFFFF"}
+              radius={12}
+            />
             <Text className="text-white dark:text-slate-900 font-semibold text-sm">
               Try again
             </Text>
@@ -340,7 +347,7 @@ export default function NotificationsPage() {
         </Text>
       </View>
     );
-  }, [error, load, loading]);
+  }, [error, isDark, load, loading]);
 
   const listFooter = useMemo(() => {
     if (!items.length) return null;

@@ -12,7 +12,7 @@
 import React from "react";
 import { ScrollView, Text, TouchableOpacity, View } from "react-native";
 import { Bx, type BxName } from "@/components/jo/Bx";
-import { Chip, SearchField, f, makeJoStyles, useJoTheme } from "@/components/jo/ui";
+import { GlossFill, Chip, SearchField, f, makeJoStyles, useJoTheme } from "@/components/jo/ui";
 
 export interface PMChip {
   key: string;
@@ -174,6 +174,7 @@ export function PMListHeader({
           accessibilityLabel={`Filter PM tasks${filterActive ? ", filters applied" : ""}`}
           accessibilityState={{ selected: filterActive }}
         >
+          {filterActive ? <GlossFill color={t.selBg} fg={t.selFg} radius={22} bleed={1} /> : null}
           <Bx
             name="bx-slider-alt"
             size={19}

@@ -29,6 +29,7 @@ import {
   useAuthPalette,
   type AuthPalette,
 } from "./authTheme";
+import { GlossFill } from "@/components/jo/ui";
 
 /* NativeWind runs every element through its css-interop wrapper (babel sets
    `jsxImportSource: "nativewind"`), and that wrapper reads `style` as a value —
@@ -261,6 +262,7 @@ export function AuthCta({
   const t = useAuthPalette();
   const off = !!disabled;
   const [pressed, setPressed] = usePressed();
+  const fill = bg ? bg : busy || pressed ? t.ctaBgPressed : t.ctaBg;
 
   return (
     <Pressable
@@ -273,17 +275,12 @@ export function AuthCta({
       style={[
         styles.cta,
         {
-          backgroundColor: off
-            ? t.ctaOffBg
-            : bg
-              ? bg
-              : busy || pressed
-                ? t.ctaBgPressed
-                : t.ctaBg,
+          backgroundColor: off ? t.ctaOffBg : fill,
         },
         style,
       ]}
     >
+      {off ? null : <GlossFill color={fill} fg="#FFFFFF" radius={typeof style?.borderRadius === "number" ? style.borderRadius : authRadius.cta} />}
       <Text style={[styles.ctaLabel, { color: off ? t.ctaOffFg : "#FFFFFF" }]}>
         {label}
       </Text>

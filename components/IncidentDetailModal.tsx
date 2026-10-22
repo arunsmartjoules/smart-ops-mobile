@@ -17,7 +17,7 @@ import { Modal, ScrollView, Text, View } from "react-native";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Bx } from "@/components/jo/Bx";
-import { Segmented, f, useJoTheme } from "@/components/jo/ui";
+import { GlossFill, Segmented, f, useJoTheme } from "@/components/jo/ui";
 import { toneFg } from "@/constants/jo";
 import IncidentActivity from "./incidents/IncidentActivity";
 import IncAttachments from "./incidents/IncAttachments";
@@ -370,7 +370,9 @@ export default function IncidentDetailModal({
       >
         <Text style={[f.t(12.5, 600), { color: stage.color }]}>{stage.label}</Text>
         <View style={{ flex: 1, height: 4, borderRadius: 2, backgroundColor: t.track, overflow: "hidden" }}>
-          <View style={{ height: "100%", width: `${stage.pct}%`, borderRadius: 2, backgroundColor: stage.color }} />
+          <View style={{ height: "100%", width: `${stage.pct}%`, borderRadius: 2, backgroundColor: stage.color }}>
+            <GlossFill color={stage.color} radius={2} />
+          </View>
         </View>
       </View>
 
@@ -389,6 +391,7 @@ export default function IncidentDetailModal({
                   backgroundColor: x.value ? t.accent : t.track,
                 }}
               >
+                {x.value ? <GlossFill color={t.accent} fg={t.onAccent} radius={13} /> : null}
                 <Text style={[f.t(12, 700), { color: x.value ? t.onAccent : t.muted }]}>{i === 0 ? "★" : i + 1}</Text>
               </View>
               <View style={{ flex: 1, minWidth: 0 }}>

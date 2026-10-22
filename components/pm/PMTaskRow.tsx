@@ -17,7 +17,7 @@ import {
 } from "react-native";
 import * as Haptics from "expo-haptics";
 import { Bx } from "@/components/jo/Bx";
-import { Shimmer, f, makeJoStyles, useJoTheme } from "@/components/jo/ui";
+import { GlossFill, Shimmer, f, makeJoStyles, useJoTheme } from "@/components/jo/ui";
 import type { pmChecklistItems } from "@/database";
 
 export type PMChecklistItemRow = typeof pmChecklistItems.$inferSelect;
@@ -284,7 +284,10 @@ export const PMTaskRow = React.memo(
               {isNotDone ? (
                 <Bx name="bx-x" size={18} color={t.bad} />
               ) : isDone ? (
-                <Bx name="bx-check" size={18} color={t.onAccent} />
+                <>
+                  <GlossFill color={t.accent} fg={t.onAccent} radius={10} bleed={1.5} />
+                  <Bx name="bx-check" size={18} color={t.onAccent} />
+                </>
               ) : null}
             </View>
           </TouchableOpacity>

@@ -12,7 +12,7 @@ import React, { useCallback, useMemo, useState } from "react";
 import { Dimensions, FlatList, Image, Linking, Modal, Text, TouchableOpacity, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Bx, type BxName } from "@/components/jo/Bx";
-import { JoSheet, f, useJoTheme } from "@/components/jo/ui";
+import { GlossFill, JoSheet, f, useJoTheme } from "@/components/jo/ui";
 import { JO_DARK } from "@/constants/jo";
 import {
   attachmentFileName,
@@ -136,6 +136,7 @@ export default function IncAttachments({
               justifyContent: "center",
             }}
           >
+            <GlossFill color={t.selBg} fg={t.selFg} radius={12} />
             <Bx name="bx-x" size={15} color={t.selFg} />
           </TouchableOpacity>
         ) : null}

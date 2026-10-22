@@ -17,6 +17,7 @@ import StoreUpdateService, {
 } from "@/services/StoreUpdateService";
 import { dsRadius } from "@/constants/ds";
 import { makeThemedStyles, useDs } from "@/hooks/useDs";
+import { GlossFill } from "@/components/jo/ui";
 
 /**
  * Mandatory update popup — non-dismissible, covers the whole app. Mounted once
@@ -178,6 +179,7 @@ export default function UpdateRequiredScreen() {
               disabled={busy}
               activeOpacity={0.85}
             >
+              <GlossFill color={d.flame[100]} fg={d.onAccent} radius={dsRadius.base} />
               {busy ? (
                 <ActivityIndicator color={d.onAccent} />
               ) : (

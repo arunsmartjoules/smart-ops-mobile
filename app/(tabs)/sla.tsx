@@ -34,7 +34,7 @@ import {
   WifiOff,
   type LucideIcon,
 } from "@/components/jo/bxIcons";
-import { EmptyState, JoPage, JoSheet, Shimmer, Toast, f, makeJoStyles, useJoTheme } from "@/components/jo/ui";
+import { EmptyState, GlossFill, JoPage, JoSheet, Shimmer, Toast, f, makeJoStyles, useJoTheme } from "@/components/jo/ui";
 import { useNavInsets } from "@/components/jo/navInsets";
 import { ResourcesTabs } from "@/components/jo/OpsTabs";
 import { useAuth } from "@/contexts/AuthContext";
@@ -531,6 +531,7 @@ export default function SlaScreen() {
                 }}
                 style={[s.tab, on ? s.tabOn : null]}
               >
+                {on ? <GlossFill color={t.selBg} fg={t.selFg} radius={18} bleed={1} /> : null}
                 <Icon size={15} color={on ? t.selFg : tb.color} />
                 <Text style={[f.t(12.5, 600), { color: on ? t.selFg : t.ink2 }]}>{tb.label}</Text>
                 {tb.score ? (

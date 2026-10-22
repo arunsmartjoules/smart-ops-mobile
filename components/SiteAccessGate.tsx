@@ -12,6 +12,7 @@ import { useSiteResolver } from "@/hooks/useSiteResolver";
 import { useNetworkStatus } from "@/hooks/useNetworkStatus";
 import LogoLoader from "@/components/LogoLoader";
 import { useLaunchHold } from "@/services/LaunchHold";
+import { GlossFill } from "@/components/jo/ui";
 
 interface SiteAccessGateProps {
   children: React.ReactNode;
@@ -84,6 +85,7 @@ export function SiteAccessGate({ children }: SiteAccessGateProps) {
                 : "bg-red-600"
             }`}
           >
+            {refreshing || isConnected === false ? null : <GlossFill color="#D43535" fg="#FFFFFF" radius={12} />}
             {refreshing ? (
               <ActivityIndicator size="small" color="white" />
             ) : (

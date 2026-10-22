@@ -16,6 +16,7 @@ import Animated, {
 import Svg, { Circle, G } from "react-native-svg";
 import { Bx } from "@/components/jo/Bx";
 import {
+  GlossFill,
   Avatar,
   Card,
   HeroCard,
@@ -217,6 +218,7 @@ export function TeamCard({
   onToggle,
   loading,
   note,
+  periodLink,
 }: {
   count: number | null;
   rows: TeamRow[];
@@ -225,6 +227,11 @@ export function TeamCard({
   onToggle: () => void;
   loading?: boolean;
   note?: string | null;
+  /**
+   * Shown when Home is filtered to more than today: the card itself stays
+   * live (today), and this opens the attendance log for the chosen period.
+   */
+  periodLink?: { label: string; onPress: () => void } | null;
 }) {
   const t = useJoTheme();
   const s = useStyles();
@@ -239,6 +246,19 @@ export function TeamCard({
           <Text style={[f.t(12, 500), { color: t.ok }]}>Live</Text>
         </View>
       </View>
+      {periodLink ? (
+        <TouchableOpacity
+          onPress={periodLink.onPress}
+          activeOpacity={0.7}
+          hitSlop={8}
+          accessibilityRole="link"
+          accessibilityLabel={`View attendance for ${periodLink.label}`}
+          style={{ flexDirection: "row", alignItems: "center", alignSelf: "flex-start", gap: 2, marginTop: 4 }}
+        >
+          <Text style={[f.t(12, 600), { color: t.accentInk }]}>View attendance · {periodLink.label}</Text>
+          <Bx name="bx-chevron-right" size={16} color={t.accentInk} />
+        </TouchableOpacity>
+      ) : null}
       <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12, marginTop: 12 }}>
         <View style={{ flexDirection: "row", alignItems: "flex-end", gap: 8, minWidth: 0 }}>
           {loading && count == null ? (
@@ -541,6 +561,7 @@ export function TicketCategoryCard({
                   accessibilityLabel={c === "pie" ? "Pie chart" : "Bar chart"}
                   style={[s.chartToggleBtn, on && { backgroundColor: t.selBg }]}
                 >
+                  {on ? <GlossFill color={t.selBg} fg={t.selFg} radius={13} /> : null}
                   <Bx
                     name={c === "pie" ? (on ? "bxs-pie-chart-alt-2" : "bx-pie-chart-alt-2") : on ? "bxs-bar-chart-alt-2" : "bx-bar-chart-alt-2"}
                     size={16}
@@ -778,6 +799,7 @@ export function ShiftHero({
               flexShrink: 0,
             }}
           >
+            <GlossFill color="#0A0A0C" fg="#F4F4F6" radius={19} />
             {cta.busy ? (
               <ActivityIndicator color="#F4F4F6" size="small" />
             ) : (

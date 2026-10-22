@@ -21,7 +21,7 @@ import {
   WifiOff,
   type LucideIcon,
 } from "@/components/jo/bxIcons";
-import { Card, PrimaryButton, Shimmer, f, makeJoStyles, useJoTheme } from "@/components/jo/ui";
+import { GlossFill, Card, PrimaryButton, Shimmer, f, makeJoStyles, useJoTheme } from "@/components/jo/ui";
 import { toneBg, toneFg } from "@/constants/jo";
 import type { SlaDeliverable, SlaDrillColumn, SlaDrillDown } from "@/services/SlaService";
 import { FrozenTable, RoundButton, SubHeader, TintPill, type FrozenRow } from "./parts";
@@ -399,6 +399,7 @@ function ModeButton({ label, icon: Icon, on, onPress }: { label: string; icon: L
         backgroundColor: on ? t.selBg : "transparent",
       }}
     >
+      {on ? <GlossFill color={t.selBg} fg={t.selFg} radius={14} /> : null}
       <Icon size={14} color={on ? t.selFg : t.muted} />
       <Text style={[f.t(11.5, 600), { color: on ? t.selFg : t.muted }]}>{label}</Text>
     </TouchableOpacity>

@@ -47,6 +47,7 @@ import TicketDetailModal from "@/components/TicketDetailModal";
 import { useTicketDetailModal } from "@/hooks/useTicketDetailModal";
 import appLogger from "@/utils/logger";
 import { formatISTDateTime } from "@/utils/istDate";
+import { GlossFill } from "@/components/jo/ui";
 
 type SectionKey = "tickets" | "pm" | "siteLogs";
 
@@ -593,6 +594,7 @@ export default function ShiftSignoffScreen() {
                             onPress={() => removeImage(uri)}
                             className="absolute -top-1.5 -right-1.5 bg-red-600 rounded-full w-5 h-5 items-center justify-center"
                           >
+                            <GlossFill color="#D43535" fg="#FFFFFF" radius={10} />
                             <Trash2 size={11} color="#ffffff" />
                           </TouchableOpacity>
                         </View>
@@ -644,6 +646,7 @@ export default function ShiftSignoffScreen() {
                         : "border-2 border-slate-300 dark:border-slate-600"
                     }`}
                   >
+                    {declaration && <GlossFill color="#D43535" fg="#FFFFFF" radius={6} />}
                     {declaration && <Check size={13} color="#ffffff" />}
                   </View>
                   <Text className="flex-1 text-slate-600 dark:text-slate-300 text-xs leading-5">
@@ -673,6 +676,7 @@ export default function ShiftSignoffScreen() {
                     canSubmit ? "bg-red-600" : "bg-slate-200 dark:bg-slate-800"
                   }`}
                 >
+                  {canSubmit ? <GlossFill color="#D43535" fg="#FFFFFF" radius={16} /> : null}
                   {submitting ? (
                     <ActivityIndicator color={canSubmit ? "#fff" : "#94a3b8"} />
                   ) : (
@@ -766,6 +770,7 @@ function Section({
               reviewed ? "bg-green-600" : "bg-red-600"
             }`}
           >
+            <GlossFill color={reviewed ? "#16A34A" : "#D43535"} fg="#FFFFFF" radius={12} />
             {reviewed ? (
               <Check size={15} color="#ffffff" />
             ) : (

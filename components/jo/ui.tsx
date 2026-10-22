@@ -506,6 +506,7 @@ export function HeroTag({
         alignSelf: "flex-start",
       }}
     >
+      <GlossFill color="#0A0A0C" fg={color} radius={13} />
       {dot ? <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: color }} /> : null}
       {Icon ? <JoIconView icon={Icon} size={14} color={color} /> : null}
       <Text style={[f.t(11.5, 600), { color }]} numberOfLines={1}>
@@ -558,6 +559,7 @@ export function Chip({
         borderColor: selected ? t.selBg : t.lineMid,
       }}
     >
+      {selected ? <GlossFill color={t.selBg} fg={t.selFg} radius={height / 2} bleed={1} /> : null}
       {Icon ? <JoIconView icon={Icon} size={15} color={selected ? t.selFg : iconColor ?? t.ink2} /> : null}
       <Text style={[f.t(12.5, 600), { color: selected ? t.selFg : t.ink2 }]} numberOfLines={1}>
         {label}
@@ -634,6 +636,7 @@ export function Segmented<K extends string>({
               gap: 6,
             }}
           >
+            {on ? <GlossFill color={t.selBg} fg={t.selFg} radius={height / 2} /> : null}
             <Text style={[f.t(12.5, 600), { color: on ? t.selFg : t.muted }]} numberOfLines={1}>
               {it.label}
             </Text>
@@ -672,6 +675,7 @@ export function NewBadge({ style }: { style?: StyleProp<ViewStyle> }) {
       importantForAccessibility="no-hide-descendants"
       accessibilityElementsHidden
     >
+      <GlossFill color={t.accent} fg={t.onAccent} radius={7} />
       <Text style={[f.t(7.5, 700), { color: t.onAccent, lineHeight: 10 }]}>NEW</Text>
     </View>
   );
@@ -706,6 +710,7 @@ export function StatusPill({
         backgroundColor: solid ? fg : toneBg(t, tone),
       }}
     >
+      {solid ? <GlossFill color={fg} fg="#0A0A0C" radius={height / 2} /> : null}
       {dot ? <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: solid ? "#0A0A0C" : fg }} /> : null}
       <Text style={[f.t(11, 600), { color: solid ? "#0A0A0C" : fg }]} numberOfLines={1}>
         {label}
@@ -714,18 +719,194 @@ export function StatusPill({
   );
 }
 
-/** `#RRGGBB` blended toward white by `k` (0–1); other colour formats pass through. */
-export function lighten(hex: string, k: number): string {
-  const m = /^#([0-9a-f]{6})$/i.exec(hex);
-  if (!m) return hex;
-  const n = parseInt(m[1]!, 16);
-  const ch = (shift: number) => {
-    const c = (n >> shift) & 255;
-    return Math.round(c + (255 - c) * k)
-      .toString(16)
-      .padStart(2, "0");
+/* ── Gloss ("HD" fill) ─────────────────────────────────────────────────── */
+
+type Rgb = [number, number, number];
+
+/** `#RGB`, `#RRGGBB`, `rgb()` or opaque `rgba()` → channels; null for anything else (incl. translucent). */
+function parseRgb(c: string): Rgb | null {
+  const s = c.trim();
+  const short = /^#([0-9a-f])([0-9a-f])([0-9a-f])$/i.exec(s);
+  if (short) return [parseInt(short[1]! + short[1]!, 16), parseInt(short[2]! + short[2]!, 16), parseInt(short[3]! + short[3]!, 16)];
+  const long = /^#([0-9a-f]{6})$/i.exec(s);
+  if (long) {
+    const n = parseInt(long[1]!, 16);
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  }
+  const fn = /^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*(?:,\s*([\d.]+)\s*)?\)$/i.exec(s);
+  if (fn && (fn[4] == null || Number(fn[4]) >= 1)) return [Number(fn[1]), Number(fn[2]), Number(fn[3])];
+  return null;
+}
+
+const toHex = ([r, g, b]: Rgb) =>
+  `#${[r, g, b].map((v) => Math.round(Math.max(0, Math.min(255, v))).toString(16).padStart(2, "0")).join("")}`;
+
+/** Blend toward `to` by `k` (0–1). */
+const mixRgb = (c: Rgb, to: number, k: number): Rgb => [c[0] + (to - c[0]) * k, c[1] + (to - c[1]) * k, c[2] + (to - c[2]) * k];
+
+/** WCAG relative luminance. */
+function luminance([r, g, b]: Rgb): number {
+  const lin = (v: number) => {
+    const s = v / 255;
+    return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
   };
-  return `#${ch(16)}${ch(8)}${ch(0)}`;
+  return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+}
+
+function contrast(a: Rgb, b: Rgb): number {
+  const la = luminance(a);
+  const lb = luminance(b);
+  return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
+}
+
+/** Colour blended toward white by `k` (0–1), as `#RRGGBB`. Unparseable / translucent colours pass through. */
+export function lighten(color: string, k: number): string {
+  const rgb = parseRgb(color);
+  return rgb ? toHex(mixRgb(rgb, 255, k)) : color;
+}
+
+interface GlossStops {
+  from: string;
+  to: string;
+  /** White highlight alpha at the top edge and where (0–1 of the height) it fades out. */
+  hi: number;
+  hiEnd: number;
+  glow: string;
+}
+
+const GLOSS_CACHE = new Map<string, GlossStops | null>();
+
+/**
+ * Gradient stops for a glossy fill of `color` carrying a label in `fg`.
+ *
+ * No label (bars), or a dark label on a light fill (every accent, the
+ * dark-mode ink chip, solid status pills): the Home bars' recipe — a 35%
+ * lighter left edge into the colour, which only RAISES the label's contrast.
+ *
+ * Light label on a dark fill (the light-mode ink chip, red alert buttons):
+ * lightening costs contrast, so the left edge takes at most a 20% tint and
+ * backs off until the label still clears WCAG AA (or its current contrast,
+ * if the flat colour was already below AA); the right edge deepens a touch so
+ * the gradient still reads. The top highlight is gentler and ends above the
+ * label's midline.
+ */
+function glossStops(color: string, fg?: string): GlossStops | null {
+  const key = `${color}|${fg ?? ""}`;
+  const hit = GLOSS_CACHE.get(key);
+  if (hit !== undefined) return hit;
+  const base = parseRgb(color);
+  let out: GlossStops | null = null;
+  if (base) {
+    const label = fg ? parseRgb(fg) : null;
+    const glow = `rgba(${base.map(Math.round).join(",")},0.33)`;
+    if (!label || luminance(label) <= luminance(base)) {
+      out = { from: toHex(mixRgb(base, 255, 0.35)), to: toHex(base), hi: 0.38, hiEnd: 0.6, glow };
+    } else {
+      // Worst spot = the left edge at the top of the label (~20% down a
+      // pill), where the tint and the highlight stack. Back the tint off
+      // first, then the highlight, until the label clears the floor there.
+      const floor = Math.min(4.5, contrast(label, base));
+      const hiEnd = 0.45;
+      const worst = (k: number, hi: number) => contrast(label, mixRgb(mixRgb(base, 255, k), 255, hi * (1 - 0.2 / hiEnd)));
+      let k = 0.2;
+      let hi = 0.2;
+      while (k > 0 && worst(k, hi) < floor) k = Math.max(0, k - 0.02);
+      while (hi > 0 && worst(k, hi) < floor) hi = Math.max(0, hi - 0.02);
+      out = {
+        from: toHex(mixRgb(base, 255, k)),
+        to: toHex(mixRgb(base, 0, 0.14)),
+        hi,
+        hiEnd,
+        glow,
+      };
+    }
+  }
+  GLOSS_CACHE.set(key, out);
+  return out;
+}
+
+export type GlossCorners = {
+  topLeft?: number;
+  topRight?: number;
+  bottomRight?: number;
+  bottomLeft?: number;
+};
+
+/**
+ * The "HD" gloss layer (Home's bars, now every coloured control): a
+ * left-to-right gradient from a lighter tint into `color`, a white highlight
+ * along the top edge and, with `glow` in dark mode, a soft halo in the fill's
+ * own colour.
+ *
+ * Drop it in as the FIRST child of a filled control — it absolutely fills the
+ * parent and draws under the label. Give it the parent's corner radius (it
+ * clips itself, so the parent needs no `overflow: hidden`), and `bleed` = the
+ * parent's border width when the border is the same colour as the fill, so
+ * the gloss covers the border too. Keep the parent's `backgroundColor`: it is
+ * the fallback for colours the gradient can't parse (translucent tints render
+ * nothing — those surfaces stay flat by design).
+ */
+export function GlossFill({
+  color,
+  fg,
+  radius = 999,
+  bleed = 0,
+  direction = "horizontal",
+  glow,
+}: {
+  /** The fill colour (hex or opaque rgb). */
+  color: string;
+  /**
+   * Label / icon colour drawn over the fill. Pass it whenever the fill carries
+   * text: a light label makes the gradient back off so it never drops below AA.
+   */
+  fg?: string;
+  /** Corner radius of the parent, or per-corner radii. */
+  radius?: number | GlossCorners;
+  /** Extend over the parent's border (its border width). */
+  bleed?: number;
+  /** Gradient axis: light edge on the left (default) or on the top. */
+  direction?: "horizontal" | "vertical";
+  /** Dark-mode halo blur in px (omit for none). */
+  glow?: number;
+}) {
+  const t = useJoTheme();
+  const stops = glossStops(color, fg);
+  if (!stops) return null;
+  const corners: ViewStyle =
+    typeof radius === "number"
+      ? { borderRadius: radius }
+      : {
+          borderTopLeftRadius: radius.topLeft ?? 0,
+          borderTopRightRadius: radius.topRight ?? 0,
+          borderBottomRightRadius: radius.bottomRight ?? 0,
+          borderBottomLeftRadius: radius.bottomLeft ?? 0,
+        };
+  const vertical = direction === "vertical";
+  return (
+    <View
+      pointerEvents="none"
+      style={[
+        { position: "absolute", top: -bleed, left: -bleed, right: -bleed, bottom: -bleed },
+        corners,
+        glow && t.isDark ? { boxShadow: `0 0 ${glow}px ${stops.glow}` } : null,
+      ]}
+    >
+      <LinearGradient
+        colors={[stops.from, stops.to]}
+        start={vertical ? { x: 0.5, y: 0 } : { x: 0, y: 0.5 }}
+        end={vertical ? { x: 0.5, y: 1 } : { x: 1, y: 0.5 }}
+        style={[{ flex: 1, overflow: "hidden" }, corners]}
+      >
+        <LinearGradient
+          colors={[`rgba(255,255,255,${stops.hi})`, "rgba(255,255,255,0)"]}
+          start={{ x: 0.5, y: 0 }}
+          end={{ x: 0.5, y: stops.hiEnd }}
+          style={StyleSheet.absoluteFill}
+        />
+      </LinearGradient>
+    </View>
+  );
 }
 
 export function ProgressBar({
@@ -733,16 +914,16 @@ export function ProgressBar({
   color,
   height = 4,
   style,
-  gloss = false,
+  gloss = true,
 }: {
   pct: number;
   color: string;
   height?: number;
   style?: StyleProp<ViewStyle>;
   /**
-   * "HD" fill (Home): a left-to-right gradient from a lighter tint into the
+   * "HD" fill (default): a left-to-right gradient from a lighter tint into the
    * colour, a soft highlight along the top edge and, in dark mode, a faint
-   * glow in the bar's own colour.
+   * glow in the bar's own colour. `false` = the plain flat bar.
    */
   gloss?: boolean;
 }) {
@@ -771,27 +952,10 @@ export function ProgressBar({
       ]}
     >
       {w > 0 ? (
-        <View
-          style={{
-            width: `${w}%`,
-            height: "100%",
-            borderRadius: radius,
-            ...(t.isDark ? { boxShadow: `0 0 ${Math.max(4, height)}px ${color}55` } : null),
-          }}
-        >
-          <LinearGradient
-            colors={[lighten(color, 0.35), color]}
-            start={{ x: 0, y: 0.5 }}
-            end={{ x: 1, y: 0.5 }}
-            style={{ flex: 1, borderRadius: radius, overflow: "hidden" }}
-          >
-            <LinearGradient
-              colors={["rgba(255,255,255,0.38)", "rgba(255,255,255,0)"]}
-              start={{ x: 0.5, y: 0 }}
-              end={{ x: 0.5, y: 0.6 }}
-              style={StyleSheet.absoluteFill}
-            />
-          </LinearGradient>
+        <View style={{ width: `${w}%`, height: "100%", borderRadius: radius }}>
+          {/* Fallback flat fill under the gradient for colours it can't parse. */}
+          <View style={[StyleSheet.absoluteFill, { borderRadius: radius, backgroundColor: color }]} />
+          <GlossFill color={color} radius={radius} glow={Math.max(4, height)} />
         </View>
       ) : null}
     </View>
@@ -908,6 +1072,9 @@ export function PrimaryButton({
 }) {
   const t = useJoTheme();
   const off = disabled || busy;
+  // A caller's style may reshape the button; the gloss follows its corners.
+  const flat = StyleSheet.flatten(style);
+  const radius = typeof flat?.borderRadius === "number" ? flat.borderRadius : (typeof flat?.height === "number" ? flat.height : height) / 2;
   return (
     <TouchableOpacity
       onPress={onPress}
@@ -929,6 +1096,7 @@ export function PrimaryButton({
         style,
       ]}
     >
+      <GlossFill color={t.accent} fg={t.onAccent} radius={radius} glow={12} />
       {busy ? (
         <ActivityIndicator color={t.onAccent} />
       ) : (
@@ -1036,6 +1204,7 @@ export function Fab({
         zIndex: 6,
       }}
     >
+      <GlossFill color={t.accent} fg={t.onAccent} radius={26} glow={12} />
       <JoIconView icon={Icon} size={20} color={t.onAccent} />
       <Text style={[f.t(14, 700), { color: t.onAccent }]}>{label}</Text>
     </TouchableOpacity>
@@ -1223,6 +1392,7 @@ export function ListRow({
             backgroundColor: badgeTone === "accent" ? t.accent : t.warnTint,
           }}
         >
+          {badgeTone === "accent" ? <GlossFill color={t.accent} fg={t.onAccent} radius={11} /> : null}
           <Text style={[f.t(11, badgeTone === "accent" ? 700 : 600), { color: badgeTone === "accent" ? t.onAccent : t.warn }]}>
             {badge}
           </Text>
@@ -1361,6 +1531,7 @@ export function SheetOption({
           borderColor: selected ? t.accent : t.disabled,
         }}
       >
+        {selected ? <GlossFill color={t.accent} fg={t.onAccent} radius={11} bleed={1.5} /> : null}
         {selected ? <Bx name="bx-check" size={15} color={t.onAccent} /> : null}
       </View>
     </TouchableOpacity>
@@ -1447,6 +1618,7 @@ export function Toast({
         zIndex: 20,
       }}
     >
+      <GlossFill color={t.selBg} fg={t.selFg} radius={18} />
       <Text style={[f.t(13, 600), { color: t.selFg, textAlign: "center" }]}>{message}</Text>
     </Animated.View>
   );

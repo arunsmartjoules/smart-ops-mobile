@@ -7,7 +7,7 @@
 import React from "react";
 import { Text, View } from "react-native";
 import { Bx } from "@/components/jo/Bx";
-import { Card, HeroCard, capsStyle, f, makeJoStyles, useJoTheme } from "@/components/jo/ui";
+import { GlossFill, Card, HeroCard, capsStyle, f, makeJoStyles, useJoTheme } from "@/components/jo/ui";
 import { JO_DARK } from "@/constants/jo";
 import { aggregate, big, n2, n3, overTarget, toNum, type EffRow, type SideConfig } from "./lib";
 
@@ -55,6 +55,7 @@ export function Summary({
         <View style={s.heroRow}>
           {hasTarget && sec !== null ? (
             <View style={s.heroPill}>
+              <GlossFill color={t.onAccent} fg={statusColor} radius={12} />
               <View style={[s.dot, { backgroundColor: statusColor }]} />
               <Text style={[f.t(11.5, 600), { color: statusColor }]} numberOfLines={1}>
                 {over ? "Above target" : "On target"}

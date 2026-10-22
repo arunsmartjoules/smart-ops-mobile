@@ -17,6 +17,7 @@ import { FlashList } from "@shopify/flash-list";
 import { useLocalSearchParams, router, useFocusEffect } from "expo-router";
 import { Bx } from "@/components/jo/Bx";
 import {
+  GlossFill,
   Chip,
   EmptyState,
   IconButton,
@@ -397,6 +398,7 @@ export default function SiteHistory() {
               accessibilityState={{ selected: filterOn }}
               style={[st.roundBtn, filterOn && { backgroundColor: t.selBg, borderColor: t.selBg }]}
             >
+              {filterOn ? <GlossFill color={t.selBg} fg={t.selFg} radius={22} bleed={1} /> : null}
               <Bx name="bx-slider-alt" size={19} color={filterOn ? t.selFg : t.ink} />
             </TouchableOpacity>
           </>

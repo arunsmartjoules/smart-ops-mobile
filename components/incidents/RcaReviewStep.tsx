@@ -7,7 +7,7 @@ import React, { useMemo } from "react";
 import { Image, Linking, ScrollView, Text, TouchableOpacity, View } from "react-native";
 import * as Haptics from "expo-haptics";
 import { Bx } from "@/components/jo/Bx";
-import { f, makeJoStyles, useJoTheme } from "@/components/jo/ui";
+import { GlossFill, f, makeJoStyles, useJoTheme } from "@/components/jo/ui";
 import type { SelectOption } from "@/components/SearchableSelect";
 import {
   FAULT_TYPE_OPTIONS,
@@ -302,6 +302,7 @@ export default function RcaReviewStep({
                   >
                     <Image source={{ uri: img.url }} style={[s.thumb, !on && { opacity: 0.35 }]} resizeMode="cover" />
                     <View style={[s.check, on ? s.checkOn : s.checkOff]}>
+                      {on ? <GlossFill color={t.accent} fg={t.onAccent} radius={11} /> : null}
                       {on ? <Bx name="bx-check" size={15} color={t.onAccent} /> : null}
                     </View>
                   </TouchableOpacity>

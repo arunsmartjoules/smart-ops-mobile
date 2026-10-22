@@ -11,6 +11,7 @@ import { JouleTabBar } from "@/components/JouleTabBar";
 import { SiteAccessGate } from "@/components/SiteAccessGate";
 import { useAttendanceGate } from "@/contexts/AttendanceGateContext";
 import { useDs } from "@/hooks/useDs";
+import { GlossFill } from "@/components/jo/ui";
 
 /** ~240ms ease-out fade-through for every tab switch. */
 const TAB_SPEC: TransitionSpec = {
@@ -105,6 +106,7 @@ function ReadOnlyBanner() {
         hitSlop={8}
         className="flex-row items-center px-2.5 py-1 bg-amber-600 rounded-full active:opacity-90"
       >
+        <GlossFill color="#D97706" fg="#FFFFFF" />
         <LogIn size={11} color="white" />
         <Text className="ml-1 text-[11px] font-semibold text-white">
           Start Day

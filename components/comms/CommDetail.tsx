@@ -17,6 +17,7 @@ import { Bx } from "@/components/jo/Bx";
 import { ArrowLeftRight, Pencil, Send } from "@/components/jo/bxIcons";
 import { toneBg, toneFg } from "@/constants/jo";
 import {
+  GlossFill,
   Chip,
   PrimaryButton,
   SecondaryButton,
@@ -569,6 +570,7 @@ export function CommDetail({
                 justifyContent: "center",
               }}
             >
+              {note.trim() ? <GlossFill color={t.accent} fg={t.onAccent} radius={24} /> : null}
               <Send size={18} color={note.trim() ? t.onAccent : t.muted} />
             </TouchableOpacity>
           </View>

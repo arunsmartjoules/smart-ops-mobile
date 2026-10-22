@@ -36,6 +36,7 @@ import { API_BASE_URL } from "@/constants/api";
 import { APP_VERSION } from "@/constants/version";
 import { StorageService } from "@/services/StorageService";
 import logger from "@/utils/logger";
+import { GlossFill } from "@/components/jo/ui";
 
 const MAX_ATTACHMENTS = 5;
 
@@ -270,12 +271,10 @@ export default function ReportIssue() {
               onPress={() => router.back()}
               className="overflow-hidden rounded-xl"
             >
-              <LinearGradient
-                colors={["#dc2626", "#b91c1c"]}
-                style={{ paddingHorizontal: 20, paddingVertical: 12 }}
-              >
+              <View style={{ paddingHorizontal: 20, paddingVertical: 12, backgroundColor: "#dc2626" }}>
+                <GlossFill color="#dc2626" fg="#FFFFFF" radius={12} />
                 <Text className="text-white font-semibold text-sm">Done</Text>
-              </LinearGradient>
+              </View>
             </TouchableOpacity>
           </View>
         </SafeAreaView>
@@ -470,6 +469,7 @@ export default function ReportIssue() {
                       elevation: 3,
                     }}
                   >
+                    <GlossFill color="#D43535" fg="#FFFFFF" radius={12} />
                     <X size={14} color="white" />
                   </TouchableOpacity>
                 </View>
@@ -521,14 +521,15 @@ export default function ReportIssue() {
               className="overflow-hidden rounded-xl mt-6"
               style={{ opacity: canSubmit ? 1 : 0.5 }}
             >
-              <LinearGradient
-                colors={["#dc2626", "#b91c1c"]}
+              <View
                 style={{
                   paddingVertical: 14,
                   alignItems: "center",
                   justifyContent: "center",
+                  backgroundColor: "#dc2626",
                 }}
               >
+                <GlossFill color="#dc2626" fg="#FFFFFF" radius={12} />
                 {submitting ? (
                   <ActivityIndicator color="white" />
                 ) : (
@@ -536,7 +537,7 @@ export default function ReportIssue() {
                     Submit Report
                   </Text>
                 )}
-              </LinearGradient>
+              </View>
             </TouchableOpacity>
           </ScrollView>
         </KeyboardAvoidingView>

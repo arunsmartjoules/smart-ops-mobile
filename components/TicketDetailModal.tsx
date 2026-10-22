@@ -17,7 +17,7 @@ import {
   ticketStatusColors,
 } from "@/components/tickets/TicketsUI";
 import { Bx } from "@/components/jo/Bx";
-import { Card, IconButton, PrimaryButton, f, makeJoStyles, useJoTheme } from "@/components/jo/ui";
+import { GlossFill, Card, IconButton, PrimaryButton, f, makeJoStyles, useJoTheme } from "@/components/jo/ui";
 import { isSlaBreached, slaDueToMs } from "@/utils/ticketSla";
 import { formatIST } from "@/utils/istDate";
 import type { TicketIncidentDraft } from "@/constants/incidentFormOptions";
@@ -268,11 +268,14 @@ const TicketDetailModal = React.memo(
                 </View>
                 {priority ? (
                   <View style={[s.pill, { backgroundColor: priority.bg }]}>
+                    {/* Only the solid "Very high" fill glosses; the tints are translucent and render nothing. */}
+                    <GlossFill color={priority.bg} fg={priority.fg} radius={12} />
                     <Text style={[s.pillText, { color: priority.fg }]}>{priority.label}</Text>
                   </View>
                 ) : null}
                 {isSlaBreached(ticket) ? (
                   <View style={[s.pill, { backgroundColor: t.bad, flexDirection: "row", gap: 4 }]}>
+                    <GlossFill color={t.bad} fg={t.onAccent} radius={12} />
                     <Bx name="bx-error" size={13} color={t.onAccent} />
                     <Text style={[s.pillText, { color: t.onAccent }]}>SLA breached</Text>
                   </View>

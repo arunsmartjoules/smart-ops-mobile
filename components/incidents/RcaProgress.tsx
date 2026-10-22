@@ -14,7 +14,7 @@ import Animated, {
   withTiming,
 } from "react-native-reanimated";
 import { Bx } from "@/components/jo/Bx";
-import { Card, f, makeJoStyles, useJoTheme } from "@/components/jo/ui";
+import { GlossFill, Card, f, makeJoStyles, useJoTheme } from "@/components/jo/ui";
 import type { RcaImportStage } from "@/services/RcaImportService";
 
 export type RcaPhase = "uploading" | RcaImportStage;
@@ -119,7 +119,9 @@ export default function RcaProgress({
         accessibilityRole="progressbar"
         accessibilityLabel={`Step ${Math.min(active + 1, STEPS.length)} of ${STEPS.length}: ${current.label}`}
       >
-        <Animated.View style={[styles.fill, barStyle]} />
+        <Animated.View style={[styles.fill, barStyle]}>
+          <GlossFill color={t.accent} radius={3} />
+        </Animated.View>
       </View>
       <Text style={styles.reassure}>This usually takes under a minute.</Text>
 
@@ -141,7 +143,10 @@ export default function RcaProgress({
                 ]}
               >
                 {done ? (
-                  <Bx name="bx-check" size={16} color={t.onAccent} />
+                  <>
+                    <GlossFill color={t.ok} fg={t.onAccent} radius={14} bleed={1.5} />
+                    <Bx name="bx-check" size={16} color={t.onAccent} />
+                  </>
                 ) : now ? (
                   <ActivityIndicator size="small" color={t.accentInk} />
                 ) : (

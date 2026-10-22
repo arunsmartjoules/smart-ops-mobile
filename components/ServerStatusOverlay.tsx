@@ -10,6 +10,7 @@ import ServerStatusService, {
   type ServerStatusState,
 } from "@/services/ServerStatusService";
 import VersionGateService from "@/services/VersionGateService";
+import { GlossFill } from "@/components/jo/ui";
 
 /**
  * Renders the maintenance-mode blocking notice.
@@ -134,6 +135,7 @@ function MaintenanceModal({
           onPress={() => VersionGateService.check()}
           activeOpacity={0.85}
         >
+          <GlossFill color="#f59e0b" fg="#0f172a" radius={14} />
           <Text style={styles.maintButtonText}>Check Again</Text>
         </TouchableOpacity>
       </View>

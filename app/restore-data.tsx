@@ -18,6 +18,7 @@ import SiteLogService, {
 import { useNetworkStatus } from "@/hooks/useNetworkStatus";
 import logger from "@/utils/logger";
 import { istTodayString, istDateString } from "@/utils/istDate";
+import { GlossFill } from "@/components/jo/ui";
 
 const LOG_NAMES = ["", "Water", "Temp RH", "Chemical Dosing"] as const;
 
@@ -176,6 +177,7 @@ export default function RestoreData() {
                       : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800"
                   }`}
                 >
+                  {siteCode === s.site_code ? <GlossFill color="#D43535" fg="#FFFFFF" bleed={1} /> : null}
                   <Text
                     className={`text-xs font-bold ${
                       siteCode === s.site_code ? "text-white" : "text-slate-700 dark:text-slate-300"
@@ -231,6 +233,7 @@ export default function RestoreData() {
                     : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800"
                 }`}
               >
+                {logName === ln ? <GlossFill color="#D43535" fg="#FFFFFF" bleed={1} /> : null}
                 <Text
                   className={`text-xs font-bold ${
                     logName === ln ? "text-white" : "text-slate-700 dark:text-slate-300"

@@ -6,7 +6,7 @@
 import React from "react";
 import { Text, TouchableOpacity, View } from "react-native";
 import { Bx } from "@/components/jo/Bx";
-import { Avatar, f, makeJoStyles, useJoTheme } from "@/components/jo/ui";
+import { GlossFill, Avatar, f, makeJoStyles, useJoTheme } from "@/components/jo/ui";
 import { toneBg, toneFg } from "@/constants/jo";
 import {
   PM_TONE,
@@ -194,7 +194,9 @@ const PMItem = React.memo(
           {percent != null ? (
             <>
               <View style={s.track}>
-                <View style={[s.fill, { width: `${percent}%` }]} />
+                <View style={[s.fill, { width: `${percent}%` }]}>
+                  <GlossFill color={t.info} radius={2} />
+                </View>
               </View>
               <Text style={s.pct}>{percent}%</Text>
             </>

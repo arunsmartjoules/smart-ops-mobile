@@ -35,6 +35,7 @@ import loggerUtil from "@/utils/logger";
 import * as Haptics from "expo-haptics";
 import { Bx, type BxName } from "@/components/jo/Bx";
 import {
+  GlossFill,
   EmptyState,
   IconButton,
   JoPage,
@@ -832,6 +833,7 @@ export default function SiteLogs() {
               accessibilityState={{ selected: filtersActive(filters) }}
               style={[s.roundBtn, filtersActive(filters) && { backgroundColor: t.selBg, borderColor: t.selBg }]}
             >
+              {filtersActive(filters) ? <GlossFill color={t.selBg} fg={t.selFg} radius={22} bleed={1} /> : null}
               <Bx name="bx-slider-alt" size={19} color={filtersActive(filters) ? t.selFg : t.ink} />
             </TouchableOpacity>
           </View>

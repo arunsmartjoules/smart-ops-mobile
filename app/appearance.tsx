@@ -13,6 +13,7 @@ import { Check, ChevronLeft, Monitor, Moon, Sun, type LucideIcon } from "@/compo
 import { useTheme } from "@/contexts/ThemeContext";
 import { ACCENTS } from "@/constants/jo";
 import {
+  GlossFill,
   HeroCard,
   HeroTag,
   IconButton,
@@ -79,6 +80,7 @@ export default function AppearanceScreen() {
                 >
                   <View style={[s.swatchRing, { borderColor: on ? a.color : "transparent" }]}>
                     <View style={[s.swatch, { backgroundColor: a.color }]}>
+                      <GlossFill color={a.color} fg="#0A0A0C" radius={24} />
                       {on ? <Check size={20} color="#0A0A0C" strokeWidth={2.8} /> : null}
                     </View>
                   </View>
@@ -111,6 +113,7 @@ export default function AppearanceScreen() {
                   accessibilityLabel={`${m.label} mode`}
                   style={[s.mode, { backgroundColor: on ? t.selBg : t.raised }]}
                 >
+                  {on ? <GlossFill color={t.selBg} fg={t.selFg} radius={20} /> : null}
                   <Icon size={20} color={on ? t.selFg : t.ink2} />
                   <Text style={[f.t(12.5, 600), { color: on ? t.selFg : t.ink2 }]}>{m.label}</Text>
                 </TouchableOpacity>

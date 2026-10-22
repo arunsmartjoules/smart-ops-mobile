@@ -21,6 +21,7 @@ import { RefreshControl, ScrollView, Text, TextInput, TouchableOpacity, View } f
 import { FlashList } from "@shopify/flash-list";
 import { Bx } from "@/components/jo/Bx";
 import {
+  GlossFill,
   Chip,
   EmptyState,
   JoPage,
@@ -286,6 +287,7 @@ export default function AssetListView({
               accessible
               accessibilityLabel={`${c.label}: ${loading ? "loading" : c.value}`}
             >
+              {c.key === "all" ? <GlossFill color={c.bg} fg={c.fg} radius={18} bleed={1} /> : null}
               <Text style={[s.tileValue, { color: c.fg }]} numberOfLines={1}>
                 {loading ? "–" : c.value}
               </Text>

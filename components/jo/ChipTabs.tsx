@@ -10,7 +10,7 @@
 import React, { useEffect, useRef } from "react";
 import { ScrollView, Text, TouchableOpacity, type StyleProp, type ViewStyle } from "react-native";
 import { Bx, type BxName } from "@/components/jo/Bx";
-import { f, makeJoStyles, useJoTheme } from "@/components/jo/ui";
+import { GlossFill, f, makeJoStyles, useJoTheme } from "@/components/jo/ui";
 
 export interface ChipTab<K extends string> {
   key: K;
@@ -70,6 +70,7 @@ export function ChipTabs<K extends string>({
             accessibilityLabel={meta ? `${it.label}, ${meta}` : it.label}
             style={[s.tab, on ? s.tabOn : null]}
           >
+            {on ? <GlossFill color={t.selBg} fg={t.selFg} radius={18} bleed={1} /> : null}
             <Bx name={it.icon} size={15} color={on ? t.selFg : it.color ?? t.ink2} />
             <Text style={[f.t(12.5, 600), { color: on ? t.selFg : t.ink2 }]}>{it.label}</Text>
             {meta ? <Text style={[f.t(11, 600), { color: on ? t.faint : t.muted }]}>{meta}</Text> : null}

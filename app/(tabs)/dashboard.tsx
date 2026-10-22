@@ -919,6 +919,18 @@ export default function Dashboard() {
                 onToggle={() => setTeamOpen((o) => !o)}
                 loading={teamLoading}
                 note={!teamLoading && !teamRowsRaw ? "Couldn't load today's attendance." : null}
+                periodLink={
+                  period !== "today" && activeSiteCode
+                    ? {
+                        label: periodLabel,
+                        onPress: () =>
+                          router.push({
+                            pathname: "/attendance-logs",
+                            params: { site: activeSiteCode, siteName, from: range.from, to: range.to, label: periodLabel },
+                          }),
+                      }
+                    : null
+                }
               />
             ) : null}
             {showSla ? (

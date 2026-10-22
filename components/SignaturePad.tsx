@@ -16,6 +16,7 @@ import {
   State,
 } from "react-native-gesture-handler";
 import ViewShot, { type ViewShotRef } from "react-native-view-shot";
+import { GlossFill } from "@/components/jo/ui";
 
 interface SignaturePadProps {
   onOK: (signatureUri: string) => void;
@@ -191,6 +192,7 @@ export default function SignaturePad({
           className="flex-1 py-4 rounded-xl items-center"
           style={{ backgroundColor: accentColor }}
         >
+          <GlossFill color={accentColor} fg="#FFFFFF" radius={12} />
           <Text className="font-bold text-white">{okText}</Text>
         </TouchableOpacity>
       </View>

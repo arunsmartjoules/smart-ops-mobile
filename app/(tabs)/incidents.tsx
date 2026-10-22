@@ -20,6 +20,7 @@ import { useNetworkStatus } from "@/hooks/useNetworkStatus";
 import { useAutoSync } from "@/hooks/useAutoSync";
 import { Bx } from "@/components/jo/Bx";
 import {
+  GlossFill,
   EmptyState,
   Fab,
   JoPage,
@@ -1300,6 +1301,7 @@ export default function IncidentsTab() {
               {rcaOwed} incident{rcaOwed === 1 ? "" : "s"} waiting on an RCA{roleAllowsRca ? " from you" : ""}
             </Text>
             <View style={s.bannerBtn}>
+              <GlossFill color={t.bad} fg={t.onAccent} radius={15} />
               <Text style={s.bannerBtnText}>Open</Text>
             </View>
           </TouchableOpacity>

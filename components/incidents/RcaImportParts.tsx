@@ -21,7 +21,7 @@ import DateTimePicker, { DateTimePickerAndroid } from "@react-native-community/d
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Haptics from "expo-haptics";
 import { Bx, type BxName } from "@/components/jo/Bx";
-import { f, makeJoStyles, useJoTheme } from "@/components/jo/ui";
+import { GlossFill, f, makeJoStyles, useJoTheme } from "@/components/jo/ui";
 import { InlineError as JoInlineError, Notice as JoNotice } from "./IncFields";
 import {
   formatClock,
@@ -81,6 +81,7 @@ export function OptionCard({
       accessibilityLabel={`${label}${recommended ? ", recommended" : ""}${hint ? `. ${hint}` : ""}`}
     >
       <View style={[s.radio, selected && s.radioOn]}>
+        {selected ? <GlossFill color={t.accent} fg={t.onAccent} radius={12} bleed={1.5} /> : null}
         {selected ? <Bx name="bx-check" size={15} color={t.onAccent} /> : null}
       </View>
       <View style={{ flex: 1, minWidth: 0 }}>
@@ -199,6 +200,7 @@ export function FooterButtons({
           accessibilityLabel={primaryLabel}
           accessibilityState={{ disabled: !!off, busy: !!busy }}
         >
+          {!quiet && !(off && !busy) ? <GlossFill color={t.accent} fg={t.onAccent} radius={27} glow={12} /> : null}
           {busy ? (
             <ActivityIndicator size="small" color={t.onAccent} />
           ) : (

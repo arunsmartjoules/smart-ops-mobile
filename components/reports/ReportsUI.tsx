@@ -11,7 +11,7 @@ import {
   FileText,
   type LucideIcon,
 } from "@/components/jo/bxIcons";
-import { Card, Shimmer, StatusPill, capsStyle, f, makeJoStyles, useJoTheme, type JoTheme } from "@/components/jo/ui";
+import { GlossFill, Card, Shimmer, StatusPill, capsStyle, f, makeJoStyles, useJoTheme, type JoTheme } from "@/components/jo/ui";
 import type { JoTone } from "@/constants/jo";
 import type { DocSite, DocStat, DocTone } from "@/services/ReportsService";
 
@@ -208,6 +208,7 @@ export function ModuleCard({
           accessibilityState={{ busy, disabled: busy }}
           style={[st.dlButton, { backgroundColor: done ? t.okTint : t.accent }]}
         >
+          {!done ? <GlossFill color={t.accent} fg={t.onAccent} radius={20} /> : null}
           {busy ? (
             <ActivityIndicator size="small" color={t.onAccent} />
           ) : done ? (
@@ -278,6 +279,7 @@ export function DateStrip({
               { backgroundColor: on ? t.accent : t.card, borderColor: on ? t.accent : t.cardBorder },
             ]}
           >
+            {on ? <GlossFill color={t.accent} fg={fg} radius={18} bleed={1} /> : null}
             <Text style={[f.t(10.5), { color: fg, opacity: 0.75 }]} numberOfLines={1}>
               {it.top}
             </Text>
@@ -401,6 +403,7 @@ export function DownloadBar({
         accessibilityState={{ busy, disabled: busy }}
         style={st.cta}
       >
+        <GlossFill color={t.accent} fg={t.onAccent} radius={25} glow={12} />
         {busy ? (
           <ActivityIndicator color={t.onAccent} />
         ) : (

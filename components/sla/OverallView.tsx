@@ -5,7 +5,7 @@
 import React from "react";
 import { Text, TouchableOpacity, View } from "react-native";
 import { ChevronRight, Maximize2 } from "@/components/jo/bxIcons";
-import { Card, HeroCard, ProgressBar, capsStyle, f, makeJoStyles, useJoTheme } from "@/components/jo/ui";
+import { GlossFill, Card, HeroCard, ProgressBar, capsStyle, f, makeJoStyles, useJoTheme } from "@/components/jo/ui";
 import { toneFg } from "@/constants/jo";
 import type { SlaCategoryKey, SlaReport } from "@/services/SlaService";
 import { FrozenTable, type FrozenRow } from "./parts";
@@ -73,10 +73,13 @@ export function OverallView({
           </Text>
         </View>
         <View style={s.heroTrack}>
-          <View style={[s.heroFill, { width: `${clampPct(ratingPct)}%` }]} />
+          <View style={[s.heroFill, { width: `${clampPct(ratingPct)}%` }]}>
+            <GlossFill color={t.onAccent} radius={3} />
+          </View>
         </View>
         <View style={s.heroBandRow}>
           <View style={s.heroBandPill}>
+            <GlossFill color={t.onAccent} fg={onBlackTone(ratingTone(ratingPct))} radius={12} />
             <Text style={[f.t(11.5, 600), { color: onBlackTone(ratingTone(ratingPct)) }]} numberOfLines={1}>
               {report.band.label}
             </Text>
@@ -208,6 +211,7 @@ export function OverallView({
                 </View>
                 {cur ? (
                   <View style={s.currentPill}>
+                    <GlossFill color={t.accent} fg={t.onAccent} radius={11} />
                     <Text style={[f.t(11, 700), { color: t.onAccent }]}>Current</Text>
                   </View>
                 ) : null}

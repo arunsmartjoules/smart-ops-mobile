@@ -6,7 +6,7 @@ import React from "react";
 import { Text, TouchableOpacity, View } from "react-native";
 import * as Haptics from "expo-haptics";
 import { Bx, type BxName } from "@/components/jo/Bx";
-import { JoSheet, f, useJoTheme } from "@/components/jo/ui";
+import { GlossFill, JoSheet, f, useJoTheme } from "@/components/jo/ui";
 
 export type RaiseChoice = "manual" | "rca";
 
@@ -96,6 +96,7 @@ function ChoiceCard({
           backgroundColor: accent ? t.accent : t.raised,
         }}
       >
+        {accent ? <GlossFill color={t.accent} fg={t.onAccent} radius={22} /> : null}
         <Bx name={icon} size={21} color={accent ? t.onAccent : t.ink2} />
       </View>
       <View style={{ flex: 1, minWidth: 0 }}>
@@ -113,6 +114,7 @@ function ChoiceCard({
                 backgroundColor: t.accent,
               }}
             >
+              <GlossFill color={t.accent} fg={t.onAccent} radius={10} />
               <Bx name="bxs-magic-wand" size={11} color={t.onAccent} />
               <Text style={[f.t(10, 700), { color: t.onAccent }]}>NEW · AI</Text>
             </View>

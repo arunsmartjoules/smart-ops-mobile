@@ -11,7 +11,7 @@ import React, { memo } from "react";
 import { Text, TouchableOpacity, View } from "react-native";
 import { Calendar, Check, CircleAlert, Clock, LayoutList, Paperclip, Speech } from "@/components/jo/bxIcons";
 import { toneBg, toneFg } from "@/constants/jo";
-import { StatusPill, f, makeJoStyles, useJoTheme } from "@/components/jo/ui";
+import { GlossFill, StatusPill, f, makeJoStyles, useJoTheme } from "@/components/jo/ui";
 import type { CommRow } from "@/services/CustomerCommunicationService";
 import {
   dueOf,
@@ -141,6 +141,7 @@ export const CommCard = memo(function CommCard({
         <View style={{ flex: 1 }} />
         {row.priority ? (
           <View style={[s.prio, { backgroundColor: critical ? t.bad : toneBg(t, pTone) }]}>
+            {critical ? <GlossFill color={t.bad} fg={t.onAccent} radius={10} /> : null}
             <Text style={[s.prioText, { color: critical ? t.onAccent : toneFg(t, pTone) }]}>{row.priority}</Text>
           </View>
         ) : null}

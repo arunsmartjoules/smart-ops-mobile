@@ -20,7 +20,7 @@ import {
 import { LinearGradient } from "expo-linear-gradient";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Bx, type BxName } from "@/components/jo/Bx";
-import { IconButton, Ring, f, makeJoStyles, useJoTheme } from "@/components/jo/ui";
+import { GlossFill, IconButton, Ring, f, makeJoStyles, useJoTheme } from "@/components/jo/ui";
 import SignaturePad from "@/components/SignaturePad";
 import SmartJoulesWordmark from "@/components/SmartJoulesWordmark";
 
@@ -423,6 +423,7 @@ export function CompleteFooter({
         accessibilityLabel="Complete and sign"
         accessibilityHint={ready ? undefined : "Shows what is still missing"}
       >
+        <GlossFill color={t.accent} fg={t.onAccent} radius={27} glow={12} />
         <Bx name="bx-pen" size={19} color={t.onAccent} />
         <Text style={s.ctaText}>Complete &amp; Sign</Text>
       </TouchableOpacity>

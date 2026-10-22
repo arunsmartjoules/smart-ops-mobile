@@ -6,7 +6,7 @@
 import React, { useMemo, useState } from "react";
 import { Text, TouchableOpacity, View, useWindowDimensions } from "react-native";
 import { ChevronDown, ChevronUp, GitCompare, Maximize2 } from "@/components/jo/bxIcons";
-import { Card, EmptyState, Shimmer, f, makeJoStyles, useJoTheme } from "@/components/jo/ui";
+import { GlossFill, Card, EmptyState, Shimmer, f, makeJoStyles, useJoTheme } from "@/components/jo/ui";
 import { toneBg, toneFg } from "@/constants/jo";
 import type { SlaReport } from "@/services/SlaService";
 import { FrozenTable, TintPill, type FrozenRow } from "./parts";
@@ -276,6 +276,7 @@ export function CompareView({
             >
               <View style={s.rankTop}>
                 <View style={[s.rankNo, i === 0 ? { backgroundColor: t.accent } : null]}>
+                  {i === 0 ? <GlossFill color={t.accent} fg={t.onAccent} radius={14} /> : null}
                   <Text style={[f.t(12, 700), { color: i === 0 ? t.onAccent : t.ink3 }]}>{i + 1}</Text>
                 </View>
                 <View style={{ flex: 1, minWidth: 0 }}>
@@ -332,7 +333,9 @@ export function CompareView({
                   Score <Text style={[f.t(11.5, 700), { color: t.ink }]}>{fmtScore(r.score)}</Text>
                 </Text>
                 <View style={s.rankTrack}>
-                  <View style={{ width: `${clampPct(r.rating)}%`, height: "100%", borderRadius: 3, backgroundColor: rc }} />
+                  <View style={{ width: `${clampPct(r.rating)}%`, height: "100%", borderRadius: 3, backgroundColor: rc }}>
+                    <GlossFill color={rc} radius={3} />
+                  </View>
                 </View>
                 <Text style={[f.t(13, 700), { color: rc }]}>{fmtPct(r.rating / 100)}%</Text>
                 <Maximize2 size={14} color={t.muted} />
