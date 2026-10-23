@@ -717,6 +717,17 @@ export const AttendanceService = {
    * Get attendance history for a user.
    * Reads from attendance_logs filtered by user_id ordered by check_in_time desc via CacheManager.
    */
+  /**
+   * This user's punches in a date range (Attendance › Custom range). Online
+   * only — the caller falls back to filtering the cached history. Null when
+   * the server couldn't be reached or refused.
+   */
+  async getAttendanceRange(userId: string, from: string, to: string): Promise<AttendanceLog[] | null> {
+    const qs = new URLSearchParams({ page: "1", limit: "500", date_from: from, date_to: to });
+    const result = await apiFetch(`/api/attendance/user/${userId}?${qs.toString()}`);
+    return result.success && Array.isArray(result.data) ? (result.data as AttendanceLog[]) : null;
+  },
+
   async getAttendanceHistory(
     userId: string,
     page: number = 1,

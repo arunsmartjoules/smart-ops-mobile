@@ -1,6 +1,8 @@
 package expo.modules.jouleopsdownloads
 
+import android.content.ActivityNotFoundException
 import android.content.ContentValues
+import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -28,8 +30,9 @@ class JouleOpsDownloadsModule : Module() {
 
     /**
      * Copies `sourceUri` (a file:// or content:// URI the app can read) into
-     * Downloads as `fileName`. Resolves with the name actually used —
-     * MediaStore appends " (1)" etc. when the name is taken.
+     * Downloads as `fileName`. Resolves with `{ name, uri }`: the name actually
+     * used (MediaStore appends " (1)" etc. when it's taken) and the saved
+     * file's content:// URI, for `openFile`.
      */
     AsyncFunction("saveToDownloads") { sourceUri: String, fileName: String, mimeType: String ->
       if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
@@ -63,10 +66,30 @@ class JouleOpsDownloadsModule : Module() {
         throw e
       }
 
+      var savedName = fileName
       resolver.query(item, arrayOf(MediaStore.MediaColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
-        if (cursor.moveToFirst()) return@AsyncFunction cursor.getString(0) ?: fileName
+        if (cursor.moveToFirst()) savedName = cursor.getString(0) ?: fileName
       }
-      fileName
+      mapOf("name" to savedName, "uri" to item.toString())
+    }
+
+    /**
+     * Opens a file the app saved (its content:// URI) in whichever app
+     * handles `mimeType`, granting that app read access for this one view.
+     * Rejects with ERR_NO_VIEWER when nothing on the phone can open it.
+     */
+    AsyncFunction("openFile") { uri: String, mimeType: String ->
+      val context = appContext.currentActivity ?: appContext.reactContext ?: throw Exceptions.ReactContextLost()
+      val intent = Intent(Intent.ACTION_VIEW).apply {
+        setDataAndType(Uri.parse(uri), mimeType)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        if (appContext.currentActivity == null) addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+      }
+      try {
+        context.startActivity(intent)
+      } catch (e: ActivityNotFoundException) {
+        throw CodedException("ERR_NO_VIEWER", "No app on this phone can open this file", e)
+      }
     }
   }
 

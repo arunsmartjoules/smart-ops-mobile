@@ -13,12 +13,17 @@ import { authEvents } from "@/utils/authEvents";
 
 // Configure notification handler
 Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldPlaySound: true,
-    shouldSetBadge: true,
-    shouldShowBanner: true,
-    shouldShowList: true,
-  }),
+  handleNotification: async (notification) => {
+    // Local download notices (services/DownloadNotices) appear quietly while
+    // the app is open; every push keeps its sound and badge.
+    const isDownload = (notification.request.content.data as { kind?: unknown } | null)?.kind === "download";
+    return {
+      shouldPlaySound: !isDownload,
+      shouldSetBadge: !isDownload,
+      shouldShowBanner: true,
+      shouldShowList: true,
+    };
+  },
 });
 
 const PUSH_TOKEN_STORAGE_KEY = "pushToken";

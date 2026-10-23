@@ -749,6 +749,7 @@ export function ShiftHero({
   slaTagColor,
   onSla,
   cta,
+  onPress,
 }: {
   label: string;
   big: string;
@@ -756,12 +757,19 @@ export function ShiftHero({
   slaTag: string | null;
   slaTagColor: string;
   onSla?: () => void;
+  /** Tapping the card (outside the SLA tag / CTA) opens the attendance history. */
+  onPress?: () => void;
   cta: { label: string; icon: "in" | "out" | "done"; onPress: () => void; busy?: boolean } | null;
 }) {
   const t = useJoTheme();
   const ctaIcon = cta?.icon === "out" ? "bx-log-out-circle" : cta?.icon === "in" ? "bx-log-in-circle" : "bx-check-double";
   return (
-    <HeroCard rings={1} style={{ marginTop: 14, paddingVertical: 11, paddingHorizontal: 14 }}>
+    <HeroCard
+      rings={1}
+      style={{ marginTop: 14, paddingVertical: 11, paddingHorizontal: 14 }}
+      onPress={onPress}
+      accessibilityLabel={onPress ? `${label}, ${big}. Opens attendance history` : undefined}
+    >
       <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
         <View style={{ flex: 1, minWidth: 0 }}>
           <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
@@ -891,40 +899,6 @@ export function TechTiles({ tiles }: { tiles: TechTile[] }) {
         </Card>
       ))}
     </View>
-  );
-}
-
-export function ProgressCard({
-  meta,
-  bars,
-}: {
-  meta: string;
-  bars: { label: string; done: number; total: number; pct: number; color: string }[];
-}) {
-  const t = useJoTheme();
-  return (
-    <Card style={{ marginTop: 12, padding: 18 }}>
-      <View style={{ flexDirection: "row", alignItems: "baseline", justifyContent: "space-between" }}>
-        <Text style={[f.t(15, 600), { color: t.ink }]}>Progress</Text>
-        <Text style={[f.t(12), { color: t.muted }]}>{meta}</Text>
-      </View>
-      <View style={{ gap: 16, marginTop: 14 }}>
-        {bars.map((b) => (
-          <View key={b.label}>
-            <View style={{ flexDirection: "row", alignItems: "flex-end", justifyContent: "space-between" }}>
-              <View>
-                <Text style={[f.t(13, 500), { color: t.ink }]}>{b.label}</Text>
-                <Text style={[f.t(11.5), { color: t.muted, marginTop: 2 }]}>
-                  {b.done} of {b.total} done
-                </Text>
-              </View>
-              <Text style={[f.d(24, -0.03, 1.05), { color: b.color }]}>{b.pct}%</Text>
-            </View>
-            <ProgressBar pct={b.pct} color={b.color} height={7} gloss style={{ marginTop: 9 }} />
-          </View>
-        ))}
-      </View>
-    </Card>
   );
 }
 

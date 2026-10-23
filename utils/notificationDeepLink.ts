@@ -1,5 +1,6 @@
 import * as Notifications from "expo-notifications";
 import logger from "@/utils/logger";
+import { openDownloadedFile } from "@/services/DownloadNotices";
 
 type RouterNav = {
   push: (href: any) => void;
@@ -35,6 +36,13 @@ export function navigateFromNotificationData(
   options: { replace?: boolean } = {},
 ): boolean {
   const nav = options.replace ? router.replace : router.push;
+
+  // A local "Downloaded" notice (services/DownloadNotices): open the file
+  // rather than navigating. Progress / failure notices have no file to open.
+  if (data?.kind === "download") {
+    if (data.phase === "done") void openDownloadedFile(data);
+    return true;
+  }
 
   if (data?.ticket_no) {
     nav({

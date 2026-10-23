@@ -584,7 +584,7 @@ const styles = StyleSheet.create({
   footText: { fontSize: 13, fontWeight: "400" },
   footLink: { fontSize: 13, fontWeight: "600" },
 
-  h1: { fontSize: 32, lineHeight: 36, fontWeight: "700", letterSpacing: 0.64 },
+  h1: { fontSize: 26, lineHeight: 30, fontWeight: "700", letterSpacing: 0.52 },
   sub: { fontSize: 13.5, lineHeight: 21, fontWeight: "400" },
 
   bubble: {

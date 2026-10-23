@@ -24,6 +24,12 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { getValidAuthToken } from "@/services/AuthTokenManager";
 import { API_BASE_URL } from "@/constants/api";
 import { APP_VERSION } from "@/constants/version";
+import {
+  downloadCancelled,
+  downloadFailed,
+  downloadFinished,
+  downloadStarted,
+} from "@/services/DownloadNotices";
 
 function safeName(name: string) {
   return name.replace(/[^A-Za-z0-9._ -]/g, "_").replace(/\s+/g, "_");
@@ -34,7 +40,11 @@ const EXPORT_DIR_KEY = "export-dir-uri:v1";
 /** modules/jouleops-downloads — absent on binaries built before it existed. */
 const Downloads = Platform.OS === "android"
   ? requireOptionalNativeModule<{
-      saveToDownloads(sourceUri: string, fileName: string, mimeType: string): Promise<string>;
+      saveToDownloads(
+        sourceUri: string,
+        fileName: string,
+        mimeType: string,
+      ): Promise<{ name: string; uri: string } | string>;
     }>("JouleOpsDownloads")
   : null;
 
@@ -46,8 +56,17 @@ function folderLabel(dirUri: string): string {
   return name === "Download" ? "Downloads" : name;
 }
 
+/** Where a delivered file ended up: the toast line, and what the notice opens. */
+interface Delivered {
+  message: string;
+  /** The saved file (content:// on Android, the cached file:// on iOS). */
+  uri: string | null;
+  name: string;
+  where: string;
+}
+
 /** Write base64 bytes into the remembered Android folder, asking for one if needed. */
-async function writeToAndroidFolder(base64: string, filename: string, mimeType: string): Promise<string | null> {
+async function writeToAndroidFolder(base64: string, filename: string, mimeType: string): Promise<Delivered | null> {
   const saf = FileSystem.StorageAccessFramework;
   const dot = filename.lastIndexOf(".");
   const stem = dot > 0 ? filename.slice(0, dot) : filename;
@@ -55,13 +74,17 @@ async function writeToAndroidFolder(base64: string, filename: string, mimeType: 
   const tryWrite = async (dirUri: string) => {
     const target = await saf.createFileAsync(dirUri, stem, mimeType);
     await FileSystem.writeAsStringAsync(target, base64, { encoding: FileSystem.EncodingType.Base64 });
+    return target;
+  };
+  const delivered = (dirUri: string, uri: string): Delivered => {
+    const where = folderLabel(dirUri);
+    return { message: `Saved to ${where} · ${filename}`, uri, name: filename, where };
   };
 
   const saved = await AsyncStorage.getItem(EXPORT_DIR_KEY).catch(() => null);
   if (saved) {
     try {
-      await tryWrite(saved);
-      return `Saved to ${folderLabel(saved)} · ${filename}`;
+      return delivered(saved, await tryWrite(saved));
     } catch {
       // Grant revoked or folder gone — fall through and ask again.
       await AsyncStorage.removeItem(EXPORT_DIR_KEY).catch(() => {});
@@ -70,20 +93,22 @@ async function writeToAndroidFolder(base64: string, filename: string, mimeType: 
 
   const perm = await saf.requestDirectoryPermissionsAsync(saf.getUriForDirectoryInRoot("Documents"));
   if (!perm.granted) return null;
-  await tryWrite(perm.directoryUri);
+  const uri = await tryWrite(perm.directoryUri);
   await AsyncStorage.setItem(EXPORT_DIR_KEY, perm.directoryUri).catch(() => {});
-  return `Saved to ${folderLabel(perm.directoryUri)} · ${filename}`;
+  return delivered(perm.directoryUri, uri);
 }
 
-async function deliver(localUri: string, filename: string, mimeType: string): Promise<string | null> {
+async function deliver(localUri: string, filename: string, mimeType: string): Promise<Delivered | null> {
   if (Platform.OS === "ios") {
     await Share.share({ url: localUri });
-    return `${filename} ready`;
+    return { message: `${filename} ready`, uri: localUri, name: filename, where: "Ready" };
   }
   if (Downloads) {
     try {
       const saved = await Downloads.saveToDownloads(localUri, filename, mimeType);
-      return `Saved to Downloads · ${saved}`;
+      const name = typeof saved === "string" ? saved : saved.name;
+      const uri = typeof saved === "string" ? null : saved.uri;
+      return { message: `Saved to Downloads · ${name}`, uri, name, where: "Downloads" };
     } catch {
       // Android 9 and below, or MediaStore refused — use the folder picker.
     }
@@ -94,22 +119,49 @@ async function deliver(localUri: string, filename: string, mimeType: string): Pr
   return writeToAndroidFolder(base64, filename, mimeType);
 }
 
+/**
+ * Runs one save with its notifications: "Downloading…" first, then
+ * "Downloaded · Tap to open" (or a failure line, or nothing if the person
+ * cancelled the folder picker). Resolves with the toast message.
+ */
+async function withNotices(
+  filename: string,
+  mimeType: string,
+  run: () => Promise<Delivered | null>,
+): Promise<string | null> {
+  const notice = await downloadStarted(filename);
+  try {
+    const result = await run();
+    if (!result) {
+      await downloadCancelled(notice);
+      return null;
+    }
+    void downloadFinished(notice, { name: result.name, uri: result.uri, mimeType, where: result.where });
+    return result.message;
+  } catch (error) {
+    void downloadFailed(notice, filename);
+    throw error;
+  }
+}
+
 /** Save bytes the app built itself (XLSX / PDF), given as base64. */
-export async function saveBase64File(base64: string, filename: string, mimeType: string): Promise<string | null> {
-  const local = `${FileSystem.cacheDirectory}${safeName(filename)}`;
-  await FileSystem.writeAsStringAsync(local, base64, { encoding: FileSystem.EncodingType.Base64 });
-  return deliver(local, filename, mimeType);
+export function saveBase64File(base64: string, filename: string, mimeType: string): Promise<string | null> {
+  return withNotices(filename, mimeType, async () => {
+    const local = `${FileSystem.cacheDirectory}${safeName(filename)}`;
+    await FileSystem.writeAsStringAsync(local, base64, { encoding: FileSystem.EncodingType.Base64 });
+    return deliver(local, filename, mimeType);
+  });
 }
 
 /**
  * Download an authenticated backend file (e.g. `/api/daily-report/pdf?…`) and
  * hand it to the user. `path` is relative to API_BASE_URL.
  */
-export async function saveBackendFile(
-  path: string,
-  filename: string,
-  mimeType: string,
-): Promise<string | null> {
+export function saveBackendFile(path: string, filename: string, mimeType: string): Promise<string | null> {
+  return withNotices(filename, mimeType, () => downloadBackendFile(path, filename, mimeType));
+}
+
+async function downloadBackendFile(path: string, filename: string, mimeType: string): Promise<Delivered | null> {
   const token = await getValidAuthToken();
   const local = `${FileSystem.cacheDirectory}${safeName(filename)}`;
   const res = await FileSystem.downloadAsync(`${API_BASE_URL}${path}`, local, {
@@ -134,16 +186,14 @@ export async function saveBackendFile(
 }
 
 /** Write text the app built itself (CSV) and hand it to the user. */
-export async function saveTextFile(
-  content: string,
-  filename: string,
-  mimeType = "text/csv",
-): Promise<string | null> {
-  const local = `${FileSystem.cacheDirectory}${safeName(filename)}`;
-  await FileSystem.writeAsStringAsync(local, content, {
-    encoding: FileSystem.EncodingType.UTF8,
+export function saveTextFile(content: string, filename: string, mimeType = "text/csv"): Promise<string | null> {
+  return withNotices(filename, mimeType, async () => {
+    const local = `${FileSystem.cacheDirectory}${safeName(filename)}`;
+    await FileSystem.writeAsStringAsync(local, content, {
+      encoding: FileSystem.EncodingType.UTF8,
+    });
+    return deliver(local, filename, mimeType);
   });
-  return deliver(local, filename, mimeType);
 }
 
 /** RFC 4180 CSV from rows of cells (with a UTF-8 BOM so Excel reads ₹/°C right). */

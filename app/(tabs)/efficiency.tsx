@@ -20,6 +20,7 @@ import { ResourcesTabs } from "@/components/jo/OpsTabs";
 import { useNavInsets } from "@/components/jo/navInsets";
 import { Building2, ChevronLeft, ChevronRight, CircleAlert, WifiOff, bxIcon } from "@/components/jo/bxIcons";
 import { DateButton, EmptyState, JoPage, JoSheet, SheetOption, Shimmer, f, makeJoStyles, useJoTheme } from "@/components/jo/ui";
+import { CustomRangeSheet, type DateRange } from "@/components/jo/CustomRangeSheet";
 import { RoundButton } from "@/components/sla/parts";
 import { addMonths, fmtRange } from "@/components/reports/dates";
 import { SIDES, allDates, monthLabel, monthRange, recentMonths, type EffSide } from "@/components/efficiency/lib";
@@ -75,10 +76,12 @@ export default function EfficiencyScreen() {
   const currentMonth = today.slice(0, 7);
   const [pickedMonth, setMonth] = useState<string | null>(null);
   const month = pickedMonth && pickedMonth <= currentMonth ? pickedMonth : currentMonth;
-  const range = useMemo(() => monthRange(month, today), [month, today]);
+  /** "Custom range" from the month sheet; picking or stepping a month clears it. */
+  const [customRange, setCustomRange] = useState<DateRange | null>(null);
+  const range = useMemo(() => customRange ?? monthRange(month, today), [customRange, month, today]);
   const dayCount = useMemo(() => allDates(range.from, range.to).length, [range]);
   const monthOptions = useMemo(() => recentMonths(currentMonth, MONTH_OPTIONS), [currentMonth]);
-  const [sheet, setSheet] = useState(false);
+  const [sheet, setSheet] = useState<null | "month" | "custom">(null);
 
   const bodyRef = useRef<ScrollView>(null);
   // A new side / month is a new page — start it at the top, not the old offset.
@@ -89,6 +92,7 @@ export default function EfficiencyScreen() {
   };
   const pickMonth = (m: string) => {
     setMonth(m);
+    setCustomRange(null);
     toTop();
   };
 
@@ -132,7 +136,11 @@ export default function EfficiencyScreen() {
   const retry = useCallback(() => setTick((x) => x + 1), []);
 
   // ── Render ─────────────────────────────────────────────────────────────
-  const periodLabel = month === currentMonth ? "Month to date" : monthLabel(month);
+  const periodLabel = customRange
+    ? fmtRange(customRange.from, customRange.to, false)
+    : month === currentMonth
+      ? "Month to date"
+      : monthLabel(month);
   const rows = current?.success ? current.data : [];
   const fromCache = current?.success ? !!current.isFromCache : false;
 
@@ -188,9 +196,9 @@ export default function EfficiencyScreen() {
         <View style={s.monthRow}>
           <RoundButton icon={ChevronLeft} label="Previous month" onPress={() => pickMonth(addMonths(month, -1))} />
           <DateButton
-            label={monthLabel(month)}
+            label={customRange ? "Custom" : monthLabel(month)}
             meta={fmtRange(range.from, range.to, false)}
-            onPress={() => setSheet(true)}
+            onPress={() => setSheet("month")}
             height={40}
             style={s.monthBtn}
           />
@@ -235,8 +243,8 @@ export default function EfficiencyScreen() {
       </View>
 
       <JoSheet
-        visible={sheet}
-        onClose={() => setSheet(false)}
+        visible={sheet === "month"}
+        onClose={() => setSheet(null)}
         title="Month"
         subtitle="The current month runs to today"
       >
@@ -248,16 +256,34 @@ export default function EfficiencyScreen() {
                 key={m}
                 label={monthLabel(m)}
                 meta={m === currentMonth ? "Month to date" : fmtRange(r.from, r.to, false)}
-                selected={m === month}
+                selected={!customRange && m === month}
                 onPress={() => {
                   pickMonth(m);
-                  setSheet(false);
+                  setSheet(null);
                 }}
               />
             );
           })}
+          <SheetOption
+            label="Custom range"
+            meta={customRange ? fmtRange(customRange.from, customRange.to, false) : "Pick dates"}
+            selected={!!customRange}
+            onPress={() => setSheet("custom")}
+          />
         </ScrollView>
       </JoSheet>
+
+      <CustomRangeSheet
+        visible={sheet === "custom"}
+        onClose={() => setSheet(null)}
+        value={range}
+        maxDate={today}
+        onApply={(r) => {
+          setCustomRange(r);
+          setSheet(null);
+          toTop();
+        }}
+      />
     </JoPage>
   );
 }

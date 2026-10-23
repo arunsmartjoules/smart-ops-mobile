@@ -11,6 +11,7 @@
  *    headline numbers; "Download PDF" fetches the backend-rendered PDF.
  */
 import { ChipTabs } from "@/components/jo/ChipTabs";
+import { CustomRangeSheet } from "@/components/jo/CustomRangeSheet";
 import type { BxName } from "@/components/jo/Bx";
 import { useNavInsets } from "@/components/jo/navInsets";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
@@ -133,7 +134,7 @@ export default function ReportsScreen() {
   const [tick, setTick] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
   const [toast, setToast] = useState("");
-  const [sheet, setSheet] = useState<null | "range">(null);
+  const [sheet, setSheet] = useState<null | "range" | "custom">(null);
 
   // ── Sites ───────────────────────────────────────────────────────────
   // Exactly the site in the shared Resources header (module exports work for
@@ -168,7 +169,9 @@ export default function ReportsScreen() {
 
   // ── Modules tab ─────────────────────────────────────────────────────
   const [preset, setPreset] = useState<RangePreset>("month");
-  const range = useMemo(() => presetRange(preset, today), [preset, today]);
+  /** Set by "Custom range"; a preset pick clears it. */
+  const [customRange, setCustomRange] = useState<{ from: string; to: string } | null>(null);
+  const range = useMemo(() => customRange ?? presetRange(preset, today), [customRange, preset, today]);
   const scope: ModuleScope | null = useMemo(
     () =>
       activeSite
@@ -493,16 +496,34 @@ export default function ReportsScreen() {
                 key={p.key}
                 label={p.label}
                 meta={fmtRange(r.from, r.to)}
-                selected={p.key === preset}
+                selected={!customRange && p.key === preset}
                 onPress={() => {
                   setPreset(p.key);
+                  setCustomRange(null);
                   setSheet(null);
                 }}
               />
             );
           })}
+          <SheetOption
+            label="Custom range"
+            meta={customRange ? fmtRange(customRange.from, customRange.to) : "Pick dates"}
+            selected={!!customRange}
+            onPress={() => setSheet("custom")}
+          />
         </View>
       </JoSheet>
+
+      <CustomRangeSheet
+        visible={sheet === "custom"}
+        onClose={() => setSheet(null)}
+        value={range}
+        maxDate={today}
+        onApply={(r) => {
+          setCustomRange(r);
+          setSheet(null);
+        }}
+      />
     </JoPage>
   );
 }

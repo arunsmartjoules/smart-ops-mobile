@@ -6,7 +6,10 @@ import "@/utils/navContextErrorTrap";
 // before the modules that emit those logs (e.g. expo-notifications below).
 import "@/utils/devLogFilters";
 import {
+  DarkTheme,
+  DefaultTheme,
   Stack,
+  ThemeProvider as NavigationThemeProvider,
   useRouter,
   useSegments,
   usePathname,
@@ -28,7 +31,8 @@ import { permForPath } from "@/components/jo/modules";
 import { ThemeProvider, useTheme } from "@/contexts/ThemeContext";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
-import { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { useJoTheme } from "@/hooks/useJoTheme";
 import { AppState } from "react-native";
 import { registerBackgroundSyncAsync } from "@/services/SyncEngine";
 import { syncManager } from "@/services/SyncManager";
@@ -186,6 +190,24 @@ const LIGHT_STATUS_BAR_ROUTES = new Set([
  * per-screen tint leaks into whatever you navigate to next. Driving it off the
  * live pathname re-applies on every route change instead.
  */
+/**
+ * Gives the navigators the app's own page colour. React Navigation paints its
+ * containers with the theme background (default: light #F2F2F2) and that is
+ * what shows through while one tab fades out and the next fades in — the
+ * white flash on every tab switch in dark mode.
+ */
+function NavigationTheme({ children }: { children: React.ReactNode }) {
+  const t = useJoTheme();
+  const value = useMemo(() => {
+    const base = t.isDark ? DarkTheme : DefaultTheme;
+    return {
+      ...base,
+      colors: { ...base.colors, primary: t.accent, background: t.page, card: t.page, text: t.ink, border: t.line },
+    };
+  }, [t]);
+  return <NavigationThemeProvider value={value}>{children}</NavigationThemeProvider>;
+}
+
 function RouteStatusBar() {
   const pathname = usePathname();
   const { isDark } = useTheme();
@@ -335,6 +357,7 @@ export default function RootLayout() {
                 <PresenceTracker />
                 <ModuleRouteGuard />
                 <RouteStatusBar />
+                <NavigationTheme>
                 <Stack screenOptions={{ headerShown: false }}>
                   <Stack.Screen name="index" />
                   <Stack.Screen name="sign-in" />
@@ -363,6 +386,7 @@ export default function RootLayout() {
                   <Stack.Screen name="pm-execution" />
                   <Stack.Screen name="shift-signoff" />
                 </Stack>
+                </NavigationTheme>
               </ThemeProvider>
             </AuthGuard>
           </AttendanceGateProvider>

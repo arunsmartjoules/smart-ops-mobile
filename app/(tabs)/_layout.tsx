@@ -53,7 +53,9 @@ function TabsContent({ hideTabBar = false }: { hideTabBar?: boolean }) {
         headerShown: false,
         sceneStyleInterpolator: forTabSwitch,
         transitionSpec: TAB_SPEC,
-        sceneContainerStyle: { backgroundColor: ds.pageBg },
+        // The page colour behind fading tabs comes from the navigation theme
+        // (app/_layout NavigationTheme); this keeps each scene opaque as well.
+        sceneStyle: { backgroundColor: ds.pageBg },
       }}
     >
       <Tabs.Screen name="index" options={{ href: null }} />

@@ -139,6 +139,18 @@ const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
   return centralApiFetch(`${API_BASE_URL}${endpoint}`, options);
 };
 
+/**
+ * Thrown inside a domain pull when cleanup() has asked the in-flight sync to
+ * stop. Raised outside the per-site try/catch so it ends the handler instead
+ * of being recorded as a site failure.
+ */
+class SyncCancelledError extends Error {
+  constructor() {
+    super("Sync cancelled");
+    this.name = "SyncCancelledError";
+  }
+}
+
 // ─── SyncEngine implementation ────────────────────────────────────────────────
 
 class SyncEngineImpl implements SyncEngine {
@@ -164,6 +176,12 @@ class SyncEngineImpl implements SyncEngine {
   private flushPromise: Promise<void> | null = null;
   private forceFullSyncOnce = false;
   private hasAttemptedEmptySitesRecovery = false;
+  /**
+   * Set by cleanup() so an in-flight pull stops at the next site boundary.
+   * A full pull is ~8 sequential requests per site; without this, sign-out
+   * waited for all of them even when the device had nothing to push.
+   */
+  private cancelRequested = false;
 
   // Track previous connectivity to detect offline→online transitions
   private wasConnected = false;
@@ -213,6 +231,7 @@ class SyncEngineImpl implements SyncEngine {
         // partial cache in for TTL.tickets (10 min).
         const failures: Array<{ siteCode: string; error: any }> = [];
         for (const siteCode of siteCodes) {
+          this.throwIfCancelled();
           try {
             const response = await apiFetch(
               `/api/complaints/site/${siteCode}?limit=100`,
@@ -287,6 +306,7 @@ class SyncEngineImpl implements SyncEngine {
 
         const failures: Array<{ siteCode: string; error: any }> = [];
         for (const siteCode of siteCodes) {
+          this.throwIfCancelled();
           try {
             const response = await apiFetch(
               `/api/incidents?site_code=${encodeURIComponent(siteCode)}&limit=100`,
@@ -378,6 +398,7 @@ class SyncEngineImpl implements SyncEngine {
         const failures: Array<{ siteCode: string; logName: string; error: any }> = [];
         for (const siteCode of siteCodes) {
           for (const logName of logTypes) {
+            this.throwIfCancelled();
             try {
               await SiteLogService.pullSiteLogs(siteCode, {
                 logName,
@@ -436,6 +457,7 @@ class SyncEngineImpl implements SyncEngine {
         // partial cache for TTL.pm_instances (5 min).
         const failures: Array<{ siteCode: string; error: any }> = [];
         for (const siteCode of siteCodes) {
+          this.throwIfCancelled();
           try {
             await PMService.fetchFromAPI(
               siteCode,
@@ -521,6 +543,7 @@ class SyncEngineImpl implements SyncEngine {
 
         const failures: Array<{ siteCode: string; error: any }> = [];
         for (const siteCode of siteCodes) {
+          this.throwIfCancelled();
           try {
             await SiteLogService.pullChillerReadings(siteCode, {
               stampSync: false,
@@ -563,6 +586,7 @@ class SyncEngineImpl implements SyncEngine {
         );
         const failures: Array<{ siteCode: string; error: any }> = [];
         for (const siteCode of siteCodes) {
+          this.throwIfCancelled();
           try {
             const response = await apiFetch(`/api/assets/site/${siteCode}`);
             if (!response.ok) {
@@ -772,8 +796,10 @@ class SyncEngineImpl implements SyncEngine {
     }
 
     // Wait for any in-flight sync to finish before releasing userId, so
-    // its cache writes can't race with a follow-up clearDatabase().
+    // its cache writes can't race with a follow-up clearDatabase(). Ask it to
+    // stop first so the wait is one request, not the rest of a full pull.
     if (this.syncPromise) {
+      this.cancelRequested = true;
       try {
         await this.syncPromise;
       } catch (err) {
@@ -784,6 +810,7 @@ class SyncEngineImpl implements SyncEngine {
       }
     }
 
+    this.cancelRequested = false;
     this.userId = null;
     this.syncPromise = null;
     this.wasConnected = false;
@@ -849,6 +876,7 @@ class SyncEngineImpl implements SyncEngine {
 
       // Step 2: Pull each domain in priority order (Req 2.4)
       for (const handler of this.domainHandlers) {
+        if (this.cancelRequested) break;
         const eligible = this.forceFullSyncOnce
           ? true
           : await this.isDomainEligible(handler.domain);
@@ -865,6 +893,12 @@ class SyncEngineImpl implements SyncEngine {
             module: "SYNC_ENGINE",
           });
         } catch (err) {
+          if (err instanceof SyncCancelledError) {
+            logger.info(`SyncEngine: sync cancelled during ${handler.domain}`, {
+              module: "SYNC_ENGINE",
+            });
+            break;
+          }
           // Isolated per domain — failure does not stop others (Req 2.7)
           logger.error(`SyncEngine: domain ${handler.domain} sync failed`, {
             module: "SYNC_ENGINE",
@@ -872,6 +906,8 @@ class SyncEngineImpl implements SyncEngine {
           });
         }
       }
+
+      if (this.cancelRequested) return;
 
       this.forceFullSyncOnce = false;
 
@@ -895,6 +931,10 @@ class SyncEngineImpl implements SyncEngine {
         lastSyncedAt: new Date(syncStartedAt).toISOString(),
       });
     }
+  }
+
+  private throwIfCancelled(): void {
+    if (this.cancelRequested) throw new SyncCancelledError();
   }
 
   private async runHealthCheck(): Promise<void> {

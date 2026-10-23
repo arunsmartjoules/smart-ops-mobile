@@ -166,7 +166,7 @@ const styles = StyleSheet.create({
   },
   maintTitle: {
     color: "white",
-    fontSize: 26,
+    fontSize: 22,
     fontWeight: "800",
     marginBottom: 12,
     textAlign: "center",
@@ -202,7 +202,7 @@ const styles = StyleSheet.create({
   },
   timerValue: {
     color: "white",
-    fontSize: 40,
+    fontSize: 30,
     fontWeight: "800",
     fontVariant: ["tabular-nums"],
   },

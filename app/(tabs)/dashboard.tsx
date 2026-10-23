@@ -59,7 +59,6 @@ import {
   EfficiencyCard,
   HomeHeader,
   OpsHero,
-  ProgressCard,
   ShiftHero,
   SlaScoreCard,
   TeamCard,
@@ -806,14 +805,6 @@ export default function Dashboard() {
   };
   const shownTiles = techTiles.filter((tile) => canView(tilePerm[tile.label]!));
 
-  const techBars = [
-    ...(canView("site_logs") ? [{ label: "Site logs", done: s?.logs.completed ?? 0, total: s?.logs.expected ?? 0 }] : []),
-    ...(canView("pm") ? [{ label: "PM tasks", done: s?.pm.completed ?? 0, total: s?.pm.planned ?? 0 }] : []),
-  ].map((b) => {
-    const pct = pctOf(b.done, b.total);
-    return { ...b, pct, color: pctColor(t, pct) };
-  });
-
   // ── Manager view ──────────────────────────────────────────────────────
   const heroStats = [
     ...(canView("incidents") ? [{ label: "Incidents", value: num(s?.incidents.raised) }] : []),
@@ -880,6 +871,7 @@ export default function Dashboard() {
               slaTagColor={slaCol}
               onSla={isLocked ? undefined : () => router.push("/(tabs)/sla")}
               cta={techHero.cta}
+              onPress={!isLocked && canView("attendance") ? navigateToAttendance : undefined}
             />
             {/* Technicians: plant efficiency right under the attendance card. */}
             {efficiencyCard}
@@ -894,7 +886,6 @@ export default function Dashboard() {
                   />
                 ) : null}
                 {shownTiles.length > 0 ? <TechTiles tiles={shownTiles} /> : null}
-                {techBars.length > 0 ? <ProgressCard meta={periodLabel} bars={techBars} /> : null}
                 {categoryCard}
               </>
             ) : null}

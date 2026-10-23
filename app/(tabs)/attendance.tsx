@@ -21,6 +21,7 @@ import {
 } from "@/services/AttendanceService";
 import appLogger from "@/utils/logger";
 import { JoPage, ScreenTitle, useJoTheme } from "@/components/jo/ui";
+import { CustomRangeSheet, type DateRange } from "@/components/jo/CustomRangeSheet";
 import { useNavInsets } from "@/components/jo/navInsets";
 import {
   AttendanceHero,
@@ -81,6 +82,11 @@ export default function AttendancePage() {
   const [currentTime, setCurrentTime] = useState(new Date());
   /** 0 = newest month present in the fetched history; higher steps back. */
   const [monthOffset, setMonthOffset] = useState(0);
+  /** Custom date range for the history card; null = the month view. */
+  const [customRange, setCustomRange] = useState<DateRange | null>(null);
+  const [rangeSheet, setRangeSheet] = useState(false);
+  /** Logs fetched for `customRange` (key = "from|to"), or null when offline. */
+  const [rangeResult, setRangeResult] = useState<{ key: string; logs: AttendanceLog[] | null } | null>(null);
   const [historyFilter, setHistoryFilter] = useState<HistoryFilter>("All");
   /** Set when fetchData throws outside the per-call catches (shown with Retry). */
   const [loadError, setLoadError] = useState(false);
@@ -782,13 +788,50 @@ export default function AttendancePage() {
   // Clamp when the fetched window changes under us (e.g. a refresh).
   const monthIndex = Math.min(monthOffset, Math.max(0, months.length - 1));
   const activeMonth = months[monthIndex];
-  const monthLogs = useMemo(() => activeMonth?.[1] ?? [], [activeMonth]);
+
+  // Custom range: ask the server for exactly that range; offline (or on a
+  // failure) fall back to the cached history that falls inside it.
+  const rangeKey = customRange ? `${customRange.from}|${customRange.to}` : "";
+  useEffect(() => {
+    if (!customRange || !userId) return;
+    let cancelled = false;
+    const key = `${customRange.from}|${customRange.to}`;
+    void AttendanceService.getAttendanceRange(userId, customRange.from, customRange.to)
+      .catch(() => null)
+      .then((logs) => {
+        if (!cancelled) setRangeResult({ key, logs });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [customRange, userId]);
+  const rangeLoading = !!customRange && rangeResult?.key !== rangeKey;
+  const rangeLogs = useMemo(() => {
+    if (!customRange) return null;
+    const fetched = rangeResult?.key === rangeKey ? rangeResult.logs : null;
+    if (fetched) return fetched;
+    return attendanceHistory.filter((l) => {
+      const d = String(l.date || "");
+      return d >= customRange.from && d <= customRange.to;
+    });
+  }, [customRange, rangeKey, rangeResult, attendanceHistory]);
+
+  const monthLogs = useMemo(() => rangeLogs ?? activeMonth?.[1] ?? [], [rangeLogs, activeMonth]);
 
   const monthLabel = useMemo(() => {
+    if (customRange) {
+      const day = (iso: string) => {
+        const [y, m, d] = iso.split("-").map(Number);
+        return new Date(y as number, (m as number) - 1, d as number, 12);
+      };
+      return customRange.from === customRange.to
+        ? format(day(customRange.from), "dd MMM yyyy")
+        : `${format(day(customRange.from), "dd MMM")} – ${format(day(customRange.to), "dd MMM yyyy")}`;
+    }
     if (!activeMonth) return format(new Date(), "MMM yyyy");
     const [y, m] = activeMonth[0].split("-").map(Number);
     return format(new Date(y as number, (m as number) - 1, 1), "MMM yyyy");
-  }, [activeMonth]);
+  }, [activeMonth, customRange]);
 
   /** Kind is computed once per log, then drives filtering, summary and row tone. */
   const monthRows = useMemo(
@@ -829,8 +872,9 @@ export default function AttendancePage() {
   const hasOlder = monthIndex < months.length - 1;
   const hasNewer = monthIndex > 0;
 
-  const emptyText =
-    months.length === 0
+  const emptyText = customRange
+    ? "No days logged in this range"
+    : months.length === 0
       ? "No attendance history yet"
       : historyFilter === "All"
         ? "No days logged this month"
@@ -890,9 +934,11 @@ export default function AttendancePage() {
           hasNewer={hasNewer}
           onOlder={() => setMonthOffset((i) => i + 1)}
           onNewer={() => setMonthOffset((i) => Math.max(0, i - 1))}
+          onCustomRange={() => setRangeSheet(true)}
+          onClearCustomRange={customRange ? () => setCustomRange(null) : undefined}
           filter={historyFilter}
           onFilter={setHistoryFilter}
-          loading={loading}
+          loading={loading || rangeLoading}
           error={loadError && attendanceHistory.length === 0}
           onRetry={fetchData}
           rows={visibleRows}
@@ -918,6 +964,17 @@ export default function AttendancePage() {
         sites={availableSites}
         onClose={() => setIsSiteModalVisible(false)}
         onSelect={(code) => performCheckIn(code)}
+      />
+      <CustomRangeSheet
+        visible={rangeSheet}
+        onClose={() => setRangeSheet(false)}
+        subtitle="Show your attendance for any dates."
+        value={customRange ?? { from: `${getISTDateString().slice(0, 7)}-01`, to: getISTDateString() }}
+        maxDate={getISTDateString()}
+        onApply={(r) => {
+          setCustomRange(r);
+          setRangeSheet(false);
+        }}
       />
     </JoPage>
   );

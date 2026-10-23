@@ -55,8 +55,11 @@ const API_PATH: Record<EffSide, string> = {
   low: "/api/low-side-efficiency",
 };
 
-/** One row per site per day, so a month is ≤ 31 rows; this is headroom. */
-const ROW_LIMIT = 500;
+/**
+ * One row per site per day (a few days carry a duplicate), so this covers a
+ * custom range of well over a year; the server caps pages at 10,000.
+ */
+const ROW_LIMIT = 1000;
 
 const CACHE_PREFIX = "efficiency:v1:";
 

@@ -287,6 +287,8 @@ export function MonthCard({
   rows,
   emptyText,
   now,
+  onCustomRange,
+  onClearCustomRange,
 }: {
   label: string;
   summary: string;
@@ -294,6 +296,10 @@ export function MonthCard({
   hasNewer: boolean;
   onOlder: () => void;
   onNewer: () => void;
+  /** Opens the custom date-range sheet. */
+  onCustomRange?: () => void;
+  /** Set while a custom range is shown: back to the month view. */
+  onClearCustomRange?: () => void;
   filter: HistoryFilter;
   onFilter: (f: HistoryFilter) => void;
   loading: boolean;
@@ -314,8 +320,17 @@ export function MonthCard({
           </Text>
         </View>
         <View style={{ flexDirection: "row", gap: 6 }}>
-          <MonthStep icon="bx-chevron-left" enabled={hasOlder} onPress={onOlder} label="Previous month" />
-          <MonthStep icon="bx-chevron-right" enabled={hasNewer} onPress={onNewer} label="Next month" />
+          {onCustomRange ? (
+            <MonthStep icon="bx-calendar-edit" enabled onPress={onCustomRange} label="Custom date range" />
+          ) : null}
+          {onClearCustomRange ? (
+            <MonthStep icon="bx-x" enabled onPress={onClearCustomRange} label="Back to monthly view" />
+          ) : (
+            <>
+              <MonthStep icon="bx-chevron-left" enabled={hasOlder} onPress={onOlder} label="Previous month" />
+              <MonthStep icon="bx-chevron-right" enabled={hasNewer} onPress={onNewer} label="Next month" />
+            </>
+          )}
         </View>
       </View>
 

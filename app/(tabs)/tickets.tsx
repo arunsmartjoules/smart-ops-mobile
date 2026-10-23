@@ -918,6 +918,14 @@ export default function Tickets() {
   const siteCodeNorm = firstParam(params.siteCode);
   const deepLinkFetchGen = useRef(0);
   const deepLinkAttemptedFor = useRef<string | null>(null);
+  /**
+   * The ticket deep link whose site we've already switched to. The switch is
+   * one-shot: if the person then picks another site, the pending link is
+   * dropped. Re-switching on every change locked the whole app to the
+   * ticket's site whenever the ticket couldn't be found (the params were
+   * never cleared), so no other site could be selected anywhere.
+   */
+  const deepLinkSiteSwitchedFor = useRef<string | null>(null);
   const latestFiltersRef = useRef({
     statusFilter,
     priorityFilter,
@@ -1059,6 +1067,7 @@ export default function Tickets() {
   useEffect(() => {
     if (!ticketIdNorm) {
       deepLinkAttemptedFor.current = null;
+      deepLinkSiteSwitchedFor.current = null;
       return;
     }
 
@@ -1067,9 +1076,20 @@ export default function Tickets() {
       selectedSiteCode !== siteCodeNorm &&
       sites.length > 0
     ) {
+      if (deepLinkSiteSwitchedFor.current === ticketIdNorm) {
+        // We already moved to the ticket's site and the person has since
+        // chosen another one: respect that and let the link go.
+        deepLinkFetchGen.current++;
+        router.setParams({ ticketId: undefined, siteCode: undefined });
+        return;
+      }
       const targetSite = sites.find((s) => s.site_code === siteCodeNorm);
       if (targetSite) {
+        deepLinkSiteSwitchedFor.current = ticketIdNorm;
         void selectSite(targetSite);
+      } else {
+        // Not one of this person's sites — nothing to open here.
+        router.setParams({ ticketId: undefined, siteCode: undefined });
       }
       return;
     }

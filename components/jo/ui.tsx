@@ -22,7 +22,7 @@ import {
   type TextStyle,
   type ViewStyle,
 } from "react-native";
-import Animated, { FadeIn, SlideInDown } from "react-native-reanimated";
+import Animated, { FadeIn } from "react-native-reanimated";
 import Svg, { Circle, Defs, RadialGradient, Rect, Stop } from "react-native-svg";
 import { LinearGradient } from "expo-linear-gradient";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -49,19 +49,40 @@ const MONO: Record<Weight, string> = {
 };
 
 /**
+ * Display sizes above this are compressed (see `displaySize`).
+ */
+const DISPLAY_KNEE = 20;
+/** Share of every point above the knee that is kept. */
+const DISPLAY_SLOPE = 0.35;
+
+/**
+ * The artboard's hero numbers and titles (28–54px) made the app read large,
+ * so display sizes are compressed above the knee instead of used as drawn:
+ * ≤20 unchanged, 24 → 21.4, 28 → 22.8, 34 → 24.9, 46 → 29.1, 54 → 31.9.
+ * Callers keep passing the artboard sizes; the hierarchy between them holds.
+ */
+export function displaySize(size: number): number {
+  if (size <= DISPLAY_KNEE) return size;
+  return Math.round((DISPLAY_KNEE + (size - DISPLAY_KNEE) * DISPLAY_SLOPE) * 10) / 10;
+}
+
+/**
  * Font helpers. `d` = Bricolage display (numbers, titles); `t` = Geist text;
  * `m` = Geist Mono. `ls` is the artboard's letter-spacing in em.
  */
 export const f = {
-  d: (size: number, ls = -0.025, lh?: number): TextStyle => ({
-    fontFamily: JF.display,
-    fontSize: size,
-    letterSpacing: ls * size,
-    // CSS line-heights of .9–1 clip Bricolage's ascenders in RN; 1.08 is the
-    // tightest that renders whole glyphs on both platforms.
-    lineHeight: Math.round(size * (lh ?? 1.08)),
-    includeFontPadding: false,
-  }),
+  d: (artboardSize: number, ls = -0.025, lh?: number): TextStyle => {
+    const size = displaySize(artboardSize);
+    return {
+      fontFamily: JF.display,
+      fontSize: size,
+      letterSpacing: ls * size,
+      // CSS line-heights of .9–1 clip Bricolage's ascenders in RN; 1.08 is the
+      // tightest that renders whole glyphs on both platforms.
+      lineHeight: Math.round(size * (lh ?? 1.08)),
+      includeFontPadding: false,
+    };
+  },
   t: (size: number, w: Weight = 400, ls = 0): TextStyle => ({
     fontFamily: GEIST[w],
     fontSize: size,
@@ -1438,13 +1459,16 @@ export function JoSheet({
   const t = useJoTheme();
   const insets = useSafeAreaInsets();
   return (
-    <Modal visible={visible} transparent animationType="none" onRequestClose={onClose} statusBarTranslucent>
-      <Animated.View entering={FadeIn.duration(180)} style={[StyleSheet.absoluteFill, { backgroundColor: t.scrim }]}>
+    // The Modal's own fade animates the native window, not the views inside it.
+    // With a Reanimated `entering` slide on the panel, option rows ignored taps
+    // on some Android phones (Pixel 11, Vivo Y73; fine on a OnePlus Nord CE 4),
+    // most likely because the press was measured against the pre-slide position.
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose} statusBarTranslucent>
+      <View style={[StyleSheet.absoluteFill, { backgroundColor: t.scrim }]}>
         <Pressable style={StyleSheet.absoluteFill} onPress={onClose} accessibilityLabel="Close" />
-      </Animated.View>
+      </View>
       <View style={{ flex: 1, justifyContent: "flex-end" }} pointerEvents="box-none">
-        <Animated.View
-          entering={SlideInDown.duration(260)}
+        <View
           style={{
             marginHorizontal: 8,
             marginBottom: 8 + insets.bottom,
@@ -1467,7 +1491,7 @@ export function JoSheet({
           ) : null}
           {subtitle ? <Text style={[f.t(12.5), { color: t.muted, marginTop: 4 }]}>{subtitle}</Text> : null}
           {children}
-        </Animated.View>
+        </View>
       </View>
     </Modal>
   );
