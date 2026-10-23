@@ -761,64 +761,58 @@ export const LogEntryModule = ({
       // the row Inprogress it returns `shift_incomplete: { filled, total }`,
       // which we surface below so the operator knows the shift isn't done and
       // can pull-to-refresh the rooms their device is missing.
-      let shiftIncomplete: { filled: number; total: number } | null = null;
-      try {
-        const finishShiftLabel = uiShiftToLabel(shift);
-        const finishIso = new Date().toISOString();
-        // startdatetime omitted: server preserves the row's existing start
-        // (set on first keystroke via recordLogActivityStartOnce) or derives
-        // one from enddatetime if missing. assigned_to omitted: server is
-        // the source of truth from the auth token + COALESCE write-once
-        // protection on assigned_to.
-        const finishCalls = (payload as any[])
-          .filter((p) => p && p.status === "Completed")
-          .map((p) =>
-            recordLogActivityEvent({
-              action: "finish",
-              site_id: p.site_code,
-              log_type: activityLogType,
-              due_date: p.scheduled_date,
-              shift_label: finishShiftLabel,
-              executor_id: p.executor_id,
-              enddatetime: finishIso,
-            }),
-          );
-        const finishResults = await Promise.allSettled(finishCalls);
-        // All calls target the same shift row, so any incomplete verdict speaks
-        // for the whole shift — take the first one reported.
+      // These run in the background: the readings are already saved on the
+      // phone and queued, so the operator isn't held on the network. If the
+      // server then reports the shift incomplete, say so when it answers.
+      const finishShiftLabel = uiShiftToLabel(shift);
+      const finishIso = new Date().toISOString();
+      // startdatetime omitted: server preserves the row's existing start
+      // (set on first keystroke via recordLogActivityStartOnce) or derives
+      // one from enddatetime if missing. assigned_to omitted: server is
+      // the source of truth from the auth token + COALESCE write-once
+      // protection on assigned_to.
+      const finishCalls = (payload as any[])
+        .filter((p) => p && p.status === "Completed")
+        .map((p) =>
+          recordLogActivityEvent({
+            action: "finish",
+            site_id: p.site_code,
+            log_type: activityLogType,
+            due_date: p.scheduled_date,
+            shift_label: finishShiftLabel,
+            executor_id: p.executor_id,
+            enddatetime: finishIso,
+          }),
+        );
+      void Promise.allSettled(finishCalls).then((finishResults) => {
+        // All calls target the same shift row, so any incomplete verdict
+        // speaks for the whole shift — take the first one reported.
         for (const r of finishResults) {
-          const verdict =
-            r.status === "fulfilled" ? r.value?.data?.shift_incomplete : null;
+          const verdict = r.status === "fulfilled" ? r.value?.data?.shift_incomplete : null;
           if (verdict && typeof verdict.total === "number") {
-            shiftIncomplete = verdict;
-            break;
+            Alert.alert(
+              "Saved — shift not yet complete",
+              `Your entries were saved, but this shift still has empty rooms: only ${verdict.filled} of ${verdict.total} scheduled rooms are logged.\n\nThe missing rooms aren't loaded on this device. Open this log again and pull down to refresh to load them, then log the rest to complete the shift.`,
+            );
+            return;
           }
         }
-      } catch {
-        // Silent — server cron will reconcile with FP next 1AM IST tick.
-      }
+      });
+      // Silent on failure — server cron reconciles with FP next 1AM IST tick.
 
       // Clear Draft
       const draftKey = `draft_${type.toLowerCase()}_${siteCode}_${user?.id}_${scheduledDate}${shift ? `_${shift}` : ""}`;
       await AsyncStorage.removeItem(draftKey);
 
-      if (shiftIncomplete) {
-        Alert.alert(
-          "Saved — shift not yet complete",
-          `Your entries were saved, but this shift still has empty rooms: only ${shiftIncomplete.filled} of ${shiftIncomplete.total} scheduled rooms are logged.\n\nThe missing rooms aren't loaded on this device. Pull down to refresh to load them, then log the rest to complete the shift.`,
-          [{ text: "OK", onPress: () => loadTasks(true, true) }],
-        );
-      } else {
-        // Every scheduled task is done and signed — nothing left on this
-        // screen, so go back to the Logs overview, which re-reads its counts
-        // on focus.
-        Alert.alert(
-          "Success",
-          "Logs submitted successfully!",
-          [{ text: "OK", onPress: () => onBack() }],
-          { cancelable: false },
-        );
-      }
+      // Every scheduled task is done and signed — nothing left on this
+      // screen, so go back to the Logs overview, which re-reads its counts
+      // on focus.
+      Alert.alert(
+        "Success",
+        "Logs submitted successfully!",
+        [{ text: "OK", onPress: () => onBack() }],
+        { cancelable: false },
+      );
     } catch {
       Alert.alert("Error", "Failed to save logs. Please try again.");
     } finally {

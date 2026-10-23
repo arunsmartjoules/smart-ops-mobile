@@ -697,6 +697,7 @@ function ChillerEntryContent() {
     // the last keystroke fires after completion and creates a duplicate
     // "Inprogress" row, so the reading appears un-logged.
     if (isCompleting) {
+      if (saving) return; // already completing — ignore a second tap
       completedRef.current = true;
       if (autoSaveTimerRef.current) {
         clearTimeout(autoSaveTimerRef.current);
@@ -719,6 +720,11 @@ function ChillerEntryContent() {
       Alert.alert("Error", "Signature is required to complete the log");
       return;
     }
+
+    // Show progress from the tap on: completion may first wait for an
+    // in-flight auto-save, then for the network. Silence here is what
+    // operators reported as "Complete does nothing".
+    if (isCompleting) setSaving(true);
 
     // Serialize concurrent saves so currentReadingRef is observed AFTER any
     // in-flight create has populated it. Otherwise a second auto-save that
@@ -832,7 +838,9 @@ function ChillerEntryContent() {
           // Reading session is done — next save (e.g. for another shift or
           // chiller) should start a fresh row.
           currentReadingRef.current = null;
-          await loadDailyProgress(true);
+          // Refreshing the day's count pulls from the server; don't hold the
+          // "completed" confirmation on the network for it.
+          void loadDailyProgress(true);
         }
 
         setSignatureModalVisible(false);
@@ -1203,6 +1211,7 @@ function ChillerEntryContent() {
         title="Sign to complete"
         description={chillerLabel ? `Chiller reading · ${chillerLabel}` : "Chiller reading"}
         okText="Complete reading"
+        busy={saving}
         onClose={() => setSignatureModalVisible(false)}
         onOK={(sig: string) => handleSubmission("Completed", sig)}
       />

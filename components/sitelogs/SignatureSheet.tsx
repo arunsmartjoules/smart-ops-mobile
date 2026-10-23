@@ -24,6 +24,7 @@ export function SignatureSheet({
   onOK,
   onClear,
   onClose,
+  busy = false,
 }: {
   visible: boolean;
   title: string;
@@ -32,6 +33,13 @@ export function SignatureSheet({
   onOK: (signatureUri: string) => void;
   onClear?: () => void;
   onClose: () => void;
+  /**
+   * The parent is saving the signed record: the confirm button spins and
+   * further taps (confirm, clear, close) are ignored until it finishes — on a
+   * slow connection that can take a while, and without it the sheet looked
+   * frozen ("no response").
+   */
+  busy?: boolean;
 }) {
   const t = useJoTheme();
   const insets = useSafeAreaInsets();
@@ -46,12 +54,14 @@ export function SignatureSheet({
   };
 
   const close = () => {
+    if (busy) return;
     setPaths([]);
     setCurrentPath("");
     onClose();
   };
 
   const confirm = async () => {
+    if (busy) return;
     if (paths.length === 0 && !currentPath) {
       Alert.alert("Signature Required", "Please provide a signature before saving.");
       return;
@@ -154,8 +164,20 @@ export function SignatureSheet({
           </View>
 
           <View style={{ flexDirection: "row", gap: 9, marginTop: 14 }}>
-            <SecondaryButton label="Clear" icon="bx-eraser" onPress={clear} style={{ paddingHorizontal: 20 }} />
-            <PrimaryButton label={okText} icon="bx-check" onPress={confirm} height={52} style={{ flex: 1 }} />
+            <SecondaryButton
+              label="Clear"
+              icon="bx-eraser"
+              onPress={busy ? () => {} : clear}
+              style={{ paddingHorizontal: 20, opacity: busy ? 0.5 : 1 }}
+            />
+            <PrimaryButton
+              label={busy ? "Saving…" : okText}
+              icon="bx-check"
+              onPress={confirm}
+              busy={busy}
+              height={52}
+              style={{ flex: 1 }}
+            />
           </View>
         </Animated.View>
       </View>

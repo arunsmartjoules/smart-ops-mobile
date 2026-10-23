@@ -63,6 +63,46 @@ const isLocalUri = (uri?: string | null) =>
  * If the given URI is a local file, queue it for deferred upload and
  * return the persistent local URI. Otherwise return the URI as-is.
  */
+/**
+ * Server pushes for saved logs run in the background: the screen returns as
+ * soon as the row is on the phone (and, for anything that must not be lost,
+ * in offline_queue), and the network request happens after. On a weak site
+ * connection a request can take its full 30s timeout — awaiting it froze the
+ * entry screens ("Complete does nothing").
+ *
+ * Pushes for the same row are chained so they reach the server in the order
+ * they were made (an older auto-save can never land after the completion).
+ * Failures never reach the screen; each push enqueues / keeps its own retry.
+ */
+const pushChains = new Map<string, Promise<void>>();
+const pendingPushes = new Set<Promise<void>>();
+
+function pushInBackground(key: string, label: string, work: () => Promise<void>): void {
+  const previous = pushChains.get(key) ?? Promise.resolve();
+  const next = previous
+    .then(work)
+    .catch((error: any) => {
+      logger.warn(`${label}: background push failed`, {
+        module: "SITE_LOG_SERVICE",
+        key,
+        error: error?.message ?? String(error),
+      });
+    });
+  pushChains.set(key, next);
+  pendingPushes.add(next);
+  void next.finally(() => {
+    pendingPushes.delete(next);
+    if (pushChains.get(key) === next) pushChains.delete(key);
+  });
+}
+
+/** Resolves once every background push started so far has finished (tests, flush points). */
+export async function settleBackgroundPushes(): Promise<void> {
+  while (pendingPushes.size > 0) {
+    await Promise.all([...pendingPushes]);
+  }
+}
+
 const queueAttachmentIfLocal = async (
   uri: string | null | undefined,
   folder: string,
@@ -600,89 +640,100 @@ export const SiteLogService: ISiteLogService = {
           },
         });
 
-      // 3. Try immediate API sync first; only enqueue on transient failure.
-      // Pre-enqueueing then re-POSTing on next syncNow caused duplicate rows
-      // for the create path (backend strips client id and generates its own,
-      // so the queue retry creates a second row). PUT is idempotent so this
-      // change is just an efficiency win there; POST is the real fix.
+      // 3. Push to the server in the background — the screen returns once the
+      //    rows are on the phone. A batch used to be PUT/POSTed one row at a
+      //    time, awaited, so a 10-room shift on a weak connection could hold
+      //    the screen for minutes.
+      //    - UPDATE (PUT, idempotent): queued first so it survives the app
+      //      closing mid-push; dequeued once the server has it. Never dropped
+      //      on a 4xx either — a lost PUT strands the server row at its last
+      //      status (e.g. an auto-saved "Inprogress") while the device shows
+      //      "Completed"; the queue caps retries (retry_count > 5 →
+      //      dead_letter).
+      //    - CREATE (POST): queued only if the push fails transiently. The
+      //      backend strips the client id and generates its own, so a queued
+      //      copy of a create that also went out directly would duplicate the
+      //      row. A 4xx is logged and dropped for the same reason.
       for (const record of recordsToInsert) {
         const isExisting = existingIdSet.has(record.id);
-        let shouldRetryFromQueue = false;
-        try {
-          let response: Response;
-          if (isExisting) {
-            response = await apiFetch(`/api/site-logs/${record.id}`, {
-              method: "PUT",
-              body: JSON.stringify({
-                temperature: record.temperature,
-                rh: record.rh,
-                tds: record.tds,
-                ph: record.ph,
-                hardness: record.hardness,
-                chemical_dosing: record.chemical_dosing,
-                remarks: record.remarks,
-                main_remarks: record.main_remarks,
-                meta_date: record.meta_date,
-                shift_label: record.shift_label,
-                signature: record.signature,
-                attachment: record.attachment,
-                status: record.status,
-                assigned_to: record.assigned_to,
-                scheduled_date: record.scheduled_date,
-              }),
-            });
-          } else {
-            response = await apiFetch("/api/site-logs", {
-              method: "POST",
-              body: JSON.stringify(record),
-            });
-          }
-          if (!response.ok) {
-            const text = await response.text().catch(() => "");
-            if (response.status >= 500) {
-              shouldRetryFromQueue = true;
-            } else if (isExisting) {
-              // 4xx on an UPDATE (PUT): never drop it. A silently-lost PUT
-              // strands the row at its last server status (e.g. an
-              // auto-saved "Inprogress") while the local copy shows
-              // "Completed" — the row then looks done on this device but
-              // pending everywhere else. PUT is idempotent and the queue
-              // caps retries (retry_count > 5 -> dead_letter), so enqueue
-              // it for a bounded retry instead of discarding it.
-              shouldRetryFromQueue = true;
-              logger.warn(
-                `saveBulkSiteLogs: backend ${response.status} (PUT) — queued for retry: ${text.slice(0, 200)}`,
-                { module: "SITE_LOG_SERVICE", id: record.id },
-              );
-            } else {
-              // 4xx on a CREATE (POST): re-POSTing risks a duplicate row
-              // (backend generates its own id), so log and drop.
-              logger.warn(
-                `saveBulkSiteLogs: backend ${response.status} (POST): ${text.slice(0, 200)}`,
-                { module: "SITE_LOG_SERVICE", id: record.id },
-              );
-            }
-          }
-        } catch (err: any) {
-          shouldRetryFromQueue = true;
-          logger.debug("saveBulkSiteLogs: network error, queuing for retry", {
-            module: "SITE_LOG_SERVICE",
-            id: record.id,
-            mode: isExisting ? "update" : "create",
-            error: err?.message,
-          });
-        }
+        const queuedPayload = { ...record, scheduled_date: record.scheduled_date };
+        const updateQueueId = isExisting
+          ? await cacheManager.enqueue({
+              entity_type: "site_log_update",
+              operation: "update",
+              payload: queuedPayload,
+            })
+          : null;
 
-        if (shouldRetryFromQueue) {
-          await cacheManager.enqueue({
-            entity_type: isExisting ? "site_log_update" : "site_log_create",
-            operation: isExisting ? "update" : "create",
-            payload: {
-              ...record,
-              scheduled_date: record.scheduled_date,
-            },
-          });
-        }
+        pushInBackground(`site_log:${record.id}`, "saveBulkSiteLogs", async () => {
+          let shouldQueueCreate = false;
+          try {
+            let response: Response;
+            if (isExisting) {
+              response = await apiFetch(`/api/site-logs/${record.id}`, {
+                method: "PUT",
+                body: JSON.stringify({
+                  temperature: record.temperature,
+                  rh: record.rh,
+                  tds: record.tds,
+                  ph: record.ph,
+                  hardness: record.hardness,
+                  chemical_dosing: record.chemical_dosing,
+                  remarks: record.remarks,
+                  main_remarks: record.main_remarks,
+                  meta_date: record.meta_date,
+                  shift_label: record.shift_label,
+                  signature: record.signature,
+                  attachment: record.attachment,
+                  status: record.status,
+                  assigned_to: record.assigned_to,
+                  scheduled_date: record.scheduled_date,
+                }),
+              });
+            } else {
+              response = await apiFetch("/api/site-logs", {
+                method: "POST",
+                body: JSON.stringify(record),
+              });
+            }
+            if (response.ok) {
+              if (updateQueueId) await cacheManager.dequeue(updateQueueId);
+            } else {
+              const text = await response.text().catch(() => "");
+              if (isExisting) {
+                // Stays queued (bounded retry) — see above.
+                logger.warn(
+                  `saveBulkSiteLogs: backend ${response.status} (PUT) — left queued for retry: ${text.slice(0, 200)}`,
+                  { module: "SITE_LOG_SERVICE", id: record.id },
+                );
+              } else if (response.status >= 500) {
+                shouldQueueCreate = true;
+              } else {
+                logger.warn(
+                  `saveBulkSiteLogs: backend ${response.status} (POST): ${text.slice(0, 200)}`,
+                  { module: "SITE_LOG_SERVICE", id: record.id },
+                );
+              }
+            }
+          } catch (err: any) {
+            // Network error: the update is already queued; queue the create.
+            shouldQueueCreate = !isExisting;
+            logger.debug("saveBulkSiteLogs: network error, will sync later", {
+              module: "SITE_LOG_SERVICE",
+              id: record.id,
+              mode: isExisting ? "update" : "create",
+              error: err?.message,
+            });
+          }
+
+          if (shouldQueueCreate) {
+            await cacheManager.enqueue({
+              entity_type: "site_log_create",
+              operation: "create",
+              payload: queuedPayload,
+            });
+          }
+        });
       }
 
       logger.info(`Bulk saved ${recordsToInsert.length} logs`, {
@@ -1009,85 +1060,70 @@ export const SiteLogService: ISiteLogService = {
       },
     );
 
-    // Try the immediate POST first. Only enqueue if it fails transiently —
-    // otherwise the queue would re-POST on the next syncNow and (pre-fix)
-    // duplicate. The backend now honors the client-supplied id (validation
-    // schema accepts it) and is idempotent via ON CONFLICT (id) DO NOTHING,
-    // so a retried POST returns the same row instead of creating another.
-    // 4xx errors are still not retried because the same payload keeps failing.
-    let shouldRetryFromQueue = false;
-    let serverId: string | undefined;
-    try {
-      const response = await apiFetch("/api/chiller-readings", {
-        method: "POST",
-        body: JSON.stringify(record),
-      });
-      if (response.ok) {
-        // Reconcile: if the server (older deploy) ignored our id and assigned
-        // its own, rewrite the local row's id so subsequent PUTs target the
-        // row the server knows about. Without this, every later update PUT
-        // /api/chiller-readings/<localId> would 404 silently and the row
-        // would stay stuck in its initial state on the server.
-        try {
-          const body = await response.json();
-          const returnedId =
-            body?.data?.id ?? body?.id ?? undefined;
-          if (returnedId && returnedId !== record.id) {
-            await db
-              .update(chillerReadings)
-              .set({ id: returnedId, updated_at: Date.now() })
-              .where(eq(chillerReadings.id, record.id));
-            serverId = returnedId;
-            logger.info("saveChillerReading: reconciled local id with server", {
+    // Queue the create first, then send it in the background (the screen
+    // gets the local row straight away). Safe to queue up front: the backend
+    // honors the client-supplied id and is idempotent via ON CONFLICT (id) DO
+    // NOTHING, so a queue replay of a create that also went out directly
+    // returns the same row instead of making another.
+    const queueId = await cacheManager.enqueue({
+      entity_type: "chiller_reading_create",
+      operation: "create",
+      payload: record,
+    });
+
+    pushInBackground(`chiller_reading:${id}`, "saveChillerReading", async () => {
+      try {
+        const response = await apiFetch("/api/chiller-readings", {
+          method: "POST",
+          body: JSON.stringify(record),
+        });
+        if (response.ok) {
+          if (queueId) await cacheManager.dequeue(queueId);
+          // Reconcile: an older deploy that ignored our id and assigned its
+          // own gets the local row renamed so later PUTs target the row the
+          // server knows (any PUT that already went out under the old id is
+          // recovered by updateChillerReading's 404 path).
+          try {
+            const body = await response.json();
+            const returnedId = body?.data?.id ?? body?.id ?? undefined;
+            if (returnedId && returnedId !== record.id) {
+              await db
+                .update(chillerReadings)
+                .set({ id: returnedId, updated_at: Date.now() })
+                .where(eq(chillerReadings.id, record.id));
+              logger.info("saveChillerReading: reconciled local id with server", {
+                module: "SITE_LOG_SERVICE",
+                localId: record.id,
+                serverId: returnedId,
+              });
+            }
+          } catch (parseErr: any) {
+            logger.warn("saveChillerReading: could not parse create response", {
               module: "SITE_LOG_SERVICE",
-              localId: record.id,
-              serverId: returnedId,
+              id: record.id,
+              error: parseErr?.message,
             });
           }
-        } catch (parseErr: any) {
-          logger.warn("saveChillerReading: could not parse create response", {
+        } else if (response.status < 500 && response.status !== 401) {
+          // 4xx: the same payload keeps failing — don't retry it.
+          const text = await response.text().catch(() => "");
+          logger.warn(`saveChillerReading: backend ${response.status}: ${text.slice(0, 200)}`, {
             module: "SITE_LOG_SERVICE",
             id: record.id,
-            error: parseErr?.message,
           });
+          if (queueId) await cacheManager.dequeue(queueId);
         }
-      } else if (response.status >= 500) {
-        shouldRetryFromQueue = true;
-      } else {
-        const text = await response.text().catch(() => "");
-        logger.warn(
-          `saveChillerReading: backend ${response.status}: ${text.slice(0, 200)}`,
-          { module: "SITE_LOG_SERVICE", id: record.id },
-        );
+        // 5xx / 401: stays queued for SyncEngine.
+      } catch (err: any) {
+        // Network error: stays queued for SyncEngine.
+        logger.debug("saveChillerReading: network error, left queued", {
+          module: "SITE_LOG_SERVICE",
+          id: record.id,
+          error: err?.message,
+        });
       }
-    } catch (err: any) {
-      shouldRetryFromQueue = true;
-      logger.debug("saveChillerReading: network error, queuing for retry", {
-        module: "SITE_LOG_SERVICE",
-        id: record.id,
-        error: err?.message,
-      });
-    }
+    });
 
-    if (shouldRetryFromQueue) {
-      await cacheManager.enqueue({
-        entity_type: "chiller_reading_create",
-        operation: "create",
-        payload: record,
-      });
-    }
-
-    // Return the row by whatever id it now lives under (reconciled or original)
-    // so the caller's currentReadingRef points at a row the server also knows.
-    const finalId = serverId ?? record.id;
-    if (serverId) {
-      const [updated] = await db
-        .select()
-        .from(chillerReadings)
-        .where(eq(chillerReadings.id, finalId))
-        .limit(1);
-      return updated ?? { ...record, id: finalId };
-    }
     return record;
   },
 
@@ -1202,59 +1238,90 @@ export const SiteLogService: ISiteLogService = {
       },
     );
 
-    // Try the immediate PUT first; only enqueue if it fails transiently.
-    // Pre-fix this always enqueued AND fired, and a 404 (id the server
-    // doesn't know about) was silently ignored — the user's values appeared
-    // saved locally but the server row never changed, leaving the reading
-    // stuck Inprogress when reopened from server-pulled history.
-    let shouldRetryFromQueue = false;
-    let serverRowMissing = false;
-    try {
-      const response = await apiFetch(`/api/chiller-readings/${id}`, {
-        method: "PUT",
-        body: JSON.stringify(updateFields),
-      });
-      if (!response.ok) {
-        if (response.status === 404) {
-          // The server has no row with this id yet — typically its create
-          // is still in offline_queue. Recovered below; never shown to the
-          // operator, whose reading is already saved locally.
-          const text = await response.text().catch(() => "");
-          logger.warn(
-            `updateChillerReading: 404 — server has no row ${id}; recovering`,
-            { module: "SITE_LOG_SERVICE", body: text.slice(0, 200) },
-          );
-          serverRowMissing = true;
-        } else if (response.status >= 500) {
-          shouldRetryFromQueue = true;
-        } else {
-          const text = await response.text().catch(() => "");
-          logger.warn(
-            `updateChillerReading: backend ${response.status}: ${text.slice(0, 200)}`,
-            { module: "SITE_LOG_SERVICE", id },
-          );
+    // A status change (Complete & sign) is queued BEFORE the push and
+    // dequeued once the server has it, so it survives the operator leaving
+    // the screen, closing the app or losing signal. Plain auto-saves are not
+    // pre-queued (one every 1.5s would flood the queue); they enqueue only if
+    // their push fails transiently, and the completion carries every value
+    // anyway.
+    const durable = data.status !== undefined;
+    const durableQueueId = durable
+      ? await cacheManager.enqueue({
+          entity_type: "chiller_reading_update",
+          operation: "update",
+          payload: { id, ...updateFields },
+        })
+      : null;
+
+    // The PUT itself runs in the background (see pushInBackground) — the
+    // screen continues as soon as the row is saved on the phone.
+    pushInBackground(`chiller_reading:${id}`, "updateChillerReading", async () => {
+      // Pre-fix a 404 (id the server doesn't know about) was silently ignored
+      // — the user's values appeared saved locally but the server row never
+      // changed, leaving the reading stuck Inprogress when reopened from
+      // server-pulled history. It is recovered below instead.
+      let shouldRetryFromQueue = false;
+      let serverRowMissing = false;
+      try {
+        const response = await apiFetch(`/api/chiller-readings/${id}`, {
+          method: "PUT",
+          body: JSON.stringify(updateFields),
+        });
+        if (response.ok && durableQueueId) {
+          await cacheManager.dequeue(durableQueueId);
         }
+        if (!response.ok) {
+          if (response.status === 404) {
+            // The server has no row with this id yet — typically its create
+            // is still in offline_queue. Recovered below; never shown to the
+            // operator, whose reading is already saved locally.
+            const text = await response.text().catch(() => "");
+            logger.warn(
+              `updateChillerReading: 404 — server has no row ${id}; recovering`,
+              { module: "SITE_LOG_SERVICE", body: text.slice(0, 200) },
+            );
+            serverRowMissing = true;
+          } else if (response.status >= 500) {
+            shouldRetryFromQueue = true;
+          } else if (response.status === 401 && durableQueueId) {
+            // Signed-out mid-save: keep the queued completion for the next
+            // sync after sign-in rather than dropping it.
+            shouldRetryFromQueue = true;
+          } else {
+            const text = await response.text().catch(() => "");
+            logger.warn(
+              `updateChillerReading: backend ${response.status}: ${text.slice(0, 200)}`,
+              { module: "SITE_LOG_SERVICE", id },
+            );
+            // The server refused this update outright; retrying won't change that.
+            if (durableQueueId) await cacheManager.dequeue(durableQueueId);
+          }
+        }
+      } catch (err: any) {
+        shouldRetryFromQueue = true;
+        logger.debug("updateChillerReading: network error, queuing for retry", {
+          module: "SITE_LOG_SERVICE",
+          id,
+          error: err?.message,
+        });
       }
-    } catch (err: any) {
-      shouldRetryFromQueue = true;
-      logger.debug("updateChillerReading: network error, queuing for retry", {
-        module: "SITE_LOG_SERVICE",
-        id,
-        error: err?.message,
-      });
-    }
 
-    if (serverRowMissing) {
-      await recoverMissingChillerRow(id, updateFields);
-    }
+      if (serverRowMissing) {
+        // Recovery recreates the row with these fields; a queued copy of the
+        // update would only 404 again.
+        if (durableQueueId) await cacheManager.dequeue(durableQueueId);
+        await recoverMissingChillerRow(id, updateFields);
+      }
 
-    if (shouldRetryFromQueue) {
-      await cacheManager.enqueue({
-        entity_type: "chiller_reading_update",
-        operation: "update",
-        payload: { id, ...updateFields },
-      });
-    }
+      // A durable update is already queued (and stays queued on failure).
+      if (shouldRetryFromQueue && !durableQueueId) {
+        await cacheManager.enqueue({
+          entity_type: "chiller_reading_update",
+          operation: "update",
+          payload: { id, ...updateFields },
+        });
+      }
+    });
 
     return record;
   },
