@@ -9,6 +9,7 @@
 import React from "react";
 import { ScrollView, Text, TouchableOpacity, View } from "react-native";
 import { router } from "expo-router";
+import { LinearGradient } from "expo-linear-gradient";
 import { Check, ChevronLeft, Monitor, Moon, Sun, type LucideIcon } from "@/components/jo/bxIcons";
 import { useTheme } from "@/contexts/ThemeContext";
 import { ACCENTS } from "@/constants/jo";
@@ -44,13 +45,18 @@ export default function AppearanceScreen() {
 
   return (
     <JoPage>
-      <ScrollView contentContainerStyle={s.body} showsVerticalScrollIndicator={false}>
+      {/* Pinned header — the settings scroll underneath it. */}
+      <View style={s.top}>
         <View style={s.headRow}>
           <IconButton icon={ChevronLeft} label="Back" onPress={back} iconSize={22} />
         </View>
         <Text style={[f.t(13), { color: t.muted, paddingHorizontal: 4, marginTop: 14 }]}>App settings</Text>
         <Text style={[f.d(28, -0.025), { color: t.ink, paddingHorizontal: 4, marginTop: 4 }]}>Appearance</Text>
+      </View>
 
+      <View style={{ flex: 1 }}>
+      <LinearGradient pointerEvents="none" colors={[t.page, `${t.page}00`]} style={s.fade} />
+      <ScrollView contentContainerStyle={s.body} showsVerticalScrollIndicator={false}>
         {/* Live preview of the chosen accent. */}
         <HeroCard style={{ marginTop: 16, padding: 16 }}>
           <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
@@ -127,13 +133,16 @@ export default function AppearanceScreen() {
           System follows your phone&apos;s setting. The JouleOps design is made for dark mode.
         </Text>
       </ScrollView>
+      </View>
     </JoPage>
   );
 }
 
 const useStyles = makeJoStyles((t) => ({
+  top: { paddingHorizontal: 16 },
   body: { paddingHorizontal: 16, paddingBottom: 32 },
   headRow: { flexDirection: "row", paddingTop: 12 },
+  fade: { position: "absolute", top: 0, left: 0, right: 0, height: 20, zIndex: 2 },
   swatchGrid: { flexDirection: "row", flexWrap: "wrap", rowGap: 12 },
   swatchCell: { width: "25%", alignItems: "center" },
   swatchRing: {

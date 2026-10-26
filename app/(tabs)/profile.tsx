@@ -10,6 +10,7 @@
 import { useCallback, useState } from "react";
 import { ActivityIndicator, Alert, ScrollView, Text, View } from "react-native";
 import * as WebBrowser from "expo-web-browser";
+import { LinearGradient } from "expo-linear-gradient";
 import { router } from "expo-router";
 import {
   ArrowUpCircle,
@@ -150,8 +151,14 @@ export default function Profile() {
 
   return (
     <JoPage>
-      <ScrollView contentContainerStyle={[styles.body, { paddingBottom: clearance }]} showsVerticalScrollIndicator={false}>
+      {/* Pinned title — the groups scroll underneath it. */}
+      <View style={styles.top}>
         <Text style={[f.d(28, -0.025), styles.title]}>Settings</Text>
+      </View>
+
+      <View style={{ flex: 1 }}>
+      <LinearGradient pointerEvents="none" colors={[t.page, `${t.page}00`]} style={styles.fade} />
+      <ScrollView contentContainerStyle={[styles.body, { paddingBottom: clearance }]} showsVerticalScrollIndicator={false}>
 
         <SectionCaption>Account</SectionCaption>
         <Card style={styles.group}>
@@ -248,13 +255,16 @@ export default function Profile() {
           style={{ marginTop: 16 }}
         />
       </ScrollView>
+      </View>
     </JoPage>
   );
 }
 
 const useStyles = makeJoStyles((t) => ({
+  top: { paddingHorizontal: 16 },
   body: { paddingHorizontal: 16, paddingBottom: 28 },
   title: { color: t.ink, paddingTop: 12, paddingHorizontal: 4 },
+  fade: { position: "absolute", top: 0, left: 0, right: 0, height: 20, zIndex: 2 },
   group: { paddingVertical: 4, paddingHorizontal: 14 },
   busyRow: {
     flexDirection: "row",

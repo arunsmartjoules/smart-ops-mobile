@@ -17,6 +17,7 @@ import {
 } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 import { router } from "expo-router";
+import { LinearGradient } from "expo-linear-gradient";
 import { format } from "date-fns";
 import { Camera, ChevronLeft, Lock } from "@/components/jo/bxIcons";
 
@@ -263,7 +264,8 @@ export default function AccountScreen() {
 
   return (
     <JoPage>
-      <ScrollView contentContainerStyle={styles.body} showsVerticalScrollIndicator={false}>
+      {/* Pinned header — the account card scrolls underneath it. */}
+      <View style={styles.top}>
         <View style={styles.headRow}>
           <IconButton icon={ChevronLeft} label="Back" onPress={back} iconSize={22} />
         </View>
@@ -271,6 +273,11 @@ export default function AccountScreen() {
         <Text style={[f.d(28, -0.025), { color: t.ink, paddingHorizontal: 4, marginTop: 4 }]}>
           Account Settings
         </Text>
+      </View>
+
+      <View style={{ flex: 1 }}>
+      <LinearGradient pointerEvents="none" colors={[t.page, `${t.page}00`]} style={styles.fade} />
+      <ScrollView contentContainerStyle={styles.body} showsVerticalScrollIndicator={false}>
 
         <Card radius={28} style={styles.identityCard}>
           <View style={styles.identityRow}>
@@ -360,13 +367,16 @@ export default function AccountScreen() {
           </Text>
         </TouchableOpacity>
       </ScrollView>
+      </View>
     </JoPage>
   );
 }
 
 const useStyles = makeJoStyles((t) => ({
+  top: { paddingHorizontal: 16 },
   body: { paddingHorizontal: 16, paddingBottom: 32 },
   headRow: { flexDirection: "row", paddingTop: 12 },
+  fade: { position: "absolute", top: 0, left: 0, right: 0, height: 20, zIndex: 2 },
   identityCard: { marginTop: 16, padding: 18 },
   identityRow: { flexDirection: "row", alignItems: "center", gap: 14 },
   avatarRing: { padding: 2, borderRadius: 40 },

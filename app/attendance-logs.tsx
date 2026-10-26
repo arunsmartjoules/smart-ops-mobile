@@ -15,6 +15,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { RefreshControl, SectionList, Text, View } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
 import { format } from "date-fns";
+import { LinearGradient } from "expo-linear-gradient";
 import { useAuth } from "@/contexts/AuthContext";
 import HomeDashboardService, { type TeamAttendanceRow } from "@/services/HomeDashboardService";
 import { ChevronLeft, Users } from "@/components/jo/bxIcons";
@@ -198,8 +199,9 @@ export default function AttendanceLogsScreen() {
     };
   }, [rows, query, today]);
 
-  const header = (
-    <View>
+  // Pinned above the list; the stats, notes and search scroll with it.
+  const titleBlock = (
+    <View style={s.top}>
       <View style={s.headRow}>
         <IconButton icon={ChevronLeft} label="Back" onPress={back} iconSize={22} />
       </View>
@@ -208,7 +210,11 @@ export default function AttendanceLogsScreen() {
       </Text>
       <Text style={[f.d(28, -0.025), { color: t.ink, paddingHorizontal: 4, marginTop: 4 }]}>Attendance</Text>
       <Text style={[f.t(12.5), { color: t.muted, paddingHorizontal: 4, marginTop: 4 }]}>{rangeLabel(from, to)}</Text>
+    </View>
+  );
 
+  const header = (
+    <View>
       {rows ? (
         <View style={s.stats}>
           <Stat label="Entries" value={String(stats.entries)} />
@@ -238,6 +244,10 @@ export default function AttendanceLogsScreen() {
 
   return (
     <JoPage>
+      {titleBlock}
+
+      <View style={{ flex: 1 }}>
+      <LinearGradient pointerEvents="none" colors={[t.page, `${t.page}00`]} style={s.fade} />
       <SectionList
         sections={rows ? sections : []}
         keyExtractor={(r) => r.key}
@@ -308,6 +318,7 @@ export default function AttendanceLogsScreen() {
           )
         }
       />
+      </View>
     </JoPage>
   );
 }
@@ -327,7 +338,9 @@ function Stat({ label, value, warn }: { label: string; value: string; warn?: boo
 }
 
 const useStyles = makeJoStyles((t) => ({
+  top: { paddingHorizontal: 16 },
   body: { paddingHorizontal: 16, paddingBottom: 40 },
+  fade: { position: "absolute", top: 0, left: 0, right: 0, height: 20, zIndex: 2 },
   headRow: { flexDirection: "row", alignItems: "center", paddingTop: 12 },
   stats: { flexDirection: "row", gap: 6, marginTop: 16 },
   dayHead: {

@@ -5,7 +5,8 @@
  * early-checkout reason, technician shift sign-off) and the history state.
  */
 import React, { useState, useEffect, useCallback, useMemo } from "react";
-import { Alert, AppState, Platform, RefreshControl, ScrollView } from "react-native";
+import { Alert, AppState, Platform, RefreshControl, ScrollView, View } from "react-native";
+import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
 import NetInfo from "@react-native-community/netinfo";
 import { router, useFocusEffect } from "expo-router";
@@ -884,6 +885,17 @@ export default function AttendancePage() {
 
   return (
     <JoPage>
+      {/* Pinned title — the punch card and history scroll underneath it. */}
+      <View style={{ paddingHorizontal: 16 }}>
+        <ScreenTitle kicker={format(new Date(), "EEE d MMM")} title="Attendance" />
+      </View>
+
+      <View style={{ flex: 1 }}>
+      <LinearGradient
+        pointerEvents="none"
+        colors={[t.page, `${t.page}00`]}
+        style={{ position: "absolute", top: 0, left: 0, right: 0, height: 20, zIndex: 2 }}
+      />
       <ScrollView
         style={{ flex: 1 }}
         contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: clearance }}
@@ -897,8 +909,6 @@ export default function AttendancePage() {
           />
         }
       >
-        <ScreenTitle kicker={format(new Date(), "EEE d MMM")} title="Attendance" />
-
         {isOffline ? <OfflineNote /> : null}
 
         {/* Managers, regional managers and admins never punch in — no button,
@@ -946,6 +956,7 @@ export default function AttendancePage() {
           now={currentTime}
         />
       </ScrollView>
+      </View>
 
       {/* ── Early-checkout reason ── */}
       <EarlyCheckoutSheet
