@@ -89,7 +89,7 @@ jest.mock("@react-native-community/netinfo", () => ({}));
 jest.mock("../services/SiteConfigService", () => ({ getLogVariants: jest.fn(() => []) }));
 jest.mock("../services/AttendanceService", () => ({ getISTDateString: jest.fn(() => "2026-10-26") }));
 
-import { SiteLogService } from "../services/SiteLogService";
+import { SiteLogService, replayChillerReadingUpdate } from "../services/SiteLogService";
 
 const CHILLER_ID = "c-1";
 const LOG_ID = "l-1";
@@ -175,5 +175,63 @@ describe("site log (Temp RH / Water / Chemical) completion", () => {
     serverNeverAnswers();
     await SiteLogService.saveBulkSiteLogs([completedRow, { ...completedRow, id: "l-2" }]);
     expect(mockQueueAttachment).not.toHaveBeenCalled();
+  });
+});
+
+// A failed auto-save is queued after its 30s timeout — i.e. behind the
+// completion made meanwhile. Replaying its stale change blanked signatures
+// (Sunshine/Kondapur, 26 Oct) and used to reopen completed readings.
+describe("queued chiller update replay", () => {
+  const staleAutoSave = { id: CHILLER_ID, updated_at: 1, condenser_inlet_temp: 20, signature_text: null };
+  const sentBody = () => JSON.parse(mockApiFetch.mock.calls[0][1].body);
+
+  beforeEach(() => {
+    mockApiFetch.mockResolvedValue({ ok: true, status: 200 });
+    mockTables.chiller_readings!.set(CHILLER_ID, {
+      id: CHILLER_ID,
+      status: "Completed",
+      condenser_inlet_temp: 25,
+      signature_text: SIGNATURE,
+      assigned_to: "Operator A",
+      created_at: 1,
+      updated_at: 2,
+    });
+  });
+
+  it("sends the current status, not the stale change", async () => {
+    await replayChillerReadingUpdate(staleAutoSave);
+    expect(sentBody().status).toBe("Completed");
+  });
+
+  it("sends the current values", async () => {
+    await replayChillerReadingUpdate(staleAutoSave);
+    expect(sentBody().condenser_inlet_temp).toBe(25);
+  });
+
+  it("keeps the signature", async () => {
+    await replayChillerReadingUpdate(staleAutoSave);
+    expect(sentBody().signature_text).toBe(SIGNATURE);
+  });
+
+  it("never sends write-once operator fields", async () => {
+    await replayChillerReadingUpdate(staleAutoSave);
+    expect("assigned_to" in sentBody()).toBe(false);
+  });
+
+  it("never sends a phone-local photo path", async () => {
+    mockTables.chiller_readings!.set(CHILLER_ID, { id: CHILLER_ID, status: "Completed", attachments: QUEUED_COPY });
+    await replayChillerReadingUpdate(staleAutoSave);
+    expect("attachments" in sentBody()).toBe(false);
+  });
+
+  it("falls back to the queued change when the reading is no longer on the phone", async () => {
+    mockTables.chiller_readings!.clear();
+    await replayChillerReadingUpdate(staleAutoSave);
+    expect(sentBody()).toEqual({ updated_at: 1, condenser_inlet_temp: 20, signature_text: null });
+  });
+
+  it("reports the HTTP status when the server refuses", async () => {
+    mockApiFetch.mockResolvedValue({ ok: false, status: 404 });
+    await expect(replayChillerReadingUpdate(staleAutoSave)).rejects.toMatchObject({ statusCode: 404 });
   });
 });

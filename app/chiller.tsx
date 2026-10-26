@@ -820,7 +820,10 @@ function ChillerEntryContent() {
           // safety-net saveChillerReading below) and must never be overwritten
           // by edits. Otherwise a second operator opening someone else's log
           // to complete or correct it would silently steal authorship.
-          signature: finalSignature,
+          // Only a real signature is sent: auto-saves have none, and sending
+          // null used to blank the server's signature when a stale queued
+          // auto-save replayed after the completion.
+          ...(finalSignature ? { signature: finalSignature } : {}),
           // NOTE: status & readingTime are intentionally NOT in basePayload.
           // Auto-save must never change status or move reading_time; those
           // are set once at create (ensureChillerRow) and on completion only.

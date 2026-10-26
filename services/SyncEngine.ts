@@ -19,7 +19,7 @@ import { apiFetch as centralApiFetch } from "../utils/apiHelper";
 import { API_BASE_URL } from "../constants/api";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import cacheManager, { DataDomain } from "./CacheManager";
-import { SiteLogService } from "./SiteLogService";
+import { SiteLogService, replayChillerReadingUpdate } from "./SiteLogService";
 import PMService from "./PMService";
 import logger from "../utils/logger";
 import { getValidAuthToken } from "./AuthTokenManager";
@@ -174,6 +174,8 @@ class SyncEngineImpl implements SyncEngine {
   private syncPromise: Promise<void> | null = null;
   /** In-flight queue flush — shared so two flushes never replay the same items. */
   private flushPromise: Promise<void> | null = null;
+  /** Chiller readings whose current state was pushed in the running flush. */
+  private chillerStatePushedThisFlush = new Set<string>();
   private forceFullSyncOnce = false;
   private hasAttemptedEmptySitesRecovery = false;
   /**
@@ -1012,6 +1014,7 @@ class SyncEngineImpl implements SyncEngine {
   private async _flushQueueOnce(): Promise<void> {
     const items = await cacheManager.getQueue();
     if (items.length === 0) return;
+    this.chillerStatePushedThisFlush.clear();
 
     logger.info(`SyncEngine: flushing ${items.length} queue items`, {
       module: "SYNC_ENGINE",
@@ -1171,8 +1174,15 @@ class SyncEngineImpl implements SyncEngine {
       endpoint = "/api/chiller-readings";
       method = "POST";
     } else if (entity_type === "chiller_reading_update") {
-      endpoint = `/api/chiller-readings/${payload.id}`;
-      method = "PUT";
+      // Sends the reading's current local state, so a stale queued change
+      // can't overwrite a newer completion (see replayChillerReadingUpdate).
+      // One push per reading per flush: every later queued update for it is
+      // already covered by that state.
+      if (!this.chillerStatePushedThisFlush.has(payload.id)) {
+        await replayChillerReadingUpdate(payload);
+        this.chillerStatePushedThisFlush.add(payload.id);
+      }
+      return;
     } else if (entity_type === "chiller_reading_delete") {
       endpoint = `/api/chiller-readings/${payload.id}`;
       method = "DELETE";

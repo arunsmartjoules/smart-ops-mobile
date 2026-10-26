@@ -532,6 +532,95 @@ async function recoverMissingChillerRow(
   );
 }
 
+/**
+ * Server columns a chiller-reading update may set — the same set
+ * updateChillerReading writes. Write-once fields (assigned_to, executor_id,
+ * start times, log_id) are deliberately absent so a replay can't change who
+ * took the reading or when it started.
+ */
+const CHILLER_STATE_FIELDS = [
+  "chiller_id",
+  "equipment_id",
+  "asset_name",
+  "asset_type",
+  "date_shift",
+  "reading_time",
+  "end_datetime",
+  "condenser_inlet_temp",
+  "condenser_outlet_temp",
+  "evaporator_inlet_temp",
+  "evaporator_outlet_temp",
+  "saturated_condenser_temp",
+  "saturated_suction_temp",
+  "compressor_suction_temp",
+  "motor_temperature",
+  "set_point_celsius",
+  "discharge_pressure",
+  "main_suction_pressure",
+  "oil_pressure",
+  "oil_pressure_difference",
+  "condenser_inlet_pressure",
+  "condenser_outlet_pressure",
+  "evaporator_inlet_pressure",
+  "evaporator_outlet_pressure",
+  "compressor_load_percentage",
+  "inline_btu_meter",
+  "remarks",
+  "status",
+] as const;
+
+/** The reading as it is on this phone now, shaped for PUT /api/chiller-readings/:id. */
+export function chillerReadingStateBody(row: Record<string, any>): Record<string, unknown> {
+  const body: Record<string, unknown> = {};
+  for (const field of CHILLER_STATE_FIELDS) {
+    if (row[field] !== undefined) body[field] = row[field];
+  }
+  // Only ever send a usable signature/photo. A missing or phone-local value
+  // must never overwrite what the server already has.
+  for (const field of ["signature_text", "attachments"] as const) {
+    const value = row[field];
+    if (value && !isLocalUri(value)) body[field] = value;
+  }
+  return body;
+}
+
+/**
+ * Replay a queued chiller-reading update by sending the reading's CURRENT
+ * local state, not the change that was queued.
+ *
+ * A failed auto-save is queued only after its request times out, so it can
+ * sit in the queue behind the completion made after it. Replaying the stale
+ * change then overwrote the completed reading with older values — blanking
+ * its signature (an auto-save carried none) and, before the backend stopped
+ * defaulting status to "Pending", reopening it. Sending current state makes
+ * replays order-independent and idempotent.
+ *
+ * Throws an Error carrying `statusCode` on a non-2xx response (SyncEngine
+ * classifies 4xx/5xx from it).
+ */
+export async function replayChillerReadingUpdate(payload: Record<string, any>): Promise<void> {
+  const id = payload.id as string;
+  const [row] = await db
+    .select()
+    .from(chillerReadings)
+    .where(eq(chillerReadings.id, id))
+    .limit(1);
+  // No local row (device cleared since): the queued change is all we have.
+  const { id: _omit, ...queuedChange } = payload;
+  void _omit;
+  const body = row ? chillerReadingStateBody(row) : queuedChange;
+
+  const response = await apiFetch(`/api/chiller-readings/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    const err: any = new Error(`chiller_reading_update API error: ${response.status}`);
+    err.statusCode = response.status;
+    throw err;
+  }
+}
+
 export const SiteLogService: ISiteLogService = {
   /**
    * Fetch logs for a site by type
