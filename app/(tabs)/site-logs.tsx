@@ -416,6 +416,7 @@ export default function SiteLogs() {
         const completed = target !== null ? Math.min(logged, target) : logged;
         const pending =
           target !== null ? target - completed : todays.length - logged;
+        const total = target !== null ? target : todays.length;
         const shiftCounts = t.hasShift
           ? SHIFTS.map((sh) => {
               const shiftRows = todays.filter((r) => inShift(r, sh));
@@ -449,6 +450,7 @@ export default function SiteLogs() {
           done,
           pending,
           completed,
+          total,
           shiftCounts,
           continuing,
           sub: t.hasShift && todays.length > 0 ? `3 shifts · ${sub}` : sub,
@@ -785,6 +787,7 @@ export default function SiteLogs() {
                       sub={o.sub}
                       pending={o.pending}
                       completed={o.completed}
+                      total={o.total}
                       shiftCounts={o.shiftCounts}
                       continuing={o.continuing}
                       done={o.done}

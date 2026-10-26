@@ -43,6 +43,10 @@ import {
 } from "@/components/jo/ui";
 import { BottomBar, EntryHeader, FormHeading, NoticePill } from "./LogsKit";
 import { SignatureSheet } from "./SignatureSheet";
+import { startCompletionTrace } from "@/utils/completionTrace";
+
+/** See handleSubmit: longest the Complete button stays locked on one save. */
+const SAVE_WATCHDOG_MS = 15_000;
 
 interface LogEntryModuleProps {
   type: "Chemical" | "Water" | "TempRH";
@@ -605,7 +609,30 @@ export const LogEntryModule = ({
       return;
     }
 
+    // Reported only if slow, timed out or failed (see utils/completionTrace).
+    const trace = startCompletionTrace("SITE_LOG", {
+      site_code: siteCode,
+      log_type: type,
+      edit_mode: isEditMode,
+    });
+    trace.step("submit_start", { tasks: tasks.length });
+
     setIsSubmitting(true);
+    // Defence in depth: submit is local-only (SQLite + queue; server pushes run
+    // in the background), so it should settle in well under a second. If it
+    // ever doesn't, release the button after SAVE_WATCHDOG_MS and say so
+    // instead of spinning forever; the save keeps going and still reports
+    // success if it finishes later.
+    let settled = false;
+    const watchdog = setTimeout(() => {
+      if (settled) return;
+      trace.finish("timeout", { at: "save" });
+      setIsSubmitting(false);
+      Alert.alert(
+        "Still saving",
+        "Saving is taking longer than usual. Your readings are auto-saved — tap Complete again. If this keeps happening, close and reopen the app.",
+      );
+    }, SAVE_WATCHDOG_MS);
     try {
       if (isEditMode && editId && tasks[0]) {
         const task = tasks[0];
@@ -698,6 +725,9 @@ export const LogEntryModule = ({
           }).catch(() => {});
         }
 
+        trace.step("saved_local");
+        settled = true;
+        trace.finish("ok");
         Alert.alert("Success", "Log updated successfully!", [
           { text: "OK", onPress: () => onBack() },
         ]);
@@ -734,6 +764,7 @@ export const LogEntryModule = ({
       }).filter(Boolean);
 
       await SiteLogService.saveBulkSiteLogs(payload as any);
+      trace.step("saved_local", { rows: payload.length });
 
       // Safety net: the payload above is built from the in-memory task list,
       // which can miss a room that was auto-saved (status "Inprogress") but
@@ -749,6 +780,7 @@ export const LogEntryModule = ({
         shiftMarker: finalizeShiftMarker,
         signature: effectiveSignature,
       });
+      trace.step("finalized");
 
       // Mark each completed task as Finished in log_activity_master (DB + FP)
       // so the row's enddatetime + executor_id + status reflect the user's
@@ -803,6 +835,8 @@ export const LogEntryModule = ({
       // Clear Draft
       const draftKey = `draft_${type.toLowerCase()}_${siteCode}_${user?.id}_${scheduledDate}${shift ? `_${shift}` : ""}`;
       await AsyncStorage.removeItem(draftKey);
+      settled = true;
+      trace.finish("ok");
 
       // Every scheduled task is done and signed — nothing left on this
       // screen, so go back to the Logs overview, which re-reads its counts
@@ -813,9 +847,13 @@ export const LogEntryModule = ({
         [{ text: "OK", onPress: () => onBack() }],
         { cancelable: false },
       );
-    } catch {
+    } catch (error: any) {
+      settled = true;
+      trace.finish("error", { error: error?.message, at: "save" });
       Alert.alert("Error", "Failed to save logs. Please try again.");
     } finally {
+      settled = true;
+      clearTimeout(watchdog);
       setIsSubmitting(false);
     }
   };
@@ -1006,10 +1044,10 @@ export const LogEntryModule = ({
         description={`Confirms ${filledCount} of ${tasks.length} line item${tasks.length === 1 ? "" : "s"}`}
         okText="Save signature"
         onClose={() => setShowSignature(false)}
-        onOK={(sig: string) => {
+        onOK={(sig) => {
           setSignature(sig);
           setShowSignature(false);
-          handleSubmit(sig);
+          void handleSubmit(sig);
         }}
         onClear={() => setSignature(null)}
       />

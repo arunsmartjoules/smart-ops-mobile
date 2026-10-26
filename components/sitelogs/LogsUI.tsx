@@ -1,6 +1,6 @@
 /**
  * Site Logs hub pieces — "JouleOps App" artboard, site logs screen: the
- * per-type card (tinted icon well, pending / done in Bricolage, shift chips,
+ * per-type card (tinted icon well, done / total in Bricolage, shift chips,
  * Start log + History) and the history panel's counters and filter chips.
  */
 import React from "react";
@@ -13,7 +13,7 @@ export type { ShiftCount };
 
 export type LogStatusFilter = "all" | "pending" | "completed";
 
-/* ── One log type: today's pending/done, shift split, Start + History ───── */
+/* ── One log type: today's done/total, shift split, Start + History ────── */
 
 export function LogTypeCard({
   logName,
@@ -21,6 +21,7 @@ export function LogTypeCard({
   sub,
   pending,
   completed,
+  total,
   shiftCounts,
   continuing,
   done,
@@ -34,6 +35,8 @@ export function LogTypeCard({
   sub: string;
   pending: number;
   completed: number;
+  /** What today owes: scheduled rows, or Chiller's daily target. */
+  total: number;
   /** Temp & RH only — omit for the single-shift logs. */
   shiftCounts?: ShiftCount[];
   continuing?: boolean;
@@ -84,11 +87,20 @@ export function LogTypeCard({
         <View
           style={{ flexDirection: "row", alignItems: "baseline", gap: 2 }}
           accessible
-          accessibilityLabel={`${pending} pending, ${completed} completed`}
+          accessibilityLabel={`${completed} of ${total} completed, ${pending} pending`}
         >
-          <Text style={[f.d(24, -0.03, 1.1), { color: hasPending ? t.bad : t.faint }]}>{pending}</Text>
+          {/* Done / total, read as a fraction. Showing pending / done here read
+              as "0 of 1" on a fully completed log; pending now rides on colour. */}
+          <Text
+            style={[
+              f.d(24, -0.03, 1.1),
+              { color: total === 0 ? t.faint : hasPending ? t.bad : t.ok },
+            ]}
+          >
+            {completed}
+          </Text>
           <Text style={[f.t(13), { color: t.faint }]}>/</Text>
-          <Text style={[f.d(16, -0.02, 1.1), { color: t.ok }]}>{completed}</Text>
+          <Text style={[f.d(16, -0.02, 1.1), { color: t.muted }]}>{total}</Text>
         </View>
       </View>
 
@@ -158,8 +170,9 @@ export function PendingLegend() {
   );
   return (
     <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 14, marginTop: 12 }}>
-      {item(t.bad, "Pending")}
-      {item(t.ok, "Completed")}
+      <Text style={[f.t(11.5), { color: t.muted }]}>Done / total</Text>
+      {item(t.bad, "Pending left")}
+      {item(t.ok, "All done")}
     </View>
   );
 }

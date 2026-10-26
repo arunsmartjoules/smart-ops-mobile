@@ -103,6 +103,14 @@ export async function settleBackgroundPushes(): Promise<void> {
   }
 }
 
+/**
+ * Photos already queued this session, keyed by record + field + source URI.
+ * Screens re-send the same camera URI on every auto-save; without this each
+ * save copied the photo and queued another upload of it, putting file I/O on
+ * the path that "Complete & sign" waits behind.
+ */
+const queuedAttachmentCopies = new Map<string, string>();
+
 const queueAttachmentIfLocal = async (
   uri: string | null | undefined,
   folder: string,
@@ -112,7 +120,21 @@ const queueAttachmentIfLocal = async (
 ): Promise<string | null> => {
   if (!uri) return null;
   if (!isLocalUri(uri)) return uri;
-  return AttachmentQueueService.queueAttachment({
+
+  const key = `${entityType}:${entityId}:${field}:${uri}`;
+  const queuedCopy = queuedAttachmentCopies.get(key);
+  if (queuedCopy) {
+    // After upload the local copy is deleted — hand back the public URL.
+    const row = await AttachmentQueueService.findByLocalUri(queuedCopy);
+    return row?.uploaded_url ?? queuedCopy;
+  }
+
+  // The URI may itself be a persistent copy that is already queued (a value
+  // read back from the local row) — reuse it, or its public URL once uploaded.
+  const existing = await AttachmentQueueService.findByLocalUri(uri);
+  if (existing) return existing.uploaded_url ?? uri;
+
+  const persistentUri = await AttachmentQueueService.queueAttachment({
     localUri: uri,
     bucketName: "jouleops-attachments",
     remotePath: `${folder}/${entityId}_${Date.now()}.jpg`,
@@ -120,6 +142,10 @@ const queueAttachmentIfLocal = async (
     relatedEntityId: entityId,
     relatedField: field,
   });
+  // queueAttachment returns the source URI unchanged when the copy failed;
+  // only remember real queued copies so a failed one is retried next save.
+  if (persistentUri !== uri) queuedAttachmentCopies.set(key, persistentUri);
+  return persistentUri;
 };
 
 // Helper for API requests with auth and retry logic

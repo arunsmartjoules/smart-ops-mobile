@@ -48,6 +48,10 @@ import { eq } from "drizzle-orm";
 import { addDays } from "date-fns";
 import { formatIST, istDayStartMs, istDayEndMs } from "@/utils/istDate";
 import { consumeRouteParams } from "@/utils/routeParams";
+import { startCompletionTrace } from "@/utils/completionTrace";
+
+/** See handleSubmission: longest the Complete button stays locked on one save. */
+const SAVE_WATCHDOG_MS = 15_000;
 
 export default function ChillerEntry() {
   const { canEdit } = useAttendanceGate();
@@ -691,13 +695,28 @@ function ChillerEntryContent() {
     const currentFormData = formDataSnapshot || formDataRef.current;
 
     const isCompleting = status === "Completed";
+    // Completions only: reported if slow, timed out or failed (see utils/completionTrace).
+    const trace = isCompleting
+      ? startCompletionTrace("CHILLER_READING", {
+          site_code: selectedSite,
+          edit_mode: isEditMode,
+          reading_id: isEditMode
+            ? ((params.editId || params.id) as string)
+            : currentReadingRef.current?.id ?? null,
+        })
+      : undefined;
+    trace?.step("submit_start");
 
     // Once the reading is (being) completed, drop any pending debounced
     // auto-save and reject further auto-saves. Without this, a timer armed by
     // the last keystroke fires after completion and creates a duplicate
     // "Inprogress" row, so the reading appears un-logged.
     if (isCompleting) {
-      if (saving) return; // already completing — ignore a second tap
+      if (saving) {
+        // already completing — ignore a second tap
+        trace?.finish("error", { error: "already_saving" });
+        return;
+      }
       completedRef.current = true;
       if (autoSaveTimerRef.current) {
         clearTimeout(autoSaveTimerRef.current);
@@ -708,6 +727,7 @@ function ChillerEntryContent() {
     }
 
     if (!currentFormData.chillerId) {
+      trace?.finish("error", { error: "no_chiller" });
       Alert.alert("Error", "Please select a Chiller asset");
       return;
     }
@@ -717,6 +737,7 @@ function ChillerEntryContent() {
     // Completion always requires a signature — including when an Inprogress
     // log is reopened from history/edit. Auto-saves ("Inprogress") are exempt.
     if (status === "Completed" && !finalSignature) {
+      trace?.finish("error", { error: "no_signature" });
       Alert.alert("Error", "Signature is required to complete the log");
       return;
     }
@@ -726,9 +747,28 @@ function ChillerEntryContent() {
     // operators reported as "Complete does nothing".
     if (isCompleting) setSaving(true);
 
+    // Defence in depth: completion is local-only (SQLite + queue; the server
+    // push and any photo upload run in the background), so it should settle
+    // in well under a second. If it ever doesn't, release the button after
+    // SAVE_WATCHDOG_MS and say so instead of spinning forever; the save keeps
+    // going and still reports success if it finishes later.
+    let settled = false;
+    const watchdog = isCompleting
+      ? setTimeout(() => {
+          if (settled) return;
+          trace?.finish("timeout", { at: "save" });
+          setSaving(false);
+          Alert.alert(
+            "Still saving",
+            "Completing this reading is taking longer than usual. Your readings are auto-saved — tap Complete & sign again. If this keeps happening, close and reopen the app.",
+          );
+        }, SAVE_WATCHDOG_MS)
+      : null;
+
     // Serialize concurrent saves so currentReadingRef is observed AFTER any
     // in-flight create has populated it. Otherwise a second auto-save that
     // races the first create would also create, duplicating the row.
+    if (inFlightSaveRef.current) trace?.step("waiting_for_autosave");
     while (inFlightSaveRef.current) {
       try {
         await inFlightSaveRef.current;
@@ -736,6 +776,7 @@ function ChillerEntryContent() {
         // Previous save's error is its own to surface; we still proceed.
       }
     }
+    trace?.step("save_start");
 
     const run = async () => {
       try {
@@ -806,6 +847,7 @@ function ChillerEntryContent() {
               ? { status: "Completed", endDatetime: Date.now() }
               : {}),
           });
+          trace?.step("saved_local");
         } else if (isCompleting) {
           // Safety net: the create-on-select row is missing (ensure failed /
           // was offline at select). Create it now, completed, so a finished
@@ -821,6 +863,7 @@ function ChillerEntryContent() {
             startDatetime: now,
             endDatetime: now,
           });
+          trace?.step("saved_local", { path: "create" });
           if (created?.id) {
             currentReadingRef.current = {
               id: created.id,
@@ -845,6 +888,8 @@ function ChillerEntryContent() {
 
         setSignatureModalVisible(false);
         if (status === "Completed") {
+          settled = true;
+          trace?.finish("ok");
           Alert.alert("Success", "Reading completed successfully", [
             { text: "OK", onPress: () => router.back() },
           ]);
@@ -854,6 +899,8 @@ function ChillerEntryContent() {
         // from the offline queue. Only the explicit completion deserves
         // user-visible error reporting.
         if (isCompleting) {
+          settled = true;
+          trace?.finish("error", { error: error?.message, at: "save" });
           Alert.alert("Error", error.message || "Failed to save reading");
         }
       } finally {
@@ -866,6 +913,8 @@ function ChillerEntryContent() {
     try {
       await promise;
     } finally {
+      settled = true;
+      if (watchdog) clearTimeout(watchdog);
       if (inFlightSaveRef.current === promise) {
         inFlightSaveRef.current = null;
       }
@@ -1211,9 +1260,13 @@ function ChillerEntryContent() {
         title="Sign to complete"
         description={chillerLabel ? `Chiller reading · ${chillerLabel}` : "Chiller reading"}
         okText="Complete reading"
-        busy={saving}
         onClose={() => setSignatureModalVisible(false)}
-        onOK={(sig: string) => handleSubmission("Completed", sig)}
+        onOK={(sig) => {
+          // Close first: the sheet only collects the signature, the save
+          // shows its progress on the Complete & sign button.
+          setSignatureModalVisible(false);
+          void handleSubmission("Completed", sig);
+        }}
       />
     </JoPage>
   );
