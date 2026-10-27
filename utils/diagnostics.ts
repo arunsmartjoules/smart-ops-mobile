@@ -3,7 +3,7 @@
  */
 
 import { count } from "drizzle-orm";
-import { db, tickets, pmInstances, siteLogs } from "@/database";
+import { db, getSqlite, tickets, pmInstances, siteLogs } from "@/database";
 import logger from "./logger";
 
 export const runDiagnostics = async () => {
@@ -85,8 +85,7 @@ export const clearAllData = async () => {
     console.log("⚠️  CLEARING ALL DATA...");
 
     // For SQLite, we can just clear our tables
-    const { openDatabaseSync } = await import("expo-sqlite");
-    const sqlite = openDatabaseSync("smartops.db");
+    const sqlite = getSqlite();
     sqlite.execSync("DELETE FROM tickets; DELETE FROM pm_instances; DELETE FROM site_logs; DELETE FROM offline_queue; DELETE FROM sync_meta; DELETE FROM attachment_queue;");
 
     console.log("✅ All data cleared");

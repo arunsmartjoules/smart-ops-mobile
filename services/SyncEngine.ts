@@ -19,7 +19,7 @@ import { apiFetch as centralApiFetch } from "../utils/apiHelper";
 import { API_BASE_URL } from "../constants/api";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import cacheManager, { DataDomain } from "./CacheManager";
-import { SiteLogService, replayChillerReadingUpdate } from "./SiteLogService";
+import { SiteLogService, replayChillerReadingUpdate, replaySiteLogUpdate } from "./SiteLogService";
 import PMService from "./PMService";
 import logger from "../utils/logger";
 import { getValidAuthToken } from "./AuthTokenManager";
@@ -176,6 +176,7 @@ class SyncEngineImpl implements SyncEngine {
   private flushPromise: Promise<void> | null = null;
   /** Chiller readings whose current state was pushed in the running flush. */
   private chillerStatePushedThisFlush = new Set<string>();
+  private siteLogStatePushedThisFlush = new Set<string>();
   private forceFullSyncOnce = false;
   private hasAttemptedEmptySitesRecovery = false;
   /**
@@ -1015,6 +1016,7 @@ class SyncEngineImpl implements SyncEngine {
     const items = await cacheManager.getQueue();
     if (items.length === 0) return;
     this.chillerStatePushedThisFlush.clear();
+    this.siteLogStatePushedThisFlush.clear();
 
     logger.info(`SyncEngine: flushing ${items.length} queue items`, {
       module: "SYNC_ENGINE",
@@ -1162,8 +1164,14 @@ class SyncEngineImpl implements SyncEngine {
       endpoint = "/api/site-logs";
       method = "POST";
     } else if (entity_type === "site_log_update") {
-      endpoint = `/api/site-logs/${payload.id}`;
-      method = "PUT";
+      // Sends the log's current local state, so a stale queued auto-save
+      // can't reopen a completed log (see replaySiteLogUpdate). One push per
+      // log per flush: every later queued update for it is already covered.
+      if (!this.siteLogStatePushedThisFlush.has(payload.id)) {
+        await replaySiteLogUpdate(payload);
+        this.siteLogStatePushedThisFlush.add(payload.id);
+      }
+      return;
     } else if (entity_type === "site_log_delete") {
       endpoint = `/api/site-logs/${payload.id}`;
       method = "DELETE";

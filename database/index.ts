@@ -30,10 +30,18 @@ function ensureSiteLogsColumns() {
 /**
  * Initializes or re-initializes the database connection and schema.
  * Called at module load and during recovery from native failures.
+ * Returns false when the connection could not be opened or migrated.
  */
-function init() {
+function init(): boolean {
   try {
-    sqlite = openDatabaseSync("smartops.db");
+    // A private native connection. Without useNewConnection, expo-sqlite hands
+    // every openDatabaseSync("smartops.db") the SAME cached native handle, and
+    // when any one JS wrapper is garbage-collected it closes that handle for
+    // all of them — every later call throws "NativeDatabase.prepareSync has
+    // been rejected → NullPointerException" until the app is killed, and a
+    // re-open just gets the dead cached handle back (26 Oct 2026:
+    // Offline & Sync opened a second wrapper, chiller logging died 10 min).
+    sqlite = openDatabaseSync("smartops.db", { useNewConnection: true });
     db = drizzle(sqlite, { schema });
 
     // Run migrations synchronously to ensure tables always exist.
@@ -404,8 +412,10 @@ function init() {
     } catch (e) {
       logger.warn("date-parser one-shot reset failed (non-fatal)", { module: "DATABASE", error: e });
     }
+    return true;
   } catch (error) {
     logger.error("Database initialization failed", { module: "DATABASE", error });
+    return false;
   }
 }
 
@@ -419,8 +429,7 @@ init();
 export function ensureDatabaseConnection(): boolean {
   try {
     if (!sqlite) {
-      init();
-      return !!sqlite;
+      return init();
     }
     // Lightweight check to see if the native handle is still alive
     sqlite.execSync("SELECT 1");
@@ -432,8 +441,7 @@ export function ensureDatabaseConnection(): boolean {
       error: error.message,
     });
     try {
-      init();
-      return true;
+      return init();
     } catch (reinitError) {
       logger.error("Database recovery failed", { module: "DATABASE", error: reinitError });
       return false;
@@ -466,6 +474,16 @@ export {
   syncMeta,
   attachmentQueue,
 } from "./schema";
+
+/**
+ * The app's single raw SQLite connection, for the few screens that run SQL
+ * outside Drizzle. Never call openDatabaseSync("smartops.db") elsewhere — see
+ * init() for why a second wrapper kills this connection.
+ */
+export function getSqlite(): SQLiteDatabase {
+  ensureDatabaseConnection();
+  return sqlite;
+}
 
 export function initDatabase() {
   // Legacy shim, initialization now handled by ensuring connection on access

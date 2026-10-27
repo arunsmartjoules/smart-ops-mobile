@@ -621,6 +621,108 @@ export async function replayChillerReadingUpdate(payload: Record<string, any>): 
   }
 }
 
+/**
+ * Server columns a site-log update may set from the phone. Operator names and
+ * times are deliberately absent: the server stamps those write-once.
+ */
+const SITE_LOG_STATE_FIELDS = [
+  "temperature",
+  "rh",
+  "tds",
+  "ph",
+  "hardness",
+  "chemical_dosing",
+  "remarks",
+  "main_remarks",
+  "meta_date",
+  "shift_label",
+  "status",
+  "scheduled_date",
+] as const;
+
+/** The log as it is on this phone now, shaped for PUT /api/site-logs/:id. */
+export function siteLogStateBody(row: Record<string, any>): Record<string, unknown> {
+  const body: Record<string, unknown> = {};
+  for (const field of SITE_LOG_STATE_FIELDS) {
+    if (row[field] !== undefined) body[field] = row[field];
+  }
+  // Only ever send a usable signature/photo — a missing or phone-local value
+  // must never overwrite what the server already has.
+  for (const field of ["signature", "attachment"] as const) {
+    const value = row[field];
+    if (value && !isLocalUri(value)) body[field] = value;
+  }
+  return body;
+}
+
+/**
+ * Replay a queued site-log update by sending the log's CURRENT local state,
+ * not the change that was queued.
+ *
+ * Every auto-save is queued before it is sent, so a restart or a flush that
+ * overlaps the sends leaves stale "Inprogress" copies (no signature) in the
+ * queue. Replayed verbatim, one landing after the completion reopened the log
+ * on the server and blanked its signature — "logs show Inprogress but the
+ * operator completed them" (Oct 2026). Same fix as replayChillerReadingUpdate.
+ *
+ * Throws an Error carrying `statusCode` on a non-2xx response (SyncEngine
+ * classifies 4xx/5xx from it).
+ */
+export async function replaySiteLogUpdate(payload: Record<string, any>): Promise<void> {
+  const id = payload.id as string;
+  const [row] = await db.select().from(siteLogs).where(eq(siteLogs.id, id)).limit(1);
+  // No local row (device cleared since): the queued change is all we have —
+  // still never send its empty signature.
+  const body = row ? siteLogStateBody(row) : siteLogStateBody(payload);
+
+  const response = await apiFetch(`/api/site-logs/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    const err: any = new Error(`site_log_update API error: ${response.status}`);
+    err.statusCode = response.status;
+    throw err;
+  }
+}
+
+/** Of `ids`, the logs this phone holds as Completed with a signature. */
+export async function findLocallyCompletedIds(ids: string[]): Promise<Set<string>> {
+  const done = new Set<string>();
+  // SQLite caps bound parameters per statement.
+  for (let i = 0; i < ids.length; i += 500) {
+    const rows = await db
+      .select({ id: siteLogs.id, signature: siteLogs.signature })
+      .from(siteLogs)
+      .where(and(inArray(siteLogs.id, ids.slice(i, i + 500)), eq(siteLogs.status, "Completed")));
+    for (const row of rows) {
+      if (row.signature && row.signature.trim()) done.add(row.id);
+    }
+  }
+  return done;
+}
+
+/**
+ * Queue (once) and send each log's current local state. Queued first so the
+ * re-send survives the app closing; dequeued when the server accepts it.
+ */
+export async function resendLocalCompletions(ids: string[]): Promise<void> {
+  const queued = new Set(
+    (await cacheManager.getQueue())
+      .filter((item) => item.entity_type === "site_log_update")
+      .map((item) => item.payload?.id as string),
+  );
+  for (const id of ids) {
+    const queueId = queued.has(id)
+      ? null
+      : await cacheManager.enqueue({ entity_type: "site_log_update", operation: "update", payload: { id } });
+    pushInBackground(`site_log:${id}`, "resendLocalCompletions", async () => {
+      await replaySiteLogUpdate({ id });
+      if (queueId) await cacheManager.dequeue(queueId);
+    });
+  }
+}
+
 export const SiteLogService: ISiteLogService = {
   /**
    * Fetch logs for a site by type
@@ -798,7 +900,11 @@ export const SiteLogService: ISiteLogService = {
                   main_remarks: record.main_remarks,
                   meta_date: record.meta_date,
                   shift_label: record.shift_label,
-                  signature: record.signature,
+                  // Auto-saves carry no signature; sending null blanked the
+                  // one a completion had already stored.
+                  ...(record.signature && !isLocalUri(record.signature)
+                    ? { signature: record.signature }
+                    : {}),
                   attachment: record.attachment,
                   status: record.status,
                   assigned_to: record.assigned_to,
@@ -1771,8 +1877,25 @@ export const SiteLogService: ISiteLogService = {
 
         if (serverLogs.length === 0) return;
 
+        // 2a. Logs this phone completed (signed) that the server still has as
+        //     not Completed — the completion never arrived, or a stale replay
+        //     reopened it. Keep the phone's copy instead of letting the pull
+        //     overwrite it, and send it again.
+        const healIds = await findLocallyCompletedIds(
+          serverLogs.filter((l: any) => l.status !== "Completed").map((l: any) => l.id),
+        );
+        if (healIds.size > 0) {
+          await resendLocalCompletions([...healIds]);
+          logger.warn(`pullSiteLogs: re-sending ${healIds.size} completed logs the server doesn't have`, {
+            module: "SITE_LOG_SERVICE",
+            siteCode,
+          });
+        }
+
         // 2. Upsert all server logs via CacheManager (Req 1.6, 10.4)
-        const normalizedLogs = serverLogs.map((serverLog: any) => {
+        const normalizedLogs = serverLogs
+          .filter((serverLog: any) => !healIds.has(serverLog.id))
+          .map((serverLog: any) => {
           // Server DATE columns come back as "YYYY-MM-DD" strings via the
           // shared pg type parser; toIstYmd takes that fast path verbatim and
           // only invokes `new Date(...)` when the value is actually a

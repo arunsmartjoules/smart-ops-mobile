@@ -30,7 +30,7 @@ import {
   ChevronRight,
 } from "lucide-react-native";
 import { router } from "expo-router";
-import { openDatabaseSync } from "expo-sqlite";
+import { getSqlite } from "@/database";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useNetworkStatus } from "@/hooks/useNetworkStatus";
 import logger from "@/utils/logger";
@@ -111,7 +111,7 @@ export default function AppSettings() {
       setTotalDbSize(usage.totalDbSize);
       setAttachmentSize(usage.attachmentSize);
 
-      const sqlite = openDatabaseSync("smartops.db");
+      const sqlite = getSqlite();
       const counts: Record<string, number> = {};
       let total = 0;
       for (const t of TABLE_DEFS) {
@@ -148,7 +148,7 @@ export default function AppSettings() {
     // If disabling, clear the table data
     if (!enabled) {
       try {
-        const sqlite = openDatabaseSync("smartops.db");
+        const sqlite = getSqlite();
         sqlite.runSync(`DELETE FROM ${tableName}`);
         setTableCounts((prev) => ({ ...prev, [tableName]: 0 }));
         setTotalRecords((prev) => prev - (tableCounts[tableName] ?? 0));
@@ -170,7 +170,7 @@ export default function AppSettings() {
           style: "destructive",
           onPress: async () => {
             try {
-              const sqlite = openDatabaseSync("smartops.db");
+              const sqlite = getSqlite();
               for (const t of TABLE_DEFS) {
                 try { sqlite.runSync(`DELETE FROM ${t.name}`); } catch {}
               }
