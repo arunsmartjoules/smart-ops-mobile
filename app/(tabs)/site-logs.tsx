@@ -10,6 +10,7 @@ import {
   BackHandler,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { FlashList } from "@shopify/flash-list";
 import { router, useFocusEffect } from "expo-router";
 import Animated, {
   Easing,
@@ -692,6 +693,14 @@ export default function SiteLogs() {
   // detail views — the floating bar steps aside while it is open.
   useHideTabBar(historyKey !== null);
 
+  const renderHistoryRow = useCallback(
+    ({ item }: { item: any }) =>
+      historyKey ? (
+        <LogHistoryCard item={item} logName={historyKey} onPress={() => openRow(item)} />
+      ) : null,
+    [historyKey, openRow],
+  );
+
   const refreshControl = (
     <RefreshControl
       refreshing={refreshing}
@@ -867,7 +876,13 @@ export default function SiteLogs() {
             ) : null}
           </View>
 
-          <ScrollView
+          {/* Virtualised: a month of Temp & RH is 1,000–2,700+ rows per site,
+              and mounting every card at once (each formats its dates through
+              Intl) froze the JS thread — including the back button. */}
+          <FlashList
+            data={historyLoading ? [] : visibleRows}
+            keyExtractor={(row) => String(row.id)}
+            renderItem={renderHistoryRow}
             contentContainerStyle={{
               paddingHorizontal: 16,
               paddingTop: 12,
@@ -875,42 +890,34 @@ export default function SiteLogs() {
             }}
             showsVerticalScrollIndicator={false}
             refreshControl={refreshControl}
-          >
-            {historyLoading ? (
-              <View style={{ gap: 8 }}>
-                {[1, 2, 3, 4].map((i) => (
-                  <Shimmer key={i} height={124} radius={22} />
-                ))}
-              </View>
-            ) : visibleRows.length === 0 ? (
-              <EmptyState
-                icon="bx-history"
-                title={`No ${historyTab.label.toLowerCase()} entries`}
-                sub={
-                  filtersActive(filters)
-                    ? "Nothing matches these filters in this window."
-                    : "Nothing was scheduled or logged in this window."
-                }
-                action={
-                  filtersActive(filters)
-                    ? {
-                        label: "Reset filters",
-                        onPress: () => setFilters(DEFAULT_HISTORY_FILTERS),
-                      }
-                    : undefined
-                }
-              />
-            ) : (
-              visibleRows.map((row) => (
-                <LogHistoryCard
-                  key={row.id}
-                  item={row}
-                  logName={historyTab.key}
-                  onPress={() => openRow(row)}
+            ListEmptyComponent={
+              historyLoading ? (
+                <View style={{ gap: 8 }}>
+                  {[1, 2, 3, 4].map((i) => (
+                    <Shimmer key={i} height={124} radius={22} />
+                  ))}
+                </View>
+              ) : (
+                <EmptyState
+                  icon="bx-history"
+                  title={`No ${historyTab.label.toLowerCase()} entries`}
+                  sub={
+                    filtersActive(filters)
+                      ? "Nothing matches these filters in this window."
+                      : "Nothing was scheduled or logged in this window."
+                  }
+                  action={
+                    filtersActive(filters)
+                      ? {
+                          label: "Reset filters",
+                          onPress: () => setFilters(DEFAULT_HISTORY_FILTERS),
+                        }
+                      : undefined
+                  }
                 />
-              ))
-            )}
-          </ScrollView>
+              )
+            }
+          />
 
           {refreshing ? null : historyLoading ? (
             <View style={{ position: "absolute", top: insets.top + 22, right: 76 }}>
