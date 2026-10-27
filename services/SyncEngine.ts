@@ -19,7 +19,12 @@ import { apiFetch as centralApiFetch } from "../utils/apiHelper";
 import { API_BASE_URL } from "../constants/api";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import cacheManager, { DataDomain } from "./CacheManager";
-import { SiteLogService, replayChillerReadingUpdate, replaySiteLogUpdate } from "./SiteLogService";
+import {
+  SiteLogService,
+  replayChillerReadingUpdate,
+  replaySiteLogSubmit,
+  replaySiteLogUpdate,
+} from "./SiteLogService";
 import PMService from "./PMService";
 import logger from "../utils/logger";
 import { getValidAuthToken } from "./AuthTokenManager";
@@ -99,6 +104,13 @@ export interface SyncEngine {
   syncNow(): Promise<void>;
   /** Flush the offline queue without running domain pulls. */
   flushQueue(): Promise<void>;
+  /**
+   * Defer domain pulls while the operator is entering a log; returns the
+   * release function. Queued saves still upload.
+   */
+  holdPulls(reason: string): () => void;
+  /** What the engine is doing right now, for diagnostics. */
+  readonly diagnostics: { sync_step: string | null; pulls_held: boolean };
   subscribe(listener: (status: SyncStatus) => void): () => void;
   get status(): SyncStatus;
 }
@@ -168,6 +180,8 @@ class SyncEngineImpl implements SyncEngine {
   // Lifecycle handles
   private netUnsubscribe: (() => void) | null = null;
   private appStateSubscription: { remove: () => void } | null = null;
+  /** What the running sync is doing — see `diagnostics`. */
+  private currentSyncStep: string | null = null;
   private intervalHandle: ReturnType<typeof setInterval> | null = null;
 
   // Debounce: in-flight sync promise
@@ -176,6 +190,8 @@ class SyncEngineImpl implements SyncEngine {
   private flushPromise: Promise<void> | null = null;
   /** Chiller readings whose current state was pushed in the running flush. */
   private chillerStatePushedThisFlush = new Set<string>();
+  /** Open entry screens holding off domain pulls (see holdPulls). */
+  private pullHolds = new Set<symbol>();
   private siteLogStatePushedThisFlush = new Set<string>();
   private forceFullSyncOnce = false;
   private hasAttemptedEmptySitesRecovery = false;
@@ -844,6 +860,29 @@ class SyncEngineImpl implements SyncEngine {
     return this.syncPromise;
   }
 
+  /** What the engine is doing right now, for diagnostics (JS stall reports). */
+  get diagnostics(): { sync_step: string | null; pulls_held: boolean } {
+    return { sync_step: this.currentSyncStep, pulls_held: this.pullHolds.size > 0 };
+  }
+
+  /** See SyncEngine.holdPulls. Pulls resume (with a catch-up sync) on the last release. */
+  holdPulls(reason: string): () => void {
+    const token = Symbol(reason);
+    this.pullHolds.add(token);
+    return () => {
+      if (!this.pullHolds.delete(token)) return;
+      // Catch up on what was deferred once the operator leaves the screen —
+      // after any sync still running, which stopped before its pulls.
+      if (this.pullHolds.size === 0) {
+        const running = this.syncPromise ?? Promise.resolve();
+        void running
+          .catch(() => {})
+          .then(() => (this.pullHolds.size === 0 ? this.syncNow() : undefined))
+          .catch(() => {});
+      }
+    };
+  }
+
   /**
    * Flush the offline queue without running domain pulls. Faster than
    * `syncNow()` when the caller only needs queued mutations to reach the
@@ -875,11 +914,21 @@ class SyncEngineImpl implements SyncEngine {
 
     try {
       // Step 1: Flush offline queue BEFORE pulling fresh data (Req 2.10, 3.7)
+      this.currentSyncStep = "flush_queue";
       await this._flushQueue();
 
       // Step 2: Pull each domain in priority order (Req 2.4)
       for (const handler of this.domainHandlers) {
         if (this.cancelRequested) break;
+        // An entry screen is open: stop before the next pull (checked per
+        // domain, so a sync already running when the screen opens stops too).
+        if (this.pullHolds.size > 0) {
+          logger.debug("SyncEngine: pulls deferred while a log is being entered", {
+            module: "SYNC_ENGINE",
+            next: handler.domain,
+          });
+          break;
+        }
         const eligible = this.forceFullSyncOnce
           ? true
           : await this.isDomainEligible(handler.domain);
@@ -891,6 +940,7 @@ class SyncEngineImpl implements SyncEngine {
         }
 
         try {
+          this.currentSyncStep = `pull:${handler.domain}`;
           await handler.sync(this.userId!);
           logger.info(`SyncEngine: synced ${handler.domain}`, {
             module: "SYNC_ENGINE",
@@ -911,6 +961,8 @@ class SyncEngineImpl implements SyncEngine {
       }
 
       if (this.cancelRequested) return;
+      // Deferred pulls keep a pending forced full sync pending.
+      if (this.pullHolds.size > 0) return;
 
       this.forceFullSyncOnce = false;
 
@@ -928,6 +980,7 @@ class SyncEngineImpl implements SyncEngine {
         await this.domainHandlers[0].sync(this.userId);
       }
     } finally {
+      this.currentSyncStep = null;
       // Always clear downloading flag and update lastSyncedAt (Req 2.6)
       await this.refreshQueueCounts({
         downloading: false,
@@ -1171,6 +1224,11 @@ class SyncEngineImpl implements SyncEngine {
         await replaySiteLogUpdate(payload);
         this.siteLogStatePushedThisFlush.add(payload.id);
       }
+      return;
+    } else if (entity_type === "site_log_submit") {
+      // A whole "Complete & sign" (see submitSiteLogs). Resending is safe:
+      // the endpoint's row writes are idempotent.
+      await replaySiteLogSubmit(payload);
       return;
     } else if (entity_type === "site_log_delete") {
       endpoint = `/api/site-logs/${payload.id}`;

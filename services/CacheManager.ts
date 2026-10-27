@@ -30,6 +30,15 @@ import {
 } from "@/database";
 import logger from "@/utils/logger";
 
+/**
+ * Hand the JS thread back to React Native for one tick (touches, timers,
+ * renders). `await` on a synchronous SQLite call resolves as a microtask and
+ * never does this.
+ */
+export function yieldToEventLoop(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export type DataDomain =
@@ -82,6 +91,7 @@ export interface OfflineQueueItem {
     | "notification_token_registration"
     | "site_log_create"
     | "site_log_update"
+    | "site_log_submit"
     | "site_log_delete"
     | "chiller_reading_create"
     | "chiller_reading_update"
@@ -228,6 +238,11 @@ class CacheManagerImpl {
       // ─── Performance Optimization: Batch Upsert ───────────────────────────
       const CHUNK_SIZE = 50; 
       for (let i = 0; i < records.length; i += CHUNK_SIZE) {
+        // The SQLite driver is synchronous, so `await db…` never gives the JS
+        // thread back on its own: a 2,000-row pull used to run start to finish
+        // without processing a single tap ("Complete & sign does nothing").
+        // Yield between chunks so touches and timers run while we write.
+        if (i > 0) await yieldToEventLoop();
         const chunk = records.slice(i, i + CHUNK_SIZE).map((r) => {
           const normalized: Record<string, any> = {};
           Object.keys(r).forEach((k) => {
@@ -284,7 +299,8 @@ class CacheManagerImpl {
             error: chunkError.message,
           });
 
-          for (const record of chunk) {
+          for (const [index, record] of chunk.entries()) {
+            if (index > 0 && index % 10 === 0) await yieldToEventLoop();
             try {
               if (!record?.id) continue;
               const existing = await db

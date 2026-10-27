@@ -34,7 +34,8 @@ import { StatusBar } from "expo-status-bar";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useJoTheme } from "@/hooks/useJoTheme";
 import { AppState } from "react-native";
-import { registerBackgroundSyncAsync } from "@/services/SyncEngine";
+import syncEngine, { registerBackgroundSyncAsync } from "@/services/SyncEngine";
+import { startJsStallMonitor } from "@/utils/jsStallMonitor";
 import { syncManager } from "@/services/SyncManager";
 import { initDatabase } from "@/database";
 import { KeyboardProvider } from "react-native-keyboard-controller";
@@ -286,6 +287,17 @@ export default function RootLayout() {
     boxicons: require("../assets/fonts/boxicons.ttf"),
   });
   const fontsReady = fontsLoaded || !!fontError;
+
+  // Reports any time the JS thread is blocked for >3s (taps do nothing then),
+  // with the screen and what the sync engine was doing.
+  useEffect(
+    () =>
+      startJsStallMonitor(() => ({
+        route: presenceService.currentRoute,
+        ...syncEngine.diagnostics,
+      })),
+    [],
+  );
 
   useEffect(() => {
     const init = async () => {

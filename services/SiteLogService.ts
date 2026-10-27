@@ -262,13 +262,12 @@ interface ISiteLogService {
   ): Promise<any[]>;
   observeLogsByType(siteCode: string, logType: string, options?: any): any;
   saveBulkSiteLogs(logs: any[]): Promise<void>;
-  finalizeShiftLogs(params: {
+  findShiftStragglers(params: {
     siteCode: string;
     logName: string;
     scheduledDate: string;
     shiftMarker: string | null;
-    signature?: string | null;
-  }): Promise<number>;
+  }): Promise<any[]>;
   saveSiteLog(data: any): Promise<any>;
   saveChillerReading(data: any): Promise<any>;
   updateChillerReading(id: string, data: Partial<any>): Promise<any>;
@@ -822,6 +821,302 @@ export async function resendLocalCompletions(ids: string[]): Promise<void> {
   }
 }
 
+// ─── One-shot submit ("Complete & sign") ──────────────────────────────────────
+
+/** One room/point of a submitted log. Only the fields the log type uses. */
+export interface SiteLogSubmitRow {
+  id: string;
+  status: "Completed" | "Inprogress" | "Open";
+  temperature?: number | null;
+  rh?: number | null;
+  tds?: number | null;
+  ph?: number | null;
+  hardness?: number | null;
+  chemical_dosing?: string | null;
+  main_remarks?: string | null;
+  attachment?: string | null;
+  meta_date?: string | null;
+  shift_label?: string | null;
+}
+
+export interface SiteLogSubmitInput {
+  siteCode: string;
+  /** log_activity_master type: "Temp RH" | "Water" | "Chemical Dosing". */
+  activityLogType: string;
+  scheduledDate: string;
+  shiftLabel: string | null;
+  /** Epoch ms of the operator's first entry (from the draft). */
+  startedAt: number | null;
+  signature: string | null;
+  rows: SiteLogSubmitRow[];
+}
+
+export type SiteLogSubmitOutcome =
+  /** The server has it. `shiftIncomplete` = rooms still empty server-side. */
+  | { state: "uploaded"; shiftIncomplete: { total: number; filled: number } | null }
+  /** Saved on the phone and queued; uploads when the connection allows. */
+  | { state: "queued" }
+  /** The server refused it (kept queued for retry; message for the operator). */
+  | { state: "rejected"; message: string };
+
+/** How long "Complete & sign" waits for the server before reporting "queued". */
+const SUBMIT_TIMEOUT_MS = 20_000;
+
+const finiteOrNull = (v: unknown): number | null =>
+  typeof v === "number" && Number.isFinite(v) ? v : null;
+
+/**
+ * "Complete & sign" for a Temp RH shift / Water / Chemical log, the same way
+ * tickets save: write the phone's copy, queue ONE upload, try it once and
+ * report what happened. While typing nothing is sent — values live in the
+ * screen's draft until this is called — so there is no stream of auto-save
+ * writes, replays or activity events to race with.
+ *
+ * Never throws for network trouble: the outcome says whether the server has
+ * it or it is waiting in the queue (SyncEngine retries `site_log_submit`).
+ */
+export async function submitSiteLogs(input: SiteLogSubmitInput): Promise<SiteLogSubmitOutcome> {
+  const now = Date.now();
+
+  const rows = await Promise.all(
+    input.rows.map(async (row) => ({
+      ...row,
+      temperature: row.temperature === undefined ? undefined : finiteOrNull(row.temperature),
+      rh: row.rh === undefined ? undefined : finiteOrNull(row.rh),
+      tds: row.tds === undefined ? undefined : finiteOrNull(row.tds),
+      ph: row.ph === undefined ? undefined : finiteOrNull(row.ph),
+      hardness: row.hardness === undefined ? undefined : finiteOrNull(row.hardness),
+      attachment: await queueAttachmentIfLocal(row.attachment, "site-logs", "site_log", row.id, "attachment"),
+    })),
+  );
+
+  // 1. The phone's copy — what the screens and the pending lists read.
+  for (const row of rows) {
+    const { id, ...fields } = row;
+    const set: Record<string, unknown> = { updated_at: now };
+    for (const [key, value] of Object.entries(fields)) {
+      if (value !== undefined) set[key] = value;
+    }
+    if (input.signature) set.signature = input.signature;
+    await db.update(siteLogs).set(set as any).where(eq(siteLogs.id, id));
+  }
+
+  // 2. One queued upload for the whole log, so it survives the app closing.
+  const payload = {
+    submission_id: uuidv4(),
+    site_code: input.siteCode,
+    activity_log_type: input.activityLogType,
+    scheduled_date: input.scheduledDate,
+    shift_label: input.shiftLabel,
+    started_at: input.startedAt ? new Date(input.startedAt).toISOString() : null,
+    finished_at: new Date(now).toISOString(),
+    signature: input.signature,
+    rows,
+  };
+  const queueId = await cacheManager.enqueue({
+    entity_type: "site_log_submit",
+    operation: "create",
+    payload,
+  });
+
+  // 3. Try it once, now.
+  let response: Response;
+  try {
+    response = await centralApiFetch(
+      `${BACKEND_URL}/api/site-logs/submit`,
+      { method: "POST", body: JSON.stringify(payload) },
+      SUBMIT_TIMEOUT_MS,
+    );
+  } catch (err: any) {
+    logger.debug("submitSiteLogs: offline or slow, left queued", {
+      module: "SITE_LOG_SERVICE",
+      error: err?.message,
+    });
+    return { state: "queued" };
+  }
+
+  if (response.ok) {
+    if (queueId) await cacheManager.dequeue(queueId);
+    const body = await response.json().catch(() => null);
+    return { state: "uploaded", shiftIncomplete: body?.data?.shift_incomplete ?? null };
+  }
+  if (response.status === 404) {
+    // Backend without the submit endpoint yet (app updated first): send the
+    // rows the per-row way instead, from their now-final local state.
+    if (queueId) await cacheManager.dequeue(queueId);
+    await resendLocalCompletions(rows.map((r) => r.id));
+    return { state: "queued" };
+  }
+  return submitOutcomeOf(response, "submitSiteLogs");
+}
+
+/**
+ * Replay a queued `site_log_submit` (SyncEngine). Same fallback as the live
+ * submit when the backend doesn't have the endpoint yet. Throws an Error
+ * carrying `statusCode` on any other non-2xx so SyncEngine retries it.
+ */
+export async function replaySiteLogSubmit(payload: Record<string, any>): Promise<void> {
+  const response = await apiFetch("/api/site-logs/submit", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+  if (response.ok) return;
+  if (response.status === 404) {
+    const ids = Array.isArray(payload.rows) ? payload.rows.map((r: any) => r.id).filter(Boolean) : [];
+    await resendLocalCompletions(ids);
+    return;
+  }
+  const err: any = new Error(`site_log_submit API error: ${response.status}`);
+  err.statusCode = response.status;
+  throw err;
+}
+
+/** Reading columns a chiller submit sets (server/local column names). */
+export type ChillerValueField =
+  | "condenser_inlet_temp"
+  | "condenser_outlet_temp"
+  | "evaporator_inlet_temp"
+  | "evaporator_outlet_temp"
+  | "saturated_condenser_temp"
+  | "saturated_suction_temp"
+  | "compressor_suction_temp"
+  | "motor_temperature"
+  | "set_point_celsius"
+  | "discharge_pressure"
+  | "main_suction_pressure"
+  | "oil_pressure"
+  | "oil_pressure_difference"
+  | "condenser_inlet_pressure"
+  | "condenser_outlet_pressure"
+  | "evaporator_inlet_pressure"
+  | "evaporator_outlet_pressure"
+  | "compressor_load_percentage"
+  | "inline_btu_meter";
+
+export interface ChillerSubmitInput {
+  /** The reading being edited; omit for a new reading. */
+  existingId?: string | null;
+  siteCode: string;
+  chillerId: string;
+  equipmentId: string;
+  assetName: string;
+  assetType: string;
+  /** Operator label — recorded on a NEW reading only (authorship is write-once). */
+  operator: string;
+  readingTime: number;
+  /** Epoch ms of the operator's first entry (from the draft). */
+  startedAt: number | null;
+  values: Partial<Record<ChillerValueField, number | null>>;
+  remarks: string | null;
+  attachment: string | null;
+  signature: string;
+}
+
+/** Classify an upload response the same way for every one-shot submit. */
+async function submitOutcomeOf(response: Response, label: string): Promise<SiteLogSubmitOutcome> {
+  if (response.ok) return { state: "uploaded", shiftIncomplete: null };
+  if (response.status >= 500 || response.status === 401) return { state: "queued" };
+  const body = await response.json().catch(() => null);
+  logger.error(`${label}: server refused the submit`, {
+    module: "SITE_LOG_SERVICE",
+    status: response.status,
+    error: body?.error,
+  });
+  return {
+    state: "rejected",
+    message: typeof body?.error === "string" ? body.error : `Server error ${response.status}`,
+  };
+}
+
+/**
+ * "Complete & sign" for a chiller reading, the tickets way. Nothing is sent
+ * while the operator types (the screen keeps a draft); this writes the
+ * phone's copy, queues ONE upload and tries it once:
+ *   - new reading → one create with the phone's id (idempotent on the
+ *     server), so there is no "row created on select" to 404 against;
+ *   - edit → one update with the reading's current state.
+ */
+export async function submitChillerReading(
+  input: ChillerSubmitInput,
+): Promise<SiteLogSubmitOutcome & { id: string }> {
+  const now = Date.now();
+  const id = input.existingId || uuidv4();
+  const values = Object.fromEntries(
+    Object.entries(input.values).map(([k, v]) => [k, finiteOrNull(v)]),
+  );
+  const attachments = await queueAttachmentIfLocal(
+    input.attachment,
+    "chiller-readings",
+    "chiller_reading",
+    id,
+    "attachments",
+  );
+  const common = {
+    chiller_id: input.chillerId,
+    equipment_id: input.equipmentId,
+    asset_name: input.assetName,
+    asset_type: input.assetType,
+    reading_time: input.readingTime,
+    end_datetime: now,
+    ...values,
+    remarks: input.remarks,
+    signature_text: input.signature,
+    attachments,
+    status: "Completed",
+    updated_at: now,
+  };
+
+  if (input.existingId) {
+    await db.update(chillerReadings).set(common as any).where(eq(chillerReadings.id, id));
+  } else {
+    await db.insert(chillerReadings).values({
+      ...common,
+      id,
+      log_id: "",
+      site_code: input.siteCode,
+      executor_id: input.operator,
+      assigned_to: input.operator,
+      start_datetime: input.startedAt ?? now,
+      created_at: now,
+    } as any);
+  }
+  const [row] = await db.select().from(chillerReadings).where(eq(chillerReadings.id, id)).limit(1);
+
+  // One queued upload. Replays send the reading's current state either way
+  // (chiller_reading_create posts the full row; _update goes through
+  // replayChillerReadingUpdate).
+  const queueId = await cacheManager.enqueue(
+    input.existingId
+      ? { entity_type: "chiller_reading_update", operation: "update", payload: { id } }
+      : { entity_type: "chiller_reading_create", operation: "create", payload: row },
+  );
+
+  const send = (method: "POST" | "PUT", path: string, body: unknown) =>
+    centralApiFetch(`${BACKEND_URL}${path}`, { method, body: JSON.stringify(body) }, SUBMIT_TIMEOUT_MS);
+
+  let response: Response;
+  try {
+    response = input.existingId
+      ? await send("PUT", `/api/chiller-readings/${id}`, chillerReadingStateBody(row ?? {}))
+      : await send("POST", "/api/chiller-readings", row);
+    // An edited reading the server never received (older app versions kept
+    // some only on the phone): create it from the full local row.
+    if (input.existingId && response.status === 404) {
+      response = await send("POST", "/api/chiller-readings", row);
+    }
+  } catch (err: any) {
+    logger.debug("submitChillerReading: offline or slow, left queued", {
+      module: "SITE_LOG_SERVICE",
+      error: err?.message,
+    });
+    return { state: "queued", id };
+  }
+
+  const outcome = await submitOutcomeOf(response, "submitChillerReading");
+  if (outcome.state === "uploaded" && queueId) await cacheManager.dequeue(queueId);
+  return { ...outcome, id };
+}
+
 /** "YYYY-MM-DD" of an epoch-ms instant in IST, without Intl (hot loop). */
 const istDayOfMs = (ms: number) =>
   new Date(ms + (5 * 60 + 30) * 60_000).toISOString().slice(0, 10);
@@ -1328,28 +1623,21 @@ export const SiteLogService: ISiteLogService = {
   },
 
   /**
-   * Safety net for the bulk "Complete & sign" submit.
+   * Safety net for the "Complete & sign" submit.
    *
-   * LogEntryModule.handleSubmit builds its Completed-write batch from the
-   * in-memory task list. Any row that was auto-saved earlier (status
-   * "Inprogress") but is missing from that list — it dropped out of the
-   * pending query, or was filled in an earlier screen session — never
-   * receives the Completed write and is stranded at "Inprogress" forever
-   * despite having full readings.
-   *
-   * This sweeps the LOCAL site_logs table for the shift and finalizes every
-   * row that has complete data but isn't Completed yet. Best-effort: a
-   * straggler write that fails is enqueued by saveBulkSiteLogs and retried
-   * by SyncEngine. Returns the number of rows finalized.
+   * The screen builds its submit from the in-memory task list. A row that was
+   * filled earlier (status "Inprogress" with full readings) but is missing
+   * from that list — it dropped out of the pending query, or was filled in an
+   * earlier session or app version — would otherwise never be completed.
+   * Returns those local rows so the screen includes them in the same submit.
    */
-  async finalizeShiftLogs(params: {
+  async findShiftStragglers(params: {
     siteCode: string;
     logName: string;
     scheduledDate: string;
     shiftMarker: string | null; // "1/3" | "2/3" | "3/3" | null (null = no shift)
-    signature?: string | null;
-  }): Promise<number> {
-    const { siteCode, logName, scheduledDate, shiftMarker, signature } = params;
+  }): Promise<any[]> {
+    const { siteCode, logName, scheduledDate, shiftMarker } = params;
     try {
       const conditions = [
         eq(siteLogs.site_code, siteCode),
@@ -1365,55 +1653,21 @@ export const SiteLogService: ISiteLogService = {
         .from(siteLogs)
         .where(and(...conditions));
 
-      // Keep only rows whose readings are actually complete (the app's own
-      // completion rule) — genuinely half-filled rows stay "Inprogress".
-      const isComplete = (r: any): boolean => {
+      // Only rows whose readings are actually complete (the app's own
+      // completion rule) — genuinely half-filled rows stay as they are.
+      return rows.filter((r: any) => {
         const n = normalizeLogName(r.log_name);
         if (n === "Temp RH") return r.temperature != null && r.rh != null;
-        if (n === "Water")
-          return r.tds != null || r.ph != null || r.hardness != null;
-        if (n === "Chemical Dosing")
-          return !!(r.chemical_dosing && String(r.chemical_dosing).trim());
+        if (n === "Water") return r.tds != null || r.ph != null || r.hardness != null;
+        if (n === "Chemical Dosing") return !!(r.chemical_dosing && String(r.chemical_dosing).trim());
         return false;
-      };
-      const stragglers = rows.filter(isComplete);
-      if (stragglers.length === 0) return 0;
-
-      logger.info(
-        `finalizeShiftLogs: finalizing ${stragglers.length} straggler row(s)`,
-        { module: "SITE_LOG_SERVICE", siteCode, logName, scheduledDate },
-      );
-
-      await this.saveBulkSiteLogs(
-        stragglers.map((r) => ({
-          id: r.id,
-          site_code: r.site_code,
-          executor_id: r.executor_id,
-          log_name: r.log_name,
-          task_name: r.task_name,
-          scheduled_date: scheduledDate,
-          status: "Completed",
-          temperature: r.temperature,
-          rh: r.rh,
-          tds: r.tds,
-          ph: r.ph,
-          hardness: r.hardness,
-          chemical_dosing: r.chemical_dosing,
-          remarks: r.remarks,
-          main_remarks: r.main_remarks,
-          meta_date: r.meta_date,
-          shift_label: r.shift_label,
-          attachment: r.attachment,
-          signature: r.signature || signature || null,
-        })),
-      );
-      return stragglers.length;
+      });
     } catch (e: any) {
-      logger.warn("finalizeShiftLogs failed", {
+      logger.warn("findShiftStragglers failed", {
         module: "SITE_LOG_SERVICE",
         error: e?.message,
       });
-      return 0;
+      return [];
     }
   },
 

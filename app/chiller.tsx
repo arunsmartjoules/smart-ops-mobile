@@ -12,7 +12,8 @@ import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import DateTimePicker, {
   DateTimePickerAndroid,
 } from "@react-native-community/datetimepicker";
-import { SiteLogService } from "@/services/SiteLogService";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { SiteLogService, submitChillerReading } from "@/services/SiteLogService";
 import { formatAssignee, operatorLabel } from "@/utils/assignee";
 import AssetService from "@/services/AssetService";
 import AttendanceService from "@/services/AttendanceService";
@@ -48,10 +49,16 @@ import { eq } from "drizzle-orm";
 import { addDays } from "date-fns";
 import { formatIST, istDayStartMs, istDayEndMs } from "@/utils/istDate";
 import { consumeRouteParams } from "@/utils/routeParams";
-import { startCompletionTrace } from "@/utils/completionTrace";
+import syncEngine from "@/services/SyncEngine";
 
-/** See handleSubmission: longest the Complete button stays locked on one save. */
-const SAVE_WATCHDOG_MS = 15_000;
+/** Stamp the first-entry time once (kept out of the component body for the compiler). */
+function markStarted(ref: { current: number | null }): void {
+  if (ref.current === null) ref.current = Date.now();
+}
+
+/** "" → null; otherwise the number typed (a real 0 stays 0). */
+const toNumber = (v: string): number | null =>
+  v === undefined || v === null || String(v).trim() === "" ? null : parseFloat(v);
 
 export default function ChillerEntry() {
   const { canEdit } = useAttendanceGate();
@@ -146,39 +153,13 @@ function ChillerEntryContent() {
   });
   // iOS only — Android uses the imperative DateTimePickerAndroid API.
   const [iosPickerVisible, setIosPickerVisible] = useState(false);
-  // Persist a user-edited reading_time to the existing row. Debounced so
-  // rapid picker interactions don't spam the DB.
-  const readingTimePersistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
-    null,
-  );
-  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const formDataRef = useRef(formData);
-  // Tracks the row id of the in-progress reading and the chiller it belongs
-  // to. First save creates the row; subsequent auto-saves UPDATE the same row
-  // instead of creating a new one. Cleared when the reading is Completed
-  // or the user picks a different chiller (= a different reading entirely).
-  // Storing chillerId alongside id prevents an in-flight create from claiming
-  // the slot after the user switched chillers mid-session.
-  const currentReadingRef = useRef<{ id: string; chillerId: string } | null>(
-    null,
-  );
-  // Single-flight gate for handleSubmission. Without this, a slow create POST
-  // would let the next debounced auto-save run before currentReadingRef was
-  // populated, and both would call saveChillerReading() — producing a fresh
-  // row per concurrent save. Serializing means later submissions await the
-  // current one and see the populated ref, falling through to update.
-  const inFlightSaveRef = useRef<Promise<void> | null>(null);
-  // Set the moment a "Completed" submission begins. A debounced auto-save
-  // timer scheduled by the last keystroke can otherwise fire AFTER completion
-  // (which nulls currentReadingRef), fall into the create branch, and write a
-  // duplicate "Inprogress" row — making the reading look un-logged.
-  const completedRef = useRef(false);
   // Dedupe the "incomplete chiller log" alert within a single mount so the
   // focus/site effects don't re-fire it. Keyed by `${site}:${openRowId}`.
   const dupGuardKeyRef = useRef<string | null>(null);
-  // Single-flight gate for the create-on-select row so React re-renders /
-  // effect re-runs can't spawn a second row before the first create returns.
-  const creatingRowRef = useRef(false);
+  // When the operator entered the first value — becomes the reading's start
+  // time. Nothing is sent to the server before Complete & sign.
+  const startedAtRef = useRef<number | null>(null);
 
   const isEditMode = !!(params.editId || params.id);
   const targetId = (params.editId || params.id || "") as string;
@@ -223,44 +204,55 @@ function ChillerEntryContent() {
   const showFieldErrors = isAnyFieldFilled || isEditMode;
 
   // Clean up timers on unmount
-  useEffect(() => {
-    return () => {
-      if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
-      if (readingTimePersistTimerRef.current)
-        clearTimeout(readingTimePersistTimerRef.current);
-    };
-  }, []);
+  // No background data pulls while a reading is being entered: they write to
+  // SQLite on the JS thread and could leave Complete & sign unresponsive.
+  useEffect(() => syncEngine.holdPulls("chiller-entry"), []);
 
-  // Persist a user-edited reading_time to the existing row. Skipped on the
-  // very first mount-set (no existing row yet) and when no row has been
-  // created — those cases get the latest value via ensureChillerRow /
-  // handleSubmission. Debounced so opening/closing the picker repeatedly
-  // doesn't spam writes.
-  const readingTimeMountedRef = useRef(false);
-  useEffect(() => {
-    if (!readingTimeMountedRef.current) {
-      readingTimeMountedRef.current = true;
-      return;
-    }
-    const rowId = isEditMode ? targetId : currentReadingRef.current?.id;
-    if (!rowId) return;
-    if (completedRef.current) return;
+  // ── Draft ────────────────────────────────────────────────────────────────
+  // The reading lives only on this phone until Complete & sign, like a ticket
+  // being edited. The draft survives the app closing; it is cleared once the
+  // reading is submitted.
+  const chillerUserId = user?.user_id || user?.id;
+  const draftKey = isEditMode
+    ? `draft_chiller_edit_${targetId}`
+    : selectedSite
+      ? `draft_chiller_${selectedSite}_${chillerUserId ?? ""}`
+      : null;
+  const draftRestoredRef = useRef<string | null>(null);
 
-    if (readingTimePersistTimerRef.current)
-      clearTimeout(readingTimePersistTimerRef.current);
-    readingTimePersistTimerRef.current = setTimeout(() => {
-      // Fire-and-forget: SyncEngine retries from offline_queue on failure.
-      SiteLogService.updateChillerReading(rowId, { readingTime }).catch(
-        (e) => console.error("Failed to persist reading_time edit", e),
-      );
-    }, 500);
-  }, [readingTime, isEditMode, targetId]);
+  // New reading: restore an unfinished draft for this site once.
+  useEffect(() => {
+    if (isEditMode || !draftKey || draftRestoredRef.current === draftKey) return;
+    draftRestoredRef.current = draftKey;
+    AsyncStorage.getItem(draftKey)
+      .then((raw) => {
+        if (!raw) return;
+        const draft = JSON.parse(raw);
+        // Opened for a specific chiller: only that chiller's draft applies.
+        const wanted = formDataRef.current.chillerId;
+        if (wanted && draft?.formData?.chillerId && draft.formData.chillerId !== wanted) return;
+        if (draft?.formData) setFormData((prev) => ({ ...prev, ...draft.formData }));
+        if (Number.isFinite(draft?.readingTime)) setReadingTime(draft.readingTime);
+        if (Number.isFinite(draft?.startedAt)) startedAtRef.current = draft.startedAt;
+      })
+      .catch(() => {});
+  }, [draftKey, isEditMode]);
+
+  useEffect(() => {
+    if (!draftKey || !formData.chillerId) return;
+    const timer = setTimeout(() => {
+      AsyncStorage.setItem(
+        draftKey,
+        JSON.stringify({ formData, readingTime, startedAt: startedAtRef.current }),
+      ).catch(() => {});
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [draftKey, formData, readingTime]);
 
   useEffect(() => {
     formDataRef.current = formData;
   }, [formData]);
 
-  const chillerUserId = user?.user_id || user?.id;
   useEffect(() => {
     loadSites();
     // loadSites is recreated each render; re-run only when the user changes.
@@ -314,13 +306,6 @@ function ChillerEntryContent() {
       const open =
         await SiteLogService.findOpenChillerReadingForToday(selectedSite);
       if (!open) return;
-      // The row this session is actively creating must not block itself.
-      if (
-        currentReadingRef.current?.id &&
-        open.id === currentReadingRef.current.id
-      ) {
-        return;
-      }
       const key = `${selectedSite}:${open.id}`;
       if (dupGuardKeyRef.current === key) return;
       dupGuardKeyRef.current = key;
@@ -386,77 +371,6 @@ function ChillerEntryContent() {
     }, [checkForOpenChillerLog]),
   );
 
-  // Single-row model: selecting a chiller (new entry) immediately creates ONE
-  // chiller_readings row — status=Inprogress, start time=now. Every later edit
-  // UPDATES this same row (see handleSubmission). The reading is finished
-  // later from the history screen via Complete & Sign. No per-keystroke
-  // duplicate rows are ever created.
-  const ensureChillerRow = useCallback(async () => {
-    if (isEditMode) return;
-    if (!selectedSite || !formData.chillerId) return;
-    if (currentReadingRef.current?.id) return;
-    if (completedRef.current || creatingRowRef.current) return;
-
-    creatingRowRef.current = true;
-    try {
-      // If an open row already exists for this site+day, the duplicate guard
-      // (checkForOpenChillerLog) owns it and redirects to edit — never create
-      // a second row here.
-      const existing =
-        await SiteLogService.findOpenChillerReadingForToday(selectedSite);
-      if (existing?.id) return;
-
-      const selectedAsset = assets.find(
-        (a) => a.value === formData.chillerId,
-      );
-      const assetName = selectedAsset?.label || formData.chillerId;
-      const now = Date.now();
-      const created = await SiteLogService.saveChillerReading({
-        siteCode: selectedSite,
-        chillerId: assetName,
-        equipmentId: formData.chillerId,
-        assetName,
-        assetType: selectedAsset?.description || "Chiller",
-        // Both columns get the same human-readable label (name ->
-        // employee_code -> email local-part). Never the user's UUID — a UUID
-        // in executor_id renders verbatim on the history screen.
-        assignedTo: operatorLabel(user),
-        executorId: operatorLabel(user),
-        status: "Inprogress",
-        readingTime,
-        startDatetime: now,
-      });
-      if (created?.id) {
-        currentReadingRef.current = {
-          id: created.id,
-          chillerId: formData.chillerId,
-        };
-      }
-    } catch (e) {
-      console.error("ensureChillerRow failed", e);
-    } finally {
-      creatingRowRef.current = false;
-    }
-    // operatorLabel(user) reads several user fields; the specific sub-properties used
-    // are listed explicitly below rather than the whole `user` object.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    isEditMode,
-    selectedSite,
-    formData.chillerId,
-    assets,
-    user?.full_name,
-    user?.name,
-    user?.employee_code,
-    user?.user_id,
-    user?.id,
-    readingTime,
-  ]);
-
-  useEffect(() => {
-    ensureChillerRow();
-  }, [ensureChillerRow]);
-
   useEffect(() => {
     if (targetId) {
       loadReading();
@@ -492,20 +406,6 @@ function ChillerEntryContent() {
       );
 
     if (!matchedAsset) return;
-
-    // Keep currentReadingRef in sync with the remap. Without this, the
-    // chillerId match check in handleSubmission fails for the rest of the
-    // session — auto-saves silently skip and the Complete & Sign safety-net
-    // creates a SECOND row, producing the empty-row + completed-row dupe.
-    if (
-      currentReadingRef.current &&
-      currentReadingRef.current.chillerId === formData.chillerId
-    ) {
-      currentReadingRef.current = {
-        ...currentReadingRef.current,
-        chillerId: matchedAsset.value,
-      };
-    }
 
     setFormData((prev) => ({
       ...prev,
@@ -588,6 +488,15 @@ function ChillerEntryContent() {
           attachment: record.attachments || "",
           signature: record.signature_text || "",
         });
+        // Unsaved edits from an earlier session on this phone win.
+        const raw = await AsyncStorage.getItem(`draft_chiller_edit_${targetId}`).catch(() => null);
+        if (raw) {
+          try {
+            const draft = JSON.parse(raw);
+            if (draft?.formData) setFormData((prev) => ({ ...prev, ...draft.formData }));
+            if (Number.isFinite(draft?.readingTime)) setReadingTime(draft.readingTime);
+          } catch {}
+        }
       }
     } catch (e) {
       console.error("Failed to load reading", e);
@@ -633,294 +542,91 @@ function ChillerEntryContent() {
   };
 
   const updateField = (field: string, value: string) => {
-    setFormData((prev) => {
-      const next = { ...prev, [field]: value };
-
-      // If the user picks a different chiller, drop the in-progress row pointer
-      // so we create a new row for the new asset instead of overwriting the old.
-      if (field === "chillerId" && prev.chillerId && value !== prev.chillerId) {
-        currentReadingRef.current = null;
-        // New asset = a fresh reading; allow auto-save again.
-        completedRef.current = false;
-      }
-
-      // Auto-save logic (debounced)
-      if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
-      
-      // Auto-save only for actual reading/content fields, not selector changes.
-      const autoSaveEligibleFields = new Set([
-        "condenserInletTemp",
-        "condenserOutletTemp",
-        "evaporatorInletTemp",
-        "evaporatorOutletTemp",
-        "saturatedCondenserTemp",
-        "saturatedSuctionTemp",
-        "compressorSuctionTemp",
-        "motorTemperature",
-        "setPointCelsius",
-        "dischargePressure",
-        "mainSuctionPressure",
-        "oilPressure",
-        "oilPressureDifference",
-        "condenserInletPressure",
-        "condenserOutletPressure",
-        "evaporatorInletPressure",
-        "evaporatorOutletPressure",
-        "load",
-        "inlineBtuMeter",
-        "remarks",
-        "attachment",
-      ]);
-
-      // Debounced save = UPDATE the single row created on chiller-select.
-      // It never creates a row and never changes status (handleSubmission
-      // treats a non-"Completed" status as a value-only update).
-      if (next.chillerId && autoSaveEligibleFields.has(field)) {
-        autoSaveTimerRef.current = setTimeout(() => {
-          if (completedRef.current) return;
-          handleSubmission("Inprogress", undefined, next);
-        }, 1500); // 1.5s delay for technical logs
-      }
-      
-      return next;
-    });
+    if (field !== "chillerId" && String(value ?? "").trim().length > 0) {
+      markStarted(startedAtRef);
+    }
+    setFormData((prev) => ({ ...prev, [field]: value }));
   };
 
-
-  const handleSubmission = async (
-    status: string,
-    sig?: string,
-    formDataSnapshot?: typeof formData,
-  ) => {
-    const currentFormData = formDataSnapshot || formDataRef.current;
-
-    const isCompleting = status === "Completed";
-    // Completions only: reported if slow, timed out or failed (see utils/completionTrace).
-    const trace = isCompleting
-      ? startCompletionTrace("CHILLER_READING", {
-          site_code: selectedSite,
-          edit_mode: isEditMode,
-          reading_id: isEditMode
-            ? ((params.editId || params.id) as string)
-            : currentReadingRef.current?.id ?? null,
-        })
-      : undefined;
-    trace?.step("submit_start");
-
-    // Once the reading is (being) completed, drop any pending debounced
-    // auto-save and reject further auto-saves. Without this, a timer armed by
-    // the last keystroke fires after completion and creates a duplicate
-    // "Inprogress" row, so the reading appears un-logged.
-    if (isCompleting) {
-      if (saving) {
-        // already completing — ignore a second tap
-        trace?.finish("error", { error: "already_saving" });
-        return;
-      }
-      completedRef.current = true;
-      if (autoSaveTimerRef.current) {
-        clearTimeout(autoSaveTimerRef.current);
-        autoSaveTimerRef.current = null;
-      }
-    } else if (completedRef.current) {
-      return;
-    }
-
-    if (!currentFormData.chillerId) {
-      trace?.finish("error", { error: "no_chiller" });
+  // Complete & sign — the tickets model: one save, one result.
+  const handleComplete = async (sig: string) => {
+    if (saving) return;
+    const f = formDataRef.current;
+    if (!f.chillerId) {
       Alert.alert("Error", "Please select a Chiller asset");
       return;
     }
-
-    const finalSignature = sig || currentFormData.signature;
-
-    // Completion always requires a signature — including when an Inprogress
-    // log is reopened from history/edit. Auto-saves ("Inprogress") are exempt.
-    if (status === "Completed" && !finalSignature) {
-      trace?.finish("error", { error: "no_signature" });
+    const signature = sig || f.signature;
+    if (!signature) {
       Alert.alert("Error", "Signature is required to complete the log");
       return;
     }
 
-    // Show progress from the tap on: completion may first wait for an
-    // in-flight auto-save, then for the network. Silence here is what
-    // operators reported as "Complete does nothing".
-    if (isCompleting) setSaving(true);
-
-    // Defence in depth: completion is local-only (SQLite + queue; the server
-    // push and any photo upload run in the background), so it should settle
-    // in well under a second. If it ever doesn't, release the button after
-    // SAVE_WATCHDOG_MS and say so instead of spinning forever; the save keeps
-    // going and still reports success if it finishes later.
-    let settled = false;
-    const watchdog = isCompleting
-      ? setTimeout(() => {
-          if (settled) return;
-          trace?.finish("timeout", { at: "save" });
-          setSaving(false);
-          Alert.alert(
-            "Still saving",
-            "Completing this reading is taking longer than usual. Your readings are auto-saved — tap Complete & sign again. If this keeps happening, close and reopen the app.",
-          );
-        }, SAVE_WATCHDOG_MS)
-      : null;
-
-    // Serialize concurrent saves so currentReadingRef is observed AFTER any
-    // in-flight create has populated it. Otherwise a second auto-save that
-    // races the first create would also create, duplicating the row.
-    if (inFlightSaveRef.current) trace?.step("waiting_for_autosave");
-    while (inFlightSaveRef.current) {
-      try {
-        await inFlightSaveRef.current;
-      } catch {
-        // Previous save's error is its own to surface; we still proceed.
-      }
-    }
-    trace?.step("save_start");
-
-    const run = async () => {
-      try {
-        // Only show the user-facing saving spinner / disable the button for
-        // an explicit completion. Auto-saves run silently every 1.5s; if they
-        // flipped this state the Complete & Sign button would spin and refuse
-        // taps on every keystroke, making operators think the reading was
-        // already submitted.
-        if (isCompleting) setSaving(true);
-        const selectedAsset = assets.find((a) => a.value === currentFormData.chillerId);
-        const assetName = selectedAsset?.label || currentFormData.chillerId;
-
-        const basePayload = {
-          siteCode: selectedSite,
-          chillerId: assetName,
-          equipmentId: currentFormData.chillerId,
-          assetName: assetName,
-          assetType: selectedAsset?.description || "Chiller",
-          condenserInletTemp: parseFloat(currentFormData.condenserInletTemp),
-          condenserOutletTemp: parseFloat(currentFormData.condenserOutletTemp),
-          evaporatorInletTemp: parseFloat(currentFormData.evaporatorInletTemp),
-          evaporatorOutletTemp: parseFloat(currentFormData.evaporatorOutletTemp),
-          saturatedCondenserTemp: parseFloat(currentFormData.saturatedCondenserTemp),
-          saturatedSuctionTemp: parseFloat(currentFormData.saturatedSuctionTemp),
-          compressorSuctionTemp: parseFloat(currentFormData.compressorSuctionTemp),
-          motorTemperature: parseFloat(currentFormData.motorTemperature),
-          setPointCelsius: parseFloat(currentFormData.setPointCelsius),
-          dischargePressure: parseFloat(currentFormData.dischargePressure),
-          mainSuctionPressure: parseFloat(currentFormData.mainSuctionPressure),
-          oilPressure: parseFloat(currentFormData.oilPressure),
-          oilPressureDifference: parseFloat(currentFormData.oilPressureDifference),
-          condenserInletPressure: parseFloat(currentFormData.condenserInletPressure),
-          condenserOutletPressure: parseFloat(currentFormData.condenserOutletPressure),
-          evaporatorInletPressure: parseFloat(currentFormData.evaporatorInletPressure),
-          evaporatorOutletPressure: parseFloat(currentFormData.evaporatorOutletPressure),
-          compressorLoadPercentage: parseFloat(currentFormData.load),
-          inlineBtuMeter: parseFloat(currentFormData.inlineBtuMeter),
-          remarks: currentFormData.remarks,
-          // NOTE: assignedTo is intentionally NOT in basePayload. The row's
-          // assigned_to is set ONCE at create time (ensureChillerRow / the
-          // safety-net saveChillerReading below) and must never be overwritten
-          // by edits. Otherwise a second operator opening someone else's log
-          // to complete or correct it would silently steal authorship.
-          // Only a real signature is sent: auto-saves have none, and sending
-          // null used to blank the server's signature when a stale queued
-          // auto-save replayed after the completion.
-          ...(finalSignature ? { signature: finalSignature } : {}),
-          // NOTE: status & readingTime are intentionally NOT in basePayload.
-          // Auto-save must never change status or move reading_time; those
-          // are set once at create (ensureChillerRow) and on completion only.
-          attachments: currentFormData.attachment,
-        };
-
-        // The single row to write to: the edited record, or the row
-        // ensureChillerRow created this session for THIS chiller.
-        const sessionId =
-          !isEditMode &&
-          currentReadingRef.current?.chillerId === currentFormData.chillerId
-            ? currentReadingRef.current.id
-            : undefined;
-        const targetId = isEditMode
-          ? ((params.editId || params.id) as string)
-          : sessionId;
-
-        if (targetId) {
-          // Value-only update. Status flips to Completed ONLY on explicit
-          // Complete & Sign; auto-save ("Inprogress") preserves it.
-          await SiteLogService.updateChillerReading(targetId, {
-            ...basePayload,
-            ...(isCompleting
-              ? { status: "Completed", endDatetime: Date.now() }
-              : {}),
-          });
-          trace?.step("saved_local");
-        } else if (isCompleting) {
-          // Safety net: the create-on-select row is missing (ensure failed /
-          // was offline at select). Create it now, completed, so a finished
-          // reading is never lost. This is the ONLY create path left here —
-          // and the only place we set assigned_to from the current user.
-          const now = Date.now();
-          const created = await SiteLogService.saveChillerReading({
-            ...basePayload,
-            assignedTo: operatorLabel(user),
-            executorId: operatorLabel(user),
-            status: "Completed",
-            readingTime,
-            startDatetime: now,
-            endDatetime: now,
-          });
-          trace?.step("saved_local", { path: "create" });
-          if (created?.id) {
-            currentReadingRef.current = {
-              id: created.id,
-              chillerId: currentFormData.chillerId,
-            };
-          }
-        } else {
-          // Auto-save fired before the create-on-select row exists — skip.
-          // ensureChillerRow owns creation; the next auto-save / completion
-          // will persist these values to that single row.
-          return;
-        }
-
-        if (status === "Completed") {
-          // Reading session is done — next save (e.g. for another shift or
-          // chiller) should start a fresh row.
-          currentReadingRef.current = null;
-          // Refreshing the day's count pulls from the server; don't hold the
-          // "completed" confirmation on the network for it.
-          void loadDailyProgress(true);
-        }
-
-        setSignatureModalVisible(false);
-        if (status === "Completed") {
-          settled = true;
-          trace?.finish("ok");
-          Alert.alert("Success", "Reading completed successfully", [
-            { text: "OK", onPress: () => router.back() },
-          ]);
-        }
-      } catch (error: any) {
-        // Don't surface silent auto-save failures as redboxes — they retry
-        // from the offline queue. Only the explicit completion deserves
-        // user-visible error reporting.
-        if (isCompleting) {
-          settled = true;
-          trace?.finish("error", { error: error?.message, at: "save" });
-          Alert.alert("Error", error.message || "Failed to save reading");
-        }
-      } finally {
-        if (isCompleting) setSaving(false);
-      }
-    };
-
-    const promise = run();
-    inFlightSaveRef.current = promise;
+    setSaving(true);
     try {
-      await promise;
-    } finally {
-      settled = true;
-      if (watchdog) clearTimeout(watchdog);
-      if (inFlightSaveRef.current === promise) {
-        inFlightSaveRef.current = null;
+      const selectedAsset = assets.find((a) => a.value === f.chillerId);
+      const assetName = selectedAsset?.label || f.chillerId;
+      const outcome = await submitChillerReading({
+        existingId: isEditMode ? targetId : null,
+        siteCode: selectedSite,
+        chillerId: assetName,
+        equipmentId: f.chillerId,
+        assetName,
+        assetType: selectedAsset?.description || "Chiller",
+        operator: operatorLabel(user),
+        readingTime,
+        startedAt: startedAtRef.current,
+        values: {
+          condenser_inlet_temp: toNumber(f.condenserInletTemp),
+          condenser_outlet_temp: toNumber(f.condenserOutletTemp),
+          evaporator_inlet_temp: toNumber(f.evaporatorInletTemp),
+          evaporator_outlet_temp: toNumber(f.evaporatorOutletTemp),
+          saturated_condenser_temp: toNumber(f.saturatedCondenserTemp),
+          saturated_suction_temp: toNumber(f.saturatedSuctionTemp),
+          compressor_suction_temp: toNumber(f.compressorSuctionTemp),
+          motor_temperature: toNumber(f.motorTemperature),
+          set_point_celsius: toNumber(f.setPointCelsius),
+          discharge_pressure: toNumber(f.dischargePressure),
+          main_suction_pressure: toNumber(f.mainSuctionPressure),
+          oil_pressure: toNumber(f.oilPressure),
+          oil_pressure_difference: toNumber(f.oilPressureDifference),
+          condenser_inlet_pressure: toNumber(f.condenserInletPressure),
+          condenser_outlet_pressure: toNumber(f.condenserOutletPressure),
+          evaporator_inlet_pressure: toNumber(f.evaporatorInletPressure),
+          evaporator_outlet_pressure: toNumber(f.evaporatorOutletPressure),
+          compressor_load_percentage: toNumber(f.load),
+          inline_btu_meter: toNumber(f.inlineBtuMeter),
+        },
+        remarks: f.remarks || null,
+        attachment: f.attachment || null,
+        signature,
+      });
+
+      if (outcome.state === "rejected") {
+        Alert.alert(
+          "Couldn't upload",
+          `${outcome.message}\n\nThe reading is saved on this phone and will be retried automatically. If this keeps happening, please contact support.`,
+        );
+        return;
       }
+
+      // The phone's copy and the queued upload now hold everything.
+      if (draftKey) await AsyncStorage.removeItem(draftKey).catch(() => {});
+      startedAtRef.current = null;
+
+      Alert.alert(
+        outcome.state === "queued" ? "Saved on this phone" : "Success",
+        outcome.state === "queued"
+          ? "The connection is weak right now, so the reading will upload automatically as soon as it's back. You don't need to submit again."
+          : "Reading completed successfully",
+        [{ text: "OK", onPress: () => router.back() }],
+        { cancelable: false },
+      );
+    } catch (error: any) {
+      // Only a failure to save on the phone itself lands here.
+      Alert.alert("Error", error?.message || "Failed to save reading");
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -1268,7 +974,7 @@ function ChillerEntryContent() {
           // Close first: the sheet only collects the signature, the save
           // shows its progress on the Complete & sign button.
           setSignatureModalVisible(false);
-          void handleSubmission("Completed", sig);
+          void handleComplete(sig);
         }}
       />
     </JoPage>

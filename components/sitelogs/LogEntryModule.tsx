@@ -14,13 +14,13 @@ import { getSelectedSiteCode, setSelectedSiteCode } from "@/services/SiteSelecti
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useAuth } from "@/contexts/AuthContext";
 import { SiteConfigService, TaskItem } from "@/services/SiteConfigService";
-import { SiteLogService } from "@/services/SiteLogService";
-import syncEngine from "@/services/SyncEngine";
 import {
-  recordLogActivityEvent,
-  recordLogActivityStartOnce,
-  uiShiftToLabel,
-} from "@/services/LogActivityMasterService";
+  SiteLogService,
+  submitSiteLogs,
+  type SiteLogSubmitRow,
+} from "@/services/SiteLogService";
+import syncEngine from "@/services/SyncEngine";
+import { uiShiftToLabel } from "@/services/LogActivityMasterService";
 import { UnifiedLogItem } from "./UnifiedLogItem";
 import { DateNavBar } from "./DateNavBar";
 import { getISTDateString } from "@/services/AttendanceService";
@@ -43,10 +43,10 @@ import {
 } from "@/components/jo/ui";
 import { BottomBar, EntryHeader, FormHeading, NoticePill } from "./LogsKit";
 import { SignatureSheet } from "./SignatureSheet";
-import { startCompletionTrace } from "@/utils/completionTrace";
 
-/** See handleSubmit: longest the Complete button stays locked on one save. */
-const SAVE_WATCHDOG_MS = 15_000;
+/** "" / undefined → null; otherwise the number typed. */
+const toNumber = (v: unknown): number | null =>
+  v === undefined || v === null || String(v).trim() === "" ? null : parseFloat(String(v));
 
 interface LogEntryModuleProps {
   type: "Chemical" | "Water" | "TempRH";
@@ -86,6 +86,9 @@ export const LogEntryModule = ({
   const [signature, setSignature] = useState<string | null>(null);
   const [showSignature, setShowSignature] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // When the operator entered the first value — sent with the submit as the
+  // log's start time (nothing reaches the server before Complete & sign).
+  const startedAtRef = useRef<number | null>(null);
 
   // Metadata
   const [prevCount, setPrevCount] = useState(0);
@@ -109,6 +112,10 @@ export const LogEntryModule = ({
   const activityLogType =
     type === "TempRH" ? "Temp RH" : type === "Water" ? "Water" : "Chemical Dosing";
   // Load Sites
+  // No background data pulls while a log is being entered: they write to
+  // SQLite on the JS thread and could leave Complete & sign unresponsive.
+  useEffect(() => syncEngine.holdPulls(`log-entry:${type}`), [type]);
+
   useEffect(() => {
     const loadSites = async () => {
       try {
@@ -146,7 +153,13 @@ export const LogEntryModule = ({
     }
   }, [siteCode, user?.user_id, user?.id]);
 
-  // Load Tasks
+  // Where this screen's draft lives: one per log/shift/day, or per edited row.
+  const draftKey = !siteCode
+    ? null
+    : editId
+      ? `draft_${type.toLowerCase()}_edit_${editId}`
+      : `draft_${type.toLowerCase()}_${siteCode}_${user?.id}_${scheduledDate}${shift ? `_${shift}` : ""}`;
+
   // Load Tasks
   const loadTasks = async (showLoading = true, forceRefresh = false) => {
     if (!siteCode) return;
@@ -220,21 +233,25 @@ export const LogEntryModule = ({
           }
         });
 
-        // Load Draft
-        const draftKey = `draft_${type.toLowerCase()}_${siteCode}_${user?.id}_${scheduledDate}${shift ? `_${shift}` : ""}`;
+      }
+
+      // The draft holds everything typed since the last submit — it is the
+      // only copy of in-progress values (they are not sent until submit).
+      startedAtRef.current = null;
+      if (draftKey) {
         const savedDraft = await AsyncStorage.getItem(draftKey);
         if (savedDraft) {
           try {
-            const { values, signature: sig } = JSON.parse(savedDraft);
+            const { values, signature: sig, startedAt } = JSON.parse(savedDraft);
             if (values) {
               Object.keys(values).forEach(k => {
                 if (initialValues[k]) initialValues[k] = { ...initialValues[k], ...values[k] };
               });
             }
             if (sig) setSignature(sig);
+            if (typeof startedAt === "number") startedAtRef.current = startedAt;
           } catch {}
         }
-
       }
 
       setTasks(finalTasks);
@@ -269,24 +286,27 @@ export const LogEntryModule = ({
     await loadTasks(false, true);
   };
 
-  // Save Draft (debounced). Serializing the WHOLE form to AsyncStorage on every
-  // keystroke stringified the entire logValues map per character — visible lag
-  // on multi-room sites. Debounce so the write only fires ~400ms after typing
-  // pauses; the SQLite auto-save (updateValue) already covers durable persistence.
+  // Draft (debounced). Typing only ever updates this phone-local draft —
+  // nothing is sent to the server until Complete & sign (see handleSubmit).
+  // Debounced so the whole form isn't re-serialized on every keystroke.
+  const writeDraft = useCallback(() => {
+    if (!draftKey) return Promise.resolve();
+    return AsyncStorage.setItem(
+      draftKey,
+      JSON.stringify({ values: logValues, signature, startedAt: startedAtRef.current }),
+    ).catch(() => {});
+  }, [draftKey, logValues, signature]);
+
   useEffect(() => {
-    if (siteCode && Object.keys(logValues).length > 0 && !editId) {
-      const draftKey = `draft_${type.toLowerCase()}_${siteCode}_${user?.id}_${scheduledDate}${shift ? `_${shift}` : ""}`;
-      const t = setTimeout(() => {
-        AsyncStorage.setItem(
-          draftKey,
-          JSON.stringify({ values: logValues, signature }),
-        ).catch(() => {});
-      }, 400);
-      return () => clearTimeout(t);
-    }
-  }, [logValues, signature, editId, siteCode, scheduledDate, shift, type, user?.id]);
+    if (!draftKey || Object.keys(logValues).length === 0) return;
+    const timer = setTimeout(() => void writeDraft(), 400);
+    return () => clearTimeout(timer);
+  }, [draftKey, logValues, writeDraft]);
 
   const updateValue = (taskId: string, field: string, val: string) => {
+    if (startedAtRef.current === null && val && String(val).trim().length > 0) {
+      startedAtRef.current = Date.now();
+    }
     setLogValues((prev) => ({
       ...prev,
       [taskId]: {
@@ -294,35 +314,6 @@ export const LogEntryModule = ({
         [field]: val,
       },
     }));
-
-    // Fire a one-shot Start event the first time this task receives input.
-    // recordLogActivityStartOnce dedupes per session and is best-effort —
-    // failures must not block the existing offline-first flow.
-    //
-    // assigned_to is deliberately NOT sent: the server derives the assignee
-    // from the authenticated Firebase user, and the row is write-once on the
-    // backend (see logActivityMasterController.event + repository COALESCE
-    // guard). Sending it from mobile creates an override vector that reassigns
-    // the row to whoever last touched it — wrong on shared devices.
-    if (val && String(val).trim().length > 0 && siteCode) {
-      recordLogActivityStartOnce({
-        action: "start",
-        site_id: siteCode,
-        log_type: activityLogType,
-        due_date: scheduledDate,
-        shift_label: uiShiftToLabel(shift),
-        executor_id: user?.name || null,
-      }).catch(() => {});
-    }
-
-    // Schedule debounced auto-save for this specific task.
-    const existing = autoSaveTimers.current.get(taskId);
-    if (existing) clearTimeout(existing);
-    const timer = setTimeout(() => {
-      autoSaveTimers.current.delete(taskId);
-      autoSaveTaskRef.current(taskId).catch(() => {});
-    }, AUTO_SAVE_DEBOUNCE_MS);
-    autoSaveTimers.current.set(taskId, timer);
   };
 
   // Filtered Tasks
@@ -351,172 +342,6 @@ export const LogEntryModule = ({
     },
     [logValues, type],
   );
-
-  // ── Auto-save ────────────────────────────────────────────────────────────
-  // After the user stops typing for AUTO_SAVE_DEBOUNCE_MS, persist that
-  // task's row to local SQLite and enqueue it for background sync.
-  // SyncEngine handles offline → online transitions and flushes the queue;
-  // each PUT triggers Fieldproxy sync via the backend controller.
-  const AUTO_SAVE_DEBOUNCE_MS = 600;
-  const autoSaveTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(
-    new Map(),
-  );
-
-  const autoSaveTask = useCallback(
-    async (taskId: string) => {
-      if (!siteCode) return;
-      const val = logValues[taskId];
-      if (!val) return;
-      const task = tasks.find((t) => t.id === taskId);
-      if (!task) return;
-
-      // Skip if no field has a value yet — nothing to save.
-      const hasData =
-        type === "Chemical"
-          ? !!val.dosing
-          : type === "Water"
-            ? !!(
-                (val.tds && String(val.tds).trim()) ||
-                (val.ph && String(val.ph).trim()) ||
-                (val.hardness && String(val.hardness).trim())
-              )
-            : !!(
-                (val.temp && String(val.temp).trim()) ||
-                (val.rh && String(val.rh).trim())
-              );
-      if (!hasData) return;
-
-      // Auto-save NEVER marks a row Completed. "Completed" is reserved for
-      // the explicit submit-with-signature flow (handleSubmit) — otherwise
-      // a row drops out of the pending list the instant both fields are
-      // filled, which (a) shows it as Completed without a signature, and
-      // (b) empties the tasks array so handleSubmit hits its "No Data"
-      // early-return and the Complete & Sign button does nothing.
-      const status = "Inprogress";
-
-      // In edit mode there's exactly one row; use updateSiteLog so we don't
-      // overwrite the original signature and assigned_to.
-      if (isEditMode && editId) {
-        try {
-          if (type === "Chemical") {
-            await SiteLogService.updateSiteLog(editId, {
-              chemicalDosing: val.dosing || null,
-              mainRemarks: val.mainRemarks || null,
-              meta_date: task.meta?.meta_date || null,
-              shift_label: uiShiftToLabel(shift),
-              attachment: val.attachment || null,
-              status,
-            });
-          } else if (type === "Water") {
-            await SiteLogService.updateSiteLog(editId, {
-              tds: val.tds && String(val.tds).trim() ? parseFloat(val.tds) : null,
-              ph: val.ph && String(val.ph).trim() ? parseFloat(val.ph) : null,
-              hardness:
-                val.hardness && String(val.hardness).trim()
-                  ? parseFloat(val.hardness)
-                  : null,
-              mainRemarks: val.mainRemarks || null,
-              meta_date: task.meta?.meta_date || null,
-              shift_label: uiShiftToLabel(shift),
-              attachment: val.attachment || null,
-              status,
-            });
-          } else {
-            await SiteLogService.updateSiteLog(editId, {
-              temperature:
-                val.temp && String(val.temp).trim() ? parseFloat(val.temp) : null,
-              rh: val.rh && String(val.rh).trim() ? parseFloat(val.rh) : null,
-              mainRemarks: val.mainRemarks || null,
-              meta_date: task.meta?.meta_date || null,
-              shift_label: uiShiftToLabel(shift),
-              attachment: val.attachment || null,
-              status,
-            });
-          }
-        } catch {
-          // Silent — SyncEngine retries from offline_queue.
-        }
-        return;
-      }
-
-      // Bulk-screen path: upsert this single task.
-      const payload = {
-        id: task.id,
-        site_code: siteCode,
-        executor_id: user?.name || null,
-        log_name: logName,
-        task_name: task.name,
-        scheduled_date: scheduledDate,
-        status,
-        main_remarks: val.mainRemarks || null,
-        meta_date: task.meta?.meta_date || null,
-        shift_label: uiShiftToLabel(shift),
-        ...(type === "Chemical" ? { chemical_dosing: val.dosing } : {}),
-        ...(type === "Water"
-          ? {
-              tds:
-                val.tds && String(val.tds).trim() ? parseFloat(val.tds) : null,
-              ph: val.ph && String(val.ph).trim() ? parseFloat(val.ph) : null,
-              hardness:
-                val.hardness && String(val.hardness).trim()
-                  ? parseFloat(val.hardness)
-                  : null,
-            }
-          : {}),
-        ...(type === "TempRH"
-          ? {
-              temperature:
-                val.temp && String(val.temp).trim() ? parseFloat(val.temp) : null,
-              rh: val.rh && String(val.rh).trim() ? parseFloat(val.rh) : null,
-            }
-          : {}),
-        attachment: val.attachment,
-      };
-
-      try {
-        await SiteLogService.saveBulkSiteLogs([payload as any]);
-      } catch {
-        // Silent — local save + queue happens regardless; SyncEngine retries.
-      }
-      // Kick the sync engine so the queue flushes immediately when online,
-      // instead of waiting up to 15 minutes for the periodic interval.
-      // syncNow() is internally debounced — concurrent calls share one promise.
-      syncEngine.syncNow().catch(() => {});
-    },
-    [
-      logValues,
-      tasks,
-      type,
-      shift,
-      siteCode,
-      scheduledDate,
-      user,
-      logName,
-      isEditMode,
-      editId,
-    ],
-  );
-
-  // Always-fresh ref so debounced timers see the latest closure.
-  const autoSaveTaskRef = useRef(autoSaveTask);
-  useEffect(() => {
-    autoSaveTaskRef.current = autoSaveTask;
-  }, [autoSaveTask]);
-
-  // On unmount, clear pending timers and flush any queued saves immediately.
-  useEffect(() => {
-    // autoSaveTimers.current is a stable Map instance (never reassigned), so capturing
-    // it here is safe — the cleanup still sees the timers accumulated over the lifetime.
-    const timers = autoSaveTimers.current;
-    return () => {
-      const pending = Array.from(timers.entries());
-      timers.clear();
-      pending.forEach(([taskId, timer]) => {
-        clearTimeout(timer);
-        autoSaveTaskRef.current(taskId).catch(() => {});
-      });
-    };
-  }, []);
 
   const allScheduledTasksComplete =
     tasks.length > 0 && tasks.every((task) => isTaskComplete(task.id));
@@ -553,29 +378,45 @@ export const LogEntryModule = ({
     }
   }, [scheduledDate]);
 
-  // Manual save: flush all pending debounced auto-saves immediately.
+  // "Save progress now": write the draft immediately.
   const handleManualSave = useCallback(() => {
-    const pending = Array.from(autoSaveTimers.current.entries());
-    autoSaveTimers.current.clear();
-    pending.forEach(([taskId, timer]) => {
-      clearTimeout(timer);
-      autoSaveTaskRef.current(taskId).catch(() => {});
-    });
-    tasks.forEach((t) => {
-      autoSaveTaskRef.current(t.id).catch(() => {});
-    });
-  }, [tasks]);
+    void writeDraft().then(() =>
+      Alert.alert("Saved on this phone", "Your entries are kept on this phone until you complete & sign."),
+    );
+  }, [writeDraft]);
 
-  // Submission
+  /** One submitted row from the screen's values. */
+  const buildRow = (task: TaskItem, status: SiteLogSubmitRow["status"]): SiteLogSubmitRow => {
+    const val = logValues[task.id] || {};
+    return {
+      id: task.id,
+      status,
+      main_remarks: val.mainRemarks || null,
+      attachment: val.attachment || null,
+      meta_date: task.meta?.meta_date || null,
+      shift_label: uiShiftToLabel(shift),
+      ...(type === "Chemical" ? { chemical_dosing: val.dosing || null } : {}),
+      ...(type === "Water"
+        ? { tds: toNumber(val.tds), ph: toNumber(val.ph), hardness: toNumber(val.hardness) }
+        : {}),
+      ...(type === "TempRH" ? { temperature: toNumber(val.temp), rh: toNumber(val.rh) } : {}),
+    };
+  };
+
+  /** Edit mode keeps today's rule: a partly filled row stays Inprogress/Open. */
+  const editStatus = (val: Record<string, any>): SiteLogSubmitRow["status"] => {
+    const has = (v: unknown) => v !== undefined && v !== null && String(v).trim() !== "";
+    if (type === "Chemical") return val.dosing ? "Completed" : "Inprogress";
+    if (type === "Water") return has(val.tds) || has(val.ph) || has(val.hardness) ? "Completed" : "Inprogress";
+    if (has(val.temp) && has(val.rh)) return "Completed";
+    return has(val.temp) || has(val.rh) ? "Inprogress" : "Open";
+  };
+
+  // Submission — the tickets model: one save, one result.
   const handleSubmit = async (signatureOverride?: string) => {
     if (!siteCode) return;
     const effectiveSignature = signatureOverride || signature;
 
-    // Cancel any in-flight auto-save timers so the signed Submit PUT can't
-    // be silently overwritten by an unsigned debounced auto-save firing late.
-    autoSaveTimers.current.forEach((t) => clearTimeout(t));
-    autoSaveTimers.current.clear();
-    
     if (!isEditMode && tasks.length === 0) {
       Alert.alert("No Data", "No scheduled logs are available for this selection.");
       return;
@@ -609,251 +450,94 @@ export const LogEntryModule = ({
       return;
     }
 
-    // Reported only if slow, timed out or failed (see utils/completionTrace).
-    const trace = startCompletionTrace("SITE_LOG", {
-      site_code: siteCode,
-      log_type: type,
-      edit_mode: isEditMode,
-    });
-    trace.step("submit_start", { tasks: tasks.length });
-
     setIsSubmitting(true);
-    // Defence in depth: submit is local-only (SQLite + queue; server pushes run
-    // in the background), so it should settle in well under a second. If it
-    // ever doesn't, release the button after SAVE_WATCHDOG_MS and say so
-    // instead of spinning forever; the save keeps going and still reports
-    // success if it finishes later.
-    let settled = false;
-    const watchdog = setTimeout(() => {
-      if (settled) return;
-      trace.finish("timeout", { at: "save" });
-      setIsSubmitting(false);
-      Alert.alert(
-        "Still saving",
-        "Saving is taking longer than usual. Your readings are auto-saved — tap Complete again. If this keeps happening, close and reopen the app.",
-      );
-    }, SAVE_WATCHDOG_MS);
     try {
+      let rows: SiteLogSubmitRow[];
       if (isEditMode && editId && tasks[0]) {
-        const task = tasks[0];
-        const val = logValues[task.id] || {};
-
-        if (type === "Chemical") {
-          const hasDosing = !!val.dosing;
-          await SiteLogService.updateSiteLog(editId, {
-            chemicalDosing: val.dosing || null,
-            mainRemarks: val.mainRemarks || null,
-            meta_date: task.meta?.meta_date || null,
-            shift_label: uiShiftToLabel(shift),
-            attachment: val.attachment || null,
-            signature: effectiveSignature || undefined,
-            status: hasDosing ? "Completed" : "Inprogress",
-            assignedTo: user?.name || user?.user_id || "unknown",
-          });
-        } else if (type === "Water") {
-          const hasTds = !!(val.tds && String(val.tds).trim().length > 0);
-          const hasPh = !!(val.ph && String(val.ph).trim().length > 0);
-          const hasHardness = !!(
-            val.hardness && String(val.hardness).trim().length > 0
-          );
-          const status = hasTds || hasPh || hasHardness ? "Completed" : "Inprogress";
-
-          await SiteLogService.updateSiteLog(editId, {
-            tds: hasTds ? parseFloat(val.tds) : null,
-            ph: hasPh ? parseFloat(val.ph) : null,
-            hardness: hasHardness ? parseFloat(val.hardness) : null,
-            mainRemarks: val.mainRemarks || null,
-            meta_date: task.meta?.meta_date || null,
-            shift_label: uiShiftToLabel(shift),
-            attachment: val.attachment || null,
-            signature: effectiveSignature || undefined,
-            status,
-            assignedTo: user?.name || user?.user_id || "unknown",
-          });
-        } else {
-          const hasTemp = !!(val.temp && String(val.temp).trim().length > 0);
-          const hasRh = !!(val.rh && String(val.rh).trim().length > 0);
-          const status =
-            hasTemp && hasRh ? "Completed" : hasTemp || hasRh ? "Inprogress" : "Open";
-
-          await SiteLogService.updateSiteLog(editId, {
-            temperature: hasTemp ? parseFloat(val.temp) : null,
-            rh: hasRh ? parseFloat(val.rh) : null,
-            mainRemarks: val.mainRemarks || null,
-            meta_date: task.meta?.meta_date || null,
-            shift_label: uiShiftToLabel(shift),
-            attachment: val.attachment || null,
-            signature: effectiveSignature || undefined,
-            status,
-            assignedTo: user?.name || user?.user_id || "unknown",
+        rows = [buildRow(tasks[0], editStatus(logValues[tasks[0].id] || {}))];
+      } else {
+        rows = tasks.map((task) => buildRow(task, "Completed"));
+        // Rooms filled earlier that dropped out of this list (see
+        // findShiftStragglers) are completed in the same submit.
+        const shiftMarker =
+          shift === "A" ? "1/3" : shift === "B" ? "2/3" : shift === "C" ? "3/3" : null;
+        const listed = new Set(rows.map((r) => r.id));
+        const stragglers = await SiteLogService.findShiftStragglers({
+          siteCode,
+          logName,
+          scheduledDate,
+          shiftMarker,
+        });
+        for (const r of stragglers) {
+          if (listed.has(r.id)) continue;
+          rows.push({
+            id: r.id,
+            status: "Completed",
+            temperature: r.temperature,
+            rh: r.rh,
+            tds: r.tds,
+            ph: r.ph,
+            hardness: r.hardness,
+            chemical_dosing: r.chemical_dosing,
+            main_remarks: r.main_remarks,
+            attachment: r.attachment,
+            meta_date: r.meta_date,
+            shift_label: r.shift_label,
           });
         }
+      }
 
-        // Edit-mode finish: mirror to log_activity_master + Fieldproxy
-        // when the user submits a Completed entry. Skipped silently if the
-        // backend can't resolve the row.
-        const editVal = logValues[task.id] || {};
-        const editIsCompleted =
-          type === "Chemical"
-            ? !!editVal.dosing
-            : type === "Water"
-              ? !!(
-                  (editVal.tds && String(editVal.tds).trim()) ||
-                  (editVal.ph && String(editVal.ph).trim()) ||
-                  (editVal.hardness && String(editVal.hardness).trim())
-                )
-              : !!(
-                  editVal.temp &&
-                  String(editVal.temp).trim() &&
-                  editVal.rh &&
-                  String(editVal.rh).trim()
-                );
-        if (editIsCompleted && siteCode) {
-          const finishIso = new Date().toISOString();
-          // Do NOT pass startdatetime: the server keeps the existing start
-          // (or derives one from enddatetime via lamTimestampHelper). Sending
-          // finishIso here caused start==end / 0-duration rows when the
-          // Start event never reached the server (flaky LAN, app restart).
-          recordLogActivityEvent({
-            action: "finish",
-            site_id: siteCode,
-            log_type: activityLogType,
-            due_date: scheduledDate,
-            shift_label: uiShiftToLabel(shift),
-            executor_id: user?.name || null,
-            enddatetime: finishIso,
-          }).catch(() => {});
-        }
+      const outcome = await submitSiteLogs({
+        siteCode,
+        activityLogType,
+        scheduledDate,
+        shiftLabel: uiShiftToLabel(shift),
+        startedAt: startedAtRef.current,
+        signature: effectiveSignature || null,
+        rows,
+      });
 
-        trace.step("saved_local");
-        settled = true;
-        trace.finish("ok");
-        Alert.alert("Success", "Log updated successfully!", [
-          { text: "OK", onPress: () => onBack() },
-        ]);
+      if (outcome.state === "rejected") {
+        Alert.alert(
+          "Couldn't upload",
+          `${outcome.message}\n\nYour entries are saved on this phone and will be retried automatically. If this keeps happening, please contact support.`,
+        );
         return;
       }
 
-      const payload = tasks.map(task => {
-        const val = logValues[task.id];
-        if (!val) return null;
-        
-        // Skip if NO data entered for this specific item
-        const hasData = type === "Chemical" ? val.dosing : (type === "Water" ? (val.tds || val.ph || val.hardness) : (val.temp || val.rh));
-        if (!hasData) return null;
+      // The phone's copy and the queued upload now hold everything.
+      if (draftKey) await AsyncStorage.removeItem(draftKey).catch(() => {});
 
-        
-        return {
-          id: task.id,
-          site_code: siteCode,
-          executor_id: user?.name || null,
-          log_name: logName,
-          task_name: task.name,
-          scheduled_date: scheduledDate,
-          status: "Completed", 
-          signature: effectiveSignature,
-          main_remarks: val.mainRemarks || null,
-          meta_date: task.meta?.meta_date || null,
-          shift_label: uiShiftToLabel(shift),
-          // Specific fields
-          ...(type === "Chemical" ? { chemical_dosing: val.dosing } : {}),
-          ...(type === "Water" ? { tds: parseFloat(val.tds), ph: parseFloat(val.ph), hardness: parseFloat(val.hardness) } : {}),
-          ...(type === "TempRH" ? { temperature: parseFloat(val.temp), rh: parseFloat(val.rh) } : {}),
-          attachment: val.attachment
-        };
-      }).filter(Boolean);
-
-      await SiteLogService.saveBulkSiteLogs(payload as any);
-      trace.step("saved_local", { rows: payload.length });
-
-      // Safety net: the payload above is built from the in-memory task list,
-      // which can miss a room that was auto-saved (status "Inprogress") but
-      // dropped out of the pending list. Without this sweep that room stays
-      // "Inprogress" forever despite having full readings. finalizeShiftLogs
-      // re-scans local SQLite for the shift and finalizes any such straggler.
-      const finalizeShiftMarker =
-        shift === "A" ? "1/3" : shift === "B" ? "2/3" : shift === "C" ? "3/3" : null;
-      await SiteLogService.finalizeShiftLogs({
-        siteCode,
-        logName,
-        scheduledDate,
-        shiftMarker: finalizeShiftMarker,
-        signature: effectiveSignature,
-      });
-      trace.step("finalized");
-
-      // Mark each completed task as Finished in log_activity_master (DB + FP)
-      // so the row's enddatetime + executor_id + status reflect the user's
-      // submission. Best-effort — already-saved local + queue is the source
-      // of truth for the field data; this just keeps activity master in sync.
-      //
-      // The backend re-counts the shift's rooms from site_logs before flipping
-      // the activity row to Completed (a partial device cache can otherwise let
-      // an operator sign off a shift that still has empty rooms). When it keeps
-      // the row Inprogress it returns `shift_incomplete: { filled, total }`,
-      // which we surface below so the operator knows the shift isn't done and
-      // can pull-to-refresh the rooms their device is missing.
-      // These run in the background: the readings are already saved on the
-      // phone and queued, so the operator isn't held on the network. If the
-      // server then reports the shift incomplete, say so when it answers.
-      const finishShiftLabel = uiShiftToLabel(shift);
-      const finishIso = new Date().toISOString();
-      // startdatetime omitted: server preserves the row's existing start
-      // (set on first keystroke via recordLogActivityStartOnce) or derives
-      // one from enddatetime if missing. assigned_to omitted: server is
-      // the source of truth from the auth token + COALESCE write-once
-      // protection on assigned_to.
-      const finishCalls = (payload as any[])
-        .filter((p) => p && p.status === "Completed")
-        .map((p) =>
-          recordLogActivityEvent({
-            action: "finish",
-            site_id: p.site_code,
-            log_type: activityLogType,
-            due_date: p.scheduled_date,
-            shift_label: finishShiftLabel,
-            executor_id: p.executor_id,
-            enddatetime: finishIso,
-          }),
+      if (outcome.state === "queued") {
+        Alert.alert(
+          "Saved on this phone",
+          "The connection is weak right now, so your logs will upload automatically as soon as it's back. You don't need to submit again.",
+          [{ text: "OK", onPress: () => onBack() }],
+          { cancelable: false },
         );
-      void Promise.allSettled(finishCalls).then((finishResults) => {
-        // All calls target the same shift row, so any incomplete verdict
-        // speaks for the whole shift — take the first one reported.
-        for (const r of finishResults) {
-          const verdict = r.status === "fulfilled" ? r.value?.data?.shift_incomplete : null;
-          if (verdict && typeof verdict.total === "number") {
-            Alert.alert(
-              "Saved — shift not yet complete",
-              `Your entries were saved, but this shift still has empty rooms: only ${verdict.filled} of ${verdict.total} scheduled rooms are logged.\n\nThe missing rooms aren't loaded on this device. Open this log again and pull down to refresh to load them, then log the rest to complete the shift.`,
-            );
-            return;
-          }
-        }
-      });
-      // Silent on failure — server cron reconciles with FP next 1AM IST tick.
+        return;
+      }
 
-      // Clear Draft
-      const draftKey = `draft_${type.toLowerCase()}_${siteCode}_${user?.id}_${scheduledDate}${shift ? `_${shift}` : ""}`;
-      await AsyncStorage.removeItem(draftKey);
-      settled = true;
-      trace.finish("ok");
+      if (outcome.shiftIncomplete) {
+        const { filled, total } = outcome.shiftIncomplete;
+        Alert.alert(
+          "Saved — shift not yet complete",
+          `Your entries were saved, but this shift still has empty rooms: only ${filled} of ${total} scheduled rooms are logged.\n\nThe missing rooms aren't loaded on this device. Open this log again and pull down to refresh to load them, then log the rest to complete the shift.`,
+          [{ text: "OK", onPress: () => onBack() }],
+        );
+        return;
+      }
 
-      // Every scheduled task is done and signed — nothing left on this
-      // screen, so go back to the Logs overview, which re-reads its counts
-      // on focus.
       Alert.alert(
         "Success",
-        "Logs submitted successfully!",
+        isEditMode ? "Log updated successfully!" : "Logs submitted successfully!",
         [{ text: "OK", onPress: () => onBack() }],
         { cancelable: false },
       );
     } catch (error: any) {
-      settled = true;
-      trace.finish("error", { error: error?.message, at: "save" });
-      Alert.alert("Error", "Failed to save logs. Please try again.");
+      // Only a failure to save on the phone itself lands here.
+      Alert.alert("Error", error?.message || "Failed to save logs. Please try again.");
     } finally {
-      settled = true;
-      clearTimeout(watchdog);
       setIsSubmitting(false);
     }
   };

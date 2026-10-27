@@ -136,6 +136,11 @@ class PresenceService {
     }
   }
 
+  /** Screen the operator is on (for diagnostics such as JS stall reports). */
+  get currentRoute(): string | null {
+    return this.state.route;
+  }
+
   setRoute(route: string | null): void {
     if (this.state.route === route) return;
     this.emitScreenLeave();
