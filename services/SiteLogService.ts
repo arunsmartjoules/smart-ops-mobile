@@ -30,7 +30,7 @@ import type { TaskItem } from "./SiteConfigService";
 import cacheManager from "./CacheManager";
 import { AttachmentQueueService } from "./AttachmentQueueService";
 import { getISTDateString } from "./AttendanceService";
-import { toIstYmd } from "../utils/istDate";
+import { istDayStartMsFromYmd, toIstYmd } from "../utils/istDate";
 
 import { API_BASE_URL } from "../constants/api";
 
@@ -202,7 +202,59 @@ export interface SiteProgressResponse {
   chiller: { completed: number; inProgress: number };
 }
 
+/** One page pulled into SQLite: row ids in server order + the filtered total. */
+export interface PulledPage {
+  ids: string[];
+  total: number;
+}
+
+/** The history panel's window and filters. */
+export interface HistoryQuery {
+  /** Inclusive IST calendar days, "YYYY-MM-DD". */
+  from: string;
+  to: string;
+  status: "all" | "pending" | "completed";
+  /** "1/3" | "2/3" | "3/3", or null for every shift. Temp RH only. */
+  shiftLabel: string | null;
+}
+
+export interface HistoryPage {
+  rows: any[];
+  hasMore: boolean;
+}
+
+export interface HistoryCount {
+  total: number;
+  completed: number;
+}
+
+/**
+ * Whole-window counts for the history panel's counters — they can't come from
+ * the loaded rows, which are only the pages scrolled so far.
+ */
+export interface HistoryStats extends HistoryCount {
+  /** Temp RH: per-shift counts, status-agnostic. */
+  byShift: Record<"A" | "B" | "C", HistoryCount> | null;
+  /** Chiller: completed readings per calendar day, for the daily target. */
+  completedPerDay: Record<string, number> | null;
+}
+
 interface ISiteLogService {
+  getLogsByIds(logType: string, ids: string[]): Promise<any[]>;
+  fetchHistoryPage(
+    siteCode: string,
+    logType: string,
+    query: HistoryQuery,
+    page: number,
+    pageSize: number,
+    opts: { online: boolean },
+  ): Promise<HistoryPage>;
+  fetchHistoryStats(
+    siteCode: string,
+    logType: string,
+    range: { from: string; to: string },
+    opts: { online: boolean },
+  ): Promise<HistoryStats>;
   getLogsByType(
     siteCode: string,
     logType: string,
@@ -240,8 +292,15 @@ interface ISiteLogService {
       siteCodes?: string[];
       stampSync?: boolean;
       throwOnError?: boolean;
+      /** 1-based page; a paged pull never runs the stale-log cleanup. */
+      page?: number;
+      limit?: number;
+      sortBy?: string;
+      sortOrder?: "asc" | "desc";
+      /** Generic filter rules, forwarded as `filters=` JSON. */
+      filters?: { fieldId: string; operator: string; value?: any; valueEnd?: any }[];
     },
-  ): Promise<void>;
+  ): Promise<PulledPage | void>;
   pullChillerReadings(
     siteCode: string,
     options?: {
@@ -249,8 +308,12 @@ interface ISiteLogService {
       toDate?: number;
       stampSync?: boolean;
       throwOnError?: boolean;
+      /** 1-based page; a paged or filtered pull never deletes stale rows. */
+      page?: number;
+      limit?: number;
+      filters?: { fieldId: string; operator: string; value?: any; valueEnd?: any }[];
     },
-  ): Promise<void>;
+  ): Promise<PulledPage | void>;
   prefetchPendingForCategory(siteCode: string, logName: string): Promise<void>;
   fetchProgress(
     siteCode: string,
@@ -321,6 +384,22 @@ export interface RestoreLocalSiteLogsResult {
 }
 
 /**
+ * "Completed" the way the screens read it (LogHistoryCard's
+ * normaliseLogStatus): case/separator-insensitive, and an empty status means
+ * logged. Everything else (Open, Inprogress, Pending…) is pending.
+ */
+const isCompletedStatus = (raw?: string | null) => {
+  const s = String(raw ?? "").toLowerCase().replace(/[\s_-]+/g, "");
+  return s === "completed" || s === "";
+};
+
+/** SQL twin of {@link isCompletedStatus} for the local history reads. */
+const statusCondition = (col: any, status: "pending" | "completed") =>
+  status === "completed"
+    ? sql`lower(coalesce(${col}, '')) IN ('completed', '')`
+    : sql`lower(coalesce(${col}, '')) NOT IN ('completed', '')`;
+
+/**
  * Helper to build log queries and fetch results
  */
 const _fetchLogs = async (
@@ -339,11 +418,15 @@ const _fetchLogs = async (
     if (options.toDate) {
       conditions.push(lte(chillerReadings.created_at, options.toDate));
     }
-    return db
+    if (options.status === "completed" || options.status === "pending") {
+      conditions.push(statusCondition(chillerReadings.status, options.status));
+    }
+    const q = db
       .select()
       .from(chillerReadings)
       .where(conditions.length > 1 ? and(...conditions) : conditions[0])
       .orderBy(desc(chillerReadings.created_at));
+    return options.limit ? q.limit(options.limit).offset(options.offset ?? 0) : q;
   } else {
     const conditions: any[] = [];
     if (siteCode && siteCode !== "all") {
@@ -353,6 +436,10 @@ const _fetchLogs = async (
 
     if (options.scheduledDate) {
       conditions.push(eq(siteLogs.scheduled_date, options.scheduledDate));
+    } else if (options.fromYmd || options.toYmd) {
+      // Calendar-day bounds straight through — no epoch round-trip.
+      if (options.fromYmd) conditions.push(gte(siteLogs.scheduled_date, options.fromYmd));
+      if (options.toYmd) conditions.push(lte(siteLogs.scheduled_date, options.toYmd));
     } else if (options.fromDate || options.toDate) {
       // scheduled_date is stored as YYYY-MM-DD in the user's local calendar
       // (pullSiteLogs converts incoming UTC midnight to IST before storing).
@@ -377,11 +464,23 @@ const _fetchLogs = async (
       }
     }
 
-    return db
+    if (options.status === "completed" || options.status === "pending") {
+      conditions.push(statusCondition(siteLogs.status, options.status));
+    }
+    if (options.shiftLabel) {
+      // Legacy rows saved without a shift belong to every shift (matches the
+      // screen's `inShift`).
+      conditions.push(
+        sql`(${siteLogs.shift_label} = ${options.shiftLabel} OR ${siteLogs.shift_label} IS NULL OR ${siteLogs.shift_label} = '')`,
+      );
+    }
+
+    const q = db
       .select()
       .from(siteLogs)
       .where(conditions.length > 1 ? and(...conditions) : conditions[0])
-      .orderBy(desc(siteLogs.scheduled_date), desc(siteLogs.created_at))
+      .orderBy(desc(siteLogs.scheduled_date), desc(siteLogs.created_at));
+    return (options.limit ? q.limit(options.limit).offset(options.offset ?? 0) : q)
       .then((rows) => {
         logger.debug("_fetchLogs raw query result", {
           module: "SITE_LOG_SERVICE",
@@ -723,7 +822,265 @@ export async function resendLocalCompletions(ids: string[]): Promise<void> {
   }
 }
 
+/** "YYYY-MM-DD" of an epoch-ms instant in IST, without Intl (hot loop). */
+const istDayOfMs = (ms: number) =>
+  new Date(ms + (5 * 60 + 30) * 60_000).toISOString().slice(0, 10);
+
+/** Inclusive IST day bounds as epoch ms. */
+const istWindowMs = (from: string, to: string) => ({
+  fromDate: istDayStartMsFromYmd(from) ?? 0,
+  toDate: (istDayStartMsFromYmd(to) ?? 0) + 24 * 60 * 60 * 1000 - 1,
+});
+
+/**
+ * Chiller status filter as generic rules. A NULL status reads as logged on
+ * the phone, so "pending" has to exclude it explicitly and "completed" is
+ * expressed as "none of the open states" (`not_equals` keeps NULLs).
+ */
+const chillerStatusRules = (status: HistoryQuery["status"]) =>
+  status === "pending"
+    ? [
+        { fieldId: "status", operator: "not_equals", value: "Completed" },
+        { fieldId: "status", operator: "is_not_empty" },
+      ]
+    : status === "completed"
+      ? ["Inprogress", "Pending", "Open"].map((value) => ({
+          fieldId: "status",
+          operator: "not_equals",
+          value,
+        }))
+      : [];
+
+const UI_SHIFTS = [
+  ["A", "1/3"],
+  ["B", "2/3"],
+  ["C", "3/3"],
+] as const;
+
+const emptyCount = (): HistoryCount => ({ total: 0, completed: 0 });
+
 export const SiteLogService: ISiteLogService = {
+  /**
+   * Local rows for these ids, in the order given (the server's page order).
+   * Ids the cache doesn't hold are skipped.
+   */
+  async getLogsByIds(logType: string, ids: string[]) {
+    if (ids.length === 0) return [];
+    const rows: any[] =
+      logType === "Chiller Logs"
+        ? await db.select().from(chillerReadings).where(inArray(chillerReadings.id, ids))
+        : await db.select().from(siteLogs).where(inArray(siteLogs.id, ids));
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    return ids.map((id) => byId.get(id)).filter(Boolean);
+  },
+
+  /**
+   * One page of the history panel. Online: the server page (filters applied
+   * there) is cached into SQLite, then read back by id so a phone-side copy
+   * that is ahead of the server (pullSiteLogs' heal path) still wins.
+   * Offline, or if the server call fails: the same page from SQLite.
+   */
+  async fetchHistoryPage(siteCode, logType, query, page, pageSize, { online }) {
+    const isChiller = logType === "Chiller Logs";
+    const window = istWindowMs(query.from, query.to);
+
+    if (online) {
+      try {
+        const pulled = isChiller
+          ? await this.pullChillerReadings(siteCode, {
+              ...window,
+              page,
+              limit: pageSize,
+              filters: chillerStatusRules(query.status),
+              stampSync: false,
+              throwOnError: true,
+            })
+          : await this.pullSiteLogs(siteCode, {
+              logName: logType,
+              fromDate: query.from,
+              toDate: query.to,
+              page,
+              limit: pageSize,
+              sortBy: "scheduled_date",
+              sortOrder: "desc",
+              status:
+                query.status === "pending"
+                  ? "pending"
+                  : query.status === "completed"
+                    ? "Completed"
+                    : undefined,
+              filters: query.shiftLabel
+                ? [{ fieldId: "shift_label", operator: "equals", value: query.shiftLabel }]
+                : undefined,
+              stampSync: false,
+              throwOnError: true,
+            });
+        if (pulled) {
+          const rows = await this.getLogsByIds(logType, pulled.ids);
+          return {
+            rows,
+            hasMore: (page - 1) * pageSize + pulled.ids.length < pulled.total,
+          };
+        }
+      } catch (error: any) {
+        logger.warn("History page pull failed — reading the device copy", {
+          module: "SITE_LOG_SERVICE",
+          logType,
+          page,
+          error: error?.message,
+        });
+      }
+    }
+
+    // One extra row tells us whether another page exists, without a COUNT.
+    const rows: any[] = await _fetchLogs(siteCode, logType, {
+      ...(isChiller ? window : { fromYmd: query.from, toYmd: query.to }),
+      status: query.status,
+      shiftLabel: isChiller ? null : query.shiftLabel,
+      limit: pageSize + 1,
+      offset: (page - 1) * pageSize,
+    });
+    return { rows: rows.slice(0, pageSize), hasMore: rows.length > pageSize };
+  },
+
+  /**
+   * Whole-window counts for the history counters. Online: the `/stats`
+   * GROUP BY endpoints (no row data). Offline or on failure: the same tally
+   * over what this device holds.
+   */
+  async fetchHistoryStats(siteCode, logType, { from, to }, { online }) {
+    const isChiller = logType === "Chiller Logs";
+
+    if (online) {
+      try {
+        const getJson = async (url: string) => {
+          const res = await apiFetch(url);
+          if (!res.ok) throw new Error(`stats API ${res.status}`);
+          const body = await res.json();
+          return Array.isArray(body?.data) ? body.data : [];
+        };
+
+        if (isChiller) {
+          const filters = JSON.stringify([
+            { fieldId: "reading_time", operator: "between", value: from, valueEnd: to },
+          ]);
+          const rows = await getJson(
+            `/api/chiller-readings/stats?site_code=${encodeURIComponent(siteCode)}&filters=${encodeURIComponent(filters)}`,
+          );
+          const stats: HistoryStats = { ...emptyCount(), byShift: null, completedPerDay: {} };
+          for (const r of rows) {
+            const n = Number(r.count) || 0;
+            stats.total += n;
+            if (isCompletedStatus(r.status)) {
+              stats.completed += n;
+              if (r.day) stats.completedPerDay![r.day] = (stats.completedPerDay![r.day] ?? 0) + n;
+            }
+          }
+          return stats;
+        }
+
+        const base = `/api/site-logs/stats?site_code=${encodeURIComponent(siteCode)}&log_name=${encodeURIComponent(logType)}&fromDate=${from}&toDate=${to}`;
+        const tally = (rows: any[]): HistoryCount =>
+          rows.reduce(
+            (acc: HistoryCount, r: any) => {
+              const n = Number(r.count) || 0;
+              acc.total += n;
+              if (isCompletedStatus(r.status)) acc.completed += n;
+              return acc;
+            },
+            emptyCount(),
+          );
+        const shiftUrl = (label: string) =>
+          `${base}&filters=${encodeURIComponent(JSON.stringify([{ fieldId: "shift_label", operator: "equals", value: label }]))}`;
+
+        // Temp RH also needs the per-shift split: three more GROUP BYs.
+        const [all, ...shifts] = await Promise.all([
+          getJson(base),
+          ...(logType === "Temp RH" ? UI_SHIFTS.map(([, label]) => getJson(shiftUrl(label))) : []),
+        ]);
+        return {
+          ...tally(all),
+          byShift:
+            shifts.length === 3
+              ? { A: tally(shifts[0]), B: tally(shifts[1]), C: tally(shifts[2]) }
+              : null,
+          completedPerDay: null,
+        };
+      } catch (error: any) {
+        logger.warn("History stats fetch failed — counting the device copy", {
+          module: "SITE_LOG_SERVICE",
+          logType,
+          error: error?.message,
+        });
+      }
+    }
+
+    if (isChiller) {
+      const window = istWindowMs(from, to);
+      const rows = await db
+        .select({
+          reading_time: chillerReadings.reading_time,
+          created_at: chillerReadings.created_at,
+          status: chillerReadings.status,
+        })
+        .from(chillerReadings)
+        .where(
+          and(
+            eq(chillerReadings.site_code, siteCode),
+            gte(chillerReadings.created_at, window.fromDate),
+            lte(chillerReadings.created_at, window.toDate),
+          ),
+        );
+      const stats: HistoryStats = { ...emptyCount(), byShift: null, completedPerDay: {} };
+      for (const r of rows) {
+        stats.total += 1;
+        if (!isCompletedStatus(r.status)) continue;
+        stats.completed += 1;
+        const ms = r.reading_time ?? r.created_at;
+        if (ms) {
+          const day = istDayOfMs(ms);
+          stats.completedPerDay![day] = (stats.completedPerDay![day] ?? 0) + 1;
+        }
+      }
+      return stats;
+    }
+
+    const groups = await db
+      .select({ status: siteLogs.status, shift: siteLogs.shift_label, n: count() })
+      .from(siteLogs)
+      .where(
+        and(
+          eq(siteLogs.site_code, siteCode),
+          eq(siteLogs.log_name, logType),
+          gte(siteLogs.scheduled_date, from),
+          lte(siteLogs.scheduled_date, to),
+        ),
+      )
+      .groupBy(siteLogs.status, siteLogs.shift_label);
+
+    const stats: HistoryStats = {
+      ...emptyCount(),
+      byShift:
+        logType === "Temp RH" ? { A: emptyCount(), B: emptyCount(), C: emptyCount() } : null,
+      completedPerDay: null,
+    };
+    for (const g of groups) {
+      const n = Number(g.n) || 0;
+      const done = isCompletedStatus(g.status);
+      stats.total += n;
+      if (done) stats.completed += n;
+      if (!stats.byShift) continue;
+      const label = String(g.shift ?? "").trim();
+      for (const [ui, shiftLabel] of UI_SHIFTS) {
+        // Legacy rows saved without a shift count in every shift.
+        if (label && label !== shiftLabel) continue;
+        stats.byShift[ui].total += n;
+        if (done) stats.byShift[ui].completed += n;
+      }
+    }
+    return stats;
+  },
+
   /**
    * Fetch logs for a site by type
    */
@@ -1789,7 +2146,11 @@ export const SiteLogService: ISiteLogService = {
         finalSiteCode = options.siteCodes[0];
       }
 
-      let url = `/api/site-logs/site/${finalSiteCode}?limit=${PULL_SITE_LOGS_LIMIT}`;
+      const limit = options.limit ?? PULL_SITE_LOGS_LIMIT;
+      let url = `/api/site-logs/site/${finalSiteCode}?limit=${limit}`;
+      if (options.page) url += `&page=${options.page}`;
+      if (options.sortBy)
+        url += `&sortBy=${options.sortBy}&sortOrder=${options.sortOrder ?? "desc"}`;
       if (options.logName)
         url += `&log_name=${encodeURIComponent(options.logName)}`;
       if (options.fromDate) url += `&fromDate=${options.fromDate}`;
@@ -1798,6 +2159,8 @@ export const SiteLogService: ISiteLogService = {
       if (options.siteCodes && Array.isArray(options.siteCodes)) {
         url += `&site_codes=${options.siteCodes.join(",")}`;
       }
+      if (options.filters?.length)
+        url += `&filters=${encodeURIComponent(JSON.stringify(options.filters))}`;
 
       const response = await apiFetch(url);
       if (!response.ok) {
@@ -1832,14 +2195,20 @@ export const SiteLogService: ISiteLogService = {
         // pending set. A truncated page (length hit the cap) means a room could
         // be missing simply because it didn't fit — auto-completing it would
         // hide genuinely-pending work and leave the room Open on the server.
-        const responseTruncated = serverLogs.length >= PULL_SITE_LOGS_LIMIT;
-        if (responseTruncated) {
+        // A page request (`options.page`) is a slice by definition, so it is
+        // never the full pending set either.
+        const responseTruncated = serverLogs.length >= limit;
+        if (responseTruncated && !options.page) {
           logger.warn(
             "pullSiteLogs response hit the row cap — skipping stale-log cleanup to avoid false completions",
             { module: "SITE_LOG_SERVICE", count: serverLogs.length, siteCode },
           );
         }
-        if (options.status === "pending" && !responseTruncated) {
+        if (
+          options.status === "pending" &&
+          !responseTruncated &&
+          !options.page
+        ) {
           const normalizedName = normalizeLogName(options.logName);
           const conditions: any[] = [
             eq(siteLogs.log_name, normalizedName),
@@ -1875,7 +2244,11 @@ export const SiteLogService: ISiteLogService = {
           }
         }
 
-        if (serverLogs.length === 0) return;
+        const pulled: PulledPage = {
+          ids: serverIds,
+          total: Number(result.pagination?.total ?? serverIds.length),
+        };
+        if (serverLogs.length === 0) return pulled;
 
         // 2a. Logs this phone completed (signed) that the server still has as
         //     not Completed — the completion never arrived, or a stale replay
@@ -1942,6 +2315,7 @@ export const SiteLogService: ISiteLogService = {
           };
         });
         await cacheManager.write("site_logs", normalizedLogs, { stampSync });
+        return pulled;
       }
     } catch (error: any) {
       logger.error("Error pulling site logs", {
@@ -1964,10 +2338,13 @@ export const SiteLogService: ISiteLogService = {
       // in-range readings got only the newest 100 back, and every reading beyond
       // that (still on the server) was wiped locally and re-fetched next sync —
       // flapping on every cycle.
-      const url0 = `/api/chiller-readings/site/${siteCode}?limit=${PULL_SITE_LOGS_LIMIT}`;
-      let url = url0;
+      const limit = options.limit ?? PULL_SITE_LOGS_LIMIT;
+      let url = `/api/chiller-readings/site/${siteCode}?limit=${limit}`;
+      if (options.page) url += `&page=${options.page}`;
       if (options.fromDate) url += `&fromDate=${options.fromDate}`;
       if (options.toDate) url += `&toDate=${options.toDate}`;
+      if (options.filters?.length)
+        url += `&filters=${encodeURIComponent(JSON.stringify(options.filters))}`;
 
       const response = await apiFetch(url);
 
@@ -1988,16 +2365,19 @@ export const SiteLogService: ISiteLogService = {
         // COMPLETE set. If it hit the row cap, an in-range local reading could be
         // missing simply because it didn't fit the page — deleting it would drop
         // a valid server row. Skip the stale-cleanup pass entirely when truncated.
-        const responseTruncated = serverData.length >= PULL_SITE_LOGS_LIMIT;
-        if (responseTruncated) {
+        const responseTruncated = serverData.length >= limit;
+        if (responseTruncated && !options.page) {
           logger.warn(
             "pullChillerReadings response hit the row cap — skipping stale-row cleanup to avoid deleting valid readings",
             { module: "SITE_LOG_SERVICE", count: serverData.length, siteCode },
           );
         }
 
-        // Find synced records to delete if they no longer exist on the server
-        const allLocal = responseTruncated
+        // Find synced records to delete if they no longer exist on the server.
+        // Never on a page request (`options.page`) or a filtered one: both are
+        // slices, so "absent from this response" says nothing about the
+        // server, and deleting on it would wipe valid readings.
+        const allLocal = responseTruncated || options.page || options.filters?.length
           ? []
           : await db
               .select()
@@ -2101,6 +2481,10 @@ export const SiteLogService: ISiteLogService = {
           updated_at: Date.now(),
         }));
         await cacheManager.write("chiller_readings", normalizedReadings, { stampSync });
+        return {
+          ids: [...serverReadingIds] as string[],
+          total: Number(result.pagination?.total ?? serverData.length),
+        };
       }
     } catch (error: any) {
       logger.error("Error pulling chiller readings", {

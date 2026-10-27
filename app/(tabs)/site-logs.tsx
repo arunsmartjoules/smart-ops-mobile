@@ -1,4 +1,11 @@
-import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import React, {
+  useState,
+  useEffect,
+  useLayoutEffect,
+  useCallback,
+  useRef,
+  useMemo,
+} from "react";
 import { OpsTabs } from "@/components/jo/OpsTabs";
 import {
   View,
@@ -20,7 +27,10 @@ import Animated, {
 import { useAuth } from "@/contexts/AuthContext";
 import { useAttendanceGate } from "@/contexts/AttendanceGateContext";
 import { useAutoSync } from "@/hooks/useAutoSync";
-import siteLogService from "@/services/SiteLogService";
+import siteLogService, {
+  type HistoryQuery,
+  type HistoryStats,
+} from "@/services/SiteLogService";
 import {
   istTodayString,
   istDateString,
@@ -145,20 +155,11 @@ const chillerTargetFor = (siteCode: string | null) =>
   CHILLER_READINGS_PER_DAY;
 
 /**
- * "YYYY-MM-DD" → epoch ms of that day's device-local 00:00 / 23:59:59.999,
- * built from the parts (never `new Date("YYYY-MM-DD")`, which is UTC). The
- * local site-log read turns epoch bounds back into a calendar day with local
- * date parts, so local bounds round-trip to exactly these days; this matches
- * the startOfDay/endOfDay window the history panel used before.
+ * History rows per page. The panel never loads the whole window — a month of
+ * Temp & RH is 1,000–2,700+ rows per site — it pulls the next page as the
+ * list nears its end.
  */
-const localDayStartMs = (ymd: string) => {
-  const [y, m, d] = ymd.split("-").map(Number);
-  return new Date(y ?? 1970, (m ?? 1) - 1, d ?? 1).getTime();
-};
-const localDayEndMs = (ymd: string) => {
-  const [y, m, d] = ymd.split("-").map(Number);
-  return new Date(y ?? 1970, (m ?? 1) - 1, d ?? 1, 23, 59, 59, 999).getTime();
-};
+const HISTORY_PAGE_SIZE = 25;
 
 const isCompleted = (row: any) => normaliseLogStatus(row?.status) === "Completed";
 
@@ -209,9 +210,18 @@ export default function SiteLogs() {
   // The panel's date window is the shared Ops range (inclusive IST days).
   const { from: rangeFrom, to: rangeTo, preset: rangePreset } = useOpsDateRange();
   const [filterOpen, setFilterOpen] = useState(false);
-  // The panel's own rows for its date window — null while the first read runs.
+  // The pages loaded so far — null while page 1 loads.
   const [historyRows, setHistoryRows] = useState<any[] | null>(null);
+  const [historyHasMore, setHistoryHasMore] = useState(false);
+  const [historyLoadingMore, setHistoryLoadingMore] = useState(false);
+  // Whole-window counts — null while they load.
+  const [historyStats, setHistoryStats] = useState<HistoryStats | null>(null);
+  // Bumped on every reset; a page landing for an older generation is dropped.
   const historyReqRef = useRef(0);
+  const historyStatsReqRef = useRef(0);
+  const historyPageRef = useRef(0);
+  const loadingMoreRef = useRef(false);
+  const historyRowsRef = useRef<any[] | null>(null);
 
   const [startSheet, setStartSheet] = useState<StartSheet>(null);
   const [editRow, setEditRow] = useState<any | null>(null);
@@ -312,61 +322,162 @@ export default function SiteLogs() {
     [loadType],
   );
 
-  /**
-   * Loads the history panel's window for one type: local first, then a
-   * throttled pull for exactly that window. Stale responses (the filter or
-   * type changed meanwhile) are dropped.
-   */
-  const loadHistory = useCallback(
-    async (
-      key: LogKey,
-      range: { from: string; to: string },
-      opts?: { force?: boolean },
-    ) => {
-      if (!siteCode) return;
-      const req = ++historyReqRef.current;
-      const localRange = {
-        fromDate: localDayStartMs(range.from),
-        toDate: localDayEndMs(range.to),
-      };
-      const read = () =>
-        siteLogService
-          .getLogsByType(siteCode, key, localRange)
-          .catch(() => [] as any[]);
+  // Read through refs so the paging callbacks stay stable across
+  // connectivity flips (a flip must not reset the list mid-scroll).
+  const isConnectedRef = useRef(isConnected);
 
+  const historyShift: "all" | ShiftKey =
+    historyKey && tabFor(historyKey).hasShift ? filters.shift : "all";
+
+  // What the list shows — the server (or the local read) applies it, so a
+  // change here restarts at page 1.
+  const historyQuery = useMemo<HistoryQuery>(
+    () => ({
+      from: rangeFrom,
+      to: rangeTo,
+      status: filters.status,
+      shiftLabel: historyShift === "all" ? null : uiShiftToLabel(historyShift),
+    }),
+    [rangeFrom, rangeTo, filters.status, historyShift],
+  );
+  const historyQueryRef = useRef(historyQuery);
+  const historyKeyRef = useRef(historyKey);
+  // Synced before the effects below run, so they read this render's values.
+  useLayoutEffect(() => {
+    isConnectedRef.current = isConnected;
+    historyQueryRef.current = historyQuery;
+    historyKeyRef.current = historyKey;
+    historyRowsRef.current = historyRows;
+  });
+
+  /** Loads one page for the current generation; false if it went stale. */
+  const loadHistoryPage = useCallback(
+    async (key: LogKey, query: HistoryQuery, page: number, req: number) => {
+      if (!siteCode) return false;
       try {
-        const local = await read();
-        if (req === historyReqRef.current) setHistoryRows(local);
-
-        const cacheKey = `${siteCode}:${key}:${range.from}:${range.to}`;
-        const now = Date.now();
-        const last = lastSyncRef.current[cacheKey] ?? 0;
-        const stale = opts?.force || now - last > 1000 * 60 * 5;
-        if (!isConnected || !stale) return;
-
-        if (key === "Chiller Logs") {
-          await siteLogService.pullChillerReadings(siteCode, localRange);
-        } else {
-          await siteLogService.pullSiteLogs(siteCode, {
-            fromDate: range.from,
-            toDate: range.to,
-            logName: key,
-          });
-        }
-        lastSyncRef.current[cacheKey] = now;
-
-        const fresh = await read();
-        if (req === historyReqRef.current) setHistoryRows(fresh);
+        const res = await siteLogService.fetchHistoryPage(
+          siteCode,
+          key,
+          query,
+          page,
+          HISTORY_PAGE_SIZE,
+          { online: !!isConnectedRef.current },
+        );
+        if (req !== historyReqRef.current) return false;
+        historyPageRef.current = page;
+        setHistoryRows((prev) => {
+          if (page === 1 || !prev) return res.rows;
+          // A row inserted server-side between pages shifts the offsets by
+          // one, which repeats the boundary row — drop it.
+          const seen = new Set(prev.map((r) => r.id));
+          return [...prev, ...res.rows.filter((r) => !seen.has(r.id))];
+        });
+        setHistoryHasMore(res.hasMore);
+        return true;
       } catch (e) {
-        loggerUtil.warn("Site logs history load failed", {
+        loggerUtil.warn("Site logs history page failed", {
           module: "SITE_LOGS_SCREEN",
           logName: key,
+          page,
           error: e,
         });
+        if (req === historyReqRef.current) {
+          setHistoryRows((prev) => prev ?? []);
+          setHistoryHasMore(false);
+        }
+        return false;
       }
     },
-    [siteCode, isConnected],
+    [siteCode],
   );
+
+  /** Restarts the list at page 1 for the current type + query. */
+  const resetHistoryRows = useCallback(async () => {
+    const key = historyKeyRef.current;
+    if (!key || !siteCode) return;
+    const req = ++historyReqRef.current;
+    historyPageRef.current = 0;
+    loadingMoreRef.current = false;
+    setHistoryLoadingMore(false);
+    setHistoryHasMore(false);
+    setHistoryRows(null);
+    await loadHistoryPage(key, historyQueryRef.current, 1, req);
+  }, [siteCode, loadHistoryPage]);
+
+  /** Next page, when the list nears its end. */
+  const loadMoreHistory = useCallback(async () => {
+    const key = historyKeyRef.current;
+    if (!key || !historyHasMore || loadingMoreRef.current) return;
+    if (historyRowsRef.current === null) return;
+    const req = historyReqRef.current;
+    loadingMoreRef.current = true;
+    setHistoryLoadingMore(true);
+    try {
+      await loadHistoryPage(key, historyQueryRef.current, historyPageRef.current + 1, req);
+    } finally {
+      if (req === historyReqRef.current) {
+        loadingMoreRef.current = false;
+        setHistoryLoadingMore(false);
+      }
+    }
+  }, [historyHasMore, loadHistoryPage]);
+
+  /** Whole-window counters (status-agnostic, so filters don't refetch them). */
+  const loadHistoryStats = useCallback(async () => {
+    const key = historyKeyRef.current;
+    if (!key || !siteCode) return;
+    const req = ++historyStatsReqRef.current;
+    const { from, to } = historyQueryRef.current;
+    try {
+      const stats = await siteLogService.fetchHistoryStats(siteCode, key, { from, to }, {
+        online: !!isConnectedRef.current,
+      });
+      if (req === historyStatsReqRef.current) setHistoryStats(stats);
+    } catch (e) {
+      // Keep the previous counters rather than flashing zeroes.
+      loggerUtil.warn("Site logs history stats failed", {
+        module: "SITE_LOGS_SCREEN",
+        logName: key,
+        error: e,
+      });
+    }
+  }, [siteCode]);
+
+  /**
+   * Focus / poll / after an edit: re-read the rows already on screen from the
+   * device (picks up edits made in an entry screen) and refresh the counters,
+   * without collapsing the list back to page 1.
+   */
+  const refreshHistoryInPlace = useCallback(async () => {
+    const key = historyKeyRef.current;
+    const rows = historyRowsRef.current;
+    if (!key || !rows) return;
+    void loadHistoryStats();
+    const req = historyReqRef.current;
+    try {
+      const fresh = await siteLogService.getLogsByIds(
+        key,
+        rows.map((r) => String(r.id)),
+      );
+      if (req === historyReqRef.current) setHistoryRows(fresh);
+    } catch (e) {
+      loggerUtil.warn("Site logs history refresh failed", {
+        module: "SITE_LOGS_SCREEN",
+        logName: key,
+        error: e,
+      });
+    }
+  }, [loadHistoryStats]);
+
+  // Panel opened, or its type / window / filters changed: page 1 again.
+  useEffect(() => {
+    if (siteCode && historyKey) void resetHistoryRows();
+  }, [siteCode, historyKey, historyQuery, resetHistoryRows]);
+
+  // Counters follow the type + window only.
+  useEffect(() => {
+    if (siteCode && historyKey) void loadHistoryStats();
+  }, [siteCode, historyKey, rangeFrom, rangeTo, loadHistoryStats]);
 
   // Every type on mount and on site change.
   useEffect(() => {
@@ -377,7 +488,7 @@ export default function SiteLogs() {
   useAutoSync(() => {
     if (!siteCode) return;
     void loadAll();
-    if (historyKey) void loadHistory(historyKey, { from: rangeFrom, to: rangeTo });
+    if (historyKey) void refreshHistoryInPlace();
   }, [siteCode, historyKey, rangeFrom, rangeTo]);
 
   // Coming back from an entry screen: re-read every bucket so the counts
@@ -388,18 +499,17 @@ export default function SiteLogs() {
     useCallback(() => {
       if (!siteCode) return;
       void loadAll();
-      if (historyKey) void loadHistory(historyKey, { from: rangeFrom, to: rangeTo });
-    }, [siteCode, historyKey, rangeFrom, rangeTo, loadAll, loadHistory]),
+      void refreshHistoryInPlace();
+    }, [siteCode, loadAll, refreshHistoryInPlace]),
   );
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    // In the history panel only its own type + window needs the forced pull.
-    if (historyKey)
-      await loadHistory(historyKey, { from: rangeFrom, to: rangeTo }, { force: true });
+    // In the history panel: page 1 again plus fresh counters.
+    if (historyKey) await Promise.all([resetHistoryRows(), loadHistoryStats()]);
     else await loadAll({ force: true });
     setRefreshing(false);
-  }, [historyKey, rangeFrom, rangeTo, loadHistory, loadAll]);
+  }, [historyKey, resetHistoryRows, loadHistoryStats, loadAll]);
 
   // ── Overview: today's counts per type ────────────────────────────────────
   const today = istTodayString();
@@ -470,6 +580,7 @@ export default function SiteLogs() {
     Haptics.selectionAsync().catch(() => {});
     setFilters(DEFAULT_HISTORY_FILTERS);
     setHistoryRows(null);
+    setHistoryStats(null);
     setHistoryKey(key);
   }, []);
 
@@ -488,41 +599,32 @@ export default function SiteLogs() {
     return () => sub.remove();
   }, [historyKey]);
 
-  const historyShift = historyTab?.hasShift ? filters.shift : "all";
+  // Rows arrive already filtered (server-side, or by the local read).
+  const visibleRows = historyRows ?? [];
 
-  const shiftScopedRows = useMemo(() => {
-    const rows = historyRows ?? [];
-    if (historyShift === "all") return rows;
-    return rows.filter((r) => inShift(r, historyShift));
-  }, [historyRows, historyShift]);
-
-  const visibleRows = useMemo(() => {
-    if (filters.status === "pending")
-      return shiftScopedRows.filter((r) => !isCompleted(r));
-    if (filters.status === "completed")
-      return shiftScopedRows.filter(isCompleted);
-    return shiftScopedRows;
-  }, [shiftScopedRows, filters.status]);
+  /** The selected shift's counts (or the whole window's). */
+  const scopeCount = useMemo(() => {
+    if (!historyStats) return null;
+    if (historyShift !== "all" && historyStats.byShift)
+      return historyStats.byShift[historyShift];
+    return historyStats;
+  }, [historyStats, historyShift]);
 
   /**
-   * Top counters for the window (and shift). Site logs count their rows.
+   * Top counters for the window (and shift), from the whole-window stats.
    * Chiller has no scheduled rows, so it scores against the daily target:
    * total = target × days elapsed in the window, completed = readings capped
    * per day, pending = the shortfall.
    */
   const historyCounts = useMemo(() => {
+    if (!historyStats || !scopeCount) return { total: 0, completed: 0, pending: 0 };
     if (historyKey === "Chiller Logs") {
       const target = chillerTargetFor(siteCode);
+      const perDay = historyStats.completedPerDay ?? {};
       // Days in the window up to today — future days owe nothing yet.
       const days: string[] = [];
       for (let d = rangeFrom; d <= rangeTo && d <= today; d = addDaysIso(d, 1)) {
         days.push(d);
-      }
-      const perDay: Record<string, number> = {};
-      for (const r of shiftScopedRows) {
-        if (!isCompleted(r)) continue;
-        const day = rowDay(r);
-        perDay[day] = (perDay[day] ?? 0) + 1;
       }
       const completed = days.reduce(
         (sum, day) => sum + Math.min(perDay[day] ?? 0, target),
@@ -531,39 +633,45 @@ export default function SiteLogs() {
       const total = target * days.length;
       return { total, completed, pending: total - completed };
     }
-    const completed = shiftScopedRows.filter(isCompleted).length;
     return {
-      total: shiftScopedRows.length,
-      completed,
-      pending: shiftScopedRows.length - completed,
+      total: scopeCount.total,
+      completed: scopeCount.completed,
+      pending: scopeCount.total - scopeCount.completed,
     };
-  }, [historyKey, siteCode, rangeFrom, rangeTo, shiftScopedRows, today]);
+  }, [historyStats, scopeCount, historyKey, siteCode, rangeFrom, rangeTo, today]);
 
   /** Temp & RH: pending/done per shift over the window (status-agnostic). */
   const historyShiftCounts = useMemo(() => {
     if (!historyTab?.hasShift) return null;
-    const rows = historyRows ?? [];
+    const by = historyStats?.byShift;
     return SHIFTS.map((sh) => {
-      const shiftRows = rows.filter((r) => inShift(r, sh));
-      const done = shiftRows.filter(isCompleted).length;
+      const c = by?.[sh] ?? { total: 0, completed: 0 };
       return {
         label: `Shift ${sh}`,
-        pending: shiftRows.length - done,
-        completed: done,
+        pending: c.total - c.completed,
+        completed: c.completed,
       };
     });
-  }, [historyTab, historyRows]);
+  }, [historyTab, historyStats]);
+
+  /** Rows matching the current filters across the whole window. */
+  const matchingCount = useMemo(() => {
+    if (!scopeCount) return null;
+    if (filters.status === "completed") return scopeCount.completed;
+    if (filters.status === "pending") return scopeCount.total - scopeCount.completed;
+    return scopeCount.total;
+  }, [scopeCount, filters.status]);
 
   // The Ops header (where the range is set) is covered by the panel, so the
   // panel names the window it shows: "This month · 01–31 Oct · 12 entries".
   const historyLabel = useMemo(() => {
     if (!historyKey) return "";
-    const n = visibleRows.length;
     const range = formatOpsRange(rangeFrom, rangeTo);
     const windowLabel =
       rangePreset === "custom" ? range : `${PRESET_LABEL[rangePreset]} · ${range}`;
-    return `${windowLabel} · ${n} ${n === 1 ? "entry" : "entries"}`;
-  }, [historyKey, rangeFrom, rangeTo, rangePreset, visibleRows.length]);
+    if (matchingCount === null) return windowLabel;
+    return `${windowLabel} · ${matchingCount} ${matchingCount === 1 ? "entry" : "entries"}`;
+  }, [historyKey, rangeFrom, rangeTo, rangePreset, matchingCount]);
 
   const historyLoading = historyKey !== null && historyRows === null;
 
@@ -639,7 +747,9 @@ export default function SiteLogs() {
         );
         setEditRow(null);
         void loadType(key, { force: true });
-        void loadHistory(key, { from: rangeFrom, to: rangeTo }, { force: true });
+        // Counters only — the edited row is already patched in place, and a
+        // reset would throw away the pages scrolled so far.
+        void loadHistoryStats();
       } catch (e) {
         loggerUtil.warn("Site log update failed", {
           module: "SITE_LOGS_SCREEN",
@@ -649,7 +759,7 @@ export default function SiteLogs() {
         setSavingEdit(false);
       }
     },
-    [editRow, historyKey, loadType, loadHistory, rangeFrom, rangeTo],
+    [editRow, historyKey, loadType, loadHistoryStats],
   );
 
   /**
@@ -890,6 +1000,15 @@ export default function SiteLogs() {
             }}
             showsVerticalScrollIndicator={false}
             refreshControl={refreshControl}
+            onEndReached={() => void loadMoreHistory()}
+            onEndReachedThreshold={0.5}
+            ListFooterComponent={
+              historyLoadingMore ? (
+                <View style={{ paddingVertical: 16 }}>
+                  <ActivityIndicator size="small" color={t.muted} />
+                </View>
+              ) : null
+            }
             ListEmptyComponent={
               historyLoading ? (
                 <View style={{ gap: 8 }}>
