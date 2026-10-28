@@ -20,7 +20,6 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-import Animated, { FadeIn, SlideInDown } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Bx, type BxName } from "@/components/jo/Bx";
 import {
@@ -582,17 +581,22 @@ export function EarlyCheckoutSheet({
   const insets = useSafeAreaInsets();
   const [focused, setFocused] = useState(false);
   return (
-    <Modal visible={visible} transparent animationType="none" onRequestClose={onCancel} statusBarTranslucent>
-      <Animated.View entering={FadeIn.duration(180)} style={[StyleSheet.absoluteFill, { backgroundColor: t.scrim }]}>
-        <Pressable style={StyleSheet.absoluteFill} onPress={onCancel} accessibilityLabel="Close" />
-      </Animated.View>
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onCancel} statusBarTranslucent>
+      {/* Plain Modal + native slide, like the PM sign sheet. Reanimated
+          entering animations inside a Modal left the sheet's buttons
+          unreachable on Android — taps fell through to this backdrop
+          (see components/sitelogs/SignatureSheet). */}
+      <Pressable
+        style={[StyleSheet.absoluteFill, { backgroundColor: t.scrim }]}
+        onPress={onCancel}
+        accessibilityLabel="Close"
+      />
       <KeyboardAvoidingView
         style={{ flex: 1, justifyContent: "flex-end" }}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
         pointerEvents="box-none"
       >
-        <Animated.View
-          entering={SlideInDown.duration(260)}
+        <View
           style={{
             marginHorizontal: 8,
             marginBottom: 8 + insets.bottom,
@@ -668,7 +672,7 @@ export function EarlyCheckoutSheet({
               style={{ flex: 1 }}
             />
           </View>
-        </Animated.View>
+        </View>
       </KeyboardAvoidingView>
     </Modal>
   );

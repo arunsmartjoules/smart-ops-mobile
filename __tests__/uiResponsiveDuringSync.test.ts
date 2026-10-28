@@ -74,6 +74,9 @@ describe("CacheManager.write", () => {
   });
 });
 
+/** An app that stays in the foreground for the whole test. */
+const activeApp = { currentState: "active" as const, addEventListener: () => ({ remove: () => {} }) } as any;
+
 describe("startJsStallMonitor", () => {
   beforeEach(() => jest.useFakeTimers());
   afterEach(() => jest.useRealTimers());
@@ -86,7 +89,7 @@ describe("startJsStallMonitor", () => {
 
   it("stays quiet while the thread keeps up", () => {
     const c = clock();
-    const stop = startJsStallMonitor(() => ({}), c.now);
+    const stop = startJsStallMonitor(() => ({}), c.now, activeApp);
     for (let i = 0; i < 10; i += 1) c.tick(1_000);
     stop();
     expect(mockActivity).not.toHaveBeenCalled();
@@ -94,7 +97,7 @@ describe("startJsStallMonitor", () => {
 
   it("reports a block longer than 3s with its context", () => {
     const c = clock();
-    const stop = startJsStallMonitor(() => ({ route: "/chiller", sync_step: "pull:pm_instances" }), c.now);
+    const stop = startJsStallMonitor(() => ({ route: "/chiller", sync_step: "pull:pm_instances" }), c.now, activeApp);
     c.tick(9_000);
     stop();
     expect(mockActivity.mock.calls[0][3]).toMatchObject({
@@ -104,9 +107,46 @@ describe("startJsStallMonitor", () => {
     });
   });
 
+  it("ignores time the app spent in the background", () => {
+    const c = clock();
+    let listener: ((s: string) => void) | null = null;
+    const appState = {
+      currentState: "active" as const,
+      addEventListener: (_: string, fn: (s: string) => void) => {
+        listener = fn;
+        return { remove: () => {} };
+      },
+    };
+    const stop = startJsStallMonitor(() => ({}), c.now, appState as any);
+    listener!("background");
+    c.tick(600_000); // phone locked for 10 minutes
+    stop();
+    expect(mockActivity).not.toHaveBeenCalled();
+  });
+
+  it("still reports a real block after returning to the foreground", () => {
+    const c = clock();
+    let listener: ((s: string) => void) | null = null;
+    const appState = {
+      currentState: "active" as const,
+      addEventListener: (_: string, fn: (s: string) => void) => {
+        listener = fn;
+        return { remove: () => {} };
+      },
+    };
+    const stop = startJsStallMonitor(() => ({}), c.now, appState as any);
+    listener!("background");
+    c.tick(600_000);
+    listener!("active");
+    c.tick(1_000);
+    c.tick(9_000); // a real 8s block while active
+    stop();
+    expect(mockActivity.mock.calls[0]?.[3]).toMatchObject({ blocked_ms: 8_000 });
+  });
+
   it("reports at most once a minute", () => {
     const c = clock();
-    const stop = startJsStallMonitor(() => ({}), c.now);
+    const stop = startJsStallMonitor(() => ({}), c.now, activeApp);
     c.tick(5_000);
     c.tick(5_000);
     c.tick(5_000);

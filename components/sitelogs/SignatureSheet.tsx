@@ -1,6 +1,15 @@
 /**
  * "Sign to complete" bottom sheet in the artboard language.
  *
+ * Built like the PM sign sheet (components/pm/PMExecUI): a plain Modal with
+ * the native slide animation. It used to animate in with Reanimated layout
+ * animations (FadeIn / SlideInDown) inside a `animationType="none"` Modal;
+ * on Android that left the sheet's buttons unreachable — taps on
+ * "Save signature" and "Clear" fell through to the backdrop and only closed
+ * the sheet, while the pad (gesture handler) still drew. Reproduced on an
+ * Android 15 emulator, 28 Oct 2026; it was the "Complete & sign does
+ * nothing" report on Chiller, Water and Chemical.
+ *
  * The sheet only collects the signature. On confirm it encodes the strokes into
  * an SVG data URI in plain JS (utils/signatureSvg) and hands that string to
  * `onOK` synchronously — no native snapshot or file involved, so confirming
@@ -12,7 +21,6 @@ import React, { useRef, useState } from "react";
 import { Alert, Modal, Pressable, StyleSheet, Text, View, type LayoutChangeEvent } from "react-native";
 import Svg, { Path } from "react-native-svg";
 import { GestureHandlerRootView, PanGestureHandler, State } from "react-native-gesture-handler";
-import Animated, { FadeIn, SlideInDown } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { IconButton, PrimaryButton, SecondaryButton, f, useJoTheme } from "@/components/jo/ui";
 import {
@@ -101,13 +109,14 @@ export function SignatureSheet({
   };
 
   return (
-    <Modal visible={visible} transparent animationType="none" onRequestClose={close} statusBarTranslucent>
-      <Animated.View entering={FadeIn.duration(180)} style={[StyleSheet.absoluteFill, { backgroundColor: t.scrim }]}>
-        <Pressable style={StyleSheet.absoluteFill} onPress={close} accessibilityLabel="Close" />
-      </Animated.View>
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={close} statusBarTranslucent>
+      <Pressable
+        style={[StyleSheet.absoluteFill, { backgroundColor: t.scrim }]}
+        onPress={close}
+        accessibilityLabel="Close"
+      />
       <View style={{ flex: 1, justifyContent: "flex-end" }} pointerEvents="box-none">
-        <Animated.View
-          entering={SlideInDown.duration(260)}
+        <View
           style={{
             height: "62%",
             marginHorizontal: 8,
@@ -170,7 +179,7 @@ export function SignatureSheet({
             <SecondaryButton label="Clear" icon="bx-eraser" onPress={clear} style={{ paddingHorizontal: 20 }} />
             <PrimaryButton label={okText} icon="bx-check" onPress={confirm} height={52} style={{ flex: 1 }} />
           </View>
-        </Animated.View>
+        </View>
       </View>
     </Modal>
   );

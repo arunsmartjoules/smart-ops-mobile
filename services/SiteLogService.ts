@@ -876,6 +876,18 @@ const finiteOrNull = (v: unknown): number | null =>
  * it or it is waiting in the queue (SyncEngine retries `site_log_submit`).
  */
 export async function submitSiteLogs(input: SiteLogSubmitInput): Promise<SiteLogSubmitOutcome> {
+  const startedMs = Date.now();
+  const outcome = await submitSiteLogsOnce(input);
+  reportSubmitOutcome("SITE_LOG", outcome, {
+    site_code: input.siteCode,
+    log_type: input.activityLogType,
+    rows: input.rows.length,
+    took_ms: Date.now() - startedMs,
+  });
+  return outcome;
+}
+
+async function submitSiteLogsOnce(input: SiteLogSubmitInput): Promise<SiteLogSubmitOutcome> {
   const now = Date.now();
 
   const rows = await Promise.all(
@@ -996,6 +1008,15 @@ export type ChillerValueField =
 export interface ChillerSubmitInput {
   /** The reading being edited; omit for a new reading. */
   existingId?: string | null;
+  /**
+   * Id for a NEW reading. The screen generates it once per reading and keeps
+   * it in the draft, so a second tap of Complete (after "saved on this phone",
+   * or an app restart) re-sends the SAME reading instead of a new one: the
+   * server has a unique (site, chiller, reading_time) rule, and a new id for
+   * the same instant was rejected as "Duplicate field value entered"
+   * (KIMS Mumbai, 28 Oct, five taps in a row).
+   */
+  newId?: string | null;
   siteCode: string;
   chillerId: string;
   equipmentId: string;
@@ -1010,6 +1031,24 @@ export interface ChillerSubmitInput {
   remarks: string | null;
   attachment: string | null;
   signature: string;
+}
+
+/**
+ * One small activity row per Complete & sign, whatever happened. Cheap, and
+ * the only way to tell from the server whether an operator's tap did
+ * anything — "frozen / same issue" reports otherwise leave no trace.
+ */
+function reportSubmitOutcome(
+  module: "SITE_LOG" | "CHILLER_READING",
+  outcome: SiteLogSubmitOutcome,
+  context: Record<string, unknown>,
+): void {
+  logger.activity("LOG_SUBMIT", module, `Complete & sign → ${outcome.state}`, {
+    ...context,
+    outcome: outcome.state,
+    ...(outcome.state === "rejected" ? { message: outcome.message } : {}),
+    ...(outcome.state === "uploaded" ? { shift_incomplete: outcome.shiftIncomplete } : {}),
+  });
 }
 
 /** Classify an upload response the same way for every one-shot submit. */
@@ -1039,8 +1078,22 @@ async function submitOutcomeOf(response: Response, label: string): Promise<SiteL
 export async function submitChillerReading(
   input: ChillerSubmitInput,
 ): Promise<SiteLogSubmitOutcome & { id: string }> {
+  const startedMs = Date.now();
+  const outcome = await submitChillerReadingOnce(input);
+  reportSubmitOutcome("CHILLER_READING", outcome, {
+    site_code: input.siteCode,
+    reading_id: outcome.id,
+    edit: !!input.existingId,
+    took_ms: Date.now() - startedMs,
+  });
+  return outcome;
+}
+
+async function submitChillerReadingOnce(
+  input: ChillerSubmitInput,
+): Promise<SiteLogSubmitOutcome & { id: string }> {
   const now = Date.now();
-  const id = input.existingId || uuidv4();
+  const id = input.existingId || input.newId || uuidv4();
   const values = Object.fromEntries(
     Object.entries(input.values).map(([k, v]) => [k, finiteOrNull(v)]),
   );
@@ -1066,7 +1119,9 @@ export async function submitChillerReading(
     updated_at: now,
   };
 
-  if (input.existingId) {
+  const [already] = await db.select({ id: chillerReadings.id }).from(chillerReadings).where(eq(chillerReadings.id, id)).limit(1);
+  if (input.existingId || already) {
+    // An edit, or a re-send of a new reading already saved on this phone.
     await db.update(chillerReadings).set(common as any).where(eq(chillerReadings.id, id));
   } else {
     await db.insert(chillerReadings).values({
@@ -1113,7 +1168,18 @@ export async function submitChillerReading(
   }
 
   const outcome = await submitOutcomeOf(response, "submitChillerReading");
-  if (outcome.state === "uploaded" && queueId) await cacheManager.dequeue(queueId);
+  if (outcome.state === "uploaded") {
+    if (queueId) await cacheManager.dequeue(queueId);
+    // The server may answer with the row it already had for this reading
+    // (same chiller + instant, different id). Adopt its id so the phone's
+    // copy and the server's agree, as the old create path did.
+    const body = await response.json().catch(() => null);
+    const serverId = body?.data?.id;
+    if (typeof serverId === "string" && serverId && serverId !== id) {
+      await db.update(chillerReadings).set({ id: serverId, updated_at: Date.now() }).where(eq(chillerReadings.id, id));
+      return { ...outcome, id: serverId };
+    }
+  }
   return { ...outcome, id };
 }
 

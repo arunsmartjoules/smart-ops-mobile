@@ -13,6 +13,9 @@ import DateTimePicker, {
   DateTimePickerAndroid,
 } from "@react-native-community/datetimepicker";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { v4 as uuidv4 } from "uuid";
+import logger from "@/utils/logger";
+import { describeChillerLock } from "@/components/sitelogs/completionGate";
 import { SiteLogService, submitChillerReading } from "@/services/SiteLogService";
 import { formatAssignee, operatorLabel } from "@/utils/assignee";
 import AssetService from "@/services/AssetService";
@@ -160,6 +163,9 @@ function ChillerEntryContent() {
   // When the operator entered the first value — becomes the reading's start
   // time. Nothing is sent to the server before Complete & sign.
   const startedAtRef = useRef<number | null>(null);
+  // Id of the NEW reading being entered — fixed for the whole session (and
+  // kept in the draft) so every Complete tap sends the same reading.
+  const newReadingIdRef = useRef<string>(uuidv4());
 
   const isEditMode = !!(params.editId || params.id);
   const targetId = (params.editId || params.id || "") as string;
@@ -234,6 +240,7 @@ function ChillerEntryContent() {
         if (draft?.formData) setFormData((prev) => ({ ...prev, ...draft.formData }));
         if (Number.isFinite(draft?.readingTime)) setReadingTime(draft.readingTime);
         if (Number.isFinite(draft?.startedAt)) startedAtRef.current = draft.startedAt;
+        if (typeof draft?.readingId === "string" && draft.readingId) newReadingIdRef.current = draft.readingId;
       })
       .catch(() => {});
   }, [draftKey, isEditMode]);
@@ -243,7 +250,12 @@ function ChillerEntryContent() {
     const timer = setTimeout(() => {
       AsyncStorage.setItem(
         draftKey,
-        JSON.stringify({ formData, readingTime, startedAt: startedAtRef.current }),
+        JSON.stringify({
+          formData,
+          readingTime,
+          startedAt: startedAtRef.current,
+          readingId: newReadingIdRef.current,
+        }),
       ).catch(() => {});
     }, 400);
     return () => clearTimeout(timer);
@@ -568,6 +580,7 @@ function ChillerEntryContent() {
       const assetName = selectedAsset?.label || f.chillerId;
       const outcome = await submitChillerReading({
         existingId: isEditMode ? targetId : null,
+        newId: isEditMode ? null : newReadingIdRef.current,
         siteCode: selectedSite,
         chillerId: assetName,
         equipmentId: f.chillerId,
@@ -613,6 +626,8 @@ function ChillerEntryContent() {
       // The phone's copy and the queued upload now hold everything.
       if (draftKey) await AsyncStorage.removeItem(draftKey).catch(() => {});
       startedAtRef.current = null;
+      // The next reading on this screen is a new one.
+      newReadingIdRef.current = uuidv4();
 
       Alert.alert(
         outcome.state === "queued" ? "Saved on this phone" : "Success",
@@ -623,7 +638,13 @@ function ChillerEntryContent() {
         { cancelable: false },
       );
     } catch (error: any) {
-      // Only a failure to save on the phone itself lands here.
+      // Only a failure to save on the phone itself lands here. Report it:
+      // until now these dialogs left no trace anywhere we could see.
+      logger.activity("LOG_SUBMIT_FAILED", "CHILLER_READING", "Chiller completion failed on the phone", {
+        site_code: selectedSite,
+        edit_mode: isEditMode,
+        error: error?.message ?? String(error),
+      });
       Alert.alert("Error", error?.message || "Failed to save reading");
     } finally {
       setSaving(false);
@@ -737,6 +758,25 @@ function ChillerEntryContent() {
   const chillerLabel =
     assets.find((o) => o.value === formData.chillerId)?.label || formData.chillerId;
   const canComplete = !!formData.chillerId && allMandatoryFilled;
+
+  // Every tap answers (see components/sitelogs/completionGate) and is reported.
+  const onCompletePress = () => {
+    const reason = describeChillerLock({
+      hasChiller: !!formData.chillerId,
+      missing: missingMandatoryFields,
+    });
+    logger.activity("COMPLETE_TAP", "CHILLER_READING", "Complete & sign tapped (chiller)", {
+      site_code: selectedSite,
+      edit_mode: isEditMode,
+      missing: missingMandatoryFields,
+      blocked: reason,
+    });
+    if (reason) {
+      Alert.alert("Not ready to complete", reason);
+      return;
+    }
+    setSignatureModalVisible(true);
+  };
 
   return (
     <JoPage glow={false}>
@@ -891,9 +931,8 @@ function ChillerEntryContent() {
           <PrimaryButton
             label="Complete & sign"
             icon={canComplete ? "bx-check" : "bx-lock-alt"}
-            onPress={() => setSignatureModalVisible(true)}
+            onPress={onCompletePress}
             busy={saving}
-            disabled={!canComplete}
           />
         </BottomBar>
       </KeyboardAvoidingView>

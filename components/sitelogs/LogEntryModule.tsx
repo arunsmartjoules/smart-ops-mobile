@@ -20,6 +20,8 @@ import {
   type SiteLogSubmitRow,
 } from "@/services/SiteLogService";
 import syncEngine from "@/services/SyncEngine";
+import logger from "@/utils/logger";
+import { describeLogLock } from "./completionGate";
 import { uiShiftToLabel } from "@/services/LogActivityMasterService";
 import { UnifiedLogItem } from "./UnifiedLogItem";
 import { DateNavBar } from "./DateNavBar";
@@ -449,7 +451,6 @@ export const LogEntryModule = ({
       setShowSignature(true);
       return;
     }
-
     setIsSubmitting(true);
     try {
       let rows: SiteLogSubmitRow[];
@@ -486,7 +487,6 @@ export const LogEntryModule = ({
           });
         }
       }
-
       const outcome = await submitSiteLogs({
         siteCode,
         activityLogType,
@@ -496,7 +496,6 @@ export const LogEntryModule = ({
         signature: effectiveSignature || null,
         rows,
       });
-
       if (outcome.state === "rejected") {
         Alert.alert(
           "Couldn't upload",
@@ -535,7 +534,14 @@ export const LogEntryModule = ({
         { cancelable: false },
       );
     } catch (error: any) {
-      // Only a failure to save on the phone itself lands here.
+      // Only a failure to save on the phone itself lands here. Report it:
+      // until now these dialogs left no trace anywhere we could see.
+      logger.activity("LOG_SUBMIT_FAILED", "SITE_LOG", `${type} completion failed on the phone`, {
+        site_code: siteCode,
+        log_type: type,
+        edit_mode: isEditMode,
+        error: error?.message ?? String(error),
+      });
       Alert.alert("Error", error?.message || "Failed to save logs. Please try again.");
     } finally {
       setIsSubmitting(false);
@@ -543,6 +549,29 @@ export const LogEntryModule = ({
   };
 
   const locked = !isEditMode && !allScheduledTasksComplete;
+
+  // Every tap answers: a reason when the log isn't ready, otherwise submit.
+  // Each tap is also reported, so a "button does nothing" report can be
+  // checked against what the phone actually saw.
+  const onCompletePress = () => {
+    const reason = locked
+      ? describeLogLock({ type, loading, total: tasks.length, filled: filledCount })
+      : null;
+    logger.activity("COMPLETE_TAP", "SITE_LOG", `Complete & sign tapped (${type})`, {
+      site_code: siteCode,
+      log_type: type,
+      edit_mode: isEditMode,
+      rooms: tasks.length,
+      filled: filledCount,
+      loading,
+      blocked: reason,
+    });
+    if (reason) {
+      Alert.alert("Not ready to complete", reason);
+      return;
+    }
+    void handleSubmit();
+  };
   const heading =
     type === "Chemical"
       ? "Tick each point that was dosed"
@@ -714,9 +743,8 @@ export const LogEntryModule = ({
             <PrimaryButton
               label={isEditMode ? "Update log" : signature ? "Submit logs" : "Complete & sign"}
               icon={locked ? "bx-lock-alt" : "bx-check"}
-              onPress={() => handleSubmit()}
+              onPress={onCompletePress}
               busy={isSubmitting}
-              disabled={locked}
             />
           </BottomBar>
         )}

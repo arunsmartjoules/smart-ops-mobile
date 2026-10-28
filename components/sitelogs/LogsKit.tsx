@@ -26,7 +26,6 @@ import {
   type ViewStyle,
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
-import Animated, { FadeIn, SlideInDown } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { router } from "expo-router";
 import { Bx, type BxName } from "@/components/jo/Bx";
@@ -765,17 +764,22 @@ export function FormSheet({
   const t = useJoTheme();
   const insets = useSafeAreaInsets();
   return (
-    <Modal visible={visible} transparent animationType="none" onRequestClose={onClose} statusBarTranslucent>
-      <Animated.View entering={FadeIn.duration(180)} style={[StyleSheet.absoluteFill, { backgroundColor: t.scrim }]}>
-        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} accessibilityLabel="Close" />
-      </Animated.View>
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose} statusBarTranslucent>
+      {/* Plain Modal + native slide, like the PM sign sheet. Reanimated
+          entering animations inside a Modal left the sheet's buttons
+          unreachable on Android — taps fell through to this backdrop
+          (see components/sitelogs/SignatureSheet). */}
+      <Pressable
+        style={[StyleSheet.absoluteFill, { backgroundColor: t.scrim }]}
+        onPress={onClose}
+        accessibilityLabel="Close"
+      />
       <KeyboardAvoidingView
         style={{ flex: 1, justifyContent: "flex-end" }}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
         pointerEvents="box-none"
       >
-        <Animated.View
-          entering={SlideInDown.duration(260)}
+        <View
           style={{
             marginHorizontal: 8,
             marginBottom: 8 + insets.bottom,
@@ -805,7 +809,7 @@ export function FormSheet({
           </View>
           {children}
           {footer}
-        </Animated.View>
+        </View>
       </KeyboardAvoidingView>
     </Modal>
   );

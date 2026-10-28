@@ -30,7 +30,11 @@ jest.mock("../database", () => {
       update: (t: any) => ({
         set: (fields: Row) => ({
           where: async (cond: any) => {
-            for (const r of rowsOf(t.__name, cond)) mockTables[t.__name]!.set(r.id, { ...r, ...fields });
+            for (const r of rowsOf(t.__name, cond)) {
+              const next = { ...r, ...fields };
+              mockTables[t.__name]!.delete(r.id); // an id change re-keys the row
+              mockTables[t.__name]!.set(next.id, next);
+            }
           },
         }),
       }),
@@ -268,6 +272,30 @@ describe("submitChillerReading", () => {
     mockFetch.mockResolvedValue(ok());
     await submitChillerReading(reading());
     expect(mockQueue.size).toBe(0);
+  });
+
+  describe("tapping Complete again for the same new reading", () => {
+    const NEW_ID = "11111111-2222-4333-8444-555555555555";
+
+    it("sends the same id both times", async () => {
+      mockFetch.mockResolvedValue(ok());
+      await submitChillerReading(reading({ newId: NEW_ID }));
+      await submitChillerReading(reading({ newId: NEW_ID }));
+      expect(mockFetch.mock.calls.map((c) => JSON.parse(c[1].body).id)).toEqual([NEW_ID, NEW_ID]);
+    });
+
+    it("keeps one row on the phone", async () => {
+      offline();
+      await submitChillerReading(reading({ newId: NEW_ID }));
+      await submitChillerReading(reading({ newId: NEW_ID }));
+      expect(mockTables.chiller_readings!.size).toBe(1);
+    });
+
+    it("adopts the server's id when it already had this reading", async () => {
+      mockFetch.mockResolvedValue(ok({ id: "server-id" }));
+      const outcome = await submitChillerReading(reading({ newId: NEW_ID }));
+      expect([outcome.id, mockTables.chiller_readings!.has("server-id")]).toEqual(["server-id", true]);
+    });
   });
 
   describe("editing an existing reading", () => {
