@@ -18,6 +18,7 @@ function ensureSiteLogsColumns() {
     "ALTER TABLE site_logs ADD COLUMN main_remarks TEXT",
     "ALTER TABLE site_logs ADD COLUMN meta_date TEXT",
     "ALTER TABLE site_logs ADD COLUMN shift_label TEXT",
+    "ALTER TABLE site_logs ADD COLUMN no_access INTEGER",
   ]) {
     try {
       sqlite.execSync(sql);
@@ -146,6 +147,7 @@ function init(): boolean {
           main_remarks TEXT,
           meta_date TEXT,
           shift_label TEXT,
+          no_access INTEGER,
           entry_time REAL,
           end_time REAL,
           signature TEXT,
@@ -346,6 +348,7 @@ function init(): boolean {
       "ALTER TABLE site_logs ADD COLUMN main_remarks TEXT",
       "ALTER TABLE site_logs ADD COLUMN meta_date TEXT",
       "ALTER TABLE site_logs ADD COLUMN shift_label TEXT",
+      "ALTER TABLE site_logs ADD COLUMN no_access INTEGER",
       "ALTER TABLE tickets ADD COLUMN before_temp REAL",
       "ALTER TABLE tickets ADD COLUMN after_temp REAL",
       "ALTER TABLE tickets ADD COLUMN breakdown_type TEXT",

@@ -734,6 +734,7 @@ const SITE_LOG_STATE_FIELDS = [
   "main_remarks",
   "meta_date",
   "shift_label",
+  "no_access",
   "status",
   "scheduled_date",
 ] as const;
@@ -742,7 +743,11 @@ const SITE_LOG_STATE_FIELDS = [
 export function siteLogStateBody(row: Record<string, any>): Record<string, unknown> {
   const body: Record<string, unknown> = {};
   for (const field of SITE_LOG_STATE_FIELDS) {
-    if (row[field] !== undefined) body[field] = row[field];
+    // null = "not stated" (e.g. a row saved before no_access existed); the
+    // server column is NOT NULL, so leave it out rather than send it.
+    if (row[field] !== undefined && !(field === "no_access" && row[field] === null)) {
+      body[field] = row[field];
+    }
   }
   // Only ever send a usable signature/photo — a missing or phone-local value
   // must never overwrite what the server already has.
@@ -837,6 +842,8 @@ export interface SiteLogSubmitRow {
   attachment?: string | null;
   meta_date?: string | null;
   shift_label?: string | null;
+  /** Temp RH: the room couldn't be entered — no reading owed. */
+  no_access?: boolean;
 }
 
 export interface SiteLogSubmitInput {
@@ -2627,6 +2634,7 @@ export const SiteLogService: ISiteLogService = {
             main_remarks: serverLog.main_remarks || null,
             meta_date: serverLog.meta_date || null,
             shift_label: serverLog.shift_label || null,
+            no_access: serverLog.no_access === true,
             signature: serverLog.signature || null,
             status: serverLog.status || null,
             scheduled_date: scheduledDate,

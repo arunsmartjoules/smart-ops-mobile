@@ -21,7 +21,7 @@ import {
 } from "@/services/SiteLogService";
 import syncEngine from "@/services/SyncEngine";
 import logger from "@/utils/logger";
-import { describeLogLock } from "./completionGate";
+import { describeLogLock, isTempRhRoomDone } from "./completionGate";
 import { uiShiftToLabel } from "@/services/LogActivityMasterService";
 import { UnifiedLogItem } from "./UnifiedLogItem";
 import { DateNavBar } from "./DateNavBar";
@@ -43,7 +43,7 @@ import {
   f,
   useJoTheme,
 } from "@/components/jo/ui";
-import { BottomBar, EntryHeader, FormHeading, NoticePill } from "./LogsKit";
+import { BottomBar, EntryHeader, FormHeading } from "./LogsKit";
 import { SignatureSheet } from "./SignatureSheet";
 
 /** "" / undefined → null; otherwise the number typed. */
@@ -204,7 +204,7 @@ export const LogEntryModule = ({
           } else if (type === "Water") {
             initialValues[task.id] = { tds: log.tds?.toString() || "", ph: log.ph?.toString() || "", hardness: log.hardness?.toString() || "", attachment: log.attachment || "", mainRemarks: log.main_remarks || "" };
           } else {
-            initialValues[task.id] = { temp: log.temperature?.toString() || "", rh: log.rh?.toString() || "", attachment: log.attachment || "", mainRemarks: log.main_remarks || "" };
+            initialValues[task.id] = { temp: log.temperature?.toString() || "", rh: log.rh?.toString() || "", noAccess: log.no_access === true, attachment: log.attachment || "", mainRemarks: log.main_remarks || "" };
           }
           if (log.signature) setSignature(log.signature);
         }
@@ -231,7 +231,7 @@ export const LogEntryModule = ({
           } else if (type === "Water") {
             initialValues[task.id] = { tds: task.meta?.tds?.toString() || "", ph: task.meta?.ph?.toString() || "", hardness: task.meta?.hardness?.toString() || "", attachment: task.meta?.attachment || "", mainRemarks: task.meta?.main_remarks || "" };
           } else {
-            initialValues[task.id] = { temp: task.meta?.temperature?.toString() || "", rh: task.meta?.rh?.toString() || "", attachment: task.meta?.attachment || "", mainRemarks: task.meta?.main_remarks || "" };
+            initialValues[task.id] = { temp: task.meta?.temperature?.toString() || "", rh: task.meta?.rh?.toString() || "", noAccess: task.meta?.no_access === true, attachment: task.meta?.attachment || "", mainRemarks: task.meta?.main_remarks || "" };
           }
         });
 
@@ -318,6 +318,17 @@ export const LogEntryModule = ({
     }));
   };
 
+  // "No access" (Temp RH): the room couldn't be entered, so its readings stop
+  // being required. Any values already typed stay in the draft, so unticking
+  // brings them back; they are not sent while the box is ticked (buildRow).
+  const toggleNoAccess = (taskId: string, noAccess: boolean) => {
+    if (noAccess && startedAtRef.current === null) startedAtRef.current = Date.now();
+    setLogValues((prev) => ({
+      ...prev,
+      [taskId]: { ...(prev[taskId] || {}), noAccess },
+    }));
+  };
+
   // Filtered Tasks
   const filteredTasks = useMemo(() => {
     if (!searchQuery) return tasks;
@@ -335,12 +346,7 @@ export const LogEntryModule = ({
           (value.hardness && String(value.hardness).trim().length > 0)
         );
       }
-      return !!(
-        value.temp &&
-        String(value.temp).trim().length > 0 &&
-        value.rh &&
-        String(value.rh).trim().length > 0
-      );
+      return isTempRhRoomDone(value);
     },
     [logValues, type],
   );
@@ -352,7 +358,10 @@ export const LogEntryModule = ({
     () => tasks.filter((t) => isTaskComplete(t.id)).length,
     [tasks, isTaskComplete],
   );
-  const remainingCount = Math.max(0, tasks.length - filledCount);
+  const noAccessCount = useMemo(
+    () => (type === "TempRH" ? tasks.filter((t) => logValues[t.id]?.noAccess === true).length : 0),
+    [tasks, logValues, type],
+  );
 
   // Per-shift pending counts for the shift tabs (Temp & RH only).
   useEffect(() => {
@@ -401,7 +410,15 @@ export const LogEntryModule = ({
       ...(type === "Water"
         ? { tds: toNumber(val.tds), ph: toNumber(val.ph), hardness: toNumber(val.hardness) }
         : {}),
-      ...(type === "TempRH" ? { temperature: toNumber(val.temp), rh: toNumber(val.rh) } : {}),
+      // A no-access room sends no readings (any typed value stays only in the
+      // draft) and always states the flag, so unticking clears it server-side.
+      ...(type === "TempRH"
+        ? {
+            temperature: val.noAccess === true ? null : toNumber(val.temp),
+            rh: val.noAccess === true ? null : toNumber(val.rh),
+            no_access: val.noAccess === true,
+          }
+        : {}),
     };
   };
 
@@ -410,7 +427,7 @@ export const LogEntryModule = ({
     const has = (v: unknown) => v !== undefined && v !== null && String(v).trim() !== "";
     if (type === "Chemical") return val.dosing ? "Completed" : "Inprogress";
     if (type === "Water") return has(val.tds) || has(val.ph) || has(val.hardness) ? "Completed" : "Inprogress";
-    if (has(val.temp) && has(val.rh)) return "Completed";
+    if (val.noAccess === true || (has(val.temp) && has(val.rh))) return "Completed";
     return has(val.temp) || has(val.rh) ? "Inprogress" : "Open";
   };
 
@@ -428,7 +445,7 @@ export const LogEntryModule = ({
       Alert.alert(
         "Incomplete Logs",
         type === "TempRH"
-          ? "Each card must have both Temp and RH values before completing."
+          ? "Each card must have both Temp and RH values, or be marked No access, before completing."
           : type === "Water"
             ? "Each card must have at least one Water measurement before completing."
             : "Each card must have a Chemical Dosing selection before completing.",
@@ -439,11 +456,11 @@ export const LogEntryModule = ({
     const entriesWithData = Object.values(logValues).filter(v => {
       if (type === "Chemical") return v.dosing;
       if (type === "Water") return v.tds || v.ph || v.hardness;
-      return v.temp || v.rh;
+      return v.temp || v.rh || v.noAccess;
     });
 
     if (entriesWithData.length === 0) {
-      Alert.alert("No Data", "Please enter measurements for at least one area.");
+      Alert.alert("No Data", "Please enter measurements, or mark No access, for at least one area.");
       return;
     }
 
@@ -634,6 +651,7 @@ export const LogEntryModule = ({
                 </View>
                 <Text style={[f.t(11.5), { color: t.muted, paddingHorizontal: 4 }]}>
                   {filledCount} of {tasks.length} filled
+                  {noAccessCount > 0 ? ` · ${noAccessCount} no access` : ""}
                 </Text>
               </View>
             )}
@@ -698,6 +716,7 @@ export const LogEntryModule = ({
                 type={type}
                 value={logValues[item.id] || {}}
                 onUpdateValue={updateValue}
+                onToggleNoAccess={type === "TempRH" ? toggleNoAccess : undefined}
                 index={index + 1}
                 total={filteredTasks.length}
               />
@@ -731,15 +750,6 @@ export const LogEntryModule = ({
         {/* Footer Action */}
         {!loading && (
           <BottomBar>
-            {!isEditMode && tasks.length > 0 && !allScheduledTasksComplete ? (
-              <NoticePill
-                tone="bad"
-                style={{ alignSelf: "center" }}
-                text={`${remainingCount} line item${remainingCount === 1 ? "" : "s"} still need readings to complete this ${
-                  type === "TempRH" && shift ? "shift" : "log"
-                }`}
-              />
-            ) : null}
             <PrimaryButton
               label={isEditMode ? "Update log" : signature ? "Submit logs" : "Complete & sign"}
               icon={locked ? "bx-lock-alt" : "bx-check"}
@@ -753,7 +763,9 @@ export const LogEntryModule = ({
       <SignatureSheet
         visible={showSignature}
         title="Sign to complete"
-        description={`Confirms ${filledCount} of ${tasks.length} line item${tasks.length === 1 ? "" : "s"}`}
+        description={`Confirms ${filledCount} of ${tasks.length} line item${tasks.length === 1 ? "" : "s"}${
+          noAccessCount > 0 ? `, ${noAccessCount} marked no access` : ""
+        }`}
         okText="Save signature"
         onClose={() => setShowSignature(false)}
         onOK={(sig) => {

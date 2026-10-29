@@ -35,6 +35,7 @@ import IncidentDetailModal from "@/components/IncidentDetailModal";
 import IncidentCard from "@/components/IncidentItem";
 import RaiseIncidentChooser, { type RaiseChoice } from "@/components/incidents/RaiseIncidentChooser";
 import RcaImportModal from "@/components/incidents/RcaImportModal";
+import RcaCreateModal from "@/components/incidents/RcaCreateModal";
 import IncidentCreateSheet from "@/components/incidents/IncidentCreateForm";
 import { IncChip, Notice } from "@/components/incidents/IncFields";
 import { SwipeTabs, useListSlide } from "@/components/incidents/IncListMotion";
@@ -272,6 +273,8 @@ export default function IncidentsTab() {
   const [rcaImportOpen, setRcaImportOpen] = useState(false);
   // New key per open → the import screen always starts fresh.
   const [rcaImportSession, setRcaImportSession] = useState(0);
+  const [rcaCreateOpen, setRcaCreateOpen] = useState(false);
+  const [rcaCreateSession, setRcaCreateSession] = useState(0);
   const [selectedIncident, setSelectedIncident] = useState<IncidentItem | null>(null);
   const [incidentModalVisible, setIncidentModalVisible] = useState(false);
   const [nextStatus, setNextStatus] = useState<"Inprogress" | "Resolved" | null>(null);
@@ -600,6 +603,9 @@ export default function IncidentsTab() {
         if (choice === "manual") {
           resetCreateForm();
           setCreating(true);
+        } else if (choice === "rca-create") {
+          setRcaCreateSession((n) => n + 1);
+          setRcaCreateOpen(true);
         } else {
           setRcaImportSession((n) => n + 1);
           setRcaImportOpen(true);
@@ -1411,6 +1417,22 @@ export default function IncidentsTab() {
         onViewIncident={(incident) => {
           // Let the import screen finish closing first — iOS drops a modal
           // presented while another is still dismissing.
+          setTimeout(() => openIncidentModal(incident as IncidentItem), 450);
+        }}
+      />
+
+      <RcaCreateModal
+        key={rcaCreateSession}
+        visible={rcaCreateOpen}
+        defaultSiteCode={selectedSiteCode}
+        siteOptions={siteOptions}
+        isConnected={isConnected}
+        onClose={() => setRcaCreateOpen(false)}
+        onCreated={() => {
+          void fetchData("refresh");
+        }}
+        onViewIncident={(incident) => {
+          // Same as the upload flow: let this screen finish closing first.
           setTimeout(() => openIncidentModal(incident as IncidentItem), 450);
         }}
       />

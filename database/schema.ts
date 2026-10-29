@@ -132,6 +132,8 @@ export const siteLogs = sqliteTable("site_logs", {
   main_remarks: text("main_remarks"),
   meta_date: text("meta_date"),
   shift_label: text("shift_label"),
+  // Temp RH: the room couldn't be entered, so no reading is owed.
+  no_access: integer("no_access", { mode: "boolean" }),
   entry_time: real("entry_time"),
   end_time: real("end_time"),
   signature: text("signature"),

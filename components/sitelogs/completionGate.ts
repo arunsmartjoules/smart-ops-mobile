@@ -8,6 +8,18 @@
  */
 export type LogEntryType = "TempRH" | "Water" | "Chemical";
 
+const hasReading = (v: unknown) => v !== undefined && v !== null && String(v).trim().length > 0;
+
+/**
+ * A Temp RH room is done when both readings are in, OR the operator ticked
+ * "No access" — the room couldn't be entered, so no reading is owed. Shared by
+ * the screen's gate and the room card so they cannot disagree.
+ */
+export function isTempRhRoomDone(value: { temp?: unknown; rh?: unknown; noAccess?: unknown }): boolean {
+  if (value.noAccess === true) return true;
+  return hasReading(value.temp) && hasReading(value.rh);
+}
+
 export function describeLogLock(state: {
   type: LogEntryType;
   loading: boolean;
@@ -23,7 +35,7 @@ export function describeLogLock(state: {
   const rooms = `${left} of ${state.total} room${state.total === 1 ? "" : "s"}`;
   switch (state.type) {
     case "TempRH":
-      return `${rooms} still need both Temp and RH.`;
+      return `${rooms} still need both Temp and RH, or "No access" ticked.`;
     case "Water":
       return `${rooms} still need at least one of TDS, pH or hardness.`;
     case "Chemical":

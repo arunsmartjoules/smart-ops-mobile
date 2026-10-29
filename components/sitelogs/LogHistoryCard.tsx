@@ -35,6 +35,13 @@ const show = (v: unknown, unit?: string) => {
 function readingsFor(logName: string, row: any): Reading[] {
   switch (logName) {
     case "Temp RH":
+      // A room nobody could enter has no reading; say so rather than "—".
+      if (row.no_access === true) {
+        return [
+          { label: "Temp", value: "No access" },
+          { label: "RH", value: "No access" },
+        ];
+      }
       return [
         { label: "Temp", value: show(row.temperature, "°C") },
         { label: "RH", value: show(row.rh, "%") },

@@ -34,6 +34,15 @@ interface Props {
   assetsLoading: boolean;
   assetSearch: string;
   onAssetSearch: (q: string) => void;
+  /**
+   * Extra control under a free-text answer (the Create RCA flow's "Polish"
+   * button). Absent in the upload flow, which renders exactly as before.
+   */
+  renderTextAccessory?: (args: {
+    question: RcaQuestion;
+    value: string;
+    setValue: (next: string) => void;
+  }) => React.ReactNode;
 }
 
 const MAX_CANDIDATES = 6;
@@ -51,6 +60,7 @@ export default function RcaQuestionStep({
   assetsLoading,
   assetSearch,
   onAssetSearch,
+  renderTextAccessory,
 }: Props) {
   const styles = useStyles();
   const t = useJoTheme();
@@ -184,14 +194,21 @@ export default function RcaQuestionStep({
         ) : null}
 
         {question.kind === "text" ? (
-          <TextField
-            placeholder="Type your answer"
-            value={(value as string | null) ?? ""}
-            onChangeText={(v) => setField(question.field, v as never)}
-            multiline
-            minHeight={120}
-            accessibilityLabel={question.title}
-          />
+          <>
+            <TextField
+              placeholder="Type your answer"
+              value={(value as string | null) ?? ""}
+              onChangeText={(v) => setField(question.field, v as never)}
+              multiline
+              minHeight={120}
+              accessibilityLabel={question.title}
+            />
+            {renderTextAccessory?.({
+              question,
+              value: (value as string | null) ?? "",
+              setValue: (next) => setField(question.field, next as never),
+            })}
+          </>
         ) : null}
       </View>
 

@@ -1,4 +1,4 @@
-import { describeChillerLock, describeLogLock } from "../components/sitelogs/completionGate";
+import { describeChillerLock, describeLogLock, isTempRhRoomDone } from "../components/sitelogs/completionGate";
 
 describe("describeLogLock", () => {
   it("lets a fully filled log through", () => {
@@ -7,7 +7,7 @@ describe("describeLogLock", () => {
 
   it("explains rooms still missing Temp and RH", () => {
     expect(describeLogLock({ type: "TempRH", loading: false, total: 14, filled: 12 })).toBe(
-      "2 of 14 rooms still need both Temp and RH.",
+      '2 of 14 rooms still need both Temp and RH, or "No access" ticked.',
     );
   });
 
@@ -48,5 +48,31 @@ describe("describeChillerLock", () => {
     expect(describeChillerLock({ hasChiller: true, missing })).toBe(
       "6 required readings are still empty: Cond. Inlet, Cond. Outlet, Evap. Inlet, Evap. Outlet and 2 more.",
     );
+  });
+});
+
+describe("isTempRhRoomDone", () => {
+  it("is done with both readings", () => {
+    expect(isTempRhRoomDone({ temp: "24.5", rh: "55" })).toBe(true);
+  });
+
+  it("is not done with only one reading", () => {
+    expect(isTempRhRoomDone({ temp: "24.5", rh: "" })).toBe(false);
+  });
+
+  it("is not done with nothing entered", () => {
+    expect(isTempRhRoomDone({})).toBe(false);
+  });
+
+  it("is done when marked No access, with no readings", () => {
+    expect(isTempRhRoomDone({ temp: "", rh: "", noAccess: true })).toBe(true);
+  });
+
+  it("is not done once No access is unticked again", () => {
+    expect(isTempRhRoomDone({ temp: "", rh: "", noAccess: false })).toBe(false);
+  });
+
+  it("treats a 0 reading as entered", () => {
+    expect(isTempRhRoomDone({ temp: "0", rh: "0" })).toBe(true);
   });
 });

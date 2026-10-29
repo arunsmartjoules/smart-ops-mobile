@@ -79,16 +79,14 @@ import logger from "@/utils/logger";
 
 type PMInstanceRow = typeof pmInstances.$inferSelect;
 
-/** Chip keys = the artboard's PM_ST labels (Skipped only shows under All). */
-type PmChipKey = "All" | Exclude<PmStatusKey, "Skipped">;
+/**
+ * Chip keys. "Due" is the actionable work queue: it merges the artboard's
+ * Overdue + Due states, so it is the default view. "All" is last and is the
+ * only chip that also shows Skipped PMs.
+ */
+type PmChipKey = "Due" | "In progress" | "Completed" | "All";
 
-const CHIP_ORDER: PmChipKey[] = [
-  "All",
-  "Overdue",
-  "Due",
-  "In progress",
-  "Completed",
-];
+const CHIP_ORDER: PmChipKey[] = ["Due", "In progress", "Completed", "All"];
 
 // The shared Ops date range can target either the due date (default) or the
 // completed date — the filter sheet exposes this as a selector.
@@ -147,7 +145,7 @@ export default function PreventiveMaintenance() {
     useState<PMInstanceRow | null>(null);
   const [startBeforeImage, setStartBeforeImage] = useState<string>("");
   const [starting, setStarting] = useState(false);
-  const [statusFilter, setStatusFilter] = useState<PmChipKey>("All");
+  const [statusFilter, setStatusFilter] = useState<PmChipKey>("Due");
   const [sortMode, setSortMode] = useState<"Due date" | "Status">("Due date");
   const [slide, setSlide] = useState({ seq: 0, dir: 1 });
   const listSlideStyle = useListSlide(slide.seq, slide.dir);
@@ -477,12 +475,15 @@ export default function PreventiveMaintenance() {
   const filteredInstances = useMemo(() => {
     let list = [...allInstances];
 
-    // 1. Apply Status Filter — the artboard's five states. "Overdue" is
-    //    derived (not-started + due before today, IST), not stored.
+    // 1. Apply Status Filter. "Overdue" is derived (not-started + due before
+    //    today, IST), not stored; the "Due" chip covers Overdue and Due.
     if (statusFilter !== "All") {
-      list = list.filter(
-        (i) => pmStatusKey(i.status, i.start_due_date, todayStartMs) === statusFilter,
-      );
+      list = list.filter((i) => {
+        const k = pmStatusKey(i.status, i.start_due_date, todayStartMs);
+        return statusFilter === "Due"
+          ? k === "Overdue" || k === "Due"
+          : k === statusFilter;
+      });
     }
 
     // 2. Apply Search or QR Filter
@@ -744,21 +745,18 @@ export default function PreventiveMaintenance() {
 
   const statusChips = useMemo<PMChip[]>(
     () => [
-      { key: "All", label: "All", count: stats.total },
-      { key: "Overdue", label: "Overdue", count: stats.overdue },
-      { key: "Due", label: "Due", count: stats.due },
+      { key: "Due", label: "Due", count: stats.overdue + stats.due },
       { key: "In progress", label: "In progress", count: stats.inProgress },
       { key: "Completed", label: "Completed", count: stats.completed },
+      { key: "All", label: "All", count: stats.total },
     ],
     [stats],
   );
 
   const visibleCount = useMemo(() => {
     switch (statusFilter) {
-      case "Overdue":
-        return stats.overdue;
       case "Due":
-        return stats.due;
+        return stats.overdue + stats.due;
       case "In progress":
         return stats.inProgress;
       case "Completed":

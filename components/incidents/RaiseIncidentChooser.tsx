@@ -1,6 +1,7 @@
 /**
- * The "Raise" button's first step: fill the incident in by hand, or upload
- * the RCA report and let the server draft it. Artboard bottom sheet.
+ * The "Raise" button's first step: fill the incident in by hand, upload the
+ * RCA report and let the server draft it, or write a new RCA here based on a
+ * past one. Artboard bottom sheet.
  */
 import React from "react";
 import { Text, TouchableOpacity, View } from "react-native";
@@ -8,7 +9,7 @@ import * as Haptics from "expo-haptics";
 import { Bx, type BxName } from "@/components/jo/Bx";
 import { GlossFill, JoSheet, f, useJoTheme } from "@/components/jo/ui";
 
-export type RaiseChoice = "manual" | "rca";
+export type RaiseChoice = "manual" | "rca" | "rca-create";
 
 export default function RaiseIncidentChooser({
   visible,
@@ -17,7 +18,7 @@ export default function RaiseIncidentChooser({
   onClose,
 }: {
   visible: boolean;
-  /** The RCA option needs the network; the manual form works offline. */
+  /** Both RCA options need the network; the manual form works offline. */
   offline: boolean;
   onPick: (choice: RaiseChoice) => void;
   onClose: () => void;
@@ -44,6 +45,14 @@ export default function RaiseIncidentChooser({
           isNew
           note={offline ? "Needs an internet connection" : undefined}
           onPress={() => pick("rca")}
+        />
+        <ChoiceCard
+          icon="bx-edit"
+          title="Create RCA"
+          body="Write the RCA here, based on a past one — we'll build the document and raise the incident"
+          isNew
+          note={offline ? "Needs an internet connection" : undefined}
+          onPress={() => pick("rca-create")}
         />
       </View>
     </JoSheet>

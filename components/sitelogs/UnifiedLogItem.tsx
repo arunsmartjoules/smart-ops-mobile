@@ -12,12 +12,15 @@ import { Bx } from "@/components/jo/Bx";
 import { GlossFill, Card, f, useJoTheme } from "@/components/jo/ui";
 import { LogImagePicker } from "./LogImagePicker";
 import { NumberField, RemarksField, Tag } from "./LogsKit";
+import { isTempRhRoomDone } from "./completionGate";
 
 interface UnifiedLogItemProps {
   item: TaskItem;
   type: "Chemical" | "Water" | "TempRH";
   value: any;
   onUpdateValue: (taskId: string, field: string, value: string) => void;
+  /** Temp RH only: tick/untick "No access" for this room. */
+  onToggleNoAccess?: (taskId: string, noAccess: boolean) => void;
   isUploading?: boolean;
   index?: number;
   total?: number;
@@ -31,6 +34,7 @@ export const UnifiedLogItem = React.memo(
     type,
     value,
     onUpdateValue,
+    onToggleNoAccess,
     isUploading = false,
     index,
     total,
@@ -39,10 +43,14 @@ export const UnifiedLogItem = React.memo(
     // The scheduling label; `remarks` is the technician's note, not this.
     const location = item.meta?.meta_date || null;
 
+    // "No access" (Temp RH): the room couldn't be entered, so no reading is
+    // owed — the card counts as done and its fields stop being required.
+    const noAccess = type === "TempRH" && value.noAccess === true;
+
     const isFilled =
       type === "Water"
           ? hasText(value.tds) || hasText(value.ph) || hasText(value.hardness)
-          : hasText(value.temp) && hasText(value.rh);
+          : isTempRhRoomDone(value);
 
     const pad = (n?: number) => (n == null ? "" : String(n).padStart(2, "0"));
     const indexLabel = index != null && total != null ? `${pad(index)} / ${total}` : null;
@@ -125,8 +133,18 @@ export const UnifiedLogItem = React.memo(
       );
     }
 
+    // Temp RH rooms repeat 10-20 times a shift, so the card is kept short: a
+    // smaller field, the photo buttons and a one-line remark on a single row.
+    const compact = type === "TempRH";
+
     return (
-      <Card style={{ padding: 16, marginBottom: 10, borderColor: isFilled ? t.cardBorder : t.badBorder }}>
+      <Card
+        style={{
+          padding: compact ? 14 : 16,
+          marginBottom: compact ? 8 : 10,
+          borderColor: isFilled ? t.cardBorder : t.badBorder,
+        }}
+      >
         {/* Header: area + location + index */}
         <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 10 }}>
           <View style={{ flex: 1, minWidth: 0 }}>
@@ -142,20 +160,54 @@ export const UnifiedLogItem = React.memo(
               </View>
             ) : null}
           </View>
-          {indexLabel ? <Tag label={indexLabel} tone={isFilled ? "ok" : "bad"} /> : null}
+          {indexLabel ? <Tag label={indexLabel} tone={noAccess ? "warn" : isFilled ? "ok" : "bad"} /> : null}
         </View>
 
-        {/* TempRH: Temp + RH */}
+        {/* TempRH: No access + Temp + RH */}
+        {type === "TempRH" && onToggleNoAccess ? (
+          <TouchableOpacity
+            onPress={() => onToggleNoAccess(item.id, !noAccess)}
+            disabled={isUploading}
+            activeOpacity={0.75}
+            accessibilityRole="checkbox"
+            accessibilityState={{ checked: noAccess, disabled: isUploading }}
+            accessibilityLabel={`${item.name || "Room"}, no access`}
+            accessibilityHint="Tick when the room could not be entered. Temperature and RH are then not required."
+            style={{ flexDirection: "row", alignItems: "center", gap: 10, marginTop: 10, minHeight: 32 }}
+          >
+            <View
+              style={{
+                width: 24,
+                height: 24,
+                borderRadius: 8,
+                alignItems: "center",
+                justifyContent: "center",
+                backgroundColor: noAccess ? t.accent : "transparent",
+                borderWidth: 2,
+                borderColor: noAccess ? t.accent : t.disabled,
+              }}
+            >
+              {noAccess ? <GlossFill color={t.accent} fg={t.onAccent} radius={8} bleed={2} /> : null}
+              {noAccess ? <Bx name="bx-check" size={17} color={t.onAccent} /> : null}
+            </View>
+            <Text style={[f.t(13.5, 600), { color: t.ink, flexShrink: 1 }]} numberOfLines={1}>
+              No access
+              {noAccess ? <Text style={[f.t(12), { color: t.warn }]}>{"  ·  Temp & RH not required"}</Text> : null}
+            </Text>
+          </TouchableOpacity>
+        ) : null}
+
         {type === "TempRH" && (
-          <View style={{ flexDirection: "row", gap: 8, marginTop: 14 }}>
+          <View style={{ flexDirection: "row", gap: 8, marginTop: 10, opacity: noAccess ? 0.45 : 1 }}>
             <NumberField
               label="Temperature"
               value={value.temp}
               onChangeText={(v) => onUpdateValue(item.id, "temp", v)}
               unit="°C"
               placeholder="— —"
-              size="md"
-              attention={!hasText(value.temp)}
+              size="sm"
+              editable={!noAccess}
+              attention={!noAccess && !hasText(value.temp)}
               style={{ flex: 1, minWidth: 0 }}
             />
             <NumberField
@@ -164,8 +216,9 @@ export const UnifiedLogItem = React.memo(
               onChangeText={(v) => onUpdateValue(item.id, "rh", v)}
               unit="%"
               placeholder="— —"
-              size="md"
-              attention={!hasText(value.rh)}
+              size="sm"
+              editable={!noAccess}
+              attention={!noAccess && !hasText(value.rh)}
               style={{ flex: 1, minWidth: 0 }}
             />
           </View>
@@ -193,24 +246,60 @@ export const UnifiedLogItem = React.memo(
           </View>
         )}
 
-        <View style={{ marginTop: 16 }}>
-          <LogImagePicker
-            label="Attachment"
-            value={value.attachment}
-            onImageChange={(url) => onUpdateValue(item.id, "attachment", url || "")}
-            uploadPath={`${type.toLowerCase()}/${item.id}`}
-            cta="Add photo"
-            disabled={isUploading}
-          />
-        </View>
+        {compact ? (
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 10 }}>
+            <LogImagePicker
+              compact
+              value={value.attachment}
+              onImageChange={(url) => onUpdateValue(item.id, "attachment", url || "")}
+              uploadPath={`${type.toLowerCase()}/${item.id}`}
+              disabled={isUploading}
+            />
+            <TextInput
+              value={value.mainRemarks ?? ""}
+              onChangeText={(v) => onUpdateValue(item.id, "mainRemarks", v)}
+              placeholder={noAccess ? "Reason (optional)" : "Add a remark…"}
+              placeholderTextColor={t.faint}
+              accessibilityLabel="Remarks"
+              style={[
+                f.t(13),
+                {
+                  flex: 1,
+                  minWidth: 0,
+                  height: 44,
+                  paddingVertical: 0,
+                  paddingHorizontal: 14,
+                  borderRadius: 22,
+                  color: t.ink,
+                  backgroundColor: t.raised,
+                  borderWidth: 1,
+                  borderColor: t.lineMid,
+                },
+              ]}
+            />
+          </View>
+        ) : (
+          <>
+            <View style={{ marginTop: 16 }}>
+              <LogImagePicker
+                label="Attachment"
+                value={value.attachment}
+                onImageChange={(url) => onUpdateValue(item.id, "attachment", url || "")}
+                uploadPath={`${type.toLowerCase()}/${item.id}`}
+                cta="Add photo"
+                disabled={isUploading}
+              />
+            </View>
 
-        <RemarksField
-          label="Remarks"
-          value={value.mainRemarks}
-          onChangeText={(v) => onUpdateValue(item.id, "mainRemarks", v)}
-          placeholder="Add a remark…"
-          style={{ marginTop: 14 }}
-        />
+            <RemarksField
+              label="Remarks"
+              value={value.mainRemarks}
+              onChangeText={(v) => onUpdateValue(item.id, "mainRemarks", v)}
+              placeholder="Add a remark…"
+              style={{ marginTop: 14 }}
+            />
+          </>
+        )}
       </Card>
     );
   },
