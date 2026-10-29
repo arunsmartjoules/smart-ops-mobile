@@ -1,7 +1,7 @@
 /**
  * The "Raise" button's first step: fill the incident in by hand, upload the
- * RCA report and let the server draft it, or write a new RCA here based on a
- * past one. Artboard bottom sheet.
+ * RCA report and let the server draft it, or write the RCA here and let the
+ * server build the document. Artboard bottom sheet.
  */
 import React from "react";
 import { Text, TouchableOpacity, View } from "react-native";
@@ -49,7 +49,7 @@ export default function RaiseIncidentChooser({
         <ChoiceCard
           icon="bx-edit"
           title="Create RCA"
-          body="Write the RCA here, based on a past one — we'll build the document and raise the incident"
+          body="Write the RCA here — we'll build the document and raise the incident"
           isNew
           note={offline ? "Needs an internet connection" : undefined}
           onPress={() => pick("rca-create")}

@@ -1,12 +1,13 @@
 /**
  * "Create RCA" — write an RCA in the app, modelled on one already in JouleOps.
  *
- *   GET  /api/incidents/rca-create/templates?site_code=   past RCA files to model on
- *   POST /api/incidents/rca-create/start                  sections + incident-details questions
+ *   POST /api/incidents/rca-create/start                  standard sections + incident-details questions
  *   POST /api/incidents/rca-create/polish                 spelling / grammar fix for one answer
+ *   POST /api/incidents/rca-create/voice                  start typing up an uploaded recording
+ *   GET  /api/incidents/rca-create/voice/:id              poll that job for the text
  *   POST /api/incidents/rca-create                        build the PDF + create the incident
  *
- * Online-only on purpose (the server reads the template, fixes the text and
+ * Online-only on purpose (the server fixes the text, types up recordings and
  * builds the PDF), so nothing here touches the offline queue. Like the RCA
  * upload, every failure comes back as plain-language copy: the server's own
  * `error` text when it sent one (it is written for end users), else a generic
@@ -44,29 +45,21 @@ export interface RcaSection {
   required: boolean;
 }
 
-export interface RcaTemplate {
-  incident_id: string;
-  site_code: string;
-  site_name: string | null;
-  fault_symptom: string | null;
-  file_url: string;
-  file_name: string;
-  created_at: string | null;
-}
-
 export interface RcaCreateStart {
-  template: { name: string | null; url: string | null; used_default: boolean };
   sections: RcaSection[];
   result: RcaImportResult;
 }
+
+export type RcaVoiceView =
+  | { status: "processing" }
+  | { status: "ready"; text: string }
+  | { status: "failed"; message: string };
 
 export interface RcaSectionPayload extends RcaSection {
   text: string;
   photos: { url: string; caption: string }[];
 }
 
-/** Reading a template with AI can take ~45 s the first time; the default 30 s would cut it off. */
-export const RCA_START_TIMEOUT_MS = 90_000;
 /** Building the PDF reads every photo back from storage first. */
 export const RCA_CREATE_TIMEOUT_MS = 90_000;
 
@@ -102,18 +95,12 @@ async function call<T>(
 }
 
 export const RcaCreateService = {
-  templates(siteCode?: string) {
-    const qs = siteCode ? `?site_code=${encodeURIComponent(siteCode)}` : "";
-    return call<{ templates: RcaTemplate[] }>(`/api/incidents/rca-create/templates${qs}`);
-  },
-
-  /** Omit `template_url` for the built-in standard sections. */
-  start(input: { site_code: string; template_url?: string }) {
-    return call<RcaCreateStart>(
-      "/api/incidents/rca-create/start",
-      { method: "POST", body: JSON.stringify(input) },
-      RCA_START_TIMEOUT_MS,
-    );
+  /** The standard sections and the incident-details questions for a site. */
+  start(input: { site_code: string }) {
+    return call<RcaCreateStart>("/api/incidents/rca-create/start", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
   },
 
   polish(text: string) {
@@ -121,6 +108,18 @@ export const RcaCreateService = {
       method: "POST",
       body: JSON.stringify({ text }),
     });
+  },
+
+  /** Dictation: the recording is already on S3 (presigned PUT); this starts the job. */
+  voiceStart(audioUrl: string) {
+    return call<{ id: string }>("/api/incidents/rca-create/voice", {
+      method: "POST",
+      body: JSON.stringify({ audio_url: audioUrl }),
+    });
+  },
+
+  voiceGet(id: string) {
+    return call<RcaVoiceView>(`/api/incidents/rca-create/voice/${encodeURIComponent(id)}`);
   },
 
   /**

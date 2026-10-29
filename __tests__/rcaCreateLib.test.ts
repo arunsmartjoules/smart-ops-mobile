@@ -10,8 +10,17 @@ import {
   buildSectionsPayload,
   checkPhotoAsset,
   collectProblems,
-  filterTemplates,
-  firstLine,
+  MAX_DICTATION_SECONDS,
+  VOICE_GIVE_UP_MS,
+  appendDictation,
+  fieldAnchor,
+  formatElapsed,
+  maxForField,
+  problemAnchor,
+  sectionAnchor,
+  shouldAutoStop,
+  voiceGiveUp,
+  voiceKey,
   initialFields,
   isSectionRequired,
   narrativeFromAnswers,
@@ -23,7 +32,7 @@ import {
   type PhotoItem,
   type SectionAnswer,
 } from "../components/incidents/rcaCreateLib";
-import type { RcaSection, RcaTemplate } from "../services/RcaCreateService";
+import type { RcaSection } from "../services/RcaCreateService";
 import type { RcaFields, RcaImportResult } from "../services/RcaImportService";
 
 const section = (over: Partial<RcaSection> = {}): RcaSection => ({
@@ -386,28 +395,103 @@ describe("initialFields", () => {
   });
 });
 
-describe("template list helpers", () => {
-  const tpl = (over: Partial<RcaTemplate>): RcaTemplate => ({
-    incident_id: "INC-1",
-    site_code: "S1",
-    site_name: "Sunshine",
-    fault_symptom: "Chiller trip",
-    file_url: "https://x/y.pdf",
-    file_name: "RCA chiller.pdf",
-    created_at: null,
-    ...over,
+describe("appendDictation", () => {
+  it("adds the words after the existing text with one space", () => {
+    expect(appendDictation("Pump tripped.", "  then   restarted ", 100).text).toBe("Pump tripped. then restarted");
   });
 
-  it("returns everything for an empty search", () => {
-    expect(filterTemplates([tpl({}), tpl({ incident_id: "INC-2" })], "  ")).toHaveLength(2);
+  it("starts the field when it is empty", () => {
+    expect(appendDictation("", "Hello there", 100)).toEqual({ text: "Hello there", truncated: false, added: true });
   });
 
-  it("matches on file name, incident id, site or title, ignoring case", () => {
-    const list = [tpl({}), tpl({ incident_id: "INC-2", file_name: "Pump.pdf", site_name: "KIMS", fault_symptom: "Leak" })];
-    expect(filterTemplates(list, "kims").map((t) => t.incident_id)).toEqual(["INC-2"]);
+  it("ignores trailing whitespace already in the field", () => {
+    expect(appendDictation("Done.  \n", "More", 100).text).toBe("Done. More");
   });
 
-  it("takes the first non-empty line, shortened", () => {
-    expect(firstLine("\n  First line here  \nsecond", 8)).toBe("First l…");
+  it("leaves the field alone when nothing was heard", () => {
+    expect(appendDictation("Keep", "   ", 100)).toEqual({ text: "Keep", truncated: false, added: false });
+  });
+
+  it("never goes past the field's limit", () => {
+    const out = appendDictation("abc", "one two three four five", 12);
+    expect(out.text.length).toBeLessThanOrEqual(12);
+  });
+
+  it("cuts at a word boundary when it has to cut", () => {
+    expect(appendDictation("abc", "one two three", 11).text).toBe("abc one two");
+  });
+
+  it("reports that it cut the dictation", () => {
+    expect(appendDictation("abc", "one two three four five", 12).truncated).toBe(true);
+  });
+
+  it("adds nothing when the field is already full", () => {
+    expect(appendDictation("x".repeat(10), "more words", 10)).toEqual({
+      text: "x".repeat(10),
+      truncated: true,
+      added: false,
+    });
+  });
+
+  it("fits exactly to the limit without calling it truncated", () => {
+    expect(appendDictation("ab", "cd", 5)).toEqual({ text: "ab cd", truncated: false, added: true });
+  });
+});
+
+describe("recording and transcription limits", () => {
+  it("does not auto-stop before the cap", () => {
+    expect(shouldAutoStop(MAX_DICTATION_SECONDS - 1)).toBe(false);
+  });
+
+  it("auto-stops at the 2-minute cap", () => {
+    expect(shouldAutoStop(MAX_DICTATION_SECONDS)).toBe(true);
+  });
+
+  it("caps a recording at two minutes", () => {
+    expect(MAX_DICTATION_SECONDS).toBe(120);
+  });
+
+  it("keeps waiting for a transcript just before the give-up time", () => {
+    expect(voiceGiveUp(1000, 1000 + VOICE_GIVE_UP_MS - 1)).toBe(false);
+  });
+
+  it("gives up on a transcript after two minutes", () => {
+    expect(voiceGiveUp(1000, 1000 + VOICE_GIVE_UP_MS)).toBe(true);
+  });
+
+  it("formats elapsed seconds as m:ss", () => {
+    expect(formatElapsed(75)).toBe("1:15");
+  });
+
+  it("formats a few seconds with a leading zero", () => {
+    expect(formatElapsed(7.9)).toBe("0:07");
+  });
+
+  it("builds the contract's S3 key for a recording", () => {
+    expect(voiceKey("SITE1", "abc")).toBe("incidents/SITE1/rca-create/voice/abc.m4a");
+  });
+});
+
+describe("form anchors and field limits", () => {
+  it("keeps field and section anchors apart", () => {
+    expect(fieldAnchor("fault_symptom")).not.toBe(sectionAnchor("fault_symptom"));
+  });
+
+  it("anchors a section problem to its section", () => {
+    expect(problemAnchor({ key: "s2", message: "x", target: { type: "section", id: "s2" } })).toBe("s:s2");
+  });
+
+  it("anchors a details problem to its field", () => {
+    expect(problemAnchor({ key: "a", message: "x", target: { type: "field", field: "asset_location" } })).toBe(
+      "f:asset_location",
+    );
+  });
+
+  it("limits the title to what the server keeps", () => {
+    expect(maxForField("fault_symptom")).toBe(300);
+  });
+
+  it("limits raised-by to what the server keeps", () => {
+    expect(maxForField("raised_by")).toBe(200);
   });
 });

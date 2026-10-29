@@ -25,6 +25,8 @@ export default function PolishButton({
   onChange,
   disabled,
   offline,
+  before,
+  status,
   style,
 }: {
   value: string;
@@ -32,6 +34,10 @@ export default function PolishButton({
   disabled?: boolean;
   /** Polishing needs the server. */
   offline?: boolean;
+  /** A control placed just before the button (the dictation mic). */
+  before?: React.ReactNode;
+  /** Shown in the message slot instead of the button's own messages (e.g. "Recording…"). */
+  status?: React.ReactNode;
   style?: StyleProp<ViewStyle>;
 }) {
   const t = useJoTheme();
@@ -100,7 +106,9 @@ export default function PolishButton({
   return (
     <View style={[s.row, style]}>
       <View style={s.msg} accessibilityLiveRegion="polite">
-        {shownNote ? (
+        {status ? (
+          status
+        ) : shownNote ? (
           <Text style={[s.msgText, shownNote.kind === "error" && { color: t.bad }]}>{shownNote.text}</Text>
         ) : showUndo && undo ? (
           <View style={s.undoRow}>
@@ -120,9 +128,10 @@ export default function PolishButton({
         ) : tooLong ? (
           <Text style={s.msgText}>Too long to polish (max {POLISH_MAX.toLocaleString("en-US")} characters)</Text>
         ) : offline ? (
-          <Text style={s.msgText}>Polish needs an internet connection</Text>
+          <Text style={s.msgText}>Needs an internet connection</Text>
         ) : null}
       </View>
+      {before}
       <TouchableOpacity
         onPress={() => void polish()}
         disabled={off}

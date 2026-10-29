@@ -6,12 +6,7 @@
  * Times, question visibility and the incident-field checks are reused from the
  * RCA-upload flow (rcaImportLib) so both flows accept the same incidents.
  */
-import type {
-  RcaSection,
-  RcaSectionPayload,
-  RcaSectionTarget,
-  RcaTemplate,
-} from "@/services/RcaCreateService";
+import type { RcaSection, RcaSectionPayload, RcaSectionTarget } from "@/services/RcaCreateService";
 import type { RcaCreateFields, RcaFields, RcaImportResult } from "@/services/RcaImportService";
 import {
   FIELD_ORDER,
@@ -30,8 +25,6 @@ export const PHOTOS_TOTAL = 24;
 export const PHOTO_MAX_BYTES = 5 * 1024 * 1024;
 /** The polish endpoint takes 1–2000 characters. */
 export const POLISH_MAX = 2000;
-/** Template list gets a search box above this many files. */
-export const TEMPLATE_SEARCH_THRESHOLD = 8;
 
 export const PHOTO_FORMAT_MESSAGE = "Please use a JPG or PNG photo.";
 
@@ -64,7 +57,7 @@ export const emptyAnswer = (): SectionAnswer => ({ text: "", photos: [] });
 export const sectionAsksText = (s: Pick<RcaSection, "kind">) => s.kind !== "photos";
 export const sectionAsksPhotos = (s: Pick<RcaSection, "kind">) => s.kind !== "text";
 
-/** The closing remark is always required, whatever the template said. */
+/** The closing remark is always required, whatever the sections say. */
 export const isSectionRequired = (s: Pick<RcaSection, "required" | "maps_to">) =>
   s.required || s.maps_to === "remarks";
 
@@ -101,10 +94,6 @@ export function sectionProblem(section: RcaSection, answer: SectionAnswer | unde
   }
   return null;
 }
-
-/** True when the section may be left blank without a problem. */
-export const isSectionBlank = (a: SectionAnswer | undefined) =>
-  !a || (!a.text.trim() && a.photos.length === 0);
 
 /* ── Photos ──────────────────────────────────────────────────────────────── */
 
@@ -328,20 +317,68 @@ export function collectProblems(
   return problems;
 }
 
-/* ── Template list ───────────────────────────────────────────────────────── */
 
-export function filterTemplates(list: RcaTemplate[], query: string): RcaTemplate[] {
-  const q = query.trim().toLowerCase();
-  if (!q) return list;
-  return list.filter((t) =>
-    [t.file_name, t.incident_id, t.site_name, t.site_code, t.fault_symptom]
-      .filter(Boolean)
-      .some((v) => String(v).toLowerCase().includes(q)),
-  );
+/* ── Form anchors ────────────────────────────────────────────────────────── */
+
+/** Where the form scrolls to for a problem: one id per field / section block. */
+export const fieldAnchor = (field: keyof RcaFields) => `f:${String(field)}`;
+export const sectionAnchor = (id: string) => `s:${id}`;
+export const problemAnchor = (p: Problem) =>
+  p.target.type === "field" ? fieldAnchor(p.target.field) : sectionAnchor(p.target.id);
+
+/** The most characters a details text field keeps (the server trims to these). */
+const FIELD_MAX: Partial<Record<keyof RcaFields, number>> = {
+  fault_symptom: 300,
+  raised_by: 200,
+  vendor_tagged: 200,
+};
+export const DEFAULT_FIELD_MAX = 300;
+export const maxForField = (field: keyof RcaFields) => FIELD_MAX[field] ?? DEFAULT_FIELD_MAX;
+
+/* ── Dictation (speech to text) ──────────────────────────────────────────── */
+
+/** A recording stops itself here — a dictated answer, not a meeting. */
+export const MAX_DICTATION_SECONDS = 2 * 60;
+export const VOICE_POLL_MS = 2000;
+/** After this long without a result we stop waiting and say so. */
+export const VOICE_GIVE_UP_MS = 2 * 60 * 1000;
+/** Consecutive failed polls tolerated on a patchy connection. */
+export const VOICE_POLL_MISSES = 4;
+
+export const shouldAutoStop = (seconds: number) => seconds >= MAX_DICTATION_SECONDS;
+
+export const voiceGiveUp = (startedAt: number, now: number) => now - startedAt >= VOICE_GIVE_UP_MS;
+
+/** `incidents/<site>/rca-create/voice/<uuid>.m4a` — the contract's key for a recording. */
+export const voiceKey = (siteCode: string, uuid: string) =>
+  `incidents/${siteCode}/rca-create/voice/${uuid}.m4a`;
+
+/** 75 → "1:15". */
+export function formatElapsed(seconds: number): string {
+  const s = Math.max(0, Math.floor(seconds));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
 
-/** First non-empty line of an answer, trimmed for a summary row. */
-export function firstLine(text: string, max = 90): string {
-  const line = (text.split("\n").find((l) => l.trim()) ?? "").trim();
-  return line.length > max ? `${line.slice(0, max - 1).trimEnd()}…` : line;
+/**
+ * Adds dictated words after what is already there, separated by one space,
+ * never going past the field's limit (cut at a word boundary where possible).
+ */
+export function appendDictation(
+  current: string,
+  dictated: string,
+  max: number,
+): { text: string; truncated: boolean; added: boolean } {
+  const add = dictated.replace(/\s+/g, " ").trim();
+  if (!add) return { text: current, truncated: false, added: false };
+  const base = current.replace(/\s+$/, "");
+  const joined = base ? `${base} ${add}` : add;
+  if (joined.length <= max) return { text: joined, truncated: false, added: true };
+  const room = max - (base ? base.length + 1 : 0);
+  if (room <= 0) return { text: current, truncated: true, added: false };
+  let cut = add.slice(0, room);
+  const lastSpace = cut.lastIndexOf(" ");
+  if (lastSpace > 0 && add.charAt(room) !== " ") cut = cut.slice(0, lastSpace);
+  cut = cut.trimEnd();
+  if (!cut) return { text: current, truncated: true, added: false };
+  return { text: base ? `${base} ${cut}` : cut, truncated: true, added: true };
 }

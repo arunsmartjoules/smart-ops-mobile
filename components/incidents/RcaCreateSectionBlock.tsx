@@ -1,21 +1,23 @@
 /**
- * "Create RCA": one section of the RCA per screen. The prompt is the question,
- * then a text answer and/or photo rows depending on the section's kind.
+ * "Create RCA": one block of the RCA in the form — the section's title, the
+ * question (prompt) and hint, then a text answer and/or photo rows depending on
+ * the section's kind. Free-text answers get the mic and Polish controls.
  *
- * Photos are added from the camera or the gallery; this screen only picks and
- * reports them (the modal checks JPG/PNG and the limits, then uploads), so
- * answers survive Back/Next and an upload that fails never loses anything.
+ * Photos are added from the camera or the gallery; this block only picks and
+ * reports them (the modal checks JPG/PNG and the limits, then uploads), so a
+ * failed upload never loses anything else.
  */
 import React, { useState } from "react";
-import { ActivityIndicator, Image, ScrollView, Text, TouchableOpacity, View } from "react-native";
+import { ActivityIndicator, Image, Text, TouchableOpacity, View } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 import * as Haptics from "expo-haptics";
 import { Bx } from "@/components/jo/Bx";
 import { f, makeJoStyles, useJoTheme } from "@/components/jo/ui";
 import type { RcaSection } from "@/services/RcaCreateService";
 import { FieldLabel, TextField } from "./IncFields";
-import { InlineError, StepDots } from "./RcaImportParts";
-import PolishButton from "./PolishButton";
+import { InlineError } from "./RcaImportParts";
+import { DictatedTextField } from "./RcaCreateFields";
+import type { Dictation } from "./useRcaDictation";
 import {
   CAPTION_MAX,
   PHOTOS_PER_SECTION,
@@ -44,6 +46,9 @@ interface Props {
   /** Photos across the whole RCA — the overall limit. */
   totalPhotos: number;
   offline: boolean;
+  dictation: Dictation;
+  /** Shown beside the block after a failed Create. */
+  error?: string;
   onText: (text: string) => void;
   /** Returns plain-language notes about photos that weren't added. */
   onPhotosPicked: (assets: PickedAsset[]) => string[];
@@ -60,13 +65,15 @@ const toAsset = (a: ImagePicker.ImagePickerAsset): PickedAsset => ({
   fileSize: a.fileSize,
 });
 
-export default function RcaCreateSectionStep({
+export default function RcaCreateSectionBlock({
   section,
   index,
   count,
   answer,
   totalPhotos,
   offline,
+  dictation,
+  error,
   onText,
   onPhotosPicked,
   onCaption,
@@ -133,48 +140,39 @@ export default function RcaCreateSectionStep({
   };
 
   return (
-    <ScrollView
-      style={{ flex: 1 }}
-      contentContainerStyle={s.body}
-      keyboardShouldPersistTaps="handled"
-      showsVerticalScrollIndicator={false}
-    >
-      <View style={s.progressRow}>
-        <Text style={s.counter}>
-          Section {index + 1} of {count}
-        </Text>
-        <StepDots count={count} index={index} />
-      </View>
-
-      <Text style={s.eyebrow}>{section.title}</Text>
-      <Text style={s.title} accessibilityRole="header">
-        {section.prompt || section.title}
+    <View style={s.block}>
+      <Text style={s.counter}>
+        Section {index + 1} of {count}
       </Text>
+      <View style={s.titleRow}>
+        <Text style={s.title} accessibilityRole="header">
+          {section.title}
+        </Text>
+        <Text style={required ? s.required : s.optional}>{required ? "Required" : "Optional"}</Text>
+      </View>
+      {section.prompt && section.prompt !== section.title ? <Text style={s.prompt}>{section.prompt}</Text> : null}
       {section.help ? <Text style={s.help}>{section.help}</Text> : null}
-      <Text style={required ? s.required : s.optional}>{required ? "Required" : "Optional"}</Text>
 
       {asksText ? (
-        <View style={{ marginTop: 18 }}>
-          <TextField
-            placeholder="Type your answer"
+        <View style={{ marginTop: 12 }}>
+          <DictatedTextField
+            id={`s:${section.id}`}
             value={answer.text}
-            onChangeText={onText}
+            onChange={onText}
+            max={SECTION_TEXT_MAX}
             multiline
-            minHeight={150}
-            maxLength={SECTION_TEXT_MAX}
+            minHeight={130}
+            placeholder="Type your answer"
+            invalid={!!error}
             accessibilityLabel={section.title}
+            dictation={dictation}
+            offline={offline}
           />
-          {answer.text.length >= SECTION_TEXT_MAX - 500 ? (
-            <Text style={s.count}>
-              {answer.text.length.toLocaleString("en-US")} / {SECTION_TEXT_MAX.toLocaleString("en-US")}
-            </Text>
-          ) : null}
-          <PolishButton value={answer.text} onChange={onText} offline={offline} />
         </View>
       ) : null}
 
       {asksPhotos ? (
-        <View style={{ marginTop: asksText ? 24 : 18 }}>
+        <View style={{ marginTop: asksText ? 18 : 12 }}>
           <View style={s.photosHead}>
             <FieldLabel label={asksText ? "Photos (optional)" : "Photos"} required={!asksText && required} />
             <Text style={s.photoCount}>
@@ -214,7 +212,8 @@ export default function RcaCreateSectionStep({
           {offline ? <InlineError text="You're offline. Photos can't be uploaded right now." style={{ marginTop: 8 }} /> : null}
         </View>
       ) : null}
-    </ScrollView>
+      <InlineError text={error} style={{ marginTop: 10 }} />
+    </View>
   );
 }
 
@@ -327,22 +326,13 @@ function AddButton({
 }
 
 const useStyles = makeJoStyles((t) => ({
-  body: { paddingHorizontal: 16, paddingTop: 20, paddingBottom: 28 },
-  progressRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: 18,
-    paddingHorizontal: 4,
-  },
-  counter: { ...f.t(12, 600, 0.04), textTransform: "uppercase", color: t.muted },
-  eyebrow: { ...f.t(12.5, 600), color: t.accentInk, paddingHorizontal: 4, marginBottom: 6 },
-  title: { ...f.d(24, -0.02, 1.18), color: t.ink, paddingHorizontal: 4 },
-  help: { ...f.t(14), lineHeight: 20, color: t.muted, marginTop: 8, paddingHorizontal: 4 },
+  block: { paddingVertical: 16 },
+  counter: { ...f.t(11.5, 600, 0.04), textTransform: "uppercase", color: t.muted },
+  titleRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10, marginTop: 4 },
+  title: { ...f.t(17, 600), color: t.ink, flex: 1 },
+  prompt: { ...f.t(14.5, 500), lineHeight: 20, color: t.ink2, marginTop: 6 },
+  help: { ...f.t(13), lineHeight: 18, color: t.muted, marginTop: 4 },
   optional: {
-    alignSelf: "flex-start",
-    marginTop: 10,
-    marginLeft: 4,
     ...f.t(11, 600),
     color: t.ink2,
     backgroundColor: t.muteTint,
@@ -352,9 +342,6 @@ const useStyles = makeJoStyles((t) => ({
     overflow: "hidden",
   },
   required: {
-    alignSelf: "flex-start",
-    marginTop: 10,
-    marginLeft: 4,
     ...f.t(11, 600),
     color: t.accentInk,
     backgroundColor: t.accentTint,
@@ -363,8 +350,6 @@ const useStyles = makeJoStyles((t) => ({
     borderRadius: 99,
     overflow: "hidden",
   },
-  count: { ...f.t(11.5), color: t.muted, textAlign: "right", marginTop: 6 },
-
   photosHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8, paddingHorizontal: 4 },
   photoCount: { ...f.t(12), color: t.muted },
   photoRow: {

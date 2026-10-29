@@ -1,14 +1,14 @@
 /**
- * "Create RCA" → write an RCA in the app, modelled on a past one, and let the
- * server build the document and raise the incident.
+ * "Create RCA" → write an RCA in the app and let the server build the document
+ * and raise the incident.
  *
- *   site ─► past RCA ─► reading ─► incident questions ─► sections ─► review ─► done
+ *   site ─► one form (incident details + the RCA sections) ─► done
  *
- * Online-only, like the RCA upload: the template is read by the server, the
- * text is polished by the server and the PDF is built there, so nothing is put
- * on the offline queue. Answers live in this component, so Back never loses
- * them, a failed photo upload or create never loses them, and every async
- * reply is checked against the screen it was asked for before it is applied.
+ * Online-only, like the RCA upload: the standard sections come from the
+ * server, the text is polished and the recordings typed up there, and the PDF
+ * is built there, so nothing is put on the offline queue. Answers live in this
+ * component, so a failed photo upload or create never loses them, and every
+ * async reply is checked against what it was asked for before it is applied.
  * The create call reuses one `client_request_id` for the whole session, so a
  * retry can never raise a second incident.
  *
@@ -25,6 +25,8 @@ import {
   Text,
   TouchableOpacity,
   View,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
 } from "react-native";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -37,43 +39,31 @@ import { IncHeader, IncPicker, Panel } from "./IncFields";
 import { StorageService } from "@/services/StorageService";
 import { TicketsService } from "@/services/TicketsService";
 import { IncidentsService } from "@/services/IncidentsService";
-import { RcaCreateService, type RcaCreateStart, type RcaTemplate } from "@/services/RcaCreateService";
+import { RcaCreateService, type RcaCreateStart } from "@/services/RcaCreateService";
 import type { RcaFields } from "@/services/RcaImportService";
-import RcaQuestionStep from "./RcaQuestionStep";
-import RcaCreateTemplateStep, { type TemplateList } from "./RcaCreateTemplateStep";
-import RcaCreateSectionStep, { type PickedAsset } from "./RcaCreateSectionStep";
-import RcaCreateReviewStep from "./RcaCreateReviewStep";
-import PolishButton from "./PolishButton";
+import RcaCreateForm from "./RcaCreateForm";
+import type { PickedAsset } from "./RcaCreateSectionBlock";
+import { useRcaDictation } from "./useRcaDictation";
 import { FooterButtons, Notice } from "./RcaImportParts";
 import {
-  anyUploading,
+  SECTION_TEXT_MAX,
   buildCreateFields,
   buildSectionsPayload,
   collectProblems,
   emptyAnswer,
   initialFields,
-  isSectionBlank,
-  isSectionRequired,
+  maxForField,
   photoKey,
   planPhotoAdds,
-  sectionProblem,
+  problemAnchor,
   totalPhotoCount,
   uploadedPhotos,
   type AnswerMap,
   type PhotoItem,
-  type SectionAnswer,
 } from "./rcaCreateLib";
-import { isQuestionAnswered, isQuestionVisible } from "./rcaImportLib";
+import { isQuestionVisible } from "./rcaImportLib";
 
-type Step =
-  | "site"
-  | "template"
-  | "reading"
-  | "readError"
-  | "questions"
-  | "sections"
-  | "review"
-  | "success";
+type Step = "site" | "starting" | "startError" | "form" | "success";
 
 /**
  * Mount with a new `key` for every open (see the incidents tab) so each RCA
@@ -111,16 +101,10 @@ export default function RcaCreateModal({
 
   const [step, setStep] = useState<Step>("site");
   const [siteCode, setSiteCode] = useState(defaultSiteCode);
-  const [templates, setTemplates] = useState<TemplateList>({ status: "loading" });
-  const [choice, setChoice] = useState<{ url: string | null; name: string | null }>({ url: null, name: null });
-  const [failure, setFailure] = useState<{ message: string; network: boolean } | null>(null);
-  const [started, setStarted] = useState<{ key: string; data: RcaCreateStart } | null>(null);
+  const [startError, setStartError] = useState<string | null>(null);
+  const [started, setStarted] = useState<RcaCreateStart | null>(null);
   const [fields, setFields] = useState<RcaFields | null>(null);
   const [answers, setAnswers] = useState<AnswerMap>({});
-  const [questionId, setQuestionId] = useState<string | null>(null);
-  const [sectionIndex, setSectionIndex] = useState(0);
-  /** Jumped here from the review: finishing goes straight back to it. */
-  const [fromReview, setFromReview] = useState(false);
   const [showProblems, setShowProblems] = useState(false);
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
@@ -131,34 +115,28 @@ export default function RcaCreateModal({
   const [assetsLoading, setAssetsLoading] = useState(false);
   const [assigneeOptions, setAssigneeOptions] = useState<SelectOption[]>([]);
 
-  /** One id for the whole wizard session — every create retry carries it. */
+  /** One id for the whole session — every create retry carries it. */
   const [clientRequestId] = useState(() => uuidv4());
-  /** Bumped to abandon an in-flight start (back, cancel, close, unmount). */
+  /** Bumped to abandon an in-flight start (back, close, unmount). */
   const startRunRef = useRef(0);
-  const templatesRunRef = useRef(0);
-  const templatesSiteRef = useRef<string | null>(null);
   const creatingRef = useRef(false);
   const mountedRef = useRef(true);
+
+  const scrollRef = useRef<ScrollView | null>(null);
+  const scrollYRef = useRef(0);
+  const anchorsRef = useRef(new Map<string, View>());
 
   useEffect(() => {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
       startRunRef.current += 1;
-      templatesRunRef.current += 1;
     };
   }, []);
-  useEffect(() => {
-    if (!visible) {
-      startRunRef.current += 1;
-      templatesRunRef.current += 1;
-    }
-  }, [visible]);
 
-  const result = started?.data.result ?? null;
-  const sections = useMemo(() => started?.data.sections ?? [], [started]);
-  const fieldSite = siteCode;
-  const inForm = step === "questions" || step === "review";
+  const sections = useMemo(() => started?.sections ?? [], [started]);
+  const result = started?.result ?? null;
+  const inForm = step === "form";
 
   /* ── details fields ─────────────────────────────────────────────────── */
 
@@ -169,13 +147,13 @@ export default function RcaCreateModal({
 
   // Assets for the chosen site — remote search, debounced (same as the upload flow).
   useEffect(() => {
-    if (!inForm || !fieldSite) return;
+    if (!inForm || !siteCode) return;
     let stale = false;
     const timer = setTimeout(
       async () => {
         setAssetsLoading(true);
         try {
-          const res = await TicketsService.getAssets(fieldSite, {
+          const res = await TicketsService.getAssets(siteCode, {
             page: 1,
             limit: 100,
             search: assetSearch.trim() || undefined,
@@ -202,13 +180,13 @@ export default function RcaCreateModal({
       stale = true;
       clearTimeout(timer);
     };
-  }, [inForm, fieldSite, assetSearch]);
+  }, [inForm, siteCode, assetSearch]);
 
   // Site users for "Assigned to".
   useEffect(() => {
-    if (!inForm || !fieldSite) return;
+    if (!inForm || !siteCode) return;
     let stale = false;
-    IncidentsService.getSiteUsers(fieldSite)
+    IncidentsService.getSiteUsers(siteCode)
       .then((res: any) => {
         if (stale || !res?.success || !Array.isArray(res.data)) return;
         setAssigneeOptions(
@@ -225,52 +203,14 @@ export default function RcaCreateModal({
     return () => {
       stale = true;
     };
-  }, [inForm, fieldSite]);
-
-  /* ── questions ──────────────────────────────────────────────────────── */
+  }, [inForm, siteCode]);
 
   const visibleQuestions = useMemo(
     () => (result && fields ? result.questions.filter((q) => isQuestionVisible(q, fields)) : []),
     [result, fields],
   );
-  const qIndex = Math.max(
-    0,
-    visibleQuestions.findIndex((q) => q.id === questionId),
-  );
-  const question = visibleQuestions[qIndex] ?? null;
-  const editableFields = useMemo(
-    () => new Set<keyof RcaFields>(visibleQuestions.map((q) => q.field)),
-    [visibleQuestions],
-  );
 
-  const candidates = useMemo(() => result?.asset_options?.[fieldSite] ?? [], [result, fieldSite]);
-  const personCandidates = useMemo(() => result?.assignee_options?.[fieldSite] ?? [], [result, fieldSite]);
-
-  const goToSections = () => {
-    setSectionIndex(0);
-    setStep("sections");
-  };
-
-  const nextQuestion = () => {
-    if (fromReview) {
-      setFromReview(false);
-      setStep("review");
-      return;
-    }
-    const next = visibleQuestions[qIndex + 1];
-    if (next) setQuestionId(next.id);
-    else goToSections();
-  };
-  const prevQuestion = () => {
-    const prev = visibleQuestions[qIndex - 1];
-    if (prev) setQuestionId(prev.id);
-    else setStep("template");
-  };
-
-  /* ── sections ───────────────────────────────────────────────────────── */
-
-  const section = sections[sectionIndex] ?? null;
-  const answerOf = (id: string): SectionAnswer => answers[id] ?? emptyAnswer();
+  /* ── section answers + photos ───────────────────────────────────────── */
 
   const setAnswerText = useCallback((id: string, text: string) => {
     setAnswers((prev) => ({ ...prev, [id]: { ...(prev[id] ?? emptyAnswer()), text } }));
@@ -309,7 +249,7 @@ export default function RcaCreateModal({
   );
 
   const addPhotos = (sectionId: string, assets: PickedAsset[]): string[] => {
-    const plan = planPhotoAdds(assets, answerOf(sectionId).photos.length, totalPhotoCount(answers));
+    const plan = planPhotoAdds(assets, (answers[sectionId] ?? emptyAnswer()).photos.length, totalPhotoCount(answers));
     if (plan.accepted.length) {
       const items: PhotoItem[] = plan.accepted.map((a) => ({
         id: uuidv4(),
@@ -330,145 +270,117 @@ export default function RcaCreateModal({
     return plan.messages;
   };
 
-  const sectionStepProblem = section ? sectionProblem(section, answers[section.id]) : null;
-  // "Please answer X" on an untouched required section is shown by the Required
-  // tag; the footer only speaks up for things the person has to act on.
-  const sectionNote =
-    section && sectionStepProblem && !(isSectionRequired(section) && isSectionBlank(answers[section.id]))
-      ? sectionStepProblem
-      : null;
+  /* ── dictation (one controller for the whole form) ──────────────────── */
 
-  const nextSection = () => {
-    if (!section || sectionStepProblem) return;
-    if (fromReview) {
-      setFromReview(false);
-      setStep("review");
-      return;
+  const fieldsRef = useRef<RcaFields | null>(null);
+  const answersRef = useRef<AnswerMap>({});
+  useEffect(() => {
+    fieldsRef.current = fields;
+    answersRef.current = answers;
+  }, [fields, answers]);
+
+  const dictation = useRcaDictation({
+    siteCode,
+    getValue: useCallback((id: string) => {
+      if (id.startsWith("q:")) return String(fieldsRef.current?.[id.slice(2) as keyof RcaFields] ?? "");
+      if (id.startsWith("s:")) return answersRef.current[id.slice(2)]?.text ?? "";
+      return "";
+    }, []),
+    maxFor: useCallback(
+      (id: string) => (id.startsWith("q:") ? maxForField(id.slice(2) as keyof RcaFields) : SECTION_TEXT_MAX),
+      [],
+    ),
+    apply: useCallback(
+      (id: string, text: string) => {
+        if (id.startsWith("q:")) setField(id.slice(2) as keyof RcaFields, text as never);
+        else if (id.startsWith("s:")) setAnswerText(id.slice(2), text);
+      },
+      [setField, setAnswerText],
+    ),
+  });
+  const { cancelAll: cancelDictation } = dictation;
+
+  useEffect(() => {
+    if (!visible) {
+      startRunRef.current += 1;
+      cancelDictation();
     }
-    if (sectionIndex < sections.length - 1) setSectionIndex(sectionIndex + 1);
-    else setStep("review");
-  };
-  const prevSection = () => {
-    if (sectionIndex > 0) {
-      setSectionIndex(sectionIndex - 1);
-      return;
-    }
-    const last = visibleQuestions[visibleQuestions.length - 1];
-    if (last) {
-      setQuestionId(last.id);
-      setStep("questions");
-    } else {
-      setStep("template");
-    }
-  };
+  }, [visible, cancelDictation]);
 
-  /* ── templates + reading ────────────────────────────────────────────── */
+  /* ── starting the form ──────────────────────────────────────────────── */
 
-  const loadTemplates = useCallback(async (site: string) => {
-    const run = ++templatesRunRef.current;
-    templatesSiteRef.current = site;
-    setTemplates({ status: "loading" });
-    const res = await RcaCreateService.templates(site);
-    if (run !== templatesRunRef.current || !mountedRef.current) return;
-    if (!res.ok) {
-      templatesSiteRef.current = null;
-      setTemplates({ status: "error", message: res.error });
-      return;
-    }
-    const items = Array.isArray(res.data?.templates) ? res.data.templates : [];
-    setTemplates({ status: "ready", items });
-  }, []);
-
-  const goToTemplates = () => {
-    if (!siteCode || offline) return;
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-    setStep("template");
-    if (templatesSiteRef.current !== siteCode || templates.status !== "ready") void loadTemplates(siteCode);
-  };
-
-  const startReading = async (url: string | null, name: string | null) => {
+  const startForm = async () => {
     if (!siteCode) return;
-    const key = `${siteCode}|${url ?? ""}`;
-    setChoice({ url, name });
-    // Same site and template as the answers already in progress: keep them.
-    if (started && started.key === key && fields) {
-      const first = visibleQuestions[0];
-      if (first) {
-        setQuestionId(first.id);
-        setStep("questions");
-      } else {
-        goToSections();
-      }
-      return;
-    }
     if (offline) {
-      setFailure({ message: OFFLINE_MESSAGE, network: true });
-      setStep("readError");
+      setStartError(OFFLINE_MESSAGE);
+      setStep("startError");
       return;
     }
     const run = ++startRunRef.current;
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
-    setFailure(null);
-    setStep("reading");
-    const res = await RcaCreateService.start({ site_code: siteCode, ...(url ? { template_url: url } : {}) });
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    setStartError(null);
+    setStep("starting");
+    const res = await RcaCreateService.start({ site_code: siteCode });
     if (run !== startRunRef.current || !mountedRef.current) return;
-    if (!res.ok) {
+    const data = res.ok ? res.data : null;
+    if (!res.ok || !data || !Array.isArray(data.sections) || data.sections.length === 0 || !data.result?.questions) {
       haptic(Haptics.NotificationFeedbackType.Error);
-      setFailure({ message: res.error, network: res.network });
-      setStep("readError");
+      setStartError(res.ok ? "Something went wrong. Please try again." : res.error);
+      setStep("startError");
       return;
     }
-    const data = res.data;
-    if (!data || !Array.isArray(data.sections) || data.sections.length === 0 || !data.result?.questions) {
-      haptic(Haptics.NotificationFeedbackType.Error);
-      setFailure({ message: "Something went wrong. Please try again.", network: false });
-      setStep("readError");
-      return;
-    }
-    const f0 = initialFields(data.result, siteCode);
-    setStarted({ key, data });
-    setFields(f0);
+    setStarted(data);
+    setFields(initialFields(data.result, siteCode));
     setAnswers({});
     setShowProblems(false);
     setCreateError(null);
-    setFromReview(false);
     setAssetSearch("");
-    haptic(Haptics.NotificationFeedbackType.Success);
-    const first = data.result.questions.find((q) => isQuestionVisible(q, f0));
-    if (first) {
-      setQuestionId(first.id);
-      setStep("questions");
-    } else {
-      setSectionIndex(0);
-      setStep("sections");
-    }
+    setStep("form");
   };
 
-  const pickTemplate = (tpl: RcaTemplate) => void startReading(tpl.file_url, tpl.file_name);
-
-  /* ── review + create ────────────────────────────────────────────────── */
+  /* ── validation + scrolling ─────────────────────────────────────────── */
 
   const problems = useMemo(
     () => (fields ? collectProblems(fields, sections, answers) : []),
     [fields, sections, answers],
   );
-  const uploading = anyUploading(answers);
-  const firstProblem = problems[0]?.message ?? (uploading ? "Please wait for the photos to finish uploading." : null);
+  const errors = useMemo(() => {
+    const map: Record<string, string> = {};
+    if (!showProblems) return map;
+    for (const p of problems) {
+      const key = problemAnchor(p);
+      if (!map[key]) map[key] = p.message;
+    }
+    return map;
+  }, [problems, showProblems]);
 
-  const editField = (field: keyof RcaFields) => {
-    const q = visibleQuestions.find((x) => x.field === field);
-    if (!q) return;
-    setQuestionId(q.id);
-    setFromReview(true);
-    setStep("questions");
-  };
-  const editSection = (id: string) => {
-    const i = sections.findIndex((s) => s.id === id);
-    if (i < 0) return;
-    setSectionIndex(i);
-    setFromReview(true);
-    setStep("sections");
-  };
+  const anchorRef = useCallback(
+    (id: string) => (node: View | null) => {
+      if (node) anchorsRef.current.set(id, node);
+      else anchorsRef.current.delete(id);
+    },
+    [],
+  );
+  const onScroll = useCallback((e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    scrollYRef.current = e.nativeEvent.contentOffset.y;
+  }, []);
+
+  const scrollToAnchor = useCallback((id: string) => {
+    const node = anchorsRef.current.get(id);
+    const sv = scrollRef.current as unknown as View | null;
+    if (!node || !sv) return;
+    // Window coordinates for both, so no layout bookkeeping across nested views.
+    sv.measureInWindow((_x, scrollTop) => {
+      node.measureInWindow((_nx, nodeTop) => {
+        scrollRef.current?.scrollTo({
+          y: Math.max(0, scrollYRef.current + (nodeTop - scrollTop) - 12),
+          animated: true,
+        });
+      });
+    });
+  }, []);
+
+  /* ── create ─────────────────────────────────────────────────────────── */
 
   const createRca = async () => {
     if (!fields || !started || creatingRef.current) return;
@@ -477,9 +389,16 @@ export default function RcaCreateModal({
       haptic(Haptics.NotificationFeedbackType.Warning);
       return;
     }
-    if (firstProblem) {
-      setShowProblems(true);
+    if (dictation.phase !== "idle") {
+      setCreateError("Please wait for the voice typing to finish, then create the RCA.");
       haptic(Haptics.NotificationFeedbackType.Warning);
+      return;
+    }
+    setShowProblems(true);
+    if (problems.length > 0) {
+      haptic(Haptics.NotificationFeedbackType.Warning);
+      const first = problems.find((p) => anchorsRef.current.has(problemAnchor(p)));
+      if (first) scrollToAnchor(problemAnchor(first));
       return;
     }
     creatingRef.current = true;
@@ -509,14 +428,13 @@ export default function RcaCreateModal({
 
   const close = useCallback(() => {
     startRunRef.current += 1;
-    templatesRunRef.current += 1;
+    cancelDictation();
     onClose();
-  }, [onClose]);
+  }, [onClose, cancelDictation]);
 
   const requestClose = () => {
     if (creating) return; // the request is already on its way — let it finish
-    const hasWork = step === "questions" || step === "sections" || step === "review";
-    if (hasWork) {
+    if (step === "form") {
       Alert.alert("Discard this RCA?", "Your answers and photos will be lost.", [
         { text: "Keep editing", style: "cancel" },
         { text: "Discard", style: "destructive", onPress: close },
@@ -530,25 +448,14 @@ export default function RcaCreateModal({
 
   const subtitle =
     step === "site"
-      ? "Based on a past RCA"
-      : step === "template"
-        ? "Choose what to follow"
-        : step === "reading" || step === "readError"
-          ? "Reading the RCA…"
-          : step === "questions"
-            ? "Incident details"
-            : step === "sections"
-              ? "The RCA"
-              : step === "review"
-                ? "Check the details, then create"
-                : step === "success"
-                  ? "All done"
-                  : undefined;
+      ? "Write it here, we build the document"
+      : step === "form"
+        ? "Fill in the details and the RCA"
+        : step === "success"
+          ? "All done"
+          : undefined;
 
   const siteLabel = siteOptions.find((o) => o.value === siteCode)?.label ?? siteCode;
-  const assigneeLabel = fields?.assigned_to
-    ? (assigneeOptions.find((o) => o.value === fields.assigned_to)?.label ?? "Selected person")
-    : "";
 
   let body: React.ReactNode = null;
   let footer: React.ReactNode = null;
@@ -561,148 +468,105 @@ export default function RcaCreateModal({
       <FooterButtons
         bottomInset={insets.bottom}
         primaryLabel="Continue"
-        onPrimary={goToTemplates}
+        onPrimary={() => void startForm()}
         primaryDisabled={!siteCode || offline}
         note={!siteCode ? "Choose the site first." : null}
       />
     );
-  } else if (step === "template") {
-    body = (
-      <RcaCreateTemplateStep
-        list={templates}
-        offline={offline}
-        hasAnswers={!!started}
-        onPick={pickTemplate}
-        onStandard={() => void startReading(null, null)}
-        onRetry={() => void loadTemplates(siteCode)}
-      />
-    );
-    footer = <FooterButtons bottomInset={insets.bottom} primaryLabel="Back" onPrimary={() => setStep("site")} quiet />;
-  } else if (step === "reading") {
-    body = <ReadingScreen name={choice.name} />;
+  } else if (step === "starting") {
+    body = <StartingScreen />;
     footer = (
       <FooterButtons
         bottomInset={insets.bottom}
         primaryLabel="Cancel"
         onPrimary={() => {
           startRunRef.current += 1;
-          setStep("template");
+          setStep("site");
         }}
         quiet
       />
     );
-  } else if (step === "readError" && failure) {
+  } else if (step === "startError") {
+    const noNet = startError === OFFLINE_MESSAGE;
     body = (
       <StatusScreen
-        icon={failure.network ? "bx-wifi-off" : "bx-error-circle"}
+        icon={noNet ? "bx-wifi-off" : "bx-error-circle"}
         tone="warn"
-        title={failure.network ? "No connection" : "Couldn't read this RCA"}
-        message={failure.message}
+        title={noNet ? "No connection" : "Couldn't get the form ready"}
+        message={startError ?? "Something went wrong. Please try again."}
       />
     );
     footer = (
       <FooterButtons
         bottomInset={insets.bottom}
-        secondaryLabel="Pick another"
-        onSecondary={() => setStep("template")}
+        secondaryLabel="Back"
+        onSecondary={() => setStep("site")}
         primaryLabel="Try again"
-        onPrimary={() => void startReading(choice.url, choice.name)}
-        tertiaryLabel={choice.url ? "Use standard sections" : undefined}
-        onTertiary={choice.url ? () => void startReading(null, null) : undefined}
+        onPrimary={() => void startForm()}
       />
     );
-  } else if (step === "questions" && question && fields && result) {
-    const answered = isQuestionAnswered(question, fields);
-    const last = qIndex === visibleQuestions.length - 1;
+  } else if (step === "form" && fields && result) {
+    const shownProblems = showProblems ? problems : [];
     body = (
-      <RcaQuestionStep
-        key={question.id}
-        question={question}
-        index={qIndex}
-        count={visibleQuestions.length}
+      <RcaCreateForm
+        scrollRef={scrollRef}
+        onScroll={onScroll}
+        anchorRef={anchorRef}
+        siteLabel={siteLabel}
         fields={fields}
         setField={setField}
-        assetCandidates={candidates}
-        personCandidates={personCandidates}
-        peopleOptions={assigneeOptions}
+        questions={visibleQuestions}
+        sections={sections}
+        answers={answers}
+        errors={errors}
         assetSearchOptions={assetResults}
         assetsLoading={assetsLoading}
         assetSearch={assetSearch}
         onAssetSearch={setAssetSearch}
-        renderTextAccessory={({ value, setValue }) => (
-          <PolishButton value={value} onChange={setValue} offline={offline} />
-        )}
-      />
-    );
-    footer = (
-      <FooterButtons
-        bottomInset={insets.bottom}
-        secondaryLabel={fromReview ? undefined : "Back"}
-        onSecondary={fromReview ? undefined : prevQuestion}
-        primaryLabel={fromReview ? "Back to review" : last ? "Next: the RCA" : "Next"}
-        onPrimary={nextQuestion}
-        primaryDisabled={question.required && !answered}
-        tertiaryLabel={!question.required && !fromReview ? "Skip this question" : undefined}
-        onTertiary={!question.required && !fromReview ? nextQuestion : undefined}
-      />
-    );
-  } else if (step === "sections" && section) {
-    const skip = !isSectionRequired(section) && isSectionBlank(answers[section.id]);
-    const last = sectionIndex === sections.length - 1;
-    body = (
-      <RcaCreateSectionStep
-        key={section.id}
-        section={section}
-        index={sectionIndex}
-        count={sections.length}
-        answer={answerOf(section.id)}
-        totalPhotos={totalPhotoCount(answers)}
+        peopleOptions={assigneeOptions}
+        dictation={dictation}
         offline={offline}
-        onText={(text) => setAnswerText(section.id, text)}
-        onPhotosPicked={(assets) => addPhotos(section.id, assets)}
-        onCaption={(id, caption) => patchPhoto(section.id, id, { caption })}
-        onRemovePhoto={(id) =>
+        onText={setAnswerText}
+        onPhotosPicked={addPhotos}
+        onCaption={(sid, id, caption) => patchPhoto(sid, id, { caption })}
+        onRemovePhoto={(sid, id) =>
           setAnswers((prev) => {
-            const a = prev[section.id];
+            const a = prev[sid];
             if (!a) return prev;
-            return { ...prev, [section.id]: { ...a, photos: a.photos.filter((p) => p.id !== id) } };
+            return { ...prev, [sid]: { ...a, photos: a.photos.filter((p) => p.id !== id) } };
           })
         }
-        onRetryPhoto={(id) => {
-          const p = answerOf(section.id).photos.find((x) => x.id === id);
-          if (p) void uploadPhoto(section.id, p);
+        onRetryPhoto={(sid, id) => {
+          const p = (answers[sid] ?? emptyAnswer()).photos.find((x) => x.id === id);
+          if (p) void uploadPhoto(sid, p);
         }}
       />
     );
     footer = (
-      <FooterButtons
-        bottomInset={insets.bottom}
-        secondaryLabel={fromReview ? undefined : "Back"}
-        onSecondary={fromReview ? undefined : prevSection}
-        primaryLabel={fromReview ? "Back to review" : skip ? "Skip this section" : last ? "Review" : "Next"}
-        onPrimary={nextSection}
-        primaryDisabled={!!sectionStepProblem}
-        note={sectionNote}
-      />
-    );
-  } else if (step === "review" && fields) {
-    body = (
-      <RcaCreateReviewStep
-        fields={fields}
-        siteLabel={siteLabel}
-        assigneeLabel={assigneeLabel}
-        sections={sections}
-        answers={answers}
-        problems={problems}
-        showProblems={showProblems}
-        serverError={createError}
-        editableFields={editableFields}
-        onEditField={editField}
-        onEditSection={editSection}
-      />
-    );
-    footer = (
-      <>
+      <View style={styles.footerWrap}>
+        {shownProblems.length > 0 ? (
+          <View style={[styles.summary, { backgroundColor: t.badTint }]} accessibilityLiveRegion="polite">
+            <Text style={[styles.summaryTitle, { color: t.bad }]}>
+              {shownProblems.length === 1 ? "1 thing needs fixing" : `${shownProblems.length} things need fixing`}
+            </Text>
+            {shownProblems.slice(0, 3).map((p) => (
+              <TouchableOpacity
+                key={p.key}
+                onPress={() => scrollToAnchor(problemAnchor(p))}
+                hitSlop={4}
+                accessibilityRole="button"
+                accessibilityLabel={`${p.message} Tap to go to it`}
+              >
+                <Text style={[styles.summaryLine, { color: t.ink2 }]} numberOfLines={2}>
+                  • {p.message}
+                </Text>
+              </TouchableOpacity>
+            ))}
+            {shownProblems.length > 3 ? (
+              <Text style={[styles.summaryLine, { color: t.muted }]}>+ {shownProblems.length - 3} more</Text>
+            ) : null}
+          </View>
+        ) : null}
         {creating ? (
           <View style={styles.buildingBar}>
             <Notice icon="bx-time-five" tone="info">
@@ -712,18 +576,12 @@ export default function RcaCreateModal({
         ) : null}
         <FooterButtons
           bottomInset={insets.bottom}
-          secondaryLabel="Back"
-          onSecondary={() => {
-            setSectionIndex(Math.max(0, sections.length - 1));
-            setStep("sections");
-          }}
           primaryLabel="Create RCA & incident"
           onPrimary={() => void createRca()}
           busy={creating}
-          primaryDisabled={uploading}
-          note={createError ? null : showProblems ? firstProblem : null}
+          note={createError}
         />
-      </>
+      </View>
     );
   } else if (step === "success" && created) {
     const photos = sections.reduce((n, s) => n + uploadedPhotos(answers[s.id]).length, 0);
@@ -793,8 +651,8 @@ function SiteStep({
         <View style={{ flex: 1, minWidth: 0 }}>
           <Text style={styles.introTitle}>Write the RCA here</Text>
           <Text style={styles.introText}>
-            Follow a past RCA. We&apos;ll ask about the incident, then walk you through each section —
-            with photos if you like. We build the document and raise the incident for you.
+            Fill in the incident details and each section of the RCA — with photos and voice typing
+            if you like. We build the document and raise the incident for you.
           </Text>
         </View>
       </View>
@@ -821,9 +679,9 @@ function SiteStep({
   );
 }
 
-/* ── Reading ─────────────────────────────────────────────────────────────── */
+/* ── Starting ────────────────────────────────────────────────────────────── */
 
-function ReadingScreen({ name }: { name: string | null }) {
+function StartingScreen() {
   const t = useJoTheme();
   const styles = useStyles();
   return (
@@ -832,20 +690,7 @@ function ReadingScreen({ name }: { name: string | null }) {
         <ActivityIndicator size="large" color={t.accentInk} />
       </View>
       <Text style={styles.statusTitle} accessibilityRole="header" accessibilityLiveRegion="polite">
-        {name ? "Reading the RCA…" : "Getting ready…"}
-      </Text>
-      {name ? (
-        <View style={styles.fileRow}>
-          <Bx name="bx-file" size={14} color={t.muted} />
-          <Text style={styles.fileName} numberOfLines={1}>
-            {name}
-          </Text>
-        </View>
-      ) : null}
-      <Text style={styles.statusMessage}>
-        {name
-          ? "We're picking out its sections so you can answer them one by one. The first time can take up to a minute."
-          : "Setting up the standard sections."}
+        Getting the form ready…
       </Text>
     </ScrollView>
   );
@@ -945,6 +790,10 @@ const useStyles = makeJoStyles((t) => ({
   flex: { flex: 1 },
   body: { paddingHorizontal: 16, paddingTop: 12, paddingBottom: 24 },
   buildingBar: { paddingHorizontal: 16, paddingTop: 10, backgroundColor: t.page },
+  footerWrap: { backgroundColor: t.page },
+  summary: { marginHorizontal: 16, marginTop: 10, padding: 12, borderRadius: 18 },
+  summaryTitle: { ...f.t(13, 700), marginBottom: 4 },
+  summaryLine: { ...f.t(12.5, 500), lineHeight: 18, paddingVertical: 2 },
 
   intro: { flexDirection: "row", alignItems: "flex-start", gap: 12, marginBottom: 6, paddingHorizontal: 4 },
   introIcon: {
@@ -957,9 +806,6 @@ const useStyles = makeJoStyles((t) => ({
   },
   introTitle: { ...f.t(15, 600), color: t.ink },
   introText: { ...f.t(13), lineHeight: 19, color: t.muted, marginTop: 3 },
-
-  fileRow: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 8, maxWidth: "90%" },
-  fileName: { ...f.t(12.5), color: t.muted, flexShrink: 1 },
 
   statusBody: {
     flexGrow: 1,
