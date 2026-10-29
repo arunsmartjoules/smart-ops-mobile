@@ -544,6 +544,20 @@ export const TicketsService = {
       if (result?.success === true && queueId) {
         await cacheManager.dequeue(queueId).catch(() => {});
       }
+      // Adopt the server's new updated_at as this ticket's baseline. Without it
+      // the next status change (e.g. No Access → In progress a minute later)
+      // carries a baseline older than our own write, and the backend's
+      // stale-update guard can drop it.
+      if (result?.success === true && localRows.length > 0) {
+        const serverUpdatedMs = Date.parse(String(result.data?.updated_at ?? ""));
+        if (Number.isFinite(serverUpdatedMs)) {
+          await db
+            .update(tickets)
+            .set({ updated_at: serverUpdatedMs })
+            .where(eq(tickets.id, localRows[0].id))
+            .catch(() => {});
+        }
+      }
       return result;
     } catch (err) {
       return { success: false, error: "Couldn't save the update. Please try again." };

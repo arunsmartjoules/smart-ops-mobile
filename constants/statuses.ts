@@ -8,7 +8,10 @@ export const TICKET_STATUS = {
   IN_PROGRESS: "Inprogress",
   RESOLVED: "Resolved",
   HOLD: "Hold",
+  /** Legacy — no longer offered; existing tickets may still carry it. */
   WAITING: "Waiting",
+  /** Client-signed; pauses the SLA clocks. Replaced Waiting. */
+  NO_ACCESS: "No Access",
   CANCELLED: "Cancelled",
 } as const;
 
@@ -35,6 +38,11 @@ export const TICKET_STATUS_COLORS: Record<
     bg: "#f3f4f6",
     text: "#6b7280",
     border: "#e5e7eb",
+  },
+  [TICKET_STATUS.NO_ACCESS]: {
+    bg: "#fef3c7",
+    text: "#b45309",
+    border: "#fde68a",
   },
   [TICKET_STATUS.CANCELLED]: {
     bg: "#f1f5f9",

@@ -54,7 +54,8 @@ export const WhatsAppService = {
       
       // 1. Fetch Template for newStatus
       const templateRes = await apiFetch(
-        `/api/whatsapp/templates/status/${newStatus}`,
+        // Encoded: "No Access" carries a space.
+        `/api/whatsapp/templates/status/${encodeURIComponent(newStatus)}`,
       );
       
       logger.debug(`[WhatsApp] Template fetch result:`, { 

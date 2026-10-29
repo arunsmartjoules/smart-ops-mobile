@@ -8,12 +8,13 @@ import { toneBg, toneFg, type JoTheme, type JoTone } from "@/constants/jo";
 import { formatIST, formatISTTime, istParts } from "@/utils/istDate";
 import type { Ticket } from "@/services/TicketsService";
 
-/** Artboard TK_ST: Open BAD · In progress INFO · Hold MUTE · Waiting WARN · Resolved OK · Cancelled MUTE. */
+/** Artboard TK_ST: Open BAD · In progress INFO · Hold MUTE · Waiting WARN · Resolved OK · Cancelled MUTE. No Access (Waiting's replacement) takes WARN. */
 const STATUS_TONE: Record<string, JoTone> = {
   Open: "bad",
   Inprogress: "info",
   Hold: "mute",
   Waiting: "warn",
+  "No Access": "warn",
   Resolved: "ok",
   Cancelled: "mute",
 };

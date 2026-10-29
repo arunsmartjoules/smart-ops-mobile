@@ -9,8 +9,10 @@ import { type SelectOption } from "./SearchableSelect";
 import TicketDetailStatusUpdate, {
   getTicketUpdateBlocker,
   isTempMandatoryCategory,
+  NO_ACCESS_STATUS,
   ticketCategory,
 } from "./TicketDetailStatusUpdate";
+import { NoAccessSignSheet, type NoAccessSignoff } from "@/components/tickets/NoAccessSignSheet";
 import TicketActivity from "@/components/tickets/TicketActivity";
 import {
   ticketPriorityColors,
@@ -37,7 +39,8 @@ interface TicketDetailModalProps {
   updateBreakdownType: string;
   setUpdateBreakdownType: (s: string) => void;
   isUpdating: boolean;
-  handleUpdateStatus: () => void;
+  /** `signoff` is passed only for a move to No Access, after the client signs. */
+  handleUpdateStatus: (signoff?: NoAccessSignoff) => void;
   areaOptions: SelectOption[];
   categoryOptions: SelectOption[];
   areasLoading?: boolean;
@@ -145,6 +148,8 @@ const TicketDetailModal = React.memo(
     // Turns the hints and the sticky bar's message on only once the operator
     // has actually tried to submit.
     const [attempted, setAttempted] = React.useState(false);
+    // No Access needs the client's name + signature before it can be sent.
+    const [signSheetOpen, setSignSheetOpen] = React.useState(false);
 
     // Reset on every open / ticket switch — adjusted during render rather than
     // in an effect, so the stale "attempted" flag never paints.
@@ -153,6 +158,7 @@ const TicketDetailModal = React.memo(
     if (seenKey !== resetKey) {
       setSeenKey(resetKey);
       if (visible) setAttempted(false);
+      setSignSheetOpen(false);
     }
 
     const isDirty = React.useMemo(() => {
@@ -360,6 +366,10 @@ const TicketDetailModal = React.memo(
                     // alert; this just avoids a pointless round-trip when we
                     // already know the form is incomplete.
                     if (!isDirty || blocker) return;
+                    if (updateStatus === NO_ACCESS_STATUS && ticket.status !== NO_ACCESS_STATUS) {
+                      setSignSheetOpen(true);
+                      return;
+                    }
                     handleUpdateStatus();
                   }}
                 />
@@ -367,6 +377,15 @@ const TicketDetailModal = React.memo(
             ) : null}
           </KeyboardAvoidingView>
         </View>
+        {/* Rendered inside the detail Modal so it stacks above it on iOS. */}
+        <NoAccessSignSheet
+          visible={signSheetOpen}
+          onClose={() => setSignSheetOpen(false)}
+          onConfirm={(signoff) => {
+            setSignSheetOpen(false);
+            handleUpdateStatus(signoff);
+          }}
+        />
       </Modal>
     );
   },

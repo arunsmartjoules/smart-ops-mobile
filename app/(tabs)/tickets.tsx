@@ -36,8 +36,10 @@ import TicketDetailModal from "@/components/TicketDetailModal";
 import {
   isTempMandatoryCategory,
   isBreakdownTypeCategory,
+  NO_ACCESS_STATUS,
   ticketCategory,
 } from "@/components/TicketDetailStatusUpdate";
+import type { NoAccessSignoff } from "@/components/tickets/NoAccessSignSheet";
 import {
   makeTicketIncidentDraft,
   type TicketIncidentDraft,
@@ -308,9 +310,10 @@ export default function Tickets() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enrichedTickets, sortMode]);
 
-  // Artboard chips (All · Open · In progress · Hold · Waiting · Resolved),
+  // Artboard chips (All · Open · In progress · Hold · No Access · Resolved),
   // plus Cancelled at the end — it was reachable through the old filter
-  // modal's status list and must stay reachable.
+  // modal's status list and must stay reachable. No Access replaced Waiting;
+  // the Waiting chip only appears while older tickets still carry it.
   const statusChips = useMemo<TicketStatusChip[]>(() => {
     const byStatus = stats?.byStatus as Record<string, number> | undefined;
     return [
@@ -318,11 +321,14 @@ export default function Tickets() {
       { key: "Open", label: "Open", count: byStatus?.Open },
       { key: "Inprogress", label: "In progress", count: byStatus?.Inprogress },
       { key: "Hold", label: "Hold", count: byStatus?.Hold },
-      { key: "Waiting", label: "Waiting", count: byStatus?.Waiting },
+      { key: NO_ACCESS_STATUS, label: NO_ACCESS_STATUS, count: byStatus?.[NO_ACCESS_STATUS] },
+      ...(byStatus?.Waiting || statusFilter === "Waiting"
+        ? [{ key: "Waiting", label: "Waiting", count: byStatus?.Waiting }]
+        : []),
       { key: "Resolved", label: "Resolved", count: byStatus?.Resolved },
       { key: "Cancelled", label: "Cancelled", count: byStatus?.Cancelled },
     ];
-  }, [stats]);
+  }, [stats, statusFilter]);
 
   // The list is paginated, so prefer the server's count for the active filter
   // and fall back to what's actually loaded.
@@ -1223,7 +1229,7 @@ export default function Tickets() {
     };
   }, [selectedTicket, sites]);
 
-  const handleUpdateStatus = async () => {
+  const handleUpdateStatus = async (signoff?: NoAccessSignoff) => {
     if (!selectedTicket) return;
     // Block concurrent/rapid re-entry synchronously. Validation below is
     // fully synchronous, so a double-tap can only race at the first await
@@ -1236,6 +1242,13 @@ export default function Tickets() {
       updateStatus === "Inprogress" || updateStatus === "Resolved";
     if (needsRemarks && !updateRemarks.trim()) {
       Alert.alert("Required", "Please provide remarks for this status update.");
+      return;
+    }
+    // TicketDetailModal collects these in NoAccessSignSheet before calling us.
+    const enteringNoAccess =
+      updateStatus === NO_ACCESS_STATUS && selectedTicket.status !== NO_ACCESS_STATUS;
+    if (enteringNoAccess && (!signoff?.client_name.trim() || !signoff.client_signature)) {
+      Alert.alert("Required", "The client's name and signature are needed to move this ticket to No Access.");
       return;
     }
     // Fall back to the ticket's own values, exactly like the sticky bar's
@@ -1384,6 +1397,11 @@ export default function Tickets() {
     if (updateStatus === "Resolved" && !selectedTicket.resolved_at) {
       payload.resolved_at = nowIso;
     }
+    // The on-device moment of the status change, so a No Access pause queued
+    // offline starts/ends when it happened rather than when it synced.
+    if (updateStatus !== selectedTicket.status) {
+      payload.status_changed_at = nowIso;
+    }
 
     isSubmittingRef.current = true;
     setIsUpdating(true);
@@ -1404,9 +1422,17 @@ export default function Tickets() {
       // Always call updateTicket — it writes to local DB + enqueues + attempts
       // API. The result tells us whether the API confirmed; on network failure
       // the local write is already done so we must NOT show an error to the user.
+      // The sign-off goes to the server only — kept off the optimistic ticket
+      // so the signature image isn't copied into list state.
       const res = await TicketsService.updateTicket(
         selectedTicket.id || selectedTicket.ticket_no,
-        payload,
+        enteringNoAccess && signoff
+          ? {
+              ...payload,
+              client_name: signoff.client_name.trim(),
+              client_signature: signoff.client_signature,
+            }
+          : payload,
       );
 
       const apiConfirmed = res.success === true;

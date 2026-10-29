@@ -66,6 +66,13 @@ export const REMARKS_REQUIRED_STATUSES = [
   "Resolved",
 ];
 
+/**
+ * Pauses the ticket's SLA clocks. Moving into it needs the client's name and
+ * signature (NoAccessSignSheet) — the backend rejects it without them. Replaced
+ * "Waiting" as a choice; tickets already in Waiting keep it.
+ */
+export const NO_ACCESS_STATUS = "No Access";
+
 /** Display label for a status value ("Inprogress" is stored, not shown). */
 export const statusLabel = (s: string) =>
   s === "Inprogress" ? "In progress" : s === "Open" ? "Reopen" : s;
@@ -76,6 +83,7 @@ const STATUS_ICON: Record<string, BxName> = {
   Inprogress: "bxs-wrench",
   Hold: "bx-pause",
   Waiting: "bx-time-five",
+  [NO_ACCESS_STATUS]: "bx-lock-alt",
   Resolved: "bx-check",
   Cancelled: "bx-x",
 };
@@ -99,6 +107,8 @@ function statusHintFor(status: string, tempMandatory: boolean): string {
       return "Blocked — add a reason in remarks";
     case "Waiting":
       return "Waiting on a spare or vendor";
+    case NO_ACCESS_STATUS:
+      return "Client signs to confirm — pauses the SLA timer";
     case "Cancelled":
       return "Closed without work — add a reason";
     case "Open":
@@ -303,13 +313,14 @@ const TicketDetailStatusUpdate = ({
     }
   };
 
-  // Artboard order (In progress, Resolved, Hold, Waiting, Cancelled); the
-  // grid wraps, so every option stays visible without reordering.
+  // Artboard order (In progress, Resolved, Hold, No Access, Cancelled); the
+  // grid wraps, so every option stays visible without reordering. No Access
+  // took Waiting's slot — Waiting is no longer offered.
   const statuses = [
     "Inprogress",
     "Resolved",
     "Hold",
-    "Waiting",
+    NO_ACCESS_STATUS,
     "Cancelled",
     "Open",
   ];

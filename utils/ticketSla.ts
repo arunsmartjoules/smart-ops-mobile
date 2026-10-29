@@ -6,6 +6,7 @@
  *   sla        — "Met" | "Breached" | null. Null means no SLA target applies
  *                (untracked category, or Cancelled / Waiting / Hold).
  *   sla_due_at — the next deadline, sent only while a clock is still running.
+ *                Never sent for a No Access ticket: its clocks are paused.
  *
  * Tickets are served from the local cache between pulls, so a "Met" verdict can
  * go stale. Once `sla_due_at` has passed on a still-open ticket the backend
@@ -17,6 +18,11 @@
 const UNGRADED = new Set(["Cancelled", "Waiting", "Hold"]);
 /** Statuses whose clocks have stopped: a stored "Met" is final. */
 const CLOSED = new Set(["Resolved", "Cancelled", "Completed", "Closed"]);
+/**
+ * Clocks paused (client-signed No Access). Only the server's own "Breached"
+ * counts — a deadline cached from before the pause must not flip it locally.
+ */
+const PAUSED = new Set(["No Access"]);
 
 /** Server `sla_due_at` (ISO string) → epoch ms for SQLite, or null. */
 export const slaDueToMs = (value: unknown): number | null => {
@@ -36,7 +42,7 @@ export const isSlaBreached = (ticket: {
 }): boolean => {
   if (!ticket.sla || UNGRADED.has(ticket.status || "")) return false;
   if (ticket.sla === "Breached") return true;
-  if (CLOSED.has(ticket.status || "")) return false;
+  if (CLOSED.has(ticket.status || "") || PAUSED.has(ticket.status || "")) return false;
   const due = slaDueToMs(ticket.sla_due_at);
   return due !== null && due < Date.now();
 };

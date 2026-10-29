@@ -63,6 +63,7 @@ const STATUS_VISUALS: Record<string, StatusVisual> = {
   Inprogress: { label: "In progress", color: "#3b82f6", tint: "#3b82f61f" },
   Hold: { label: "On hold", color: "#f59e0b", tint: "#f59e0b1f" },
   Waiting: { label: "Waiting", color: "#7c3aed", tint: "#7c3aed1f" },
+  "No Access": { label: "No Access", color: "#d97706", tint: "#d977061f" },
   Resolved: { label: "Resolved", color: "#16a34a", tint: "#16a34a1f" },
   Cancelled: { label: "Cancelled", color: "#64748b", tint: "#64748b1f" },
 };

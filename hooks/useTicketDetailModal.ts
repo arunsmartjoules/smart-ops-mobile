@@ -16,8 +16,10 @@ import { WhatsAppService } from "@/services/WhatsAppService";
 import {
   isTempMandatoryCategory,
   isBreakdownTypeCategory,
+  NO_ACCESS_STATUS,
   ticketCategory,
 } from "@/components/TicketDetailStatusUpdate";
+import type { NoAccessSignoff } from "@/components/tickets/NoAccessSignSheet";
 import { type SelectOption } from "@/components/SearchableSelect";
 import logger from "@/utils/logger";
 
@@ -146,7 +148,7 @@ export function useTicketDetailModal(params: {
 
   const closeModal = useCallback(() => setIsDetailVisible(false), []);
 
-  const handleUpdateStatus = async () => {
+  const handleUpdateStatus = async (signoff?: NoAccessSignoff) => {
     if (!selectedTicket || !(user?.id || user?.user_id)) return;
 
     const needsRemarks = ["Hold", "Cancelled", "Waiting", "Resolved"].includes(
@@ -156,6 +158,13 @@ export function useTicketDetailModal(params: {
       updateStatus === "Inprogress" || updateStatus === "Resolved";
     if (needsRemarks && !updateRemarks.trim()) {
       Alert.alert("Required", "Please provide remarks for this status update.");
+      return;
+    }
+    // TicketDetailModal collects these in NoAccessSignSheet before calling us.
+    const enteringNoAccess =
+      updateStatus === NO_ACCESS_STATUS && selectedTicket.status !== NO_ACCESS_STATUS;
+    if (enteringNoAccess && (!signoff?.client_name.trim() || !signoff.client_signature)) {
+      Alert.alert("Required", "The client's name and signature are needed to move this ticket to No Access.");
       return;
     }
     if (needsAreaAndCategory && !updateArea.trim()) {
@@ -243,6 +252,10 @@ export function useTicketDetailModal(params: {
     if (updateStatus === "Resolved" && !selectedTicket.resolved_at) {
       payload.resolved_at = nowIso;
     }
+    // On-device moment of the status change (offline No Access pauses).
+    if (updateStatus !== selectedTicket.status) {
+      payload.status_changed_at = nowIso;
+    }
 
     setIsUpdating(true);
     try {
@@ -258,9 +271,16 @@ export function useTicketDetailModal(params: {
             ? selectedTicket.resolved_at || nowIso
             : selectedTicket.resolved_at,
       };
+      // Sign-off goes to the server only, not onto the optimistic ticket.
       const res = await TicketsService.updateTicket(
         selectedTicket.id || selectedTicket.ticket_no,
-        payload,
+        enteringNoAccess && signoff
+          ? {
+              ...payload,
+              client_name: signoff.client_name.trim(),
+              client_signature: signoff.client_signature,
+            }
+          : payload,
       );
 
       const apiConfirmed = res.success === true;
