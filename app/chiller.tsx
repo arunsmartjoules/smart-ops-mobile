@@ -85,8 +85,9 @@ function ChillerEntryContent() {
   }>();
   // The site-logs screen passes siteCode through the imperative route-params
   // store (setRouteParams) rather than URL params, so reading useLocalSearchParams
-  // alone leaves selectedSite empty. Consume the store once on mount and merge.
-  const storeParamsRef = useRef(
+  // alone leaves selectedSite empty. Consume the store once on mount and merge
+  // (a lazy useState initialiser runs once; useRef's argument runs every render).
+  const [storeParams] = useState(() =>
     consumeRouteParams<{
       siteCode?: string;
       editId?: string;
@@ -95,11 +96,11 @@ function ChillerEntryContent() {
   );
   const initialSiteCode =
     (params.siteCode as string | undefined) ||
-    storeParamsRef.current.siteCode ||
+    storeParams.siteCode ||
     "";
 
   const [formData, setFormData] = useState({
-    chillerId: params.chillerId || storeParamsRef.current.chillerId || "",
+    chillerId: params.chillerId || storeParams.chillerId || "",
     equipmentId: "",
     // Temperatures
     condenserInletTemp: "",
@@ -167,8 +168,14 @@ function ChillerEntryContent() {
   // kept in the draft) so every Complete tap sends the same reading.
   const newReadingIdRef = useRef<string>(uuidv4());
 
-  const isEditMode = !!(params.editId || params.id);
-  const targetId = (params.editId || params.id || "") as string;
+  // The site-logs history panel hands editId over through the route-params
+  // store, not the URL — reading only `params` opened its rows as a blank
+  // new reading.
+  const targetId = (params.editId ||
+    storeParams.editId ||
+    params.id ||
+    "") as string;
+  const isEditMode = !!targetId;
 
   // Mandatory technical fields. Comp. Suction, Motor Temp, Oil Pressure and
   // Oil Diff are intentionally NOT mandatory — operators may legitimately

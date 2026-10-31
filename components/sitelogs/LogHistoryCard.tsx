@@ -55,10 +55,12 @@ function readingsFor(logName: string, row: any): Reading[] {
     case "Chemical Dosing":
       return [{ label: "Dosing", value: show(row.chemical_dosing) }];
     case "Chiller Logs":
+      // chiller_readings has no supply/return/load columns — these are the
+      // real ones, labelled as the entry form and web labels them.
       return [
-        { label: "Supply", value: show(row.supply_temp ?? row.chilled_water_supply_temp, "°C") },
-        { label: "Return", value: show(row.return_temp ?? row.chilled_water_return_temp, "°C") },
-        { label: "Load", value: show(row.load_percentage ?? row.load, "%") },
+        { label: "Evap. In", value: show(row.evaporator_inlet_temp, "°C") },
+        { label: "Evap. Out", value: show(row.evaporator_outlet_temp, "°C") },
+        { label: "Load", value: show(row.compressor_load_percentage, "%") },
       ];
     default:
       return [];
