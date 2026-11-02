@@ -24,6 +24,8 @@ import { EmptyState, JoPage, useJoTheme } from "@/components/jo/ui";
 import {
   PMChecklistSkeleton,
   PMTaskRow,
+  isCrossedValue,
+  readingOf,
   type ChecklistImageAction,
   type PMChecklistItemRow,
   type PMResponse,
@@ -690,16 +692,11 @@ export default function PMExecutionScreen() {
       const isSignedOff = instance?.status === "Completed";
       if (isSignedOff && field === "response_value") return;
       setResponses((prev) => {
-        // Number/Text tasks type into a single box that feeds both columns.
-        const patch =
-          field === "value"
-            ? { readings: value, response_value: value }
-            : { [field]: value };
         const next = {
           ...prev,
           [itemId]: {
             ...prev[itemId],
-            ...patch,
+            [field]: value,
           },
         };
 
@@ -713,14 +710,13 @@ export default function PMExecutionScreen() {
         if (isSignedOff) {
           const item = checklistItems.find((it) => it.id === itemId);
           const resp = next[itemId];
-          const isChoice =
-            (item?.field_type || "Multiple Choice") === "Multiple Choice";
+          // A reading is owed only where the checklist sets readings_mandatory,
+          // and not on a ✗ task (nothing was measured).
           const blankRequired =
             !!item &&
-            ((isChoice
-              ? Boolean(item.readings_mandatory) &&
-                !String(resp?.readings || "").trim()
-              : !String(resp?.response_value || "").trim()) ||
+            ((Boolean(item.readings_mandatory) &&
+              !isCrossedValue(resp?.response_value) &&
+              !readingOf(resp)) ||
               (Boolean(item.remarks_mandatory) &&
                 !String(resp?.remarks || "").trim()));
           if (blankRequired) return next;
@@ -783,17 +779,15 @@ export default function PMExecutionScreen() {
       const response = responses[item.id];
       const taskName = item.task_name || "Unnamed task";
       const missingResponse = !response?.response_value;
-      const isChoice =
-        (item.field_type || "Multiple Choice") === "Multiple Choice";
-      // A task ticked Done while its checklist-mandatory reading is blank —
-      // the checkbox refuses that, but the reading can be cleared afterwards.
+      // A task ticked ✓ while its checklist-mandatory reading is blank — the
+      // checkbox refuses that, but the reading can be cleared afterwards.
       // Enforced regardless of ENFORCE_READINGS_MANDATORY, which only governs
-      // the older "measure"-in-the-name heuristic below.
+      // the older "measure"-in-the-name heuristic below. Matches the server.
       const missingRequiredReading =
-        isChoice &&
         Boolean(item.readings_mandatory) &&
-        response?.response_value === "Done" &&
-        !String(response?.readings || "").trim();
+        !!response?.response_value &&
+        !isCrossedValue(response.response_value) &&
+        !readingOf(response);
       const missingReadings =
         missingRequiredReading ||
         (ENFORCE_READINGS_MANDATORY &&

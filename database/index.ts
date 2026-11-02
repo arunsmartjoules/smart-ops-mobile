@@ -251,7 +251,6 @@ function init(): boolean {
           id TEXT PRIMARY KEY,
           checklist_id TEXT NOT NULL,
           task_name TEXT NOT NULL,
-          field_type TEXT,
           sequence_no INTEGER,
           image_mandatory INTEGER,
           remarks_mandatory INTEGER,

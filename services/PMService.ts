@@ -677,7 +677,6 @@ const PMService = {
             id: itemId,
             checklist_id: item.checklist_id || checklistId,
             task_name: item.task_name || "",
-            field_type: item.field_type || null,
             sequence_no: item.sequence_no ?? null,
             image_mandatory: !!item.image_mandatory,
             remarks_mandatory: !!item.remarks_mandatory,

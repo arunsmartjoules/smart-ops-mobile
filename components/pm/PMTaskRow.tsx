@@ -3,8 +3,9 @@
  * (app.dc.html 676–692): a 28px tri-state box (Done → Not Done → clear),
  * the task name with a red asterisk when something on it is mandatory, a
  * round camera chip, then the reading + remarks fields indented under the
- * name. Behaviour (reading nudge, merged Number/Text value box, locks,
- * required-field outlines) is unchanged from the previous TaskRow.
+ * name. Every task is the box; the reading box is required only where the
+ * checklist sets readings_mandatory (reading nudge, locks and required-field
+ * outlines as before).
  */
 import React, { useRef, useState } from "react";
 import {
@@ -29,13 +30,8 @@ export interface PMResponse {
   image_url: string | null;
 }
 
-/**
- * Editable fields on a checklist response. `"value"` is the merged
- * reading+response used by Number/Text tasks: one box writes both columns, so
- * the row counts as answered (backend completion requires `response_value`)
- * while the server still gets its `readings` value.
- */
-export type ResponseField = "response_value" | "remarks" | "readings" | "value";
+/** Editable fields on a checklist response. */
+export type ResponseField = "response_value" | "remarks" | "readings";
 
 /** Checklist row image: menu, direct camera/library, or null to remove */
 export type ChecklistImageAction = "MENU" | "CAMERA" | "LIBRARY" | null;
@@ -47,6 +43,40 @@ const CYCLE_NEXT: Record<string, string | null> = {
   Done: "Not Done",
   "Not Done": null,
 };
+
+// ── Every task is a checkbox ─────────────────────────────────────────────────
+//
+// Since Nov 2026 a task's field_type no longer matters (the column is being
+// dropped): every task is the ✓/✗ box, a reading is required only where the
+// checklist sets readings_mandatory, and free text goes in remarks. Answers
+// saved by older builds can still hold Okay / Not Okay, or the reading itself,
+// in response_value — these helpers read those the same way the server and the
+// PM report do.
+
+/** The ✗ answers: the box's own, plus the legacy Okay/Not Okay choice's. */
+const CROSS_VALUES = new Set(["not done", "not okay", "not ok"]);
+/** Bare ✓ acknowledgements — they say "ticked", not "here is a value". */
+const TICK_VALUES = new Set(["done", "completed", "ok", "okay", "okey", "yes"]);
+const normalise = (v: string): string => v.trim().replace(/\s+/g, " ").toLowerCase();
+
+/** True when the response is the ✗ side of the box. */
+export const isCrossedValue = (value: string | null | undefined): boolean =>
+  !!value && CROSS_VALUES.has(normalise(value));
+
+/**
+ * The reading a response carries. Older builds wrote number and text tasks'
+ * value straight into response_value (sometimes only there), so that counts
+ * when `readings` is empty and the value isn't a box word.
+ */
+export function readingOf(
+  response: Pick<PMResponse, "response_value" | "readings"> | null | undefined,
+): string {
+  const reading = response?.readings?.trim();
+  if (reading) return reading;
+  const value = response?.response_value?.trim() || "";
+  if (!value || isCrossedValue(value) || TICK_VALUES.has(normalise(value))) return "";
+  return value;
+}
 
 /** "IMG_1234.jpg · queued" style caption under a task photo. */
 const photoCaption = (url: string) => {
@@ -177,23 +207,12 @@ export const PMTaskRow = React.memo(
     const t = useJoTheme();
     const s = useStyles();
     const value = response?.response_value || null;
-    const fieldType = item.field_type || "Multiple Choice";
-    const isChoice = fieldType === "Multiple Choice";
-    // Free-text/number tasks have no Done/Not-Done vocabulary — the box just
-    // reflects "answered" for them.
-    const isDone = isChoice ? value === "Done" : !!value;
-    const isNotDone = isChoice && value === "Not Done";
-    // Number/Text tasks have ONE value box, and it is the reading: it writes
-    // both `readings` and `response_value` (the backend rejects completion
-    // while any row has no response_value; the server reads `readings`).
-    // Multiple-Choice rows keep an optional reading box, required only when
-    // the checklist marks the task readings_mandatory.
-    const readingsRequired = isChoice ? Boolean(item.readings_mandatory) : true;
-    // Legacy rows stored the measurement in response_value only — fall back to
-    // it so an already-answered task still shows its value in the merged box.
-    const readingsValue = isChoice
-      ? response?.readings || ""
-      : response?.readings || response?.response_value || "";
+    // Any answer that isn't ✗ is ✓ — including a legacy reading or text an
+    // older build stored in response_value.
+    const isNotDone = isCrossedValue(value);
+    const isDone = !!value && !isNotDone;
+    const readingsRequired = Boolean(item.readings_mandatory);
+    const readingsValue = readingOf(response);
     // Read-only rows can't be fixed, so don't paint them red.
     const isReadingsMissing =
       readingsRequired && !readingsValue.trim() && !textLocked;
@@ -223,8 +242,8 @@ export const PMTaskRow = React.memo(
     const readingsInputRef = useRef<TextInput>(null);
 
     const cycleResponse = () => {
-      if (answerLocked || !isChoice) return;
-      const nextValue = CYCLE_NEXT[value ?? ""] ?? null;
+      if (answerLocked) return;
+      const nextValue = CYCLE_NEXT[isDone ? "Done" : isNotDone ? "Not Done" : ""] ?? null;
       // A task with a mandatory reading can't be ticked Done until the reading
       // is entered — take the operator straight to the field instead.
       if (nextValue === "Done" && readingsRequired && !readingsValue.trim()) {
@@ -234,6 +253,11 @@ export const PMTaskRow = React.memo(
         setReadingNudge(true);
         if (!textLocked) readingsInputRef.current?.focus();
         return;
+      }
+      // A legacy answer whose reading lives only in response_value would lose
+      // it when the box overwrites that column — move it to readings first.
+      if (value && readingsValue && !response?.readings?.trim()) {
+        onResponseChange(item.id, "readings", readingsValue);
       }
       onResponseChange(item.id, "response_value", nextValue);
     };
@@ -263,13 +287,13 @@ export const PMTaskRow = React.memo(
               reliably with gloves or on the move. */}
           <TouchableOpacity
             onPress={cycleResponse}
-            disabled={answerLocked || !isChoice}
+            disabled={answerLocked}
             activeOpacity={0.7}
             hitSlop={{ top: 10, bottom: 10, left: 12, right: 6 }}
             accessibilityRole="checkbox"
             accessibilityState={{
               checked: isNotDone ? "mixed" : isDone,
-              disabled: !!answerLocked || !isChoice,
+              disabled: !!answerLocked,
             }}
             accessibilityLabel={`${item.task_name} — ${value || "not answered"}`}
             style={s.boxHit}
@@ -295,7 +319,7 @@ export const PMTaskRow = React.memo(
           {/* Tapping the task name ticks it too — a far bigger target. */}
           <TouchableOpacity
             onPress={cycleResponse}
-            disabled={answerLocked || !isChoice}
+            disabled={answerLocked}
             activeOpacity={0.6}
             accessible={false}
             style={s.nameHit}
@@ -331,28 +355,24 @@ export const PMTaskRow = React.memo(
         </View>
 
         <View style={s.inputs}>
-          {/* Readings — the single value box for Number/Text tasks. A
-              required-but-empty field is outlined in red on sight, not only
-              after a blocked completion. */}
+          {/* Reading — required only where the checklist sets
+              readings_mandatory. A required-but-empty field is outlined in red
+              on sight, not only after a blocked completion. */}
           <View
             style={[
               s.field,
-              isChoice || fieldType === "Number" ? s.readingField : s.wideField,
+              s.readingField,
               isReadingsMissing && { borderColor: t.bad },
             ]}
           >
             <TextInput
               ref={readingsInputRef}
               value={readingsValue}
-              onChangeText={(val) =>
-                onResponseChange(item.id, isChoice ? "readings" : "value", val)
-              }
+              onChangeText={(val) => onResponseChange(item.id, "readings", val)}
               editable={!textLocked}
               placeholder={readingsRequired ? "Required" : "Reading"}
               placeholderTextColor={t.faint}
-              keyboardType={
-                isChoice || fieldType === "Number" ? "decimal-pad" : "default"
-              }
+              keyboardType="decimal-pad"
               accessibilityLabel={`Reading for ${item.task_name}${readingsRequired ? ", required" : ""}`}
               style={s.readingInput}
             />

@@ -241,7 +241,8 @@ export const pmChecklistItems = sqliteTable("pm_checklist_items", {
   id: text("id").primaryKey(),
   checklist_id: text("checklist_id").notNull(),
   task_name: text("task_name").notNull(),
-  field_type: text("field_type"),
+  // field_type retired Nov 2026 — every task is a ✓/✗ checkbox. Devices that
+  // already have the column keep it, unused; SQLite columns aren't dropped.
   sequence_no: integer("sequence_no"),
   image_mandatory: integer("image_mandatory", { mode: "boolean" }),
   remarks_mandatory: integer("remarks_mandatory", { mode: "boolean" }),
