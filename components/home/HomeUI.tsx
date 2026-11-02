@@ -131,21 +131,21 @@ export function HomeHeader({
 /* ── Manager: operational status hero ──────────────────────────────────── */
 
 export function OpsHero({
-  openTickets,
+  pendingTickets,
+  completedTickets,
   breachLabel,
-  stats,
   onPress,
 }: {
-  openTickets: string;
+  pendingTickets: string;
+  completedTickets: string;
   breachLabel: string | null;
-  stats: { label: string; value: string }[];
   onPress?: () => void;
 }) {
   const t = useJoTheme();
   return (
     <HeroCard
       onPress={onPress}
-      accessibilityLabel={`Operational status. ${openTickets} open tickets. Open tickets`}
+      accessibilityLabel={`Operational status. ${pendingTickets} pending tickets. ${completedTickets} completed tickets.`}
       style={{ marginTop: 14, paddingTop: 12, paddingHorizontal: 14, paddingBottom: 13 }}
     >
       <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
@@ -153,23 +153,18 @@ export function OpsHero({
         {breachLabel ? <HeroTag label={breachLabel} color="#FF8A7A" icon="bxs-error-circle" /> : null}
       </View>
       <View style={{ flexDirection: "row", alignItems: "flex-end", marginTop: 10 }}>
-        <View style={{ flex: 1.25, paddingRight: 10 }}>
-          <Text style={[f.d(34, -0.045, 1), { color: t.onAccent }]}>{openTickets}</Text>
+        <View style={{ flex: 1, paddingRight: 10 }}>
+          <Text style={[f.d(34, -0.045, 1), { color: t.onAccent }]}>{pendingTickets}</Text>
           <Text style={[f.t(11, 600), { color: t.onAccent, marginTop: 4 }]} numberOfLines={1}>
-            Open tickets
+            Pending
           </Text>
         </View>
-        {stats.map((st) => (
-          <View
-            key={st.label}
-            style={{ flex: 1, paddingLeft: 10, borderLeftWidth: 1, borderLeftColor: t.heroDivider }}
-          >
-            <Text style={[f.d(21, -0.03, 1.05), { color: t.onAccent }]}>{st.value}</Text>
-            <Text style={[f.t(11, 500), { color: t.onAccent, opacity: 0.68, marginTop: 4 }]} numberOfLines={1}>
-              {st.label}
-            </Text>
-          </View>
-        ))}
+        <View style={{ flex: 1, paddingLeft: 10, borderLeftWidth: 1, borderLeftColor: t.heroDivider }}>
+          <Text style={[f.d(34, -0.045, 1), { color: t.onAccent }]}>{completedTickets}</Text>
+          <Text style={[f.t(11, 600), { color: t.onAccent, marginTop: 4 }]} numberOfLines={1}>
+            Completed
+          </Text>
+        </View>
       </View>
     </HeroCard>
   );

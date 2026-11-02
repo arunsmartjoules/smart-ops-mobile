@@ -586,7 +586,6 @@ export default function Dashboard() {
   const logsPct = s ? pctOf(s.logs.completed, s.logs.expected) : 0;
   const pmPct = s ? pctOf(s.pm.completed, s.pm.planned) : 0;
   const pendingPm = s ? Math.max(0, s.pm.planned - s.pm.completed) : 0;
-  const pendingLogs = s ? Math.max(0, s.logs.expected - s.logs.completed) : 0;
 
   // Breach line — both homes.
   const alert = s?.breachAlert ?? null;
@@ -806,12 +805,6 @@ export default function Dashboard() {
   const shownTiles = techTiles.filter((tile) => canView(tilePerm[tile.label]!));
 
   // ── Manager view ──────────────────────────────────────────────────────
-  const heroStats = [
-    ...(canView("incidents") ? [{ label: "Incidents", value: num(s?.incidents.raised) }] : []),
-    ...(canView("pm") ? [{ label: "Pend. PM", value: s ? String(pendingPm) : dash }] : []),
-    ...(canView("site_logs") ? [{ label: "Pend. logs", value: s ? String(pendingLogs) : dash }] : []),
-  ];
-
   // Both roles: tickets raised in the period by category (pie ⇄ bar).
   const categoryCard =
     canView("tickets") && (s || summaryLoading) ? (
@@ -895,9 +888,9 @@ export default function Dashboard() {
             {/* Other roles: plant efficiency leads, above operational status. */}
             {efficiencyCard}
             <OpsHero
-              openTickets={num(s?.tickets.open)}
+              pendingTickets={num(s?.tickets.open)}
+              completedTickets={num(s?.tickets.resolved)}
               breachLabel={breachTag}
-              stats={heroStats}
               onPress={go("/(tabs)/tickets", "tickets")}
             />
             {dataNote}
