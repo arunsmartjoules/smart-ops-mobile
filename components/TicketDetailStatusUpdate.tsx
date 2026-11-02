@@ -313,13 +313,13 @@ const TicketDetailStatusUpdate = ({
     }
   };
 
-  // Artboard order (In progress, Resolved, Hold, No Access, Cancelled); the
-  // grid wraps, so every option stays visible without reordering. No Access
-  // took Waiting's slot — Waiting is no longer offered.
+  // Artboard order (In progress, Resolved, No Access, Cancelled); the grid
+  // wraps, so every option stays visible without reordering. No Access took
+  // Waiting's slot, and Hold is retired — neither is offered. A ticket that is
+  // already on Hold or Waiting still shows its status and can be moved on.
   const statuses = [
     "Inprogress",
     "Resolved",
-    "Hold",
     NO_ACCESS_STATUS,
     "Cancelled",
     "Open",

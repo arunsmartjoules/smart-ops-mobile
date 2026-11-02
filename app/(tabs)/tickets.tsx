@@ -310,17 +310,20 @@ export default function Tickets() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enrichedTickets, sortMode]);
 
-  // Artboard chips (All · Open · In progress · Hold · No Access · Resolved),
-  // plus Cancelled at the end — it was reachable through the old filter
-  // modal's status list and must stay reachable. No Access replaced Waiting;
-  // the Waiting chip only appears while older tickets still carry it.
+  // Artboard chips (All · Open · In progress · No Access · Resolved), plus
+  // Cancelled at the end — it was reachable through the old filter modal's
+  // status list and must stay reachable. No Access replaced Waiting and Hold is
+  // retired for new tickets; their chips only appear while older tickets still
+  // carry that status (or one is the active filter).
   const statusChips = useMemo<TicketStatusChip[]>(() => {
     const byStatus = stats?.byStatus as Record<string, number> | undefined;
     return [
       { key: "All", label: "All", count: stats?.total },
       { key: "Open", label: "Open", count: byStatus?.Open },
       { key: "Inprogress", label: "In progress", count: byStatus?.Inprogress },
-      { key: "Hold", label: "Hold", count: byStatus?.Hold },
+      ...(byStatus?.Hold || statusFilter === "Hold"
+        ? [{ key: "Hold", label: "Hold", count: byStatus?.Hold }]
+        : []),
       { key: NO_ACCESS_STATUS, label: NO_ACCESS_STATUS, count: byStatus?.[NO_ACCESS_STATUS] },
       ...(byStatus?.Waiting || statusFilter === "Waiting"
         ? [{ key: "Waiting", label: "Waiting", count: byStatus?.Waiting }]
