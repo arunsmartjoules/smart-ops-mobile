@@ -130,22 +130,28 @@ export function HomeHeader({
 
 /* ── Manager: operational status hero ──────────────────────────────────── */
 
+export interface OpsHeroStat {
+  label: string;
+  pending: string;
+  completed: string;
+}
+
+/** The first stat leads (large); the rest sit beside it, each as Pending / Completed. */
 export function OpsHero({
-  pendingTickets,
-  completedTickets,
+  stats,
   breachLabel,
   onPress,
 }: {
-  pendingTickets: string;
-  completedTickets: string;
+  stats: OpsHeroStat[];
   breachLabel: string | null;
   onPress?: () => void;
 }) {
   const t = useJoTheme();
+  const summary = stats.map((st) => `${st.label} ${st.pending} pending, ${st.completed} completed`).join(". ");
   return (
     <HeroCard
       onPress={onPress}
-      accessibilityLabel={`Operational status. ${pendingTickets} pending tickets. ${completedTickets} completed tickets.`}
+      accessibilityLabel={`Operational status. ${summary}`}
       style={{ marginTop: 14, paddingTop: 12, paddingHorizontal: 14, paddingBottom: 13 }}
     >
       <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
@@ -153,19 +159,38 @@ export function OpsHero({
         {breachLabel ? <HeroTag label={breachLabel} color="#FF8A7A" icon="bxs-error-circle" /> : null}
       </View>
       <View style={{ flexDirection: "row", alignItems: "flex-end", marginTop: 10 }}>
-        <View style={{ flex: 1, paddingRight: 10 }}>
-          <Text style={[f.d(34, -0.045, 1), { color: t.onAccent }]}>{pendingTickets}</Text>
-          <Text style={[f.t(11, 600), { color: t.onAccent, marginTop: 4 }]} numberOfLines={1}>
-            Pending
-          </Text>
-        </View>
-        <View style={{ flex: 1, paddingLeft: 10, borderLeftWidth: 1, borderLeftColor: t.heroDivider }}>
-          <Text style={[f.d(34, -0.045, 1), { color: t.onAccent }]}>{completedTickets}</Text>
-          <Text style={[f.t(11, 600), { color: t.onAccent, marginTop: 4 }]} numberOfLines={1}>
-            Completed
-          </Text>
-        </View>
+        {stats.map((st, i) => {
+          const lead = i === 0;
+          return (
+            <View
+              key={st.label}
+              style={
+                lead
+                  ? { flex: 1.25, paddingRight: 10 }
+                  : { flex: 1, paddingLeft: 10, borderLeftWidth: 1, borderLeftColor: t.heroDivider }
+              }
+            >
+              {/* Long counts shrink to fit the column instead of clipping. */}
+              <Text
+                style={[lead ? f.d(34, -0.045, 1) : f.d(21, -0.03, 1.05), { color: t.onAccent }]}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.6}
+              >
+                {st.pending}
+                <Text style={{ opacity: 0.55 }}>{` / ${st.completed}`}</Text>
+              </Text>
+              <Text
+                style={[f.t(11, lead ? 600 : 500), { color: t.onAccent, opacity: lead ? 1 : 0.68, marginTop: 4 }]}
+                numberOfLines={1}
+              >
+                {st.label}
+              </Text>
+            </View>
+          );
+        })}
       </View>
+      <Text style={[f.t(10, 500), { color: t.onAccent, opacity: 0.6, marginTop: 8 }]}>Pending / Completed</Text>
     </HeroCard>
   );
 }

@@ -65,6 +65,7 @@ import {
   TechTiles,
   TicketCategoryCard,
   type EffItem,
+  type OpsHeroStat,
   type SlaKpiView,
   type TeamRow,
   type TechTile,
@@ -586,6 +587,7 @@ export default function Dashboard() {
   const logsPct = s ? pctOf(s.logs.completed, s.logs.expected) : 0;
   const pmPct = s ? pctOf(s.pm.completed, s.pm.planned) : 0;
   const pendingPm = s ? Math.max(0, s.pm.planned - s.pm.completed) : 0;
+  const pendingLogs = s ? Math.max(0, s.logs.expected - s.logs.completed) : 0;
 
   // Breach line — both homes.
   const alert = s?.breachAlert ?? null;
@@ -805,6 +807,27 @@ export default function Dashboard() {
   const shownTiles = techTiles.filter((tile) => canView(tilePerm[tile.label]!));
 
   // ── Manager view ──────────────────────────────────────────────────────
+  // Operational status: Pending / Completed per module. Incidents has no
+  // "completed" count of its own, so it is raised − open (cancelled counts as done).
+  const heroStats: OpsHeroStat[] = [
+    { label: "Tickets", pending: num(s?.tickets.open), completed: num(s?.tickets.resolved) },
+    ...(canView("site_logs")
+      ? [{ label: "Site logs", pending: s ? String(pendingLogs) : dash, completed: num(s?.logs.completed) }]
+      : []),
+    ...(canView("pm")
+      ? [{ label: "PM", pending: s ? String(pendingPm) : dash, completed: num(s?.pm.completed) }]
+      : []),
+    ...(canView("incidents")
+      ? [
+          {
+            label: "Incidents",
+            pending: num(s?.incidents.open),
+            completed: s ? String(Math.max(0, s.incidents.raised - s.incidents.open)) : dash,
+          },
+        ]
+      : []),
+  ];
+
   // Both roles: tickets raised in the period by category (pie ⇄ bar).
   const categoryCard =
     canView("tickets") && (s || summaryLoading) ? (
@@ -888,8 +911,7 @@ export default function Dashboard() {
             {/* Other roles: plant efficiency leads, above operational status. */}
             {efficiencyCard}
             <OpsHero
-              pendingTickets={num(s?.tickets.open)}
-              completedTickets={num(s?.tickets.resolved)}
+              stats={heroStats}
               breachLabel={breachTag}
               onPress={go("/(tabs)/tickets", "tickets")}
             />
