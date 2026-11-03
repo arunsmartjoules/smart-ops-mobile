@@ -21,6 +21,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import cacheManager, { DataDomain } from "./CacheManager";
 import {
   SiteLogService,
+  purgeForeignCategorySiteLogs,
   replayChillerReadingUpdate,
   replaySiteLogSubmit,
   replaySiteLogUpdate,
@@ -436,6 +437,15 @@ class SyncEngineImpl implements SyncEngine {
               });
             }
           }
+        }
+
+        try {
+          await purgeForeignCategorySiteLogs();
+        } catch (error) {
+          logger.warn("SyncEngine.site_logs: foreign-category purge failed", {
+            module: "SYNC_ENGINE",
+            error,
+          });
         }
 
         if (failures.length > 0) {

@@ -31,6 +31,7 @@ import cacheManager from "./CacheManager";
 import { AttachmentQueueService } from "./AttachmentQueueService";
 import { getISTDateString } from "./AttendanceService";
 import { istDayStartMsFromYmd, toIstYmd } from "../utils/istDate";
+import { isForeignCategorySiteLog } from "../utils/siteLogCategory";
 
 import { API_BASE_URL } from "../constants/api";
 
@@ -787,6 +788,29 @@ export async function replaySiteLogUpdate(payload: Record<string, any>): Promise
     err.statusCode = response.status;
     throw err;
   }
+}
+
+/**
+ * Delete local site-log rows filed under another category's schedule slot
+ * (see utils/siteLogCategory). Pulls only upsert, so without this a phone
+ * keeps showing rows the server has removed. Returns how many were deleted.
+ */
+export async function purgeForeignCategorySiteLogs(): Promise<number> {
+  const rows = await db
+    .select({ id: siteLogs.id, log_name: siteLogs.log_name, meta_date: siteLogs.meta_date })
+    .from(siteLogs)
+    .where(sql`${siteLogs.meta_date} IS NOT NULL`);
+  const ids = rows.filter(isForeignCategorySiteLog).map((r) => r.id);
+  // SQLite caps bound parameters per statement.
+  for (let i = 0; i < ids.length; i += 500) {
+    await db.delete(siteLogs).where(inArray(siteLogs.id, ids.slice(i, i + 500)));
+  }
+  if (ids.length > 0) {
+    logger.info(`Removed ${ids.length} site logs filed under another category`, {
+      module: "SITE_LOG_SERVICE",
+    });
+  }
+  return ids.length;
 }
 
 /** Of `ids`, the logs this phone holds as Completed with a signature. */
