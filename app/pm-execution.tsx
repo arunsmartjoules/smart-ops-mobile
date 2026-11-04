@@ -19,6 +19,11 @@ import PMService from "@/services/PMService";
 import { useNetworkStatus } from "@/hooks/useNetworkStatus";
 import { useAttendanceGate } from "@/contexts/AttendanceGateContext";
 import logger from "@/utils/logger";
+import {
+  launchCameraSafe,
+  launchImageLibrarySafe,
+  takePendingCapture,
+} from "@/utils/safeImagePicker";
 import { StorageService } from "@/services/StorageService";
 import { EmptyState, JoPage, useJoTheme } from "@/components/jo/ui";
 import {
@@ -65,6 +70,10 @@ const INSTANCE_IMAGE_PICKER_OPTIONS = {
   allowsEditing: false,
   quality: 0.7,
 };
+
+/** Pending-capture owner for one PM's before/after evidence photos. */
+const evidenceCaptureOwner = (instanceId: string) =>
+  `pm_execution_evidence:${instanceId}`;
 
 // Room the floating CTA (54 + paddings + optional blocked line) takes up.
 const FOOTER_CLEARANCE = 132;
@@ -406,7 +415,7 @@ export default function PMExecutionScreen() {
               );
               return;
             }
-            const result = await ImagePicker.launchCameraAsync(
+            const result = await launchCameraSafe(
               INSTANCE_IMAGE_PICKER_OPTIONS,
             );
             if (!result.canceled && result.assets[0]?.uri) {
@@ -422,7 +431,7 @@ export default function PMExecutionScreen() {
               );
               return;
             }
-            const result = await ImagePicker.launchImageLibraryAsync(
+            const result = await launchImageLibrarySafe(
               INSTANCE_IMAGE_PICKER_OPTIONS,
             );
             if (!result.canceled && result.assets[0]?.uri) {
@@ -613,9 +622,10 @@ export default function PMExecutionScreen() {
           );
           return;
         }
-        const result = await ImagePicker.launchCameraAsync(
-          INSTANCE_IMAGE_PICKER_OPTIONS,
-        );
+        const result = await launchCameraSafe(INSTANCE_IMAGE_PICKER_OPTIONS, {
+          owner: evidenceCaptureOwner(instanceId as string),
+          payload: { type },
+        });
         if (!result.canceled && result.assets[0]?.uri) {
           await applyInstanceImageFromUri(type, result.assets[0].uri);
         }
@@ -624,8 +634,37 @@ export default function PMExecutionScreen() {
         Alert.alert("Error", "Failed to capture photo.");
       }
     },
-    [applyInstanceImageFromUri],
+    [applyInstanceImageFromUri, instanceId],
   );
+
+  // Android can kill the app while the camera is in front; the photo is kept
+  // by the picker. When the operator reopens this PM, put it back.
+  const pendingCaptureCheckedRef = useRef(false);
+  const instanceLoaded = !!instance;
+  const instanceCompleted = instance?.status === "Completed";
+  useEffect(() => {
+    if (!instanceLoaded || !canEdit || instanceCompleted) return;
+    if (pendingCaptureCheckedRef.current || !instanceId) return;
+    pendingCaptureCheckedRef.current = true;
+    void (async () => {
+      const recovered = await takePendingCapture(
+        evidenceCaptureOwner(instanceId as string),
+      );
+      const type = recovered?.payload.type;
+      if (!recovered || (type !== "before_image" && type !== "after_image")) {
+        return;
+      }
+      await applyInstanceImageFromUri(type, recovered.uri);
+    })().catch((err) => {
+      logger.warn("PM evidence photo recovery failed", { error: err });
+    });
+  }, [
+    instanceLoaded,
+    instanceCompleted,
+    canEdit,
+    instanceId,
+    applyInstanceImageFromUri,
+  ]);
 
   const promptReplaceInstanceImage = useCallback(
     (type: "before_image" | "after_image", currentUri: string) => {

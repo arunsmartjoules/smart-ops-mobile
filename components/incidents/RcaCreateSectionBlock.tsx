@@ -10,6 +10,7 @@
 import React, { useState } from "react";
 import { ActivityIndicator, Image, Text, TouchableOpacity, View } from "react-native";
 import * as ImagePicker from "expo-image-picker";
+import { launchCameraSafe, launchImageLibrarySafe } from "@/utils/safeImagePicker";
 import * as Haptics from "expo-haptics";
 import { Bx } from "@/components/jo/Bx";
 import { f, makeJoStyles, useJoTheme } from "@/components/jo/ui";
@@ -112,13 +113,13 @@ export default function RcaCreateSectionBlock({
         }
         // No crop step and a 0.7 JPEG quality, like every other photo in the app:
         // it keeps uploads small on site connections and under the 5 MB limit.
-        result = await ImagePicker.launchCameraAsync({
+        result = await launchCameraSafe({
           mediaTypes: ["images"],
           allowsEditing: false,
           quality: 0.7,
         });
       } else {
-        result = await ImagePicker.launchImageLibraryAsync({
+        result = await launchImageLibrarySafe({
           mediaTypes: ["images"],
           allowsEditing: false,
           allowsMultipleSelection: slots > 1,

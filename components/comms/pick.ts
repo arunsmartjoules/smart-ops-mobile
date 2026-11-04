@@ -9,6 +9,7 @@
 import { Alert } from "react-native";
 import * as DocumentPicker from "expo-document-picker";
 import * as ImagePicker from "expo-image-picker";
+import { launchCameraSafe, launchImageLibrarySafe } from "@/utils/safeImagePicker";
 import type { LocalFile } from "@/services/CustomerCommunicationService";
 import { extOf } from "./lib";
 
@@ -64,7 +65,7 @@ async function fromCamera(): Promise<PickedFile[]> {
       Alert.alert("Camera permission needed", "Allow camera access in Settings to take a photo.");
       return [];
     }
-    const res = await ImagePicker.launchCameraAsync({ mediaTypes: ["images"], allowsEditing: false, quality: 0.7 });
+    const res = await launchCameraSafe({ mediaTypes: ["images"], allowsEditing: false, quality: 0.7 });
     if (res.canceled) return [];
     return res.assets.map((a) => toPicked({ uri: a.uri, name: a.fileName, size: a.fileSize, mimeType: a.mimeType }, "photo"));
   } catch {
@@ -75,7 +76,7 @@ async function fromCamera(): Promise<PickedFile[]> {
 
 async function fromLibrary(limit: number): Promise<PickedFile[]> {
   try {
-    const res = await ImagePicker.launchImageLibraryAsync({
+    const res = await launchImageLibrarySafe({
       mediaTypes: ["images"],
       allowsMultipleSelection: limit > 1,
       selectionLimit: limit,

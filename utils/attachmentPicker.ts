@@ -1,5 +1,6 @@
 import { Alert } from "react-native";
 import * as ImagePicker from "expo-image-picker";
+import { launchCameraSafe, launchImageLibrarySafe } from "@/utils/safeImagePicker";
 import * as DocumentPicker from "expo-document-picker";
 
 /**
@@ -44,7 +45,7 @@ export async function pickFromCamera(): Promise<string[]> {
       Alert.alert("Permission required", "Camera permission is required.");
       return [];
     }
-    const result = await ImagePicker.launchCameraAsync({
+    const result = await launchCameraSafe({
       mediaTypes: ["images"],
       allowsEditing: false,
       quality: 0.7,
@@ -59,7 +60,7 @@ export async function pickFromCamera(): Promise<string[]> {
 
 export async function pickFromGallery(selectionLimit = 8): Promise<string[]> {
   try {
-    const result = await ImagePicker.launchImageLibraryAsync({
+    const result = await launchImageLibrarySafe({
       mediaTypes: ["images"],
       allowsMultipleSelection: true,
       allowsEditing: false,

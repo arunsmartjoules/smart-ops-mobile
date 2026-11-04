@@ -28,6 +28,7 @@ import { useLocalSearchParams } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Haptics from "expo-haptics";
 import * as ImagePicker from "expo-image-picker";
+import { launchImageLibrarySafe } from "@/utils/safeImagePicker";
 import * as Notifications from "expo-notifications";
 import { useAuth } from "@/contexts/AuthContext";
 import { useSites } from "@/hooks/useSites";
@@ -279,7 +280,7 @@ export default function AssetMappingTab() {
         Alert.alert("Permission required", "Allow photo library access to upload a photo.");
         return;
       }
-      const result = await ImagePicker.launchImageLibraryAsync(LIBRARY_OPTIONS);
+      const result = await launchImageLibrarySafe(LIBRARY_OPTIONS);
       const uri = result.canceled ? null : result.assets?.[0]?.uri;
       if (!uri) return;
       setLibraryUpload(true);

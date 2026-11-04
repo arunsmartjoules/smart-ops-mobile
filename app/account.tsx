@@ -16,6 +16,7 @@ import {
   View,
 } from "react-native";
 import * as ImagePicker from "expo-image-picker";
+import { launchCameraSafe, launchImageLibrarySafe } from "@/utils/safeImagePicker";
 import { router } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
 import { format } from "date-fns";
@@ -83,12 +84,12 @@ export default function AccountScreen() {
 
         const result =
           source === "camera"
-            ? await ImagePicker.launchCameraAsync({
+            ? await launchCameraSafe({
                 mediaTypes: "images",
                 allowsEditing: false,
                 quality: 0.6,
               })
-            : await ImagePicker.launchImageLibraryAsync({
+            : await launchImageLibrarySafe({
                 mediaTypes: "images",
                 allowsEditing: false,
                 quality: 0.6,

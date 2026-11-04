@@ -14,6 +14,7 @@ import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import * as ImagePicker from "expo-image-picker";
+import { launchCameraSafe, launchImageLibrarySafe } from "@/utils/safeImagePicker";
 import {
   ArrowLeft,
   Bug,
@@ -136,7 +137,7 @@ export default function ReportIssue() {
               );
               return;
             }
-            const res = await ImagePicker.launchCameraAsync({
+            const res = await launchCameraSafe({
               mediaTypes: "images",
               quality: 0.6,
             });
@@ -146,7 +147,7 @@ export default function ReportIssue() {
         {
           text: "Choose from Gallery",
           onPress: async () => {
-            const res = await ImagePicker.launchImageLibraryAsync({
+            const res = await launchImageLibrarySafe({
               mediaTypes: "images",
               quality: 0.6,
             });

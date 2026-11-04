@@ -16,6 +16,7 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as ImagePicker from "expo-image-picker";
+import { launchCameraSafe, launchImageLibrarySafe } from "@/utils/safeImagePicker";
 import { StorageService } from "@/services/StorageService";
 import { Bx } from "@/components/jo/Bx";
 import { IconButton, f, useJoTheme } from "@/components/jo/ui";
@@ -61,11 +62,11 @@ export const LogImagePicker: React.FC<LogImagePickerProps> = ({
       }
 
       const pickerResult = useCamera
-        ? await ImagePicker.launchCameraAsync({
+        ? await launchCameraSafe({
             mediaTypes: "images",
             quality: 0.5,
           })
-        : await ImagePicker.launchImageLibraryAsync({
+        : await launchImageLibrarySafe({
             mediaTypes: "images",
             quality: 0.5,
           });

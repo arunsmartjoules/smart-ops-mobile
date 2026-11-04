@@ -76,8 +76,12 @@ import {
 } from "@/services/OpsDateRange";
 import QRScannerModal, { type QRScannerRef } from "@/components/QRScannerModal";
 import logger from "@/utils/logger";
+import { launchCameraSafe, takePendingCapture } from "@/utils/safeImagePicker";
 
 type PMInstanceRow = typeof pmInstances.$inferSelect;
+
+/** Pending-capture owner for the Start sheet's before photo. */
+const PM_START_CAPTURE_OWNER = "pm_start_before";
 
 /**
  * Chip keys. "Due" is the actionable work queue: it merges the artboard's
@@ -144,6 +148,12 @@ export default function PreventiveMaintenance() {
   const [startModalInstance, setStartModalInstance] =
     useState<PMInstanceRow | null>(null);
   const [startBeforeImage, setStartBeforeImage] = useState<string>("");
+  // The camera callback reads the open sheet's PM through this ref so it can
+  // stay dependency-free (see captureStartBeforeImage).
+  const startModalInstanceRef = useRef<PMInstanceRow | null>(null);
+  useEffect(() => {
+    startModalInstanceRef.current = startModalInstance;
+  }, [startModalInstance]);
   const [starting, setStarting] = useState(false);
   const [statusFilter, setStatusFilter] = useState<PmChipKey>("Due");
   const [sortMode, setSortMode] = useState<"Due date" | "Status">("Due date");
@@ -657,11 +667,13 @@ export default function PreventiveMaintenance() {
         );
         return;
       }
-      const result = await ImagePicker.launchCameraAsync({
-        mediaTypes: ["images"],
-        allowsEditing: false,
-        quality: 0.7,
-      });
+      const instanceId = startModalInstanceRef.current?.id;
+      const result = await launchCameraSafe(
+        { mediaTypes: ["images"], allowsEditing: false, quality: 0.7 },
+        instanceId
+          ? { owner: PM_START_CAPTURE_OWNER, payload: { instanceId } }
+          : undefined,
+      );
       if (!result.canceled && result.assets[0]?.uri) {
         setStartBeforeImage(result.assets[0].uri);
       }
@@ -670,6 +682,28 @@ export default function PreventiveMaintenance() {
       Alert.alert("Error", "Failed to capture photo.");
     }
   }, []);
+
+  // Android can kill the app while the camera is in front (low-memory
+  // phones), which threw away both the photo and this sheet. Once the
+  // operator can edit again, reopen the sheet for that PM with the photo.
+  const pendingCaptureCheckedRef = useRef(false);
+  useEffect(() => {
+    if (!canEdit || pendingCaptureCheckedRef.current) return;
+    pendingCaptureCheckedRef.current = true;
+    void (async () => {
+      const recovered = await takePendingCapture(PM_START_CAPTURE_OWNER);
+      const instanceId = recovered?.payload.instanceId;
+      if (!recovered || !instanceId) return;
+      const instance = await PMService.getInstanceByServerId(instanceId);
+      const status = (instance?.status || "").toLowerCase();
+      const notStarted = status === "pending" || status === "open" || status === "";
+      if (!instance || !notStarted) return;
+      setStartModalInstance(instance);
+      setStartBeforeImage(recovered.uri);
+    })().catch((err) => {
+      logger.warn("PM start photo recovery failed", { error: err });
+    });
+  }, [canEdit]);
 
   const closeStartModal = useCallback(() => {
     if (starting) return;

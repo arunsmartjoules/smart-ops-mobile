@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from "react";
 import { Alert, Image, ScrollView, Text, TouchableOpacity, View } from "react-native";
 import * as ImagePicker from "expo-image-picker";
+import { launchCameraSafe, launchImageLibrarySafe } from "@/utils/safeImagePicker";
 import { type SelectOption } from "./SearchableSelect";
 import { type Ticket } from "@/services/TicketsService";
 import { Bx, type BxName } from "@/components/jo/Bx";
@@ -363,7 +364,7 @@ const TicketDetailStatusUpdate = ({
 
   const pickImage = async () => {
     try {
-      const result = await ImagePicker.launchImageLibraryAsync({
+      const result = await launchImageLibrarySafe({
         mediaTypes: ["images"],
         allowsEditing: false,
         quality: 0.6,
@@ -388,7 +389,7 @@ const TicketDetailStatusUpdate = ({
         return;
       }
 
-      const result = await ImagePicker.launchCameraAsync({
+      const result = await launchCameraSafe({
         mediaTypes: ["images"],
         allowsEditing: false,
         quality: 0.6,
@@ -405,7 +406,7 @@ const TicketDetailStatusUpdate = ({
   const pickIncidentAttachmentsFromGallery = async () => {
     if (!setIncidentDraft) return;
     try {
-      const result = await ImagePicker.launchImageLibraryAsync({
+      const result = await launchImageLibrarySafe({
         mediaTypes: ["images"],
         allowsMultipleSelection: true,
         quality: 0.7,
@@ -434,7 +435,7 @@ const TicketDetailStatusUpdate = ({
         );
         return;
       }
-      const result = await ImagePicker.launchCameraAsync({
+      const result = await launchCameraSafe({
         mediaTypes: ["images"],
         allowsEditing: false,
         quality: 0.7,

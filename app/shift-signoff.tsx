@@ -16,6 +16,7 @@ import { router, useLocalSearchParams, useFocusEffect } from "expo-router";
 import * as Location from "expo-location";
 import * as Haptics from "expo-haptics";
 import * as ImagePicker from "expo-image-picker";
+import { launchCameraSafe, launchImageLibrarySafe } from "@/utils/safeImagePicker";
 import {
   ArrowLeft,
   ChevronDown,
@@ -209,8 +210,8 @@ export default function ShiftSignoffScreen() {
           return;
         }
         const res = useCamera
-          ? await ImagePicker.launchCameraAsync({ mediaTypes: "images", quality: 0.6 })
-          : await ImagePicker.launchImageLibraryAsync({ mediaTypes: "images", quality: 0.6 });
+          ? await launchCameraSafe({ mediaTypes: "images", quality: 0.6 })
+          : await launchImageLibrarySafe({ mediaTypes: "images", quality: 0.6 });
         if (res.canceled || !res.assets?.[0]?.uri) return;
 
         setUploadingImage(true);

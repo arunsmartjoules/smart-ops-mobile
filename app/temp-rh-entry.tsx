@@ -7,6 +7,7 @@ import { formatAssignee } from "@/utils/assignee";
 import { useAuth } from "@/contexts/AuthContext";
 import { useAttendanceGate } from "@/contexts/AttendanceGateContext";
 import * as ImagePicker from "expo-image-picker";
+import { launchCameraSafe, launchImageLibrarySafe } from "@/utils/safeImagePicker";
 import * as Haptics from "expo-haptics";
 import { StorageService } from "@/services/StorageService";
 import { Card, JoPage, PrimaryButton, SecondaryButton } from "@/components/jo/ui";
@@ -188,7 +189,7 @@ function TempRHEntryContent() {
         onPress: async () => {
           const perm = await ImagePicker.requestCameraPermissionsAsync();
           if (perm.granted) {
-            const res = await ImagePicker.launchCameraAsync({
+            const res = await launchCameraSafe({
               mediaTypes: "images",
               quality: 0.5,
             });
@@ -201,7 +202,7 @@ function TempRHEntryContent() {
       {
         text: "Choose from Gallery",
         onPress: async () => {
-          const res = await ImagePicker.launchImageLibraryAsync({
+          const res = await launchImageLibrarySafe({
             mediaTypes: "images",
             quality: 0.5,
           });
