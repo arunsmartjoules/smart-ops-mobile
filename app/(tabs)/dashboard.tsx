@@ -19,7 +19,7 @@ import { useSelectedSiteCode } from "@/services/SiteSelection";
 import NetInfo from "@react-native-community/netinfo";
 import * as Location from "expo-location";
 import DateTimePicker from "@expo/ui/community/datetime-picker";
-import { router } from "expo-router";
+import { router, useIsFocused } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
 import { useLaunchHold } from "@/services/LaunchHold";
 import { addDays, format } from "date-fns";
@@ -73,6 +73,7 @@ import {
 import { makeJoStyles, useJoTheme, type JoTheme } from "@/hooks/useJoTheme";
 import { usePermissions } from "@/contexts/PermissionsContext";
 import { useNavInsets } from "@/components/jo/navInsets";
+import { RatingPromptCard } from "@/components/home/RatingPromptCard";
 
 function formatLocationFailureMessage(
   message: string,
@@ -208,6 +209,7 @@ export default function Dashboard() {
   const t = useJoTheme();
   const styles = useStyles();
   const { clearance } = useNavInsets();
+  const isFocused = useIsFocused();
   const { canView } = usePermissions();
   const { user, signOut } = useAuth();
   const {
@@ -1060,6 +1062,20 @@ export default function Dashboard() {
           ))}
         </ScrollView>
       </JoSheet>
+
+      {/* Play Store rating ask: only on a settled Home, never over a sheet,
+          a refresh or a punch in. */}
+      <RatingPromptCard
+        enabled={
+          isFocused &&
+          !isLocked &&
+          !loadingAttendance &&
+          !refreshing &&
+          !validatingLocation &&
+          !sheet &&
+          !reportPickerOpen
+        }
+      />
 
       <ReportPickerModal
         visible={reportPickerOpen}

@@ -1,5 +1,5 @@
 
-export const APP_VERSION = "1.1.8";
+export const APP_VERSION = "1.1.9";
 
 /** Human-facing version string shown in the UI. */
 export const APP_VERSION_DISPLAY = `${APP_VERSION}`;

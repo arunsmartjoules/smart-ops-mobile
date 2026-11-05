@@ -42,6 +42,7 @@ import { KeyboardProvider } from "react-native-keyboard-controller";
 import UpdateService from "@/services/UpdateService";
 import StoreUpdateService from "@/services/StoreUpdateService";
 import VersionGateService from "@/services/VersionGateService";
+import RatingPromptService from "@/services/RatingPromptService";
 import { presenceService } from "@/services/PresenceService";
 import UpdateRequiredScreen from "@/components/UpdateRequiredScreen";
 import NotificationGate from "@/components/NotificationGate";
@@ -320,6 +321,8 @@ export default function RootLayout() {
         StoreUpdateService.check(true);
         // Force-update gate: verify this build is still allowed by the backend.
         VersionGateService.check();
+        // Counts this IST day toward the "used on 5 days" rating ask rule.
+        RatingPromptService.recordActiveDay();
       } catch (e) {
         console.error("Init error:", e);
       }
@@ -333,6 +336,7 @@ export default function RootLayout() {
       VersionGateService.check();
       UpdateService.checkOnForeground();
       StoreUpdateService.check();
+      RatingPromptService.recordActiveDay();
     });
 
     const handleNotificationResponse = (
