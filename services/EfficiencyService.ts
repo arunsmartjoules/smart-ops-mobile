@@ -31,6 +31,8 @@ export interface EffRow {
   created_at?: string | null;
   updated_at?: string | null;
   last_synced_at?: string | null;
+  /** Site Hub threshold for this site in this row's month; null when none. */
+  sec_target?: number | null;
   // high side
   plant_consumption?: number | string | null;
   trh_delivered?: number | string | null;

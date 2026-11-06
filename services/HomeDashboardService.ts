@@ -16,6 +16,8 @@ export interface EfficiencyReading {
   value: number | null;
   previous: number | null;
   asOf: string | null;
+  /** Site Hub SEC threshold; absent from a response cached before this field. */
+  target?: number | null;
 }
 
 export interface HomeSummary {

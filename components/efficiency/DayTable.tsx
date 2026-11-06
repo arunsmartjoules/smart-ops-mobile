@@ -28,7 +28,8 @@ export function DayTable({ side, rows }: { side: SideConfig; rows: EffRow[] }) {
   };
 
   const body: FrozenRow[] = newestFirst.map((r) => {
-    const flagged = overTarget(r[side.secField], side.target);
+    const target = toNum(r.sec_target);
+    const flagged = overTarget(r[side.secField], target);
     const bg = flagged ? t.warnTint : undefined;
     return {
       key: r.id,
@@ -46,7 +47,7 @@ export function DayTable({ side, rows }: { side: SideConfig; rows: EffRow[] }) {
         <View style={[s.rowCells, bg ? { backgroundColor: bg } : null]}>
           {side.columns.map((c) => {
             const isSec = c.key === side.secField;
-            const over = isSec && overTarget(r[c.key], side.target);
+            const over = isSec && overTarget(r[c.key], target);
             const missing = toNum(r[c.key]) === null;
             return (
               <View key={c.key} style={s.cell}>
@@ -55,7 +56,7 @@ export function DayTable({ side, rows }: { side: SideConfig; rows: EffRow[] }) {
                     f.t(12.5, isSec ? 600 : 400),
                     tabular,
                     {
-                      color: missing ? t.muted : over ? t.warn : isSec && side.target !== null ? t.ok : t.ink,
+                      color: missing ? t.muted : over ? t.warn : isSec && target !== null ? t.ok : t.ink,
                       textAlign: "right",
                     },
                   ]}

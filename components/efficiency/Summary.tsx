@@ -1,6 +1,6 @@
 /**
  * The period's headline numbers (web CounterCards): the SEC average as the
- * accent hero — against the plant target on the high side — and the two sum
+ * accent hero — against the site's target — and the two sum
  * counters (consumption, tonnage) as cards. Same aggregation as the web: sums
  * of kWh / TRh and the mean of the daily SEC values.
  */
@@ -9,7 +9,7 @@ import { Text, View } from "react-native";
 import { Bx } from "@/components/jo/Bx";
 import { GlossFill, Card, HeroCard, capsStyle, f, makeJoStyles, useJoTheme } from "@/components/jo/ui";
 import { JO_DARK } from "@/constants/jo";
-import { aggregate, big, n2, n3, overTarget, toNum, type EffRow, type SideConfig } from "./lib";
+import { aggregate, big, n2, n3, overTarget, periodTarget, toNum, type EffRow, type SideConfig } from "./lib";
 
 export function Summary({
   side,
@@ -30,9 +30,10 @@ export function Summary({
   const logged = new Set(
     rows.filter((r) => r.report_date && toNum(r[side.secField]) !== null).map((r) => r.report_date),
   ).size;
-  const above = rows.filter((r) => overTarget(r[side.secField], side.target)).length;
-  const over = overTarget(sec, side.target);
-  const hasTarget = side.target !== null;
+  const target = periodTarget(rows);
+  const above = rows.filter((r) => overTarget(r[side.secField], toNum(r.sec_target))).length;
+  const over = overTarget(sec, target);
+  const hasTarget = target !== null;
   // Status pill sits on a near-black chip, so it takes the dark-mode tones.
   const statusColor = over ? JO_DARK.warn : JO_DARK.ok;
 
@@ -42,7 +43,7 @@ export function Summary({
         rings={1}
         style={s.hero}
         accessibilityLabel={`${side.secLabel} average ${n2(sec)} kilowatt hours per ton hour${
-          hasTarget && sec !== null ? `, ${over ? "above" : "within"} the ${n2(side.target)} target` : ""
+          hasTarget && sec !== null ? `, ${over ? "above" : "within"} the ${n2(target)} target` : ""
         }`}
       >
         <Text style={[capsStyle(12, 0.04), s.onAccentDim]} numberOfLines={1}>
@@ -64,7 +65,7 @@ export function Summary({
           ) : null}
           <Text style={[f.t(11.5, 500), s.heroMeta]} numberOfLines={2}>
             {[
-              hasTarget ? `Target ${n2(side.target)}` : "No target set",
+              hasTarget ? `Target ${n2(target)}` : "No target set",
               `${logged} of ${dayCount} days logged`,
               hasTarget && above > 0 ? `${above} above target` : null,
             ]

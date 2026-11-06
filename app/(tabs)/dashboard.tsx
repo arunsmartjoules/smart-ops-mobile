@@ -53,7 +53,6 @@ import {
   f,
 } from "@/components/jo/ui";
 // Plant SEC target, kW/TR — shared with Resources › Efficiency (and the web page).
-import { SEC_TARGET } from "@/components/efficiency/lib";
 import {
   BreachBanner,
   EfficiencyCard,
@@ -628,8 +627,9 @@ export default function Dashboard() {
   const monthIdx = Math.max(0, monthKeys.indexOf(slaMonth));
 
   // Efficiency
-  const effItem = (label: string, r: EfficiencyReading | undefined, target: number | null): EffItem => {
+  const effItem = (label: string, r: EfficiencyReading | undefined): EffItem => {
     const v = r?.value ?? null;
+    const target = r?.target ?? null;
     const color = v == null ? t.muted : target == null ? t.ok : v <= target ? t.ok : t.warn;
     const trend =
       !isOperator && v != null && r?.previous != null && r.previous !== v
@@ -638,8 +638,8 @@ export default function Dashboard() {
     return { label, value: v != null ? v.toFixed(2) : dash, color, trend };
   };
   const effItems = [
-    effItem("High side", s?.efficiency.highSide, SEC_TARGET),
-    effItem("Low side", s?.efficiency.lowSide, null),
+    effItem("High side", s?.efficiency.highSide),
+    effItem("Low side", s?.efficiency.lowSide),
   ];
   const asOf = s?.efficiency.highSide.asOf || s?.efficiency.lowSide.asOf;
   const effNote = asOf ? `Latest reading ${dayMonth(asOf)} · none in period yet.` : null;

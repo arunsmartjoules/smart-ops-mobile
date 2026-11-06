@@ -3,7 +3,7 @@
  * Resources › Efficiency screen. Ported from the web page's
  * web/src/app/efficiency/lib/efficiency.ts so both read the same numbers:
  * same counters (sum of kWh / TRh, mean of daily SEC), same columns, same
- * 0.85 kWh/TRh plant target on the high side and no target on the low side.
+ * per-site targets (the Site Hub thresholds, carried on each row as sec_target).
  *
  * `report_date` arrives as a plain "YYYY-MM-DD" string (the backend parses
  * Postgres DATE as text) and the numeric columns arrive as strings (node-pg
@@ -16,15 +16,8 @@ import type { EffRow, EffSide } from "@/services/EfficiencyService";
 
 export type { EffRow, EffSide };
 
-/**
- * Plant SEC target in kWh/TRh — the web page's SEC_TARGET
- * (web/src/app/efficiency/lib/efficiency.ts) and the value the Home screen's
- * "Plant efficiency" card flags against.
- */
-export const SEC_TARGET = 0.85;
-
 export type NumKind = "kwh" | "trh" | "sec";
-type NumField = Exclude<keyof EffRow, "id" | "report_date" | "day" | "site_id" | "source_id" | "created_at" | "updated_at" | "last_synced_at">;
+type NumField = Exclude<keyof EffRow, "id" | "report_date" | "day" | "site_id" | "source_id" | "created_at" | "updated_at" | "last_synced_at" | "sec_target">;
 
 export interface CounterDef {
   label: string;
@@ -49,8 +42,6 @@ export interface SideConfig {
   /** Field the chart plots and the hero averages. */
   secField: NumField;
   secLabel: string;
-  /** SEC target (kWh/TRh); null = no target for this side (web: low side). */
-  target: number | null;
   /** The two sum counters shown beside the SEC hero. */
   counters: CounterDef[];
   columns: MetricColumn[];
@@ -66,7 +57,6 @@ export const SIDES: Record<EffSide, SideConfig> = {
     icon: "bxs-zap",
     secField: "plant_sec",
     secLabel: "Plant SEC",
-    target: SEC_TARGET,
     counters: [
       { label: "HVAC consumption", unit: "kWh", field: "plant_consumption", agg: "sum", kind: "kwh", icon: "bxs-plug" },
       { label: "Tonnage delivered", unit: "TRh", field: "trh_delivered", agg: "sum", kind: "trh", icon: "bxs-thermometer" },
@@ -82,7 +72,7 @@ export const SIDES: Record<EffSide, SideConfig> = {
     ],
     chartTitle: "Plant SEC — daily",
     tableTitle: "High side — day wise",
-    tableNote: `Days above the ${SEC_TARGET.toFixed(2)} SEC target are flagged`,
+    tableNote: "Days above the site's SEC target are flagged",
   },
   low: {
     key: "low",
@@ -90,7 +80,6 @@ export const SIDES: Record<EffSide, SideConfig> = {
     icon: "bx-cloud-snow",
     secField: "low_side_sec",
     secLabel: "Low side SEC",
-    target: null,
     counters: [
       { label: "Tonnage", unit: "TRh", field: "tonnage", agg: "sum", kind: "trh", icon: "bxs-thermometer" },
       { label: "Total consumption", unit: "kWh", field: "total_consumption", agg: "sum", kind: "kwh", icon: "bxs-plug" },
@@ -103,7 +92,7 @@ export const SIDES: Record<EffSide, SideConfig> = {
     ],
     chartTitle: "Low side SEC — daily",
     tableTitle: "Low side — day wise",
-    tableNote: "Low side SEC is the standard (without-heater) metric",
+    tableNote: "Low side SEC is the standard (without-heater) metric · days above the site's target are flagged",
   },
 };
 
@@ -175,10 +164,20 @@ export function aggregate(rows: EffRow[], field: NumField, agg: "sum" | "mean"):
   return agg === "sum" ? sum(vals) : mean(vals);
 }
 
-/** Over the side's target? (false when there is no target or no value.) */
+/** Over the target? (false when there is no target or no value.) */
 export function overTarget(v: unknown, target: number | null): boolean {
   const n = toNum(v);
   return target !== null && n !== null && n > target;
+}
+
+/** The site's current target over these rows: the newest one that has a target. */
+export function periodTarget(rows: EffRow[]): number | null {
+  const newestFirst = [...rows].sort((a, b) => String(b.report_date ?? "").localeCompare(String(a.report_date ?? "")));
+  for (const r of newestFirst) {
+    const target = toNum(r.sec_target);
+    if (target !== null) return target;
+  }
+  return null;
 }
 
 /**

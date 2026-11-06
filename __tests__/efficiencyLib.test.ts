@@ -6,6 +6,7 @@ import {
   n3,
   niceStepTicks,
   overTarget,
+  periodTarget,
   recentMonths,
   whole,
   type EffRow,
@@ -47,6 +48,31 @@ describe("overTarget", () => {
 
   it("never flags when the side has no target", () => {
     expect(overTarget(5, null)).toBe(false);
+  });
+});
+
+describe("periodTarget", () => {
+  const dated = (report_date: string, sec_target?: number | null): EffRow => ({
+    id: report_date,
+    report_date,
+    site_id: "S",
+    sec_target,
+  });
+
+  it("uses the newest row's target when a revision lands inside the period", () => {
+    expect(periodTarget([dated("2026-10-31", 0.83), dated("2026-11-01", 0.8)])).toBe(0.8);
+  });
+
+  it("skips newer rows that have no target", () => {
+    expect(periodTarget([dated("2026-10-31", 0.83), dated("2026-11-01", null)])).toBe(0.83);
+  });
+
+  it("has no target for rows cached before sec_target existed", () => {
+    expect(periodTarget([dated("2026-10-31")])).toBeNull();
+  });
+
+  it("has no target for an empty period", () => {
+    expect(periodTarget([])).toBeNull();
   });
 });
 
