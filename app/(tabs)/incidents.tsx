@@ -13,6 +13,7 @@ import {
 import { FlashList } from "@shopify/flash-list";
 import * as Haptics from "expo-haptics";
 import { useAttendanceGate } from "@/contexts/AttendanceGateContext";
+import { usePermissions } from "@/contexts/PermissionsContext";
 import { useFocusEffect, useLocalSearchParams } from "expo-router";
 import { useAuth } from "@/contexts/AuthContext";
 import { useSites } from "@/hooks/useSites";
@@ -229,9 +230,15 @@ export default function IncidentsTab() {
     siteCode?: string | string[];
   }>();
   const selectedSiteCode = selectedSite?.site_code || "";
-  const roleAllowsRca = ["admin", "manager"].includes(String(user?.role || "").toLowerCase());
+  // Roles & Permissions decide (2026-11-11), the same grants the backend
+  // checks: incidents `edit` files / moves the RCA, reassigns and edits the
+  // incident times; incidents `add` backdates a new incident. `canEdit` is the
+  // attendance gate (punched in, or a role that never punches in).
+  const { can } = usePermissions();
+  const roleAllowsRca = can("incidents", "edit");
   const canEditRca = roleAllowsRca && canEdit;
   const canEditMeta = canEditRca;
+  const canBackdate = can("incidents", "add") && canEdit;
 
   const [incidents, setIncidents] = useState<IncidentItem[]>([]);
   const [stats, setStats] = useState<Record<string, number>>({});
@@ -575,7 +582,7 @@ export default function IncidentsTab() {
       rca_status: "Open",
       assigned_to: form.assigned_to,
       attachments: uploadedAttachments,
-      ...(canEditMeta ? { incident_created_time: form.incident_created_time.toISOString() } : {}),
+      ...(canBackdate ? { incident_created_time: form.incident_created_time.toISOString() } : {}),
       // Stable across re-submits / offline replays of this draft.
       client_request_id: form.client_request_id,
     };
@@ -1452,7 +1459,7 @@ export default function IncidentsTab() {
         faultTypes={FAULT_TYPE_OPTIONS}
         severities={SEVERITY_OPTIONS}
         operatingConditions={OPERATING_CONDITION_OPTIONS}
-        canEditMeta={canEditMeta}
+        canEditMeta={canBackdate}
         offline={isConnected === false}
         submitting={submitting}
         onSubmit={onCreateIncident}

@@ -77,7 +77,7 @@ export default function IncidentCreateForm<F extends IncidentCreateFormValue>({
   faultTypes: readonly string[];
   severities: readonly string[];
   operatingConditions: readonly string[];
-  /** Only admins / managers may back-date the incident. */
+  /** Back-dating needs the incidents `add` permission (Roles & Permissions). */
   canEditMeta: boolean;
   offline: boolean;
   submitting: boolean;
@@ -178,7 +178,7 @@ export default function IncidentCreateForm<F extends IncidentCreateFormValue>({
               />
               {!canEditMeta ? (
                 <Text style={[f.t(11.5), { color: t.muted, marginTop: 6 }]}>
-                  Recorded as now. Admins and managers can change it.
+                  Recorded as now. Your role can&apos;t change it.
                 </Text>
               ) : null}
               <FieldBlock label="Raised by">
