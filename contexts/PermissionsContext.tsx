@@ -27,14 +27,29 @@ import { useAuth } from "@/contexts/AuthContext";
 import { apiFetch } from "@/utils/apiHelper";
 import { API_BASE_URL } from "@/constants/api";
 import logger from "@/utils/logger";
+import {
+  setViewableSiteLogCategories,
+  type SiteLogCategoryKey,
+} from "@/services/SiteLogCategoryAccess";
 
 /** Backend vocabulary (backend/shared/src/lib/rolePermissions.ts PERMISSION_MODULES). */
 export const PERMISSION_MODULES = [
   "tickets",
   "attendance",
   "site_logs",
+  // Site log categories. The app has no Activity Master tab, so it decides
+  // Site Logs' own visibility from the other four (see applyMobileRules).
+  "site_logs_activity_master",
+  "site_logs_temp_rh",
+  "site_logs_water",
+  "site_logs_chiller",
+  "site_logs_chemical",
   "incidents",
   "pm",
+  // PM tabs. The app's PM screen is the Activity tab.
+  "pm_activity",
+  "pm_checklist",
+  "pm_schedule",
   "dashboard",
   "sla",
   "asset",
@@ -59,20 +74,62 @@ const ALL_VISIBLE: ViewMap = Object.fromEntries(
 
 const CACHE_PREFIX = "role-perms:v1:";
 
+/** The parent a category falls back to when the payload lacks it. */
+const CATEGORY_PARENT: Partial<Record<PermissionModule, PermissionModule>> = {
+  site_logs_activity_master: "site_logs",
+  site_logs_temp_rh: "site_logs",
+  site_logs_water: "site_logs",
+  site_logs_chiller: "site_logs",
+  site_logs_chemical: "site_logs",
+  pm_activity: "pm",
+  pm_checklist: "pm",
+  pm_schedule: "pm",
+};
+
+/** The site log categories the app has screens for. */
+export const MOBILE_SITE_LOG_CATEGORIES = [
+  "site_logs_temp_rh",
+  "site_logs_water",
+  "site_logs_chiller",
+  "site_logs_chemical",
+] as const satisfies readonly PermissionModule[];
+
+/**
+ * Mobile's own module rules (the app has no Activity Master tab and its PM
+ * screen is PM Activity): Site Logs shows when any of its four categories is
+ * viewable, and PM follows `pm_activity`. Applying them to the map keeps the
+ * tab bar, Home tiles and route guard on their existing `site_logs` / `pm`
+ * checks.
+ */
+function applyMobileRules(map: ViewMap): ViewMap {
+  const anyLog = MOBILE_SITE_LOG_CATEGORIES.some((k) => map[k].view);
+  return {
+    ...map,
+    site_logs: anyLog ? map.site_logs : allCell(false),
+    pm: map.pm_activity,
+  };
+}
+
 /**
  * API `permissions` object → per-action flags; a module or action the server
  * omitted reads as denied, and no view means nothing at all (the backend's
- * view-gate invariant, same as web lib/permissions normalizeCell).
+ * view-gate invariant, same as web lib/permissions normalizeCell). A category
+ * missing from the payload (cached before categories existed) takes its
+ * parent's grant.
  */
 export function parseViewMap(raw: unknown): ViewMap {
   const src = (raw ?? {}) as Record<string, Partial<Record<PermissionAction, unknown>> | undefined>;
-  return Object.fromEntries(
+  const parsed = Object.fromEntries(
     PERMISSION_MODULES.map((m) => {
-      const row = src[m] ?? {};
+      const parent = CATEGORY_PARENT[m];
+      const row = (src[m] === undefined && parent ? src[parent] : src[m]) ?? {};
       if (row.view !== true) return [m, allCell(false)];
       return [m, Object.fromEntries(ACTIONS.map((a) => [a, row[a] === true])) as Cell];
     }),
   ) as ViewMap;
+  // Schedule is view-only, whatever its parent grants.
+  parsed.pm_schedule = { ...allCell(false), view: parsed.pm_schedule.view };
+  return applyMobileRules(parsed);
 }
 
 function bypassesMatrix(role: unknown, isSuperadmin: unknown) {
@@ -146,6 +203,15 @@ export function PermissionsProvider({ children }: { children: React.ReactNode })
 
   const map = bypass || !state || state.userId !== userId ? ALL_VISIBLE : state.map;
   const resolved = bypass || (!!state && state.userId === userId);
+
+  // Let background pulls skip categories this role can't view.
+  useEffect(() => {
+    setViewableSiteLogCategories(
+      resolved && !bypass
+        ? new Set<SiteLogCategoryKey>(MOBILE_SITE_LOG_CATEGORIES.filter((k) => map[k].view))
+        : null,
+    );
+  }, [map, resolved, bypass]);
 
   const canView = useCallback((m: PermissionModule) => map[m]?.view !== false, [map]);
   const can = useCallback(

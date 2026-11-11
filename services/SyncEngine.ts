@@ -26,6 +26,11 @@ import {
   replaySiteLogSubmit,
   replaySiteLogUpdate,
 } from "./SiteLogService";
+import {
+  NO_LOG_TYPE_ACCESS_MESSAGE,
+  canPullSiteLogCategory,
+  replayError,
+} from "./SiteLogCategoryAccess";
 import PMService from "./PMService";
 import logger from "../utils/logger";
 import { getValidAuthToken } from "./AuthTokenManager";
@@ -414,7 +419,11 @@ class SyncEngineImpl implements SyncEngine {
         const fromDateObj = startOfDay(addDays(new Date(), -7));
         const toDateObj = endOfDay(addDays(new Date(), 7));
 
-        const logTypes = ["Temp RH", "Water", "Chemical Dosing"];
+        // Skip the categories this role can't view: the server would only
+        // answer them empty.
+        const logTypes = ["Temp RH", "Water", "Chemical Dosing"].filter(
+          canPullSiteLogCategory,
+        );
         const failures: Array<{ siteCode: string; logName: string; error: any }> = [];
         for (const siteCode of siteCodes) {
           for (const logName of logTypes) {
@@ -565,6 +574,15 @@ class SyncEngineImpl implements SyncEngine {
         if (siteCodes.length === 0) {
           logger.debug(
             "SyncEngine.chiller_readings: skipped — user has no sites",
+            { module: "SYNC_ENGINE" },
+          );
+          return;
+        }
+        // The server refuses chiller readings (403) to a role without the
+        // Chiller category, so don't ask.
+        if (!canPullSiteLogCategory("Chiller Logs")) {
+          logger.debug(
+            "SyncEngine.chiller_readings: skipped — Chiller not viewable for this role",
             { module: "SYNC_ENGINE" },
           );
           return;
@@ -1085,6 +1103,9 @@ class SyncEngineImpl implements SyncEngine {
       module: "SYNC_ENGINE",
     });
 
+    // Writes refused because the role lost their log type (one alert per flush).
+    let forbiddenThisFlush = 0;
+
     for (const item of items) {
       // Give up on an item once EITHER counter is exhausted (Req 3.5):
       //  - retry_count > MAX_4XX_RETRIES        → the server keeps rejecting it
@@ -1115,7 +1136,19 @@ class SyncEngineImpl implements SyncEngine {
         const is4xx = statusCode >= 400 && statusCode < 500;
         const is5xx = statusCode >= 500;
 
-        if (is4xx) {
+        if (err?.code === "MODULE_FORBIDDEN") {
+          // The role no longer has this log type (Settings › Roles &
+          // Permissions). A retry can't succeed, so it goes straight to the
+          // dead-letter list with the reason rather than five more attempts.
+          await cacheManager.markQueueItemFailed(item.id, NO_LOG_TYPE_ACCESS_MESSAGE);
+          await cacheManager.deadLetterQueueItem(item.id);
+          forbiddenThisFlush++;
+          logger.warn("SyncEngine: queue item refused, log type no longer granted", {
+            module: "SYNC_ENGINE",
+            id: item.id,
+            entity_type: item.entity_type,
+          });
+        } else if (is4xx) {
           // 4xx: increment retry_count, record error, skip for this cycle (Req 3.4)
           await cacheManager.markQueueItemFailed(
             item.id,
@@ -1148,6 +1181,15 @@ class SyncEngineImpl implements SyncEngine {
           });
         }
       }
+    }
+
+    if (forbiddenThisFlush > 0) {
+      Alert.alert(
+        forbiddenThisFlush === 1
+          ? "An entry wasn't uploaded"
+          : `${forbiddenThisFlush} entries weren't uploaded`,
+        NO_LOG_TYPE_ACCESS_MESSAGE,
+      );
     }
 
     // Refresh pending + failed counts after flush
@@ -1312,11 +1354,10 @@ class SyncEngineImpl implements SyncEngine {
     });
 
     if (!response.ok) {
-      const err: any = new Error(
+      throw await replayError(
+        response,
         `Queue item API error: ${response.status} ${response.statusText}`,
       );
-      err.statusCode = response.status;
-      throw err;
     }
   }
 

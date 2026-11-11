@@ -26,6 +26,7 @@ import Animated, {
 } from "react-native-reanimated";
 import { useAuth } from "@/contexts/AuthContext";
 import { useAttendanceGate } from "@/contexts/AttendanceGateContext";
+import { usePermissions } from "@/contexts/PermissionsContext";
 import { useAutoSync } from "@/hooks/useAutoSync";
 import siteLogService, {
   type HistoryQuery,
@@ -94,16 +95,39 @@ const labelToUiShift = (label?: string | null): "A" | "B" | "C" | null => {
   return null;
 };
 
-/** Card order matches the design; `key` is the value the services expect. */
+/**
+ * Card order matches the design; `key` is the value the services expect and
+ * `permission` the site log category that shows the card (Settings › Roles &
+ * Permissions).
+ */
 const LOG_TABS = [
-  { key: "Temp RH", label: "Temp & RH", route: "/temp-rh", hasShift: true },
-  { key: "Chiller Logs", label: "Chiller", route: "/chiller", hasShift: false },
-  { key: "Water", label: "Water", route: "/water", hasShift: false },
+  {
+    key: "Temp RH",
+    label: "Temp & RH",
+    route: "/temp-rh",
+    hasShift: true,
+    permission: "site_logs_temp_rh",
+  },
+  {
+    key: "Chiller Logs",
+    label: "Chiller",
+    route: "/chiller",
+    hasShift: false,
+    permission: "site_logs_chiller",
+  },
+  {
+    key: "Water",
+    label: "Water",
+    route: "/water",
+    hasShift: false,
+    permission: "site_logs_water",
+  },
   {
     key: "Chemical Dosing",
     label: "Chemical",
     route: "/chemical",
     hasShift: false,
+    permission: "site_logs_chemical",
   },
 ] as const;
 
@@ -192,6 +216,12 @@ export default function SiteLogs() {
   const { clearance } = useNavInsets();
   const { user } = useAuth();
   const { canEdit } = useAttendanceGate();
+  const { canView } = usePermissions();
+  // Only the log types this role can view are shown or loaded.
+  const visibleTabs = useMemo(
+    () => LOG_TABS.filter((tab) => canView(tab.permission)),
+    [canView],
+  );
   const { isConnected } = useNetworkStatus();
   const insets = useSafeAreaInsets();
 
@@ -318,8 +348,8 @@ export default function SiteLogs() {
 
   const loadAll = useCallback(
     (opts?: { force?: boolean }) =>
-      Promise.all(LOG_TABS.map((t) => loadType(t.key, opts))),
-    [loadType],
+      Promise.all(visibleTabs.map((t) => loadType(t.key, opts))),
+    [loadType, visibleTabs],
   );
 
   // Read through refs so the paging callbacks stay stable across
@@ -516,7 +546,7 @@ export default function SiteLogs() {
 
   const overview = useMemo(
     () =>
-      LOG_TABS.map((t) => {
+      visibleTabs.map((t) => {
         const rows = rowsByType[t.key];
         const todays = (rows ?? []).filter((r) => rowDay(r) === today);
         const logged = todays.filter(isCompleted).length;
@@ -567,7 +597,7 @@ export default function SiteLogs() {
           sub: t.hasShift && todays.length > 0 ? `3 shifts · ${sub}` : sub,
         };
       }),
-    [rowsByType, today, siteCode],
+    [rowsByType, today, siteCode, visibleTabs],
   );
 
   const anyLoaded = overview.some((o) => o.loaded);
@@ -895,7 +925,7 @@ export default function SiteLogs() {
 
             <View style={{ gap: 10, marginTop: 10 }}>
               {!anyLoaded
-                ? LOG_TABS.map((tab) => (
+                ? visibleTabs.map((tab) => (
                     <Shimmer key={tab.key} height={tab.hasShift ? 190 : 140} radius={26} />
                   ))
                 : overview.map((o) => (

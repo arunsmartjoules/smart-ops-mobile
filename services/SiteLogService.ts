@@ -28,6 +28,11 @@ import { apiFetch as centralApiFetch } from "../utils/apiHelper";
 import { getLogVariants } from "./SiteConfigService";
 import type { TaskItem } from "./SiteConfigService";
 import cacheManager from "./CacheManager";
+import {
+  NO_LOG_TYPE_ACCESS_MESSAGE,
+  isModuleForbidden,
+  replayError,
+} from "./SiteLogCategoryAccess";
 import { AttachmentQueueService } from "./AttachmentQueueService";
 import { getISTDateString } from "./AttendanceService";
 import { istDayStartMsFromYmd, toIstYmd } from "../utils/istDate";
@@ -714,9 +719,7 @@ export async function replayChillerReadingUpdate(payload: Record<string, any>): 
     body: JSON.stringify(body),
   });
   if (!response.ok) {
-    const err: any = new Error(`chiller_reading_update API error: ${response.status}`);
-    err.statusCode = response.status;
-    throw err;
+    throw await replayError(response, `chiller_reading_update API error: ${response.status}`);
   }
 }
 
@@ -784,9 +787,7 @@ export async function replaySiteLogUpdate(payload: Record<string, any>): Promise
     body: JSON.stringify(body),
   });
   if (!response.ok) {
-    const err: any = new Error(`site_log_update API error: ${response.status}`);
-    err.statusCode = response.status;
-    throw err;
+    throw await replayError(response, `site_log_update API error: ${response.status}`);
   }
 }
 
@@ -887,8 +888,12 @@ export type SiteLogSubmitOutcome =
   | { state: "uploaded"; shiftIncomplete: { total: number; filled: number } | null }
   /** Saved on the phone and queued; uploads when the connection allows. */
   | { state: "queued" }
-  /** The server refused it (kept queued for retry; message for the operator). */
-  | { state: "rejected"; message: string };
+  /**
+   * The server refused it (kept queued for retry; message for the operator).
+   * `forbidden`: refused because the role lost this log type — not queued,
+   * since a retry can't succeed.
+   */
+  | { state: "rejected"; message: string; forbidden?: boolean };
 
 /** How long "Complete & sign" waits for the server before reporting "queued". */
 const SUBMIT_TIMEOUT_MS = 20_000;
@@ -990,7 +995,7 @@ async function submitSiteLogsOnce(input: SiteLogSubmitInput): Promise<SiteLogSub
     await resendLocalCompletions(rows.map((r) => r.id));
     return { state: "queued" };
   }
-  return submitOutcomeOf(response, "submitSiteLogs");
+  return submitOutcomeOf(response, "submitSiteLogs", queueId);
 }
 
 /**
@@ -1009,9 +1014,7 @@ export async function replaySiteLogSubmit(payload: Record<string, any>): Promise
     await resendLocalCompletions(ids);
     return;
   }
-  const err: any = new Error(`site_log_submit API error: ${response.status}`);
-  err.statusCode = response.status;
-  throw err;
+  throw await replayError(response, `site_log_submit API error: ${response.status}`);
 }
 
 /** Reading columns a chiller submit sets (server/local column names). */
@@ -1083,10 +1086,28 @@ function reportSubmitOutcome(
 }
 
 /** Classify an upload response the same way for every one-shot submit. */
-async function submitOutcomeOf(response: Response, label: string): Promise<SiteLogSubmitOutcome> {
+async function submitOutcomeOf(
+  response: Response,
+  label: string,
+  queueId?: string | null,
+): Promise<SiteLogSubmitOutcome> {
   if (response.ok) return { state: "uploaded", shiftIncomplete: null };
   if (response.status >= 500 || response.status === 401) return { state: "queued" };
   const body = await response.json().catch(() => null);
+  if (isModuleForbidden(response.status, body)) {
+    // Retrying can't succeed until an admin grants the log type back, so the
+    // upload goes straight to the dead-letter list (with the reason) instead
+    // of failing again on every sync.
+    if (queueId) {
+      await cacheManager.markQueueItemFailed(queueId, NO_LOG_TYPE_ACCESS_MESSAGE);
+      await cacheManager.deadLetterQueueItem(queueId);
+    }
+    logger.warn(`${label}: log type no longer granted`, {
+      module: "SITE_LOG_SERVICE",
+      required: body?.required,
+    });
+    return { state: "rejected", message: NO_LOG_TYPE_ACCESS_MESSAGE, forbidden: true };
+  }
   logger.error(`${label}: server refused the submit`, {
     module: "SITE_LOG_SERVICE",
     status: response.status,
@@ -1198,7 +1219,7 @@ async function submitChillerReadingOnce(
     return { state: "queued", id };
   }
 
-  const outcome = await submitOutcomeOf(response, "submitChillerReading");
+  const outcome = await submitOutcomeOf(response, "submitChillerReading", queueId);
   if (outcome.state === "uploaded") {
     if (queueId) await cacheManager.dequeue(queueId);
     // The server may answer with the row it already had for this reading

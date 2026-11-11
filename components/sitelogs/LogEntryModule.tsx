@@ -515,8 +515,11 @@ export const LogEntryModule = ({
       });
       if (outcome.state === "rejected") {
         Alert.alert(
-          "Couldn't upload",
-          `${outcome.message}\n\nYour entries are saved on this phone and will be retried automatically. If this keeps happening, please contact support.`,
+          outcome.forbidden ? "No access to this log type" : "Couldn't upload",
+          // A revoked log type is not retried, so it must not promise a retry.
+          outcome.forbidden
+            ? outcome.message
+            : `${outcome.message}\n\nYour entries are saved on this phone and will be retried automatically. If this keeps happening, please contact support.`,
         );
         return;
       }
