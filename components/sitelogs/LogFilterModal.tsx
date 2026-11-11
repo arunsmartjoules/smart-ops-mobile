@@ -36,6 +36,7 @@ import {
 } from "@/components/jo/ui";
 import { FilterChip } from "./LogsUI";
 import { SelectField } from "./LogsKit";
+import { useOpsDateFloor } from "@/services/OpsDateRange";
 
 interface LogFilterModalProps {
   visible: boolean;
@@ -62,6 +63,11 @@ const LogFilterModal = ({
   selectedSiteCode,
   onSiteSelect,
 }: LogFilterModalProps) => {
+  // The role's "data visible from" day: no earlier day can be picked.
+  const floor = useOpsDateFloor();
+  const floorDate = floor
+    ? new Date(Number(floor.slice(0, 4)), Number(floor.slice(5, 7)) - 1, Number(floor.slice(8, 10)))
+    : undefined;
   const [showStartPicker, setShowStartPicker] = React.useState(false);
   const [showEndPicker, setShowEndPicker] = React.useState(false);
   const [activePreset, setActivePreset] = React.useState<string | null>(null);
@@ -268,6 +274,7 @@ const LogFilterModal = ({
             display={Platform.OS === "ios" ? "inline" : "default"}
             onChange={onStartChange}
             maximumDate={toDate || new Date()}
+            minimumDate={floorDate}
           />
         )}
 
@@ -277,7 +284,7 @@ const LogFilterModal = ({
             mode="date"
             display={Platform.OS === "ios" ? "inline" : "default"}
             onChange={onEndChange}
-            minimumDate={fromDate || undefined}
+            minimumDate={fromDate || floorDate}
             maximumDate={new Date()}
           />
         )}

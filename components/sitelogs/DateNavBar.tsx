@@ -9,6 +9,11 @@ import { format, isToday, subDays, addDays } from "date-fns";
 import DateTimePicker from "@expo/ui/community/datetime-picker";
 import { Bx } from "@/components/jo/Bx";
 import { GlossFill, f, useJoTheme } from "@/components/jo/ui";
+import { useOpsDateFloor } from "@/services/OpsDateRange";
+
+/** `YYYY-MM-DD` → a local Date at midnight (a calendar day, never parsed as UTC). */
+const isoToLocalDate = (iso: string) =>
+  new Date(Number(iso.slice(0, 4)), Number(iso.slice(5, 7)) - 1, Number(iso.slice(8, 10)));
 
 interface DateNavBarProps {
   date: Date;
@@ -30,6 +35,9 @@ export function DateNavBar({
   nextCount = 0,
 }: DateNavBarProps) {
   const t = useJoTheme();
+  // The role's "data visible from" day: no stepping or picking before it.
+  const floor = useOpsDateFloor();
+  const atFloor = !!floor && format(date, "yyyy-MM-dd") <= floor;
   const label = useMemo(() => {
     if (isToday(date)) return "Today";
     return format(date, "dd MMM yyyy");
@@ -38,6 +46,7 @@ export function DateNavBar({
   const arrow = (dir: "prev" | "next", count: number) => (
     <TouchableOpacity
       onPress={() => onDateChange(dir === "prev" ? subDays(date, 1) : addDays(date, 1))}
+      disabled={dir === "prev" && atFloor}
       activeOpacity={0.75}
       accessibilityRole="button"
       accessibilityLabel={`${dir === "prev" ? "Previous" : "Next"} day${count > 0 ? `, ${count} pending` : ""}`}
@@ -108,6 +117,7 @@ export function DateNavBar({
         <DateTimePicker
           value={date}
           mode="date"
+          minimumDate={floor ? isoToLocalDate(floor) : undefined}
           display={Platform.OS === "ios" ? "inline" : "default"}
           onChange={(_, selected) => {
             onShowPicker(false);

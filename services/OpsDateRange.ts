@@ -63,6 +63,21 @@ export function rangeForPreset(preset: Exclude<OpsDatePreset, "custom">, today =
   }
 }
 
+/**
+ * The role's "data visible from" day (Settings › Roles & Permissions), set by
+ * PermissionsContext; null = no limit. A CLIENT-SIDE lock: the range below is
+ * always clamped to it, and the date pickers can't go earlier.
+ */
+let floor: string | null = null;
+
+/** Never earlier than the floor; a range wholly before it collapses onto it. */
+export function clampToFloor<T extends { from: string; to: string }>(range: T, day: string | null): T {
+  if (!day) return range;
+  const from = range.from < day ? day : range.from;
+  const to = range.to < from ? from : range.to;
+  return from === range.from && to === range.to ? range : { ...range, from, to };
+}
+
 let state: OpsDateRange = rangeForPreset("month");
 const listeners = new Set<() => void>();
 
@@ -74,14 +89,43 @@ const snapshot = () => state;
 
 export function setOpsDateRange(next: OpsDateRange) {
   // Keep the range ordered whichever end moved.
-  const ordered = next.from <= next.to ? next : { ...next, from: next.to, to: next.from };
+  const ordered = clampToFloor(
+    next.from <= next.to ? next : { ...next, from: next.to, to: next.from },
+    floor,
+  );
   if (ordered.from === state.from && ordered.to === state.to && ordered.preset === state.preset) return;
   state = ordered;
   listeners.forEach((l) => l());
 }
 
+/** The current range, outside React (tests, services). */
+export function getOpsDateRange(): OpsDateRange {
+  return state;
+}
+
 export function useOpsDateRange(): OpsDateRange {
   return useSyncExternalStore(subscribe, snapshot, snapshot);
+}
+
+/** Set by PermissionsContext. Re-clamps the current range at once. */
+export function setOpsDateFloor(next: string | null) {
+  if (next === floor) return;
+  floor = next;
+  state = clampToFloor(state, floor);
+  listeners.forEach((l) => l());
+}
+
+const floorSnapshot = () => floor;
+
+/** The later of two optional `YYYY-MM-DD` days (a picker's own min vs the floor). */
+export function laterDay(a?: string | null, b?: string | null): string | undefined {
+  if (!a) return b ?? undefined;
+  if (!b) return a;
+  return a > b ? a : b;
+}
+/** The role's earliest viewable day — pass as a picker's `minimumDate`. */
+export function useOpsDateFloor(): string | null {
+  return useSyncExternalStore(subscribe, floorSnapshot, floorSnapshot);
 }
 
 export const PRESET_LABEL: Record<OpsDatePreset, string> = {

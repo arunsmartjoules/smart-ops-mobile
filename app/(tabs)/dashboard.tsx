@@ -73,6 +73,7 @@ import { makeJoStyles, useJoTheme, type JoTheme } from "@/hooks/useJoTheme";
 import { usePermissions } from "@/contexts/PermissionsContext";
 import { useNavInsets } from "@/components/jo/navInsets";
 import { RatingPromptCard } from "@/components/home/RatingPromptCard";
+import { clampToFloor, useOpsDateFloor } from "@/services/OpsDateRange";
 
 function formatLocationFailureMessage(
   message: string,
@@ -236,7 +237,14 @@ export default function Dashboard() {
 
   // Period filter (operational metrics) and SLA month — independent by design.
   const todayIso = getISTDateString(currentTime);
-  const monthKeys = useMemo(() => recentMonthKeys(todayIso), [todayIso]);
+  // The role's "data visible from" day (client-side lock): Home's windows, its
+  // custom picker and the SLA months never reach before it.
+  const dateFloor = useOpsDateFloor();
+  const monthKeys = useMemo(
+    () =>
+      recentMonthKeys(todayIso).filter((k) => !dateFloor || k >= dateFloor.slice(0, 7)),
+    [todayIso, dateFloor],
+  );
   const [period, setPeriod] = useState<PeriodKey>("today");
   const [customRange, setCustomRange] = useState({ from: todayIso, to: todayIso });
   const [slaMonth, setSlaMonth] = useState<string>(() => todayIso.slice(0, 7));
@@ -276,8 +284,8 @@ export default function Dashboard() {
   const activeSiteCode = activeSite?.site_code ?? null;
 
   const range = useMemo(
-    () => periodRange(period, todayIso, customRange),
-    [period, todayIso, customRange],
+    () => clampToFloor(periodRange(period, todayIso, customRange), dateFloor),
+    [period, todayIso, customRange, dateFloor],
   );
 
   const summaryKey = activeSiteCode ? `${activeSiteCode}|${range.from}|${range.to}` : null;
@@ -1011,6 +1019,7 @@ export default function Dashboard() {
             value={isoToDate(draftRange[pickerFor])}
             mode="date"
             maximumDate={isoToDate(todayIso)}
+            minimumDate={dateFloor ? isoToDate(dateFloor) : undefined}
             display={Platform.OS === "ios" ? "spinner" : "default"}
             onChange={onPickDate}
           />

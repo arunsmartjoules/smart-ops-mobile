@@ -24,6 +24,7 @@ import {
 } from "date-fns";
 import { type Site } from "@/services/AttendanceService";
 import SearchableSelect from "./SearchableSelect";
+import { useOpsDateFloor } from "@/services/OpsDateRange";
 
 const parseLocal = (dateStr: string | null) => {
   if (!dateStr) return new Date();
@@ -168,6 +169,8 @@ const AdvancedFilterModal = ({
 }: AdvancedFilterModalProps) => {
   const ds = useDs();
 
+  // The role's "data visible from" day: no earlier day can be picked.
+  const floor = useOpsDateFloor();
   const [showStartPicker, setShowStartPicker] = React.useState(false);
   const [showEndPicker, setShowEndPicker] = React.useState(false);
   const [selectedQuickRange, setSelectedQuickRange] = React.useState<
@@ -497,6 +500,7 @@ const AdvancedFilterModal = ({
                   <DateTimePicker
                     value={parseLocal(tempFromDate)}
                     mode="date"
+                    minimumDate={floor ? parseLocal(floor) : undefined}
                     display={Platform.OS === "ios" ? "spinner" : "default"}
                     onChange={onStartChange}
                   />
@@ -558,6 +562,7 @@ const AdvancedFilterModal = ({
                       <DateTimePicker
                         value={parseLocal(tempToDate || null)}
                         mode="date"
+                        minimumDate={floor ? parseLocal(floor) : undefined}
                         display={Platform.OS === "ios" ? "spinner" : "default"}
                         onChange={onEndChange}
                       />

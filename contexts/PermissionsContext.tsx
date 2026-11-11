@@ -31,6 +31,7 @@ import {
   setViewableSiteLogCategories,
   type SiteLogCategoryKey,
 } from "@/services/SiteLogCategoryAccess";
+import { setOpsDateFloor } from "@/services/OpsDateRange";
 
 /** Backend vocabulary (backend/shared/src/lib/rolePermissions.ts PERMISSION_MODULES). */
 export const PERMISSION_MODULES = [
@@ -73,6 +74,12 @@ const ALL_VISIBLE: ViewMap = Object.fromEntries(
 ) as ViewMap;
 
 const CACHE_PREFIX = "role-perms:v1:";
+/** The role's "data visible from" day, cached beside the grants. */
+const FLOOR_CACHE_PREFIX = "role-data-from:v1:";
+
+/** A `YYYY-MM-DD` out of an API value, or null. */
+const asCalendarDay = (v: unknown): string | null =>
+  typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null;
 
 /** The parent a category falls back to when the payload lacks it. */
 const CATEGORY_PARENT: Partial<Record<PermissionModule, PermissionModule>> = {
@@ -158,6 +165,7 @@ export function PermissionsProvider({ children }: { children: React.ReactNode })
   const userId = String(user?.user_id || user?.id || "");
   const bypass = bypassesMatrix(user?.role, user?.is_superadmin);
   const [state, setState] = useState<{ userId: string; map: ViewMap } | null>(null);
+  const [floor, setFloor] = useState<{ userId: string; day: string | null } | null>(null);
   const [tick, setTick] = useState(0);
 
   // Re-check when the app returns to the foreground (an admin may have
@@ -173,6 +181,15 @@ export function PermissionsProvider({ children }: { children: React.ReactNode })
     if (!token || !userId || bypass) return;
     let cancelled = false;
     const key = CACHE_PREFIX + userId;
+    const floorKey = FLOOR_CACHE_PREFIX + userId;
+
+    // The date floor survives an offline launch like the grants do.
+    AsyncStorage.getItem(floorKey)
+      .then((raw) => {
+        if (cancelled || raw === null) return;
+        setFloor((cur) => (cur?.userId === userId ? cur : { userId, day: asCalendarDay(raw) }));
+      })
+      .catch(() => {});
 
     AsyncStorage.getItem(key)
       .then((raw) => {
@@ -188,6 +205,10 @@ export function PermissionsProvider({ children }: { children: React.ReactNode })
         if (res.ok && body?.success && body.data?.permissions) {
           setState({ userId, map: parseViewMap(body.data.permissions) });
           AsyncStorage.setItem(key, JSON.stringify(body.data.permissions)).catch(() => {});
+          // Absent (an older backend) reads as "no limit".
+          const day = asCalendarDay(body.data.data_from_date);
+          setFloor({ userId, day });
+          AsyncStorage.setItem(floorKey, day ?? "").catch(() => {});
         } else {
           logger.warn("Role permissions fetch unsuccessful", { status: res.status });
         }
@@ -203,6 +224,13 @@ export function PermissionsProvider({ children }: { children: React.ReactNode })
 
   const map = bypass || !state || state.userId !== userId ? ALL_VISIBLE : state.map;
   const resolved = bypass || (!!state && state.userId === userId);
+
+  // The role's earliest viewable day locks the shared Ops date range. Never
+  // applies to admins, and clears on sign-out / user switch.
+  const dataFloor = !bypass && floor?.userId === userId ? floor.day : null;
+  useEffect(() => {
+    setOpsDateFloor(dataFloor);
+  }, [dataFloor]);
 
   // Let background pulls skip categories this role can't view.
   useEffect(() => {

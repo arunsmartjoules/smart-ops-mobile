@@ -32,6 +32,7 @@ import { useSites } from "@/hooks/useSites";
 import EfficiencyService, { type EffRow, type Loaded } from "@/services/EfficiencyService";
 import { istTodayString } from "@/utils/istDate";
 import logger from "@/utils/logger";
+import { clampToFloor, useOpsDateFloor } from "@/services/OpsDateRange";
 
 const MONTH_OPTIONS = 12;
 const SIDE_KEYS: EffSide[] = ["high", "low"];
@@ -78,7 +79,12 @@ export default function EfficiencyScreen() {
   const month = pickedMonth && pickedMonth <= currentMonth ? pickedMonth : currentMonth;
   /** "Custom range" from the month sheet; picking or stepping a month clears it. */
   const [customRange, setCustomRange] = useState<DateRange | null>(null);
-  const range = useMemo(() => customRange ?? monthRange(month, today), [customRange, month, today]);
+  // Never earlier than the role's "data visible from" day (client-side lock).
+  const dateFloor = useOpsDateFloor();
+  const range = useMemo(
+    () => clampToFloor(customRange ?? monthRange(month, today), dateFloor),
+    [customRange, month, today, dateFloor],
+  );
   const dayCount = useMemo(() => allDates(range.from, range.to).length, [range]);
   const monthOptions = useMemo(() => recentMonths(currentMonth, MONTH_OPTIONS), [currentMonth]);
   const [sheet, setSheet] = useState<null | "month" | "custom">(null);

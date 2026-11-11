@@ -78,6 +78,7 @@ import { istTodayString } from "@/utils/istDate";
 import { saveBackendFile, saveBase64File, saveTextFile, toCsv } from "@/utils/fileExport";
 import { tableToPdfBase64, tableToXlsxBase64 } from "@/utils/tableExport";
 import logger from "@/utils/logger";
+import { clampToFloor, useOpsDateFloor } from "@/services/OpsDateRange";
 
 type Tab = "module" | "daily" | "monthly";
 
@@ -171,7 +172,12 @@ export default function ReportsScreen() {
   const [preset, setPreset] = useState<RangePreset>("month");
   /** Set by "Custom range"; a preset pick clears it. */
   const [customRange, setCustomRange] = useState<{ from: string; to: string } | null>(null);
-  const range = useMemo(() => customRange ?? presetRange(preset, today), [customRange, preset, today]);
+  // Never earlier than the role's "data visible from" day (client-side lock).
+  const dateFloor = useOpsDateFloor();
+  const range = useMemo(
+    () => clampToFloor(customRange ?? presetRange(preset, today), dateFloor),
+    [customRange, preset, today, dateFloor],
+  );
   const scope: ModuleScope | null = useMemo(
     () =>
       activeSite

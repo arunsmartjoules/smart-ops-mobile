@@ -44,6 +44,7 @@ import {
   formatOpsRange,
   rangeForPreset,
   setOpsDateRange,
+  useOpsDateFloor,
   useOpsDateRange,
   type OpsDatePreset,
 } from "@/services/OpsDateRange";
@@ -73,6 +74,7 @@ function SubTabsHeader({ group, showDate }: { group: SubTabGroup; showDate: bool
   const { user } = useAuth();
   const { sites, selectedSite, selectSite } = useSites(user?.user_id || user?.id);
   const range = useOpsDateRange();
+  const dateFloor = useOpsDateFloor();
   const [sheet, setSheet] = useState<null | "site" | "date" | "custom">(null);
   const [draft, setDraft] = useState({ from: range.from, to: range.to });
   const [pickerFor, setPickerFor] = useState<null | "from" | "to">(null);
@@ -244,6 +246,8 @@ function SubTabsHeader({ group, showDate }: { group: SubTabGroup; showDate: bool
           <DateTimePicker
             value={isoToPickerDate(draft[pickerFor])}
             mode="date"
+            // The role's "data visible from" day: no earlier day can be picked.
+            minimumDate={dateFloor ? isoToPickerDate(dateFloor) : undefined}
             display={Platform.OS === "ios" ? "spinner" : "default"}
             onChange={onPickDate}
           />

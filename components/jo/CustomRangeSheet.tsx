@@ -12,6 +12,7 @@ import { Platform, Text, TouchableOpacity, View } from "react-native";
 import DateTimePicker from "@expo/ui/community/datetime-picker";
 import { format } from "date-fns";
 import { JoSheet, PrimaryButton, f, makeJoStyles, useJoTheme } from "@/components/jo/ui";
+import { clampToFloor, laterDay, useOpsDateFloor } from "@/services/OpsDateRange";
 
 export interface DateRange {
   from: string;
@@ -73,6 +74,9 @@ function RangeEditor({
   const s = useStyles();
   const [draft, setDraft] = useState<DateRange>(value);
   const [pickerFor, setPickerFor] = useState<null | "from" | "to">(null);
+  // The role's "data visible from" day: no earlier day can be picked.
+  const floor = useOpsDateFloor();
+  const effectiveMin = laterDay(minDate, floor);
 
   const onPick = (_e: unknown, date?: Date) => {
     const which = pickerFor;
@@ -113,12 +117,16 @@ function RangeEditor({
           value={toPickerDate(draft[pickerFor])}
           mode="date"
           maximumDate={maxDate ? toPickerDate(maxDate) : undefined}
-          minimumDate={minDate ? toPickerDate(minDate) : undefined}
+          minimumDate={effectiveMin ? toPickerDate(effectiveMin) : undefined}
           display={Platform.OS === "ios" ? "spinner" : "default"}
           onChange={onPick}
         />
       ) : null}
-      <PrimaryButton label="Apply range" onPress={() => onApply(draft)} style={{ marginTop: 14 }} />
+      <PrimaryButton
+        label="Apply range"
+        onPress={() => onApply(clampToFloor(draft, floor))}
+        style={{ marginTop: 14 }}
+      />
     </View>
   );
 }
