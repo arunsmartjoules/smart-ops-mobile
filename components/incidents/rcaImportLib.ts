@@ -5,6 +5,7 @@
  * instead of as a failed submit).
  */
 import type { RcaFields, RcaQuestion } from "@/services/RcaImportService";
+import { assetFields, incidentAssets } from "@/utils/incidentAssets";
 
 /* ── File checks ─────────────────────────────────────────────────────────── */
 
@@ -184,12 +185,28 @@ export const isQuestionVisible = (q: RcaQuestion, fields: RcaFields) =>
   !q.only_if || String(fields[q.only_if.field] ?? "") === q.only_if.equals;
 
 export function isQuestionAnswered(q: RcaQuestion, fields: RcaFields): boolean {
+  // One or several assets — answered once at least one is picked.
+  if (q.kind === "asset") return incidentAssets(fields).length > 0;
   const v = fields[q.field];
   if (q.kind === "datetime") {
     const d = parseLocal(v as string | null);
     return !!d && !isFuture(d);
   }
   return typeof v === "string" && v.trim().length > 0;
+}
+
+/**
+ * `fields` with one answer applied. The two asset fields always move
+ * together: a list sets its primary, and a single pick (a server that didn't
+ * mark the question `multiple`) becomes a one-item list.
+ */
+export function withField<K extends keyof RcaFields>(prev: RcaFields, field: K, value: RcaFields[K]): RcaFields {
+  if (field === "asset_locations") return { ...prev, ...assetFields((value as string[] | undefined) ?? []) };
+  if (field === "asset_location") {
+    const one = typeof value === "string" ? value.trim() : "";
+    return { ...prev, ...assetFields(one ? [one] : []) };
+  }
+  return { ...prev, [field]: value };
 }
 
 /* ── Final validation (mirrors the server's validateFinal) ──────────────── */
@@ -199,7 +216,7 @@ export type RcaFieldErrors = Partial<Record<keyof RcaFields, string>>;
 export function validateRcaFields(f: RcaFields): RcaFieldErrors {
   const e: RcaFieldErrors = {};
   if (!f.site_code) e.site_code = "Please choose the site.";
-  if (!(f.asset_location ?? "").trim()) e.asset_location = "Please choose the affected equipment.";
+  if (incidentAssets(f).length === 0) e.asset_location = "Please choose the affected equipment.";
   if (!f.fault_symptom.trim()) e.fault_symptom = "Please add a short title for the incident.";
   if (!(f.assigned_to ?? "").trim()) e.assigned_to = "Please choose who the incident is assigned to.";
   if (!f.fault_type) e.fault_type = "Please choose the fault type.";

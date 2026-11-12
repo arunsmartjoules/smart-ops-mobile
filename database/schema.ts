@@ -42,6 +42,8 @@ export const incidents = sqliteTable("incidents", {
   ticket_id: text("ticket_id"),
   site_code: text("site_code").notNull(),
   asset_location: text("asset_location"),
+  /** JSON array of every affected asset, primary first. Read via utils/incidentAssets. */
+  asset_locations: text("asset_locations"),
   raised_by: text("raised_by"),
   created_by: text("created_by"),
   incident_created_time: real("incident_created_time").notNull(),

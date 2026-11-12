@@ -61,7 +61,7 @@ import {
   type AnswerMap,
   type PhotoItem,
 } from "./rcaCreateLib";
-import { isQuestionVisible } from "./rcaImportLib";
+import { isQuestionVisible, withField } from "./rcaImportLib";
 
 type Step = "site" | "starting" | "startError" | "form" | "success";
 
@@ -141,7 +141,7 @@ export default function RcaCreateModal({
   /* ── details fields ─────────────────────────────────────────────────── */
 
   const setField = useCallback(<K extends keyof RcaFields>(field: K, value: RcaFields[K]) => {
-    setFields((prev) => (prev ? { ...prev, [field]: value } : prev));
+    setFields((prev) => (prev ? withField(prev, field, value) : prev));
     setCreateError(null);
   }, []);
 

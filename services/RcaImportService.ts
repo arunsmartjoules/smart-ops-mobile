@@ -33,7 +33,13 @@ export type RcaOperatingCondition =
 
 export interface RcaFields {
   site_code: string;
+  /** The primary asset — always `asset_locations[0]` (kept for older readers). */
   asset_location: string | null;
+  /**
+   * Every affected asset, primary first (2026-11). Missing on results read
+   * before then — read through utils/incidentAssets `incidentAssets()`.
+   */
+  asset_locations?: string[];
   fault_symptom: string;
   fault_type: RcaFaultType;
   severity: RcaSeverity;
@@ -73,6 +79,8 @@ export interface RcaQuestion {
   /** For datetime, a bare "YYYY-MM-DD" means "date known, pick the time". */
   default?: string;
   only_if?: { field: keyof RcaFields; equals: string };
+  /** Asset question: pick one or more — the answer is `asset_locations`. */
+  multiple?: boolean;
 }
 
 export interface RcaAssetCandidate {

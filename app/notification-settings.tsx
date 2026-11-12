@@ -35,9 +35,11 @@ import { formatISTDateTime } from "@/utils/istDate";
 import cacheManager from "@/services/CacheManager";
 import { GlossFill } from "@/components/jo/ui";
 
-// Push notifications are MANDATORY for everyone EXCEPT admins/superadmins, who
-// may toggle each category from their phone. (Devices are shared and SLA alerts
-// must reach the field.) Non-admins see read-only "Always On" cards.
+// Push notifications are OPTIONAL for everyone (App Store guideline 4.5.4): the
+// app is fully usable with the OS permission denied, and that denial is the
+// opt-out. Admins/superadmins may additionally toggle each category from their
+// phone. Other roles see the categories as read-only "On" cards because the
+// server only honours a per-category opt-out for admins.
 type PrefField =
   | "attendance_notifications_enabled"
   | "ticket_notifications_enabled"
@@ -158,8 +160,8 @@ export default function NotificationSettingsPage() {
       setHasSystemPermission(granted);
       if (!granted) {
         Alert.alert(
-          "Permission Required",
-          "Notifications are required for this app. Please enable them for JouleOps in your device settings.",
+          "Notifications Off",
+          "To receive alerts, turn on notifications for JouleOps in your device settings. You can keep using the app without them.",
         );
       }
     } finally {
@@ -175,8 +177,8 @@ export default function NotificationSettingsPage() {
         setHasSystemPermission(granted);
         if (!granted) {
           Alert.alert(
-            "Permission Required",
-            "Enable notifications for JouleOps in your device settings.",
+            "Notifications Off",
+            "Turn on notifications for JouleOps in your device settings to receive alerts.",
           );
           return;
         }
@@ -243,7 +245,7 @@ export default function NotificationSettingsPage() {
             <Text className="text-slate-400 dark:text-slate-500 text-xs">
               {isAdmin
                 ? "Manage your notification preferences"
-                : "Notifications are required and always on"}
+                : "Choose whether to receive alerts"}
             </Text>
           </View>
         </View>
@@ -265,9 +267,9 @@ export default function NotificationSettingsPage() {
                         Notifications Disabled at Device Level
                       </Text>
                       <Text className="text-amber-700 dark:text-amber-300 text-sm mb-3">
-                        Push notifications are required for JouleOps. Please
-                        enable them to receive attendance, ticket and incident
-                        alerts.
+                        Notifications are optional. Turn them on to receive
+                        attendance, ticket and incident alerts. JouleOps works
+                        without them.
                       </Text>
                       <TouchableOpacity
                         onPress={handleEnablePermission}
@@ -284,7 +286,7 @@ export default function NotificationSettingsPage() {
                 </View>
               )}
 
-              {/* Category cards — toggles for admins, "Always On" for everyone else */}
+              {/* Category cards — toggles for admins, read-only "On" for everyone else */}
               {CATEGORIES.map((cat) => (
                 <View
                   key={cat.key}
@@ -328,7 +330,7 @@ export default function NotificationSettingsPage() {
                           style={{ marginRight: 4 }}
                         />
                         <Text className="text-slate-500 dark:text-slate-400 text-[10px] font-bold uppercase tracking-wider">
-                          Always On
+                          On
                         </Text>
                       </View>
                     )}
@@ -344,7 +346,7 @@ export default function NotificationSettingsPage() {
                 <Text className="text-blue-700 dark:text-blue-300 text-sm">
                   {isAdmin
                     ? "Timings and message content are configured by your administrator. You will receive alerts based on your assigned sites."
-                    : "Notifications are mandatory and cannot be turned off in the app. Timings and message content are configured by your administrator."}
+                    : "You will receive alerts for your assigned sites while notifications are allowed for JouleOps. To stop them, turn off notifications for JouleOps in your device settings. Timings and message content are configured by your administrator."}
                 </Text>
               </View>
 

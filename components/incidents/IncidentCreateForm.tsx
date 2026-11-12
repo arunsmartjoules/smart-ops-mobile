@@ -22,6 +22,7 @@ import {
   FieldLabel,
   IncChip,
   IncHeader,
+  IncMultiPicker,
   IncPicker,
   Notice,
   Panel,
@@ -30,7 +31,8 @@ import {
 
 export interface IncidentCreateFormValue {
   site_code: string;
-  asset_location: string;
+  /** Every affected asset, primary first (sent as `asset_locations`). */
+  asset_locations: string[];
   fault_symptom: string;
   fault_type: string;
   severity: "Critical" | "Moderate" | "Low";
@@ -137,17 +139,18 @@ export default function IncidentCreateForm<F extends IncidentCreateFormValue>({
                 placeholder="Select site"
                 options={siteOptions}
                 value={form.site_code}
-                onChange={(v) => setForm((prev) => ({ ...prev, site_code: v, asset_location: "" }))}
+                onChange={(v) => setForm((prev) => ({ ...prev, site_code: v, asset_locations: [] }))}
                 searchPlaceholder="Search sites"
               />
-              <IncPicker
-                label="Asset"
+              <IncMultiPicker
+                label="Assets"
+                sheetTitle="Affected assets"
                 required
-                placeholder="Select asset"
+                placeholder="Select the affected assets"
                 options={assetOptions}
-                value={form.asset_location}
-                onChange={(v) => set("asset_location", v as F["asset_location"])}
-                loading={assetsLoading && !assetSearch}
+                values={form.asset_locations}
+                onChange={(v) => set("asset_locations", v as F["asset_locations"])}
+                loading={assetsLoading}
                 searchPlaceholder="Search assets..."
                 emptyMessage={assetsLoading ? "Searching…" : "No assets found"}
                 searchValue={assetSearch}

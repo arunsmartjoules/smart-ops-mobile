@@ -47,8 +47,10 @@ import {
   isQuestionVisible,
   localToIso,
   validateRcaFields,
+  withField,
   type PickedRcaFile,
 } from "./rcaImportLib";
+import { assetFields, incidentAssets } from "@/utils/incidentAssets";
 
 const POLL_MS = 1500;
 const GIVE_UP_MS = 3 * 60 * 1000;
@@ -147,14 +149,15 @@ export default function RcaImportModal({
       if (!prev) return prev;
       if (field === "site_code" && value !== prev.site_code) {
         const code = value as string;
+        const auto = resultRef.current?.asset_auto[code];
         return {
           ...prev,
           site_code: code,
-          asset_location: resultRef.current?.asset_auto[code] ?? null,
+          ...assetFields(auto ? [auto] : []),
           assigned_to: resultRef.current?.assignee_auto?.[code] ?? null,
         };
       }
-      return { ...prev, [field]: value };
+      return withField(prev, field, value);
     });
     if (field === "site_code") setAssetSearch("");
     setCreateError(null);
@@ -313,7 +316,8 @@ export default function RcaImportModal({
 
   const applyResult = (view: RcaImportView) => {
     const r = view.result!;
-    const f: RcaFields = { ...r.fields };
+    // Both asset fields in step, whichever one the server seeded.
+    const f: RcaFields = { ...r.fields, ...assetFields(incidentAssets(r.fields)) };
     // Pre-select every Recommended answer, and pre-fill full defaults.
     for (const q of r.questions) {
       if (q.kind === "choice") {
@@ -322,7 +326,8 @@ export default function RcaImportModal({
         if (q.field === "site_code") {
           if (rec.value !== f.site_code) {
             f.site_code = rec.value;
-            f.asset_location = r.asset_auto[rec.value] ?? null;
+            const auto = r.asset_auto[rec.value];
+            Object.assign(f, assetFields(auto ? [auto] : []));
             f.assigned_to = r.assignee_auto?.[rec.value] ?? null;
           }
         } else {
@@ -499,7 +504,7 @@ export default function RcaImportModal({
     const payload: RcaCreateFields = {
       ...fields,
       fault_symptom: fields.fault_symptom.trim(),
-      asset_location: (fields.asset_location ?? "").trim() || null,
+      ...assetFields(incidentAssets(fields)),
       incident_created_time: localToIso(fields.incident_created_time)!,
       incident_updated_time: localToIso(fields.incident_updated_time),
       incident_resolved_time:

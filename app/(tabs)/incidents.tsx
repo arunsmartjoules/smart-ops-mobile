@@ -64,6 +64,7 @@ import {
   SEVERITY_OPTIONS,
 } from "@/constants/incidentFormOptions";
 import { v4 as uuidv4 } from "uuid";
+import { assetFields, incidentAssets } from "@/utils/incidentAssets";
 
 type IncidentStatus = "All" | "Open" | "Inprogress" | "Resolved" | "RCA Submitted";
 
@@ -170,6 +171,8 @@ interface IncidentItem {
   incident_id: string;
   site_code: string;
   asset_location?: string | null;
+  /** Array from the server, JSON text from the local cache — read via incidentAssets(). */
+  asset_locations?: string[] | string | null;
   fault_symptom: string;
   status: IncidentStatus;
   rca_status: "Open" | "RCA Under Review" | "RCA Submitted";
@@ -195,7 +198,8 @@ interface IncidentItem {
 
 interface IncidentCreateForm {
   site_code: string;
-  asset_location: string;
+  /** Every affected asset, primary first. */
+  asset_locations: string[];
   fault_symptom: string;
   fault_type: string;
   severity: "Critical" | "Moderate" | "Low";
@@ -301,7 +305,7 @@ export default function IncidentsTab() {
   const [form, setForm] = useState<IncidentCreateForm>(() => ({
     site_code: "",
     fault_symptom: "",
-    asset_location: "",
+    asset_locations: [],
     fault_type: "Others",
     severity: "Moderate",
     operating_condition: "Stopped",
@@ -373,7 +377,7 @@ export default function IncidentsTab() {
       const needle = search?.trim().toLowerCase();
       const filtered = localRows.filter((r) => {
         if (!needle) return true;
-        const hay = `${r.incident_id} ${r.fault_symptom} ${r.asset_location || ""}`.toLowerCase();
+        const hay = `${r.incident_id} ${r.fault_symptom} ${incidentAssets(r).join(" ")}`.toLowerCase();
         return hay.includes(needle);
       });
 
@@ -476,7 +480,7 @@ export default function IncidentsTab() {
     setForm({
       site_code: selectedSiteCode || "",
       fault_symptom: "",
-      asset_location: "",
+      asset_locations: [],
       fault_type: "Others",
       severity: "Moderate",
       operating_condition: "Stopped",
@@ -545,7 +549,9 @@ export default function IncidentsTab() {
 
   const onCreateIncident = async () => {
     if (!form.site_code) return Alert.alert("Required", "Please select site.");
-    if (!form.asset_location) return Alert.alert("Required", "Please select asset.");
+    if (form.asset_locations.length === 0) {
+      return Alert.alert("Required", "Please select at least one affected asset.");
+    }
     if (!form.fault_symptom.trim()) return Alert.alert("Required", "Incident name is required.");
     if (!form.assigned_to) {
       return Alert.alert("Required", "Please choose who the incident is assigned to.");
@@ -581,6 +587,10 @@ export default function IncidentsTab() {
       status: "Inprogress",
       rca_status: "Open",
       assigned_to: form.assigned_to,
+      // The list (primary first) plus the primary on its own for servers /
+      // readers that only know the single field. Rides in the offline queue
+      // payload as-is.
+      ...assetFields(form.asset_locations),
       attachments: uploadedAttachments,
       ...(canBackdate ? { incident_created_time: form.incident_created_time.toISOString() } : {}),
       // Stable across re-submits / offline replays of this draft.
@@ -983,7 +993,7 @@ export default function IncidentsTab() {
     }
     const needle = f.search.trim().toLowerCase();
     if (needle) {
-      const hay = `${i.incident_id} ${i.fault_symptom} ${i.asset_location || ""}`.toLowerCase();
+      const hay = `${i.incident_id} ${i.fault_symptom} ${incidentAssets(i).join(" ")}`.toLowerCase();
       if (!hay.includes(needle)) return false;
     }
     return true;

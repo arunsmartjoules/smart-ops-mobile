@@ -14,12 +14,15 @@ import {
   looksLikeId,
   rcaStage,
 } from "@/components/incidents/IncidentsUI";
+import { incidentAssets } from "@/utils/incidentAssets";
 
 export interface IncidentRow {
   id: string;
   incident_id: string;
   site_code: string;
   asset_location?: string | null;
+  /** Array from the server, JSON text from the local cache — read via incidentAssets(). */
+  asset_locations?: string[] | string | null;
   fault_symptom: string;
   status: string;
   rca_status: string;
@@ -61,6 +64,8 @@ const useStyles = makeJoStyles((t) => ({
   meta: { flexDirection: "row", alignItems: "center", gap: 14, marginTop: 9 },
   metaItem: { flexDirection: "row", alignItems: "center", gap: 4 },
   metaText: { ...f.t(11.5), color: t.muted },
+  morePill: { height: 18, paddingHorizontal: 6, borderRadius: 9, justifyContent: "center", backgroundColor: t.track },
+  morePillText: { ...f.t(10.5, 600), color: t.ink2 },
 }));
 
 const IncidentItem = React.memo(({ item, assignee, onPress, showRcaPending }: IncidentItemProps) => {
@@ -71,7 +76,9 @@ const IncidentItem = React.memo(({ item, assignee, onPress, showRcaPending }: In
   const stage = rcaStage(item, t);
   const rcaPending = !!showRcaPending && item.status === "Resolved" && item.rca_status !== "RCA Submitted";
   const late = isIncidentOpen(item.status);
-  const area = item.asset_location || item.site_code || "—";
+  const assets = incidentAssets(item);
+  const primaryAsset = assets[0] || item.site_code || "—";
+  const moreAssets = assets.length > 1 ? assets.length - 1 : 0;
   const who = assignee.split(",")[0]?.trim() ?? "";
   const named = !!who && !looksLikeId(who);
 
@@ -128,8 +135,16 @@ const IncidentItem = React.memo(({ item, assignee, onPress, showRcaPending }: In
         <View style={[s.metaItem, { flex: 1, minWidth: 0 }]}>
           <Bx name="bx-map-pin" size={13} color={t.muted} />
           <Text style={[s.metaText, { flexShrink: 1 }]} numberOfLines={1}>
-            {area}
+            {primaryAsset}
           </Text>
+          {moreAssets > 0 ? (
+            <View
+              style={s.morePill}
+              accessibilityLabel={`and ${moreAssets} more ${moreAssets === 1 ? "asset" : "assets"}`}
+            >
+              <Text style={s.morePillText}>+{moreAssets}</Text>
+            </View>
+          ) : null}
         </View>
       </View>
     </TouchableOpacity>

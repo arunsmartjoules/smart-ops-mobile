@@ -16,8 +16,9 @@ import {
 } from "@/constants/incidentFormOptions";
 import type { RcaFields, RcaImportResult } from "@/services/RcaImportService";
 import { DateTimeTiles, InlineError, Notice } from "./RcaImportParts";
-import { FieldBlock, FieldLabel, IncChip, IncPicker, Panel, TextField } from "./IncFields";
+import { FieldBlock, FieldLabel, IncChip, IncMultiPicker, IncPicker, Panel, TextField } from "./IncFields";
 import { FILE_KIND_LABEL, type RcaFieldErrors } from "./rcaImportLib";
+import { incidentAssets } from "@/utils/incidentAssets";
 
 interface Props {
   result: RcaImportResult;
@@ -108,13 +109,14 @@ export default function RcaReviewStep({
           error={err("site_code")}
           searchPlaceholder="Search sites"
         />
-        <IncPicker
-          label="Asset"
+        <IncMultiPicker
+          label="Assets"
+          sheetTitle="Affected assets"
           required
           placeholder="Select the affected equipment"
           options={assetOptions}
-          value={fields.asset_location ?? ""}
-          onChange={(v) => setField("asset_location", v)}
+          values={incidentAssets(fields)}
+          onChange={(v) => setField("asset_locations", v)}
           searchPlaceholder="Search assets..."
           emptyMessage={assetsLoading ? "Searching…" : "No assets found"}
           searchValue={assetSearch}

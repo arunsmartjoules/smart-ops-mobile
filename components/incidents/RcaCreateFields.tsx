@@ -13,11 +13,12 @@ import { Bx } from "@/components/jo/Bx";
 import { f, makeJoStyles, useJoTheme } from "@/components/jo/ui";
 import type { SelectOption } from "@/components/SearchableSelect";
 import type { RcaFields, RcaQuestion } from "@/services/RcaImportService";
-import { FieldLabel, IncChip, IncPicker, TextField } from "./IncFields";
+import { FieldLabel, IncChip, IncMultiPicker, IncPicker, TextField } from "./IncFields";
 import { DateTimeTiles, InlineError } from "./RcaImportParts";
 import PolishButton from "./PolishButton";
 import { formatElapsed, maxForField } from "./rcaCreateLib";
 import type { Dictation } from "./useRcaDictation";
+import { incidentAssets } from "@/utils/incidentAssets";
 
 /** Ref callback factory the form uses to find a field when scrolling to a problem. */
 export type AnchorRef = (id: string) => (node: View | null) => void;
@@ -188,6 +189,29 @@ export function DetailField({
   const s = useStyles();
   const value = fields[question.field];
   const str = (value as string | null) ?? "";
+
+  if (question.kind === "asset" && question.multiple) {
+    return (
+      <IncMultiPicker
+        label={question.title}
+        sheetTitle="Affected assets"
+        required={question.required}
+        placeholder="Search this site's equipment"
+        options={assetSearchOptions}
+        values={incidentAssets(fields)}
+        onChange={(v) => setField("asset_locations", v)}
+        loading={assetsLoading}
+        searchPlaceholder="Search assets..."
+        emptyMessage={assetsLoading ? "Searching…" : "No assets found"}
+        searchValue={assetSearch}
+        onSearchChange={onAssetSearch}
+        remoteSearch
+        error={error}
+        hint={question.help}
+        style={{ marginTop: 0 }}
+      />
+    );
+  }
 
   if (question.kind === "asset") {
     return (

@@ -8,6 +8,7 @@
  */
 import type { RcaSection, RcaSectionPayload, RcaSectionTarget } from "@/services/RcaCreateService";
 import type { RcaCreateFields, RcaFields, RcaImportResult } from "@/services/RcaImportService";
+import { assetFields, incidentAssets } from "@/utils/incidentAssets";
 import {
   FIELD_ORDER,
   isFullLocal,
@@ -186,7 +187,12 @@ export const photoKey = (siteCode: string, uuid: string, ext: "jpg" | "png") =>
  * Enum fields stay "" until answered.
  */
 export function initialFields(result: RcaImportResult, siteCode: string): RcaFields {
-  const f: RcaFields = { ...result.fields, site_code: result.fields.site_code || siteCode };
+  const f: RcaFields = {
+    ...result.fields,
+    site_code: result.fields.site_code || siteCode,
+    // Both asset fields in step, whichever one the server seeded.
+    ...assetFields(incidentAssets(result.fields)),
+  };
   for (const q of result.questions) {
     if (q.kind === "choice") {
       const rec = q.options?.find((o) => o.recommended);
@@ -263,7 +269,8 @@ export function buildCreateFields(fields: RcaFields): Partial<RcaCreateFields> {
   return {
     ...rest,
     fault_symptom: fields.fault_symptom.trim(),
-    asset_location: (fields.asset_location ?? "").trim() || null,
+    // The list (primary first) and the primary on its own.
+    ...assetFields(incidentAssets(fields)),
     raised_by: (fields.raised_by ?? "").trim(),
     vendor_tagged: (fields.vendor_tagged ?? "").trim(),
     incident_created_time: localToIso(fields.incident_created_time) ?? undefined,

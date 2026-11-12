@@ -5,6 +5,7 @@ import CacheManager from "./CacheManager";
 import { hasUnsyncedLocalChanges, unsyncedIds } from "./localChangeGuard";
 import { apiFetch as centralApiFetch } from "../utils/apiHelper";
 import { API_BASE_URL } from "../constants/api";
+import { cleanAssetList, incidentAssets } from "../utils/incidentAssets";
 
 /** GET-style: returns parsed JSON (legacy shape). */
 const apiFetchJson = async (endpoint: string, options: RequestInit = {}) => {
@@ -52,6 +53,9 @@ export function toLocalIncidentRecord(i: any, siteCode?: string) {
     ticket_id: i.ticket_id || null,
     site_code: i.site_code || siteCode || "",
     asset_location: i.asset_location || null,
+    // Stored as the server sent it; read through incidentAssets(), which
+    // falls back to asset_location for rows from before the list existed.
+    asset_locations: JSON.stringify(cleanAssetList(i.asset_locations)),
     raised_by: i.raised_by || null,
     created_by: i.created_by || null,
     incident_created_time: i.incident_created_time ? new Date(i.incident_created_time).getTime() : Date.now(),
@@ -148,7 +152,7 @@ export const IncidentsService = {
       const filtered = rows.filter((r) => {
         if (rca_status && rca_status !== "All" && r.rca_status !== rca_status) return false;
         if (!search?.trim()) return true;
-        const hay = `${r.incident_id} ${r.fault_symptom} ${r.asset_location || ""}`.toLowerCase();
+        const hay = `${r.incident_id} ${r.fault_symptom} ${incidentAssets(r).join(" ")}`.toLowerCase();
         return hay.includes(search.trim().toLowerCase());
       });
       return { success: true, data: filtered.slice((page - 1) * limit, page * limit), isFromCache: true };

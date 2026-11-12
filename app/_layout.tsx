@@ -45,7 +45,6 @@ import VersionGateService from "@/services/VersionGateService";
 import RatingPromptService from "@/services/RatingPromptService";
 import { presenceService } from "@/services/PresenceService";
 import UpdateRequiredScreen from "@/components/UpdateRequiredScreen";
-import NotificationGate from "@/components/NotificationGate";
 import ServerStatusOverlay from "@/components/ServerStatusOverlay";
 import SplashOverlay from "@/components/SplashOverlay";
 import { useLaunchHeld } from "@/services/LaunchHold";
@@ -367,7 +366,6 @@ export default function RootLayout() {
             <AuthGuard fontsReady={fontsReady}>
               <ThemeProvider>
                 <ServerStatusOverlay />
-                <NotificationGate />
                 <UpdateRequiredScreen />
                 <PendingNotificationNavigation />
                 <PresenceTracker />

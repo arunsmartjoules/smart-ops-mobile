@@ -18,6 +18,7 @@ import { apiFetch } from "../utils/apiHelper";
 import { API_BASE_URL } from "../constants/api";
 import { formatISTDateTime } from "../utils/istDate";
 import { toCsv } from "../utils/fileExport";
+import { incidentAssets } from "../utils/incidentAssets";
 
 /* ── Shared ──────────────────────────────────────────────────────────── */
 
@@ -118,7 +119,8 @@ const MODULES: Record<ReportModuleKey, ModuleDef> = {
       { label: "Fault Symptom", get: (r) => s(r.fault_symptom) },
       { label: "Fault Type", get: (r) => s(r.fault_type) },
       { label: "Severity", get: (r) => s(r.severity) },
-      { label: "Asset / Location", get: (r) => s(r.asset_location) },
+      // Every affected asset, primary first (same "; " join as the web export).
+      { label: "Asset / Location", get: (r) => incidentAssets(r).join("; ") },
       { label: "Operating Condition", get: (r) => s(r.operating_condition) },
       { label: "Status", get: (r) => s(r.status) },
       { label: "RCA Status", get: (r) => s(r.rca_status) },

@@ -37,6 +37,7 @@ import { getValidAuthToken } from "./AuthTokenManager";
 import { db, attendanceLogs, pmInstances } from "../database";
 import { eq } from "drizzle-orm";
 import { slaDueToMs } from "@/utils/ticketSla";
+import { cleanAssetList } from "@/utils/incidentAssets";
 
 // ─── Background Fetch Task ────────────────────────────────────────────────────
 
@@ -349,6 +350,7 @@ class SyncEngineImpl implements SyncEngine {
               ticket_id: i.ticket_id || null,
               site_code: i.site_code || siteCode,
               asset_location: i.asset_location || null,
+              asset_locations: JSON.stringify(cleanAssetList(i.asset_locations)),
               raised_by: i.raised_by || null,
               created_by: i.created_by || null,
               incident_created_time: i.incident_created_time

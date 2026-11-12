@@ -56,6 +56,7 @@ export function OptionCard({
   selected,
   recommended,
   badge,
+  multi,
   onPress,
 }: {
   label: string;
@@ -64,6 +65,8 @@ export function OptionCard({
   recommended?: boolean;
   /** Replaces the Recommended badge, e.g. "From search". */
   badge?: string;
+  /** One of several that can be picked together: a checkbox, not a radio. */
+  multi?: boolean;
   onPress: () => void;
 }) {
   const s = useStyles();
@@ -76,12 +79,12 @@ export function OptionCard({
       }}
       activeOpacity={0.85}
       style={[s.option, selected && s.optionOn]}
-      accessibilityRole="radio"
+      accessibilityRole={multi ? "checkbox" : "radio"}
       accessibilityState={{ checked: selected }}
       accessibilityLabel={`${label}${recommended ? ", recommended" : ""}${hint ? `. ${hint}` : ""}`}
     >
-      <View style={[s.radio, selected && s.radioOn]}>
-        {selected ? <GlossFill color={t.accent} fg={t.onAccent} radius={12} bleed={1.5} /> : null}
+      <View style={[s.radio, multi && { borderRadius: 7 }, selected && s.radioOn]}>
+        {selected ? <GlossFill color={t.accent} fg={t.onAccent} radius={multi ? 7 : 12} bleed={1.5} /> : null}
         {selected ? <Bx name="bx-check" size={15} color={t.onAccent} /> : null}
       </View>
       <View style={{ flex: 1, minWidth: 0 }}>

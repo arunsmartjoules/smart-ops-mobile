@@ -6,6 +6,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Push notifications are now optional for every role. The full-screen "Notifications Required" block for non-admins is removed, so the app works with notifications denied. Notification Settings no longer says notifications are mandatory. Declining the OS permission is the opt-out. Needs a new store build (this is app code, so an OTA update would also deliver it, but the iOS review needs a new binary).
+
 ## [1.1.9] - 2026-11-05
 
 This version adds native code (a new Android downloads module, `expo-image-manipulator`, and new splash images), so it needs a new store build. An OTA update alone will not deliver it.

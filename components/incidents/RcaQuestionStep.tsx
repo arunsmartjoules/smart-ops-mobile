@@ -3,11 +3,11 @@
  * Recommended option is already selected, so most questions are a single tap
  * on Next.
  */
-import React, { useEffect, useMemo } from "react";
+import React, { useEffect, useMemo, useRef } from "react";
 import { ScrollView, Text, View } from "react-native";
 import { Bx } from "@/components/jo/Bx";
 import { f, makeJoStyles, useJoTheme } from "@/components/jo/ui";
-import { IncPicker, TextField } from "./IncFields";
+import { IncMultiPicker, IncPicker, TextField } from "./IncFields";
 import type { SelectOption } from "@/components/SearchableSelect";
 import type {
   RcaAssetCandidate,
@@ -16,6 +16,7 @@ import type {
 } from "@/services/RcaImportService";
 import { DateTimeTiles, Notice, OptionCard, StepDots } from "./RcaImportParts";
 import { parseLocal } from "./rcaImportLib";
+import { incidentAssets, toggleAsset } from "@/utils/incidentAssets";
 
 interface Props {
   question: RcaQuestion;
@@ -59,17 +60,36 @@ export default function RcaQuestionStep({
   // Asset / person: pre-select the recommended match when nothing is chosen
   // yet (including after the site answer changed and cleared it).
   const picksFrom = question.kind === "asset" || question.kind === "user";
+  // A server that marks the asset question `multiple` takes several assets;
+  // without the flag it is the single pick it always was.
+  const multiAsset = question.kind === "asset" && !!question.multiple;
+  const singlePick = picksFrom && !multiAsset;
   const pickField = question.kind === "user" ? "assigned_to" : "asset_location";
   const candidates = question.kind === "user" ? personCandidates : assetCandidates;
-  const picked = picksFrom ? ((fields[pickField] as string | null) ?? "") : "";
+  const picked = singlePick ? ((fields[pickField] as string | null) ?? "") : "";
   const recommendedPick = candidates.find((a) => a.recommended)?.value;
   useEffect(() => {
-    if (!picksFrom) return;
+    if (!singlePick) return;
     if (!picked && recommendedPick) setField(pickField, recommendedPick);
-  }, [picksFrom, pickField, picked, recommendedPick, setField]);
+  }, [singlePick, pickField, picked, recommendedPick, setField]);
+
+  // Several assets: everything picked so far, primary first.
+  const pickedAssets = multiAsset ? incidentAssets(fields) : [];
+  const pickedAssetCount = pickedAssets.length;
+  // Pre-select the recommended asset once per site — not again after the
+  // person has deliberately un-ticked everything to choose others.
+  const seededFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (!multiAsset) return;
+    const key = `${question.id}:${fields.site_code}`;
+    if (seededFor.current === key) return;
+    seededFor.current = key;
+    if (pickedAssetCount === 0 && recommendedPick) setField("asset_locations", [recommendedPick]);
+  }, [multiAsset, question.id, fields.site_code, pickedAssetCount, recommendedPick, setField]);
 
   const shownCandidates = useMemo(() => candidates.slice(0, MAX_CANDIDATES), [candidates]);
-  const pickedOutsideList = picksFrom && !!picked && !shownCandidates.some((a) => a.value === picked);
+  const pickedOutsideList = singlePick && !!picked && !shownCandidates.some((a) => a.value === picked);
+  const assetsOutsideList = pickedAssets.filter((v) => !shownCandidates.some((a) => a.value === v));
   const pickedLabel =
     question.kind === "user"
       ? (peopleOptions.find((o) => o.value === picked)?.label ?? picked)
@@ -114,7 +134,63 @@ export default function RcaQuestionStep({
             ))
           : null}
 
-        {picksFrom ? (
+        {multiAsset ? (
+          <>
+            {shownCandidates.length === 0 ? (
+              <Notice icon="bx-search" style={{ marginBottom: 14 }}>
+                We couldn&apos;t match the equipment automatically. Search for it below.
+              </Notice>
+            ) : (
+              <Text style={styles.listLabel}>Best matches · tick all that apply</Text>
+            )}
+            {assetsOutsideList.map((v) => (
+              <OptionCard
+                key={`picked:${v}`}
+                multi
+                label={v}
+                hint="Chosen from the asset list"
+                badge="Your pick"
+                selected
+                onPress={() => setField("asset_locations", pickedAssets.filter((a) => a !== v))}
+              />
+            ))}
+            {shownCandidates.map((a) => (
+              <OptionCard
+                key={a.value}
+                multi
+                label={a.label}
+                hint={a.hint}
+                recommended={a.recommended}
+                selected={pickedAssets.includes(a.value)}
+                onPress={() => setField("asset_locations", toggleAsset(pickedAssets, a.value))}
+              />
+            ))}
+            <View style={{ marginTop: 8 }}>
+              <IncMultiPicker
+                label="Not in the list?"
+                sheetTitle="Affected assets"
+                trigger="button"
+                placeholder="Search all assets at this site"
+                options={assetSearchOptions}
+                values={pickedAssets}
+                onChange={(v) => setField("asset_locations", v)}
+                loading={assetsLoading}
+                searchPlaceholder="Search assets..."
+                emptyMessage={assetsLoading ? "Searching…" : "No assets found"}
+                searchValue={assetSearch}
+                onSearchChange={onAssetSearch}
+                remoteSearch
+              />
+            </View>
+            {pickedAssetCount > 0 ? (
+              <Text style={styles.pickedNote} accessibilityLiveRegion="polite">
+                {pickedAssetCount === 1
+                  ? `1 asset selected: ${pickedAssets[0]}.`
+                  : `${pickedAssetCount} assets selected. ${pickedAssets[0]} is the main one.`}
+              </Text>
+            ) : null}
+          </>
+        ) : picksFrom ? (
           <>
             {shownCandidates.length === 0 ? (
               <Notice icon={question.kind === "user" ? "bx-user" : "bx-search"} style={{ marginBottom: 14 }}>
@@ -232,6 +308,7 @@ const useStyles = makeJoStyles((t) => ({
     overflow: "hidden",
   },
   listLabel: { ...f.t(12, 600, 0.04), textTransform: "uppercase", color: t.muted, marginBottom: 8, paddingHorizontal: 4 },
+  pickedNote: { ...f.t(12.5), lineHeight: 18, color: t.muted, marginTop: 10, paddingHorizontal: 4 },
   aiNote: { flexDirection: "row", alignItems: "flex-start", gap: 6, marginTop: 6, paddingHorizontal: 4 },
   aiNoteText: { ...f.t(12), flex: 1, lineHeight: 17, color: t.muted },
 }));

@@ -43,9 +43,13 @@ import {
 } from "./incidents/IncidentsUI";
 import { type SelectOption } from "./SearchableSelect";
 import { formatIST } from "@/utils/istDate";
+import { incidentAssets } from "@/utils/incidentAssets";
 
 /** The fields this screen reads beyond the list row's own shape. */
 export interface IncidentDetailRecord {
+  asset_location?: string | null;
+  /** Array from the server, JSON text from the local cache — read via incidentAssets(). */
+  asset_locations?: string[] | string | null;
   created_by?: string | null;
   raised_by?: string | null;
   root_cause?: string | null;
@@ -163,6 +167,7 @@ export default function IncidentDetailModal({
         })}${!isResolved ? ` · open ${formatAge(raisedMs)}` : ""}`;
 
   const assigneeLabel = assignedTo ? nameOf(assignedTo) : "Unassigned";
+  const assets = incidentAssets(incident);
   const sevTone = severityTone(incident.severity);
   const durationLabel = isResolved ? "Took" : "Open for";
   const durationValue =
@@ -218,7 +223,7 @@ export default function IncidentDetailModal({
       <View
         style={{
           flexDirection: "row",
-          alignItems: "center",
+          alignItems: assets.length > 1 ? "flex-start" : "center",
           gap: 8,
           marginTop: 6,
           borderRadius: 18,
@@ -229,8 +234,26 @@ export default function IncidentDetailModal({
           paddingHorizontal: 14,
         }}
       >
-        <Bx name="bx-map-pin" size={16} color={t.muted} />
-        <Text style={[f.t(13), { color: t.ink, flex: 1 }]}>{incident.asset_location || "No asset recorded"}</Text>
+        <Bx name="bx-map-pin" size={16} color={t.muted} style={{ marginTop: 1 }} />
+        {assets.length === 0 ? (
+          <Text style={[f.t(13), { color: t.ink, flex: 1 }]}>No asset recorded</Text>
+        ) : (
+          <View style={{ flex: 1, gap: 6 }}>
+            {assets.length > 1 ? (
+              <Text style={[f.t(11), { color: t.muted }]}>{assets.length} assets affected</Text>
+            ) : null}
+            {assets.map((a, i) => (
+              <View key={a} style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                <Text style={[f.t(13), { color: t.ink, flexShrink: 1 }]}>{a}</Text>
+                {i === 0 && assets.length > 1 ? (
+                  <View style={{ paddingHorizontal: 7, paddingVertical: 2, borderRadius: 99, backgroundColor: t.accentTint }}>
+                    <Text style={[f.t(10.5, 600), { color: t.accentInk }]}>Main</Text>
+                  </View>
+                ) : null}
+              </View>
+            ))}
+          </View>
+        )}
       </View>
 
       {/* Everything entered when the incident was raised stays visible in
