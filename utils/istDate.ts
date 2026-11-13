@@ -23,6 +23,26 @@ const DAY_MS = 24 * 60 * 60_000;
 
 type DateInput = Date | number | string | null | undefined;
 
+/**
+ * One Intl.DateTimeFormat per locale + options, built on first use. Building
+ * one is expensive on Hermes Android, and these helpers run once per row over
+ * whole cached lists (the PM list ran ~3 per row per search keystroke, plus
+ * one per row per status count), which froze the JS thread for seconds.
+ */
+const formatters = new Map<string, Intl.DateTimeFormat>();
+const istFormatter = (
+  locale: string,
+  options: Intl.DateTimeFormatOptions,
+): Intl.DateTimeFormat => {
+  const key = `${locale}|${JSON.stringify(options)}`;
+  let fmt = formatters.get(key);
+  if (!fmt) {
+    fmt = new Intl.DateTimeFormat(locale, { ...options, timeZone: IST_TZ });
+    formatters.set(key, fmt);
+  }
+  return fmt;
+};
+
 const toDate = (input?: DateInput): Date => {
   if (input == null) return new Date();
   if (input instanceof Date) return input;
@@ -34,8 +54,7 @@ const toDate = (input?: DateInput): Date => {
 export const istDateString = (input?: DateInput): string => {
   const d = toDate(input);
   if (Number.isNaN(d.getTime())) return "";
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: IST_TZ,
+  return istFormatter("en-CA", {
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
@@ -57,8 +76,7 @@ export interface ISTParts {
 /** Numeric IST clock/calendar parts for a given instant. */
 export const istParts = (input?: DateInput): ISTParts => {
   const d = toDate(input);
-  const fmt = new Intl.DateTimeFormat("en-GB", {
-    timeZone: IST_TZ,
+  const fmt = istFormatter("en-GB", {
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
@@ -188,7 +206,7 @@ export const formatIST = (
 ): string => {
   const d = toDate(input);
   if (Number.isNaN(d.getTime())) return "";
-  return new Intl.DateTimeFormat(locale, { ...options, timeZone: IST_TZ }).format(d);
+  return istFormatter(locale, options).format(d);
 };
 
 /** "12 May 2026" style date in IST. */
