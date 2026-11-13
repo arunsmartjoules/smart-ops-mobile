@@ -76,6 +76,7 @@ import {
 } from "@/services/OpsDateRange";
 import QRScannerModal, { type QRScannerRef } from "@/components/QRScannerModal";
 import logger from "@/utils/logger";
+import { pmSearchMatcher } from "@/utils/pmSearch";
 import { launchCameraSafe, takePendingCapture } from "@/utils/safeImagePicker";
 
 type PMInstanceRow = typeof pmInstances.$inferSelect;
@@ -501,6 +502,7 @@ export default function PreventiveMaintenance() {
       list = list.filter((i) => i.asset_id === qrAssetFilter);
     } else if (deferredSearchQuery) {
       const q = deferredSearchQuery.toLowerCase();
+      const matchesText = pmSearchMatcher(deferredSearchQuery);
       list = list.filter((i) => {
         const dateObj = i.start_due_date ? new Date(i.start_due_date) : null;
         const dueDateStr = dateObj
@@ -515,11 +517,9 @@ export default function PreventiveMaintenance() {
           : "";
 
         return (
-          (i.title && i.title.toLowerCase().includes(q)) ||
-          (i.asset_id && i.asset_id.toLowerCase().includes(q)) ||
-          (i.asset_type && i.asset_type.toLowerCase().includes(q)) ||
-          // The placeholder has always promised "area"; the card now shows it.
-          (i.location && i.location.toLowerCase().includes(q)) ||
+          // Asset name / type, title and area (the placeholder has always
+          // promised "area") — word by word, see utils/pmSearch.ts.
+          !!matchesText?.([i.asset_id, i.asset_type, i.title, i.location]) ||
           (dueDateStr && dueDateStr.toLowerCase().includes(q)) ||
           (dueDateISO && dueDateISO.includes(q)) ||
           (dueDateShort && dueDateShort.includes(q))
