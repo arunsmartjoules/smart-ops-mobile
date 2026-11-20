@@ -622,6 +622,10 @@ function ChillerEntryContent() {
         signature,
       });
 
+      if (outcome.state === "rejected" && outcome.duplicate) {
+        Alert.alert("Reading time already used", outcome.message);
+        return;
+      }
       if (outcome.state === "rejected") {
         Alert.alert(
           outcome.forbidden ? "No access to this log type" : "Couldn't upload",
