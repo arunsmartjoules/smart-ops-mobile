@@ -4,7 +4,7 @@ import { authEvents } from "../utils/authEvents";
 import { apiFetch as centralApiFetch } from "../utils/apiHelper";
 import { API_BASE_URL } from "../constants/api";
 import { cacheManager } from "./CacheManager";
-import { siteResolver } from "./SiteResolver";
+import { isJouleCoolSite, siteResolver } from "./SiteResolver";
 import { db, attendanceLogs } from "../database";
 import { and, eq, desc } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
@@ -406,11 +406,20 @@ export const AttendanceService = {
       return Array.from(uniqueSites.values());
     };
 
+    // The phone's site list now holds JoulePays sites too (spec 0002, AC-52),
+    // so the cached list is filtered here like the online one. A site cached
+    // with no project_type counts as JouleCool (AC-54).
+    const matchesProjectType = (site: { project_type?: string | null }) => {
+      if (!projectType) return true;
+      if (projectType === "JouleCool") return isJouleCoolSite(site);
+      return site.project_type === projectType;
+    };
+
     // OFFLINE FAST PATH: skip all API calls when offline, return from siteResolver immediately
     try {
       const netState = await NetInfo.fetch();
       if (netState.isConnected === false) {
-        const resolvedSites = siteResolver.getSites();
+        const resolvedSites = siteResolver.getSites().filter(matchesProjectType);
         if (resolvedSites.length > 0) {
           const mapped = normalizeSites(resolvedSites);
           logger.debug("Offline — returning siteResolver sites immediately", {
@@ -468,7 +477,7 @@ export const AttendanceService = {
 
     // Offline fallback: return from siteResolver if both network calls failed
     try {
-      const resolvedSites = siteResolver.getSites();
+      const resolvedSites = siteResolver.getSites().filter(matchesProjectType);
       if (resolvedSites.length > 0) {
         const mapped = normalizeSites(resolvedSites);
         logger.debug("Returning siteResolver sites (offline fallback)", {

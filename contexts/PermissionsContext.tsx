@@ -32,6 +32,7 @@ import {
   type SiteLogCategoryKey,
 } from "@/services/SiteLogCategoryAccess";
 import { setOpsDateFloor } from "@/services/OpsDateRange";
+import { setTrendEntryViewable } from "@/services/TrendSheetSites";
 
 /** Backend vocabulary (backend/shared/src/lib/rolePermissions.ts PERMISSION_MODULES). */
 export const PERMISSION_MODULES = [
@@ -58,6 +59,12 @@ export const PERMISSION_MODULES = [
   "efficiency",
   "inventory",
   "customer_communication",
+  // Consumption Trend Sheet (JoulePays). The parent is derived on the server;
+  // the app only has the daily entry screens, gated on `trend_sheet_entry`.
+  "trend_sheet",
+  "trend_sheet_entry",
+  "trend_sheet_dashboard",
+  "trend_sheet_config",
 ] as const;
 export type PermissionModule = (typeof PERMISSION_MODULES)[number];
 
@@ -239,6 +246,8 @@ export function PermissionsProvider({ children }: { children: React.ReactNode })
         ? new Set<SiteLogCategoryKey>(MOBILE_SITE_LOG_CATEGORIES.filter((k) => map[k].view))
         : null,
     );
+    // And skip the trend sheet site list for a role that cannot enter readings.
+    setTrendEntryViewable(resolved && !bypass ? map.trend_sheet_entry.view : null);
   }, [map, resolved, bypass]);
 
   const canView = useCallback((m: PermissionModule) => map[m]?.view !== false, [map]);

@@ -49,6 +49,7 @@ import { useAutoSync } from "@/hooks/useAutoSync";
 import { useNetworkStatus } from "@/hooks/useNetworkStatus";
 import { useSelectedSiteCode } from "@/services/SiteSelection";
 import AttendanceService, { type Site } from "@/services/AttendanceService";
+import { isJouleCoolSite } from "@/services/SiteResolver";
 import CustomerCommunicationService, {
   type CommPerson,
   type CommRow,
@@ -174,8 +175,9 @@ export default function ClientCommunicationScreen() {
         .select()
         .from(userSites)
         .where(eq(userSites.user_id, userId))
-        .catch(() => [] as { site_code: string; site_name: string }[]);
-      const cached: Site[] = local.map((r: { site_code: string; site_name: string }) => ({
+        .catch(() => [] as { site_code: string; site_name: string; project_type: string | null }[]);
+      // user_sites holds JoulePays sites too; this screen lists JouleCool only (AC-53).
+      const cached: Site[] = local.filter(isJouleCoolSite).map((r: { site_code: string; site_name: string }) => ({
         site_code: r.site_code,
         name: r.site_name,
       }));

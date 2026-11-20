@@ -31,6 +31,7 @@ import AttendanceService, {
   getISTDateString,
   type Site,
 } from "@/services/AttendanceService";
+import { isJouleCoolSite } from "@/services/SiteResolver";
 import HomeDashboardService, {
   type EfficiencyReading,
   type HomeSla,
@@ -346,8 +347,9 @@ export default function Dashboard() {
         .select()
         .from(userSites)
         .where(eq(userSites.user_id, userId))
-        .catch(() => [] as { site_code: string; site_name: string }[]);
-      const cachedSites: Site[] = localSiteRows.map(
+        .catch(() => [] as { site_code: string; site_name: string; project_type: string | null }[]);
+      // user_sites holds JoulePays sites too; Home lists JouleCool only (AC-53).
+      const cachedSites: Site[] = localSiteRows.filter(isJouleCoolSite).map(
         (row: { site_code: string; site_name: string }) => ({
           site_code: row.site_code,
           name: row.site_name,

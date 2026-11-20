@@ -17,7 +17,7 @@
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import NetInfo from "@react-native-community/netinfo";
-import { eq, inArray, notInArray, sql } from "drizzle-orm";
+import { and, eq, inArray, ne, notInArray, sql } from "drizzle-orm";
 import {
   db,
   userSites,
@@ -28,6 +28,8 @@ import {
   chillerReadings,
   areas,
   attendanceLogs,
+  trendDayContext,
+  trendEntries,
 } from "@/database";
 import { apiFetch as centralApiFetch } from "../utils/apiHelper";
 import { API_BASE_URL } from "../constants/api";
@@ -42,6 +44,16 @@ export interface Site {
   site_code: string;
   site_name: string;
   name: string; // Compatibility alias
+  /**
+   * From the site list. The list holds every mapped site, JoulePays included
+   * (spec 0002, AC-52); null (cached by an older build) counts as JouleCool.
+   */
+  project_type: string | null;
+}
+
+/** True for a site the JouleCool only screens may list (null = JouleCool). */
+export function isJouleCoolSite(site: { project_type?: string | null }): boolean {
+  return !site.project_type || site.project_type === "JouleCool";
 }
 
 export type ResolutionSource =
@@ -301,6 +313,7 @@ class SiteResolverImpl implements SiteResolver {
           site_code: r.site_code,
           site_name: r.site_name ?? r.name ?? r.site_code,
           name: r.site_name ?? r.name ?? r.site_code,
+          project_type: r.project_type ?? null,
         })),
       );
       return { ok: true, sites };
@@ -326,6 +339,7 @@ class SiteResolverImpl implements SiteResolver {
           site_code: r.site_code,
           site_name: r.site_name,
           name: r.site_name,
+          project_type: r.project_type ?? null,
         })),
       );
     } catch (error) {
@@ -354,6 +368,7 @@ class SiteResolverImpl implements SiteResolver {
           site_code: r.site_code,
           site_name: r.site_name ?? r.name ?? r.site_code,
           name: r.site_name ?? r.name ?? r.site_code,
+          project_type: r.project_type ?? null,
         })),
       );
     } catch (error) {
@@ -441,6 +456,7 @@ class SiteResolverImpl implements SiteResolver {
             site_id: site.site_id,
             site_code: site.site_code,
             site_name: site.site_name,
+            project_type: site.project_type ?? null,
           })
           .onConflictDoUpdate({
             target: userSites.id,
@@ -449,6 +465,7 @@ class SiteResolverImpl implements SiteResolver {
               site_id: site.site_id,
               site_code: site.site_code,
               site_name: site.site_name,
+              project_type: site.project_type ?? null,
             },
           });
       }
@@ -477,6 +494,11 @@ class SiteResolverImpl implements SiteResolver {
   /**
    * Delete locally-cached site-scoped rows for any site_code the user is no
    * longer authorized for. Only invoked after an authoritative API result.
+   *
+   * A trend sheet entry still `pending` is never deleted: it holds readings
+   * typed on this phone and not yet sent. It is still sent; if the server
+   * refuses it (no access) it turns `failed` and the next purge removes it
+   * (spec 0002, AC-54).
    */
   private async _purgeUnauthorizedSiteData(authorized: Site[]): Promise<void> {
     const allowedCodes = authorized
@@ -493,6 +515,8 @@ class SiteResolverImpl implements SiteResolver {
         await db.delete(pmInstances);
         await db.delete(areas);
         await db.delete(attendanceLogs);
+        await db.delete(trendDayContext);
+        await db.delete(trendEntries).where(ne(trendEntries.sync_status, "pending"));
       } else {
         await db.delete(tickets).where(notInArray(tickets.site_code, allowedCodes));
         await db.delete(incidents).where(notInArray(incidents.site_code, allowedCodes));
@@ -505,6 +529,17 @@ class SiteResolverImpl implements SiteResolver {
         await db
           .delete(attendanceLogs)
           .where(notInArray(attendanceLogs.site_code, allowedCodes));
+        await db
+          .delete(trendDayContext)
+          .where(notInArray(trendDayContext.site_code, allowedCodes));
+        await db
+          .delete(trendEntries)
+          .where(
+            and(
+              notInArray(trendEntries.site_code, allowedCodes),
+              ne(trendEntries.sync_status, "pending"),
+            ),
+          );
       }
     } catch (error) {
       logger.error("SiteResolver: purge unauthorized site data failed", {

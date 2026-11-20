@@ -68,6 +68,7 @@ function TabsContent({ hideTabBar = false }: { hideTabBar?: boolean }) {
       <Tabs.Screen name="site-logs" options={{ title: "Logs" }} />
       <Tabs.Screen name="incidents" options={{ title: "Incidents" }} />
       <Tabs.Screen name="asset-mapping" options={{ title: "Assets" }} />
+      <Tabs.Screen name="trend-sheet" options={{ title: "Trend Sheet" }} />
       <Tabs.Screen name="sla" options={{ title: "SLA" }} />
       <Tabs.Screen name="efficiency" options={{ title: "Efficiency" }} />
       <Tabs.Screen name="reports" options={{ title: "Reports" }} />

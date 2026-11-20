@@ -41,6 +41,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useSelectedSiteCode } from "@/services/SiteSelection";
 import { useSites } from "@/hooks/useSites";
 import AttendanceService, { getISTDateString } from "@/services/AttendanceService";
+import { isJouleCoolSite } from "@/services/SiteResolver";
 import { db, userSites } from "@/database";
 import logger from "@/utils/logger";
 import { useAutoSync } from "@/hooks/useAutoSync";
@@ -115,12 +116,14 @@ export default function SlaScreen() {
         .select()
         .from(userSites)
         .where(eq(userSites.user_id, userId))
-        .catch(() => [] as { site_code: string; site_name: string }[]);
-      if (local.length > 0) {
+        .catch(() => [] as { site_code: string; site_name: string; project_type: string | null }[]);
+      // user_sites holds JoulePays sites too; SLA lists JouleCool only (AC-53).
+      const localJouleCool = local.filter(isJouleCoolSite);
+      if (localJouleCool.length > 0) {
         setSites((prev) =>
           prev.length > 0
             ? prev
-            : local.map((r: { site_code: string; site_name: string }) => ({ site_code: r.site_code, name: r.site_name })),
+            : localJouleCool.map((r: { site_code: string; site_name: string }) => ({ site_code: r.site_code, name: r.site_name })),
         );
       }
       const fresh = await AttendanceService.getUserSites(userId, "JouleCool").catch(() => []);

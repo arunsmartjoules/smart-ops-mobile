@@ -15,11 +15,12 @@ import { Text, TouchableOpacity, View } from "react-native";
 import type { BottomTabBarProps } from "@react-navigation/bottom-tabs";
 import {
   BOTTOM_TABS,
-  SUB_TABS,
   bottomKeyForRoute,
-  getLastSubTab,
+  subTabToOpen,
+  visibleSubTabs,
   type BottomKey,
 } from "@/components/jo/modules";
+import { useSubTabContext } from "@/components/jo/useSubTabContext";
 import { usePermissions } from "@/contexts/PermissionsContext";
 import { useTabBarHidden } from "@/services/TabBarVisibility";
 import { Bx, solidOf } from "@/components/jo/Bx";
@@ -34,8 +35,9 @@ export function JouleTabBar({ state, navigation }: BottomTabBarProps) {
   const { canView } = usePermissions();
   const hidden = useTabBarHidden();
 
-  const opsTabs = SUB_TABS.ops.filter((o) => canView(o.perm));
-  const resourceTabs = SUB_TABS.resources.filter((o) => canView(o.perm));
+  const subTabContext = useSubTabContext();
+  const opsTabs = visibleSubTabs("ops", canView, subTabContext);
+  const resourceTabs = visibleSubTabs("resources", canView, subTabContext);
   const items = BOTTOM_TABS.filter((b) =>
     b.key === "ops"
       ? opsTabs.length > 0
@@ -51,8 +53,7 @@ export function JouleTabBar({ state, navigation }: BottomTabBarProps) {
   const routeFor = (key: BottomKey): string => {
     if (key === "ops" || key === "resources") {
       const group = key === "ops" ? opsTabs : resourceTabs;
-      const last = group.find((o) => o.key === getLastSubTab(key)) ?? group[0];
-      return last?.tab ?? "dashboard";
+      return subTabToOpen(key, group)?.tab ?? "dashboard";
     }
     return BOTTOM_TABS.find((b) => b.key === key)?.tab ?? "dashboard";
   };

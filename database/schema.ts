@@ -6,7 +6,7 @@
  * local writes are synced to the backend through the offline_queue + SyncEngine.
  */
 
-import { sqliteTable, text, integer, real } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, real, primaryKey, index } from "drizzle-orm/sqlite-core";
 
 // ─── Tickets ─────────────────────────────────────────────────────────────────
 
@@ -113,6 +113,9 @@ export const userSites = sqliteTable("user_sites", {
   site_id: text("site_id"),
   site_code: text("site_code").notNull(),
   site_name: text("site_name").notNull(),
+  // From the site list response. Empty (a row written by an older build)
+  // counts as JouleCool (spec 0002, AC-54).
+  project_type: text("project_type"),
 });
 
 // ─── Site Logs ───────────────────────────────────────────────────────────────
@@ -347,3 +350,48 @@ export const attachmentQueue = sqliteTable("attachment_queue", {
   created_at: real("created_at").notNull(),
   updated_at: real("updated_at").notNull(),
 });
+
+// ─── Consumption Trend Sheet ─────────────────────────────────────────────────
+// Both tables hold site data, so both are wiped by clearDatabase() and purged
+// by SiteResolver._purgeUnauthorizedSiteData when a site is taken away.
+
+/** The server's day context for one site and date, as JSON (services/TrendSheetService). */
+export const trendDayContext = sqliteTable(
+  "trend_day_context",
+  {
+    site_code: text("site_code").notNull(),
+    /** Calendar date, YYYY-MM-DD. */
+    entry_date: text("entry_date").notNull(),
+    /** TrendDayContext as JSON. */
+    payload: text("payload").notNull(),
+    fetched_at: real("fetched_at").notNull(),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.site_code, t.entry_date] }),
+  }),
+);
+
+/**
+ * One category save made on this phone: `id` is `site_code|entry_date|category`,
+ * so saving the same category again replaces the row. `sync_status` is
+ * `pending`, `synced`, `failed` or `replaced` (utils/trendSheet TrendSyncStatus).
+ */
+export const trendEntries = sqliteTable(
+  "trend_entries",
+  {
+    id: text("id").primaryKey(),
+    site_code: text("site_code").notNull(),
+    entry_date: text("entry_date").notNull(),
+    category: text("category").notNull(),
+    /** The save body (TrendSaveBody) as JSON. */
+    payload: text("payload").notNull(),
+    /** ISO instant the user pressed Save; decides which of two saves is newer. */
+    client_saved_at: text("client_saved_at").notNull(),
+    sync_status: text("sync_status").notNull().default("pending"),
+    last_error: text("last_error"),
+    updated_at: real("updated_at").notNull(),
+  },
+  (t) => ({
+    bySiteDate: index("idx_trend_entries_site_date").on(t.site_code, t.entry_date),
+  }),
+);

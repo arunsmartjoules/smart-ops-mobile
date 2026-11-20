@@ -281,12 +281,15 @@ export function NumberField({
   surface = "raised",
   keyboardType = "numeric",
   editable = true,
+  onBlur,
   style,
 }: {
   label?: string;
   required?: boolean;
   value: string;
   onChangeText: (v: string) => void;
+  /** Called when the field loses focus (validate on blur). */
+  onBlur?: () => void;
   unit?: string;
   placeholder?: string;
   size?: keyof typeof NUM_SIZE;
@@ -326,7 +329,10 @@ export function NumberField({
           keyboardType={keyboardType}
           editable={editable}
           onFocus={() => setFocused(true)}
-          onBlur={() => setFocused(false)}
+          onBlur={() => {
+            setFocused(false);
+            onBlur?.();
+          }}
           accessibilityLabel={label ? `${label}${unit ? ` (${unit})` : ""}` : unit}
           style={{
             flex: 1,

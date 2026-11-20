@@ -40,7 +40,9 @@ import {
 } from "@/utils/istDate";
 import { useNetworkStatus } from "@/hooks/useNetworkStatus";
 import { useSites } from "@/hooks/useSites";
+import { isJouleCoolSite } from "@/services/SiteResolver";
 import { setRouteParams } from "@/utils/routeParams";
+import { visibleLogTypes } from "@/utils/siteLogTypes";
 import { uiShiftToLabel } from "@/services/LogActivityMasterService";
 import { startOfDay, endOfDay, addDays } from "date-fns";
 import loggerUtil from "@/utils/logger";
@@ -217,11 +219,6 @@ export default function SiteLogs() {
   const { user } = useAuth();
   const { canEdit } = useAttendanceGate();
   const { canView } = usePermissions();
-  // Only the log types this role can view are shown or loaded.
-  const visibleTabs = useMemo(
-    () => LOG_TABS.filter((tab) => canView(tab.permission)),
-    [canView],
-  );
   const { isConnected } = useNetworkStatus();
   const insets = useSafeAreaInsets();
 
@@ -263,6 +260,15 @@ export default function SiteLogs() {
   const siteCode = selectedSite?.site_code ?? null;
   const siteName =
     selectedSite?.site_name ?? selectedSite?.site_code ?? "Select Site";
+  // No site yet counts as JouleCool, like the sub-tab rules.
+  const jouleCoolSite = selectedSite ? isJouleCoolSite(selectedSite) : true;
+
+  // Only the log types this role can view are shown or loaded; chiller only
+  // at a JouleCool site.
+  const visibleTabs = useMemo(
+    () => visibleLogTypes(LOG_TABS, canView, jouleCoolSite),
+    [canView, jouleCoolSite],
+  );
 
   // Site switched (from the header): drop every cached bucket — they belong
   // to the old site — and close the history panel. Adjusted during render so

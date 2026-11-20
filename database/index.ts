@@ -130,7 +130,8 @@ function init(): boolean {
           user_id TEXT NOT NULL,
           site_id TEXT,
           site_code TEXT NOT NULL,
-          site_name TEXT NOT NULL
+          site_name TEXT NOT NULL,
+          project_type TEXT
         );
         CREATE TABLE IF NOT EXISTS site_logs (
           id TEXT PRIMARY KEY,
@@ -330,6 +331,24 @@ function init(): boolean {
           created_at REAL NOT NULL,
           updated_at REAL NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS trend_day_context (
+          site_code  TEXT NOT NULL,
+          entry_date TEXT NOT NULL,
+          payload    TEXT NOT NULL,
+          fetched_at REAL NOT NULL,
+          PRIMARY KEY (site_code, entry_date)
+        );
+        CREATE TABLE IF NOT EXISTS trend_entries (
+          id              TEXT PRIMARY KEY,
+          site_code       TEXT NOT NULL,
+          entry_date      TEXT NOT NULL,
+          category        TEXT NOT NULL,
+          payload         TEXT NOT NULL,
+          client_saved_at TEXT NOT NULL,
+          sync_status     TEXT NOT NULL DEFAULT 'pending',
+          last_error      TEXT,
+          updated_at      REAL NOT NULL
+        );
         -- Performance Indexes (extended) — added for list/queue hot paths
         CREATE INDEX IF NOT EXISTS idx_areas_site_code ON areas (site_code);
         CREATE INDEX IF NOT EXISTS idx_user_sites_user_id ON user_sites (user_id);
@@ -340,6 +359,7 @@ function init(): boolean {
         CREATE INDEX IF NOT EXISTS idx_attendance_logs_user_date ON attendance_logs (user_id, date);
         CREATE INDEX IF NOT EXISTS idx_attachment_queue_status ON attachment_queue (status);
         CREATE INDEX IF NOT EXISTS idx_log_master_log_name ON log_master (log_name);
+        CREATE INDEX IF NOT EXISTS idx_trend_entries_site_date ON trend_entries (site_code, entry_date);
     `);
 
     // Run column migrations
@@ -369,6 +389,7 @@ function init(): boolean {
       "ALTER TABLE areas ADD COLUMN equipment_type TEXT",
       "ALTER TABLE pm_checklist_items ADD COLUMN readings_mandatory INTEGER",
       "ALTER TABLE offline_queue ADD COLUMN transient_retry_count INTEGER NOT NULL DEFAULT 0",
+      "ALTER TABLE user_sites ADD COLUMN project_type TEXT",
     ];
 
     for (const migration of columnMigrations) {
@@ -477,6 +498,8 @@ export {
   offlineQueue,
   syncMeta,
   attachmentQueue,
+  trendDayContext,
+  trendEntries,
 } from "./schema";
 
 /**
@@ -521,7 +544,9 @@ export async function clearDatabase() {
     "offline_queue",
     "sync_meta",
     "attendance_logs",
-    "attachment_queue"
+    "attachment_queue",
+    "trend_day_context",
+    "trend_entries",
   ];
 
   try {
