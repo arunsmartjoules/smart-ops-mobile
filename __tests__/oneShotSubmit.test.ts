@@ -32,6 +32,10 @@ jest.mock("../database", () => {
           where: async (cond: any) => {
             for (const r of rowsOf(t.__name, cond)) {
               const next = { ...r, ...fields };
+              // Like SQLite: re-keying onto an id another row holds fails.
+              if (next.id !== r.id && mockTables[t.__name]!.has(next.id)) {
+                throw new Error(`UNIQUE constraint failed: ${t.__name}.id`);
+              }
               mockTables[t.__name]!.delete(r.id); // an id change re-keys the row
               mockTables[t.__name]!.set(next.id, next);
             }
@@ -41,6 +45,11 @@ jest.mock("../database", () => {
       insert: (t: any) => ({
         values: async (row: Row) => {
           mockTables[t.__name]!.set(row.id, { ...row });
+        },
+      }),
+      delete: (t: any) => ({
+        where: async (cond: any) => {
+          for (const r of rowsOf(t.__name, cond)) mockTables[t.__name]!.delete(r.id);
         },
       }),
     },
@@ -295,6 +304,46 @@ describe("submitChillerReading", () => {
       mockFetch.mockResolvedValue(ok({ id: "server-id" }));
       const outcome = await submitChillerReading(reading({ newId: NEW_ID }));
       expect([outcome.id, mockTables.chiller_readings!.has("server-id")]).toEqual(["server-id", true]);
+    });
+  });
+
+  // KIMS Bangalore, 19–20 Nov 2026: a NEW reading sent with the same chiller +
+  // reading time as one the phone had already pulled. The server answers with
+  // that existing row (and keeps it, not ours); renaming our row onto its id
+  // hit SQLite's primary key and every retry failed with
+  // "UNIQUE constraint failed: chiller_readings.id".
+  describe("a new reading whose time another reading on the phone already holds", () => {
+    const NEW_ID = "11111111-2222-4333-8444-555555555555";
+    beforeEach(() => {
+      mockTables.chiller_readings!.set("taken", { id: "taken", status: "Completed", executor_id: "Saiyad" });
+      mockFetch.mockResolvedValue(ok({ id: "taken", reading_time: "2026-10-27T10:48:00.000Z" }));
+    });
+
+    it("reports it as a duplicate instead of failing", async () => {
+      const outcome = await submitChillerReading(reading({ newId: NEW_ID }));
+      expect([outcome.state, outcome.state === "rejected" && outcome.duplicate]).toEqual(["rejected", true]);
+    });
+
+    it("leaves the existing reading untouched", async () => {
+      await submitChillerReading(reading({ newId: NEW_ID }));
+      expect(mockTables.chiller_readings!.get("taken")).toEqual({ id: "taken", status: "Completed", executor_id: "Saiyad" });
+    });
+
+    it("drops the phone's copy the server did not take", async () => {
+      await submitChillerReading(reading({ newId: NEW_ID }));
+      expect(mockTables.chiller_readings!.has(NEW_ID)).toBe(false);
+    });
+
+    it("leaves nothing queued to retry", async () => {
+      await submitChillerReading(reading({ newId: NEW_ID }));
+      expect(mockQueue.size).toBe(0);
+    });
+
+    it("saves the reading once its time is changed", async () => {
+      await submitChillerReading(reading({ newId: NEW_ID }));
+      mockFetch.mockResolvedValue(ok({ id: NEW_ID }));
+      const outcome = await submitChillerReading(reading({ newId: NEW_ID, readingTime: Date.UTC(2026, 9, 27, 11, 0) }));
+      expect([outcome.state, mockTables.chiller_readings!.has(NEW_ID)]).toEqual(["uploaded", true]);
     });
   });
 
