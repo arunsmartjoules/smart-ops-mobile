@@ -31,6 +31,7 @@ import AttendanceService, {
   getISTDateString,
   type Site,
 } from "@/services/AttendanceService";
+import { askContinueDay, hasEndedSessionToday } from "@/components/attendance/continueDayPrompt";
 import HomeDashboardService, {
   type EfficiencyReading,
   type HomeSla,
@@ -452,6 +453,13 @@ export default function Dashboard() {
 
   const handleQuickCheckIn = async () => {
     if (!userId) return;
+    // Already ended today (often by mistake): continue that day or start new.
+    let resumeSession: AttendanceLog | null = null;
+    if (todayAttendance && hasEndedSessionToday(todayAttendance)) {
+      const choice = await askContinueDay(todayAttendance);
+      if (!choice) return;
+      if (choice === "continue") resumeSession = todayAttendance;
+    }
     setValidatingLocation(true);
     try {
       let { status } = await Location.getForegroundPermissionsAsync();
@@ -506,13 +514,15 @@ export default function Dashboard() {
         siteCode,
         loc.coords.latitude,
         loc.coords.longitude,
+        undefined,
+        resumeSession,
       );
       if (res.success) {
         Alert.alert(
           res.queued ? "Saved" : "Success",
           res.queued
-            ? "Checked in. It will sync automatically when your connection is stable."
-            : "Checked in successfully!",
+            ? `${resumeSession ? "Day continued" : "Checked in"}. It will sync automatically when your connection is stable.`
+            : res.message || "Checked in successfully!",
         );
         fetchData();
         markGatePunchedIn();
@@ -759,12 +769,21 @@ export default function Dashboard() {
       };
     }
     if (shiftComplete) {
+      // Start Day stays available after End Day: an operator who ended the day
+      // by mistake would otherwise be locked out until tomorrow (the app is
+      // gated on an open session). Restarting soon after a short session
+      // resumes it server-side instead of opening a second one.
       return {
         label: "Day ended",
         big: shiftMinutes != null ? durationLabel(shiftMinutes) : dash,
         sub: `${clock(todayAttendance?.check_in_time)}–${clock(todayAttendance?.check_out_time)} · ${format(currentTime, "EEE, dd MMM")}`,
         slaTag,
-        cta: { label: "Attendance", icon: "done" as const, onPress: navigateToAttendance },
+        cta: {
+          label: "Start Day",
+          icon: "in" as const,
+          onPress: handleQuickCheckIn,
+          busy: validatingLocation,
+        },
       };
     }
     return {
