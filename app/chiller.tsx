@@ -23,6 +23,7 @@ import AttendanceService from "@/services/AttendanceService";
 import { siteResolver } from "@/services/SiteResolver";
 import { chillerInitialSite } from "@/utils/siteLogTypes";
 import { useAuth } from "@/contexts/AuthContext";
+import { usePermissions } from "@/contexts/PermissionsContext";
 import { useAttendanceGate } from "@/contexts/AttendanceGateContext";
 import { LogImagePicker } from "@/components/sitelogs/LogImagePicker";
 import { SignatureSheet } from "@/components/sitelogs/SignatureSheet";
@@ -131,10 +132,11 @@ function ChillerEntryContent() {
     attachment: "",
     signature: "",
   });
-  // Chiller is not used at JoulePays sites (spec 0002, AC-57): opened with
-  // one, the screen starts with no site picked.
+  // Opened with a site whose project type has the Chiller log off (by
+  // default JoulePays, spec 0002 AC-57), the screen starts with no site picked.
+  const { projectTypePages } = usePermissions();
   const [selectedSite, setSelectedSite] = useState(() =>
-    chillerInitialSite(initialSiteCode, siteResolver.getSites()),
+    chillerInitialSite(initialSiteCode, siteResolver.getSites(), projectTypePages),
   );
   const [sites, setSites] = useState<SelectOption[]>([]);
   const [loadingSites, setLoadingSites] = useState(false);

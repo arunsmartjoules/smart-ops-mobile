@@ -18,8 +18,8 @@ import { permForPath, visibleSubTabs, type SubTabContext } from "../components/j
 import { parseViewMap, type PermissionModule } from "../contexts/PermissionsContext";
 
 const everything = () => true;
-const atTrendSite: SubTabContext = { siteCode: "APLINDR", trendSite: true, jouleCoolSite: false };
-const atOtherSite: SubTabContext = { siteCode: "COOL1", trendSite: false, jouleCoolSite: true };
+const atTrendSite: SubTabContext = { siteCode: "APLINDR", trendSite: true };
+const atOtherSite: SubTabContext = { siteCode: "COOL1", trendSite: false };
 const keys = (tabs: { key: string }[]) => tabs.map((t) => t.key);
 
 describe("the Trend Sheet sub-tab", () => {
@@ -32,7 +32,7 @@ describe("the Trend Sheet sub-tab", () => {
   });
 
   it("is hidden when no site is selected", () => {
-    expect(keys(visibleSubTabs("ops", everything, { siteCode: null, trendSite: false, jouleCoolSite: true }))).not.toContain("trend");
+    expect(keys(visibleSubTabs("ops", everything, { siteCode: null, trendSite: false }))).not.toContain("trend");
   });
 
   it("is hidden from a role without daily entry, even at a trend sheet site", () => {

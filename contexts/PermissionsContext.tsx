@@ -33,6 +33,11 @@ import {
 } from "@/services/SiteLogCategoryAccess";
 import { setOpsDateFloor } from "@/services/OpsDateRange";
 import { setTrendEntryViewable } from "@/services/TrendSheetSites";
+import {
+  DEFAULT_PROJECT_TYPE_PAGES,
+  parseProjectTypePages,
+  type ProjectTypePageMatrix,
+} from "@/services/ProjectTypePages";
 
 /** Backend vocabulary (backend/shared/src/lib/rolePermissions.ts PERMISSION_MODULES). */
 export const PERMISSION_MODULES = [
@@ -83,6 +88,8 @@ const ALL_VISIBLE: ViewMap = Object.fromEntries(
 const CACHE_PREFIX = "role-perms:v1:";
 /** The role's "data visible from" day, cached beside the grants. */
 const FLOOR_CACHE_PREFIX = "role-data-from:v1:";
+/** Pages by project type. Org wide (not per user), so one key. */
+const PAGES_CACHE_KEY = "project-type-pages:v1";
 
 /** A `YYYY-MM-DD` out of an API value, or null. */
 const asCalendarDay = (v: unknown): string | null =>
@@ -157,12 +164,18 @@ interface PermissionsValue {
   can: (module: PermissionModule, action: PermissionAction) => boolean;
   /** True once a real (or cached) answer is in. */
   resolved: boolean;
+  /**
+   * Pages by project type (web Settings). Applies to admins too; read it with
+   * services/ProjectTypePages `isModuleOnFor` and the selected site's type.
+   */
+  projectTypePages: ProjectTypePageMatrix;
 }
 
 const PermissionsContext = createContext<PermissionsValue>({
   canView: () => true,
   can: () => true,
   resolved: false,
+  projectTypePages: DEFAULT_PROJECT_TYPE_PAGES,
 });
 
 export const usePermissions = () => useContext(PermissionsContext);
@@ -174,6 +187,8 @@ export function PermissionsProvider({ children }: { children: React.ReactNode })
   const [state, setState] = useState<{ userId: string; map: ViewMap } | null>(null);
   const [floor, setFloor] = useState<{ userId: string; day: string | null } | null>(null);
   const [tick, setTick] = useState(0);
+  const [projectTypePages, setProjectTypePages] =
+    useState<ProjectTypePageMatrix>(DEFAULT_PROJECT_TYPE_PAGES);
 
   // Re-check when the app returns to the foreground (an admin may have
   // changed the matrix).
@@ -229,6 +244,38 @@ export function PermissionsProvider({ children }: { children: React.ReactNode })
     };
   }, [token, userId, bypass, tick]);
 
+  // Pages by project type: for everyone, admins included (it describes the
+  // site, not the person), so it is fetched outside the role bypass. The last
+  // answer is cached so an offline launch hides what it hid online; with none
+  // the defaults apply, which are the rules from before this setting.
+  useEffect(() => {
+    if (!token || !userId) return;
+    let cancelled = false;
+    AsyncStorage.getItem(PAGES_CACHE_KEY)
+      .then((raw) => {
+        if (!cancelled && raw) setProjectTypePages(parseProjectTypePages(JSON.parse(raw)));
+      })
+      .catch(() => {});
+    apiFetch(`${API_BASE_URL}/api/project-type-pages`)
+      .then(async (res) => {
+        const body = await res.json().catch(() => null);
+        if (cancelled) return;
+        if (res.ok && body?.success && body.data?.matrix) {
+          setProjectTypePages(parseProjectTypePages(body.data.matrix));
+          AsyncStorage.setItem(PAGES_CACHE_KEY, JSON.stringify(body.data.matrix)).catch(() => {});
+        } else {
+          // 404 from a backend without this route: keep the defaults.
+          logger.warn("Project type pages fetch unsuccessful", { status: res.status });
+        }
+      })
+      .catch((error) => {
+        logger.warn("Project type pages fetch failed", { error: String(error) });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [token, userId, tick]);
+
   const map = bypass || !state || state.userId !== userId ? ALL_VISIBLE : state.map;
   const resolved = bypass || (!!state && state.userId === userId);
 
@@ -255,7 +302,10 @@ export function PermissionsProvider({ children }: { children: React.ReactNode })
     (m: PermissionModule, a: PermissionAction) => map[m]?.[a] !== false,
     [map],
   );
-  const value = useMemo(() => ({ canView, can, resolved }), [canView, can, resolved]);
+  const value = useMemo(
+    () => ({ canView, can, resolved, projectTypePages }),
+    [canView, can, resolved, projectTypePages],
+  );
 
   return <PermissionsContext.Provider value={value}>{children}</PermissionsContext.Provider>;
 }

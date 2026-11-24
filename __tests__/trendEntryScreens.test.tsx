@@ -349,13 +349,13 @@ describe("Electricity entry", () => {
     expect(screenText(tree)).toContain("Electricity saved. Continue to DG");
   });
 
-  it("shows a day over baseline as a negative saving and a negative saving %", async () => {
+  it("shows a day over baseline as a negative saving with its saving % at 0, as Zoho does", async () => {
     const tree = await openElectricity();
     // Main Block 15 x 3,000 = 45,000 kWh: well over the 35,988.88 baseline.
     await type(tree, "Today", "53079.46", 0);
     await type(tree, "Today", "37422.66", 1);
     const text = screenText(tree);
-    expect([/−[\d,]+\.\d{2} kWh/.test(text), /−\d+\.\d{2}%/.test(text), text.includes("Over")]).toEqual([true, true, false]);
+    expect([/−[\d,]+\.\d{2} kWh/.test(text), /−\d+\.\d{2}%/.test(text), text.includes("0.00%")]).toEqual([true, false, true]);
   });
 
   it("offers Save again, not Continue, once the server refuses the saved entry", async () => {

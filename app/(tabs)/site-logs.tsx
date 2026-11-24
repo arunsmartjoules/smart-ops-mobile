@@ -40,7 +40,7 @@ import {
 } from "@/utils/istDate";
 import { useNetworkStatus } from "@/hooks/useNetworkStatus";
 import { useSites } from "@/hooks/useSites";
-import { isJouleCoolSite } from "@/services/SiteResolver";
+import { useSelectedPageOn } from "@/components/jo/useSelectedPageOn";
 import { setRouteParams } from "@/utils/routeParams";
 import { visibleLogTypes } from "@/utils/siteLogTypes";
 import { uiShiftToLabel } from "@/services/LogActivityMasterService";
@@ -260,14 +260,15 @@ export default function SiteLogs() {
   const siteCode = selectedSite?.site_code ?? null;
   const siteName =
     selectedSite?.site_name ?? selectedSite?.site_code ?? "Select Site";
-  // No site yet counts as JouleCool, like the sub-tab rules.
-  const jouleCoolSite = selectedSite ? isJouleCoolSite(selectedSite) : true;
+  // Pages by Project Type for the selected site (no site yet: no rule).
+  const pageOn = useSelectedPageOn();
 
-  // Only the log types this role can view are shown or loaded; chiller only
-  // at a JouleCool site.
+  // Only the log types this role can view, and whose category is on for the
+  // site's project type, are shown or loaded (by default no Chiller at a
+  // JoulePays site).
   const visibleTabs = useMemo(
-    () => visibleLogTypes(LOG_TABS, canView, jouleCoolSite),
-    [canView, jouleCoolSite],
+    () => visibleLogTypes(LOG_TABS, canView, pageOn),
+    [canView, pageOn],
   );
 
   // Site switched (from the header): drop every cached bucket — they belong

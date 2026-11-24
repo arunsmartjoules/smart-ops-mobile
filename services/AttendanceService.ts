@@ -520,10 +520,18 @@ export const AttendanceService = {
     latitude?: number,
     longitude?: number,
     address?: string,
+    /**
+     * The operator confirmed today's End Day was a mistake: continue that
+     * session (`resumeSession`) instead of starting a new one. The server
+     * reopens it; offline, the cached row is reopened until the queue syncs.
+     */
+    resumeSession?: AttendanceLog | null,
   ): Promise<{
     success: boolean;
     data?: AttendanceLog;
     error?: string;
+    /** Server message ("Day continued." when a session was resumed). */
+    message?: string;
     queued?: boolean;
     nearestSite?: Site;
     userLocation?: { latitude: number; longitude: number };
@@ -536,6 +544,7 @@ export const AttendanceService = {
       address,
       client_request_id: uuidv4(),
       punched_at: new Date().toISOString(),
+      ...(resumeSession ? { resume: true } : {}),
     };
 
     const result = await apiFetch("/api/attendance/check-in", {
@@ -561,6 +570,35 @@ export const AttendanceService = {
     // Network failure → queue and write an optimistic local record so the user
     // is not blocked. Server validation errors (e.g. out of geofence) are
     // surfaced as-is and not queued.
+    if (result.isNetworkError && resumeSession?.id) {
+      // Offline resume: reopen the cached session so the day carries on from
+      // its first check-in. The queued check-in (resume: true) reopens it on
+      // the server; SyncEngine then writes the server row over this one.
+      const reopened: AttendanceLog = {
+        ...resumeSession,
+        check_out_time: undefined,
+        check_out_latitude: undefined,
+        check_out_longitude: undefined,
+        check_out_address: undefined,
+        remarks: undefined,
+      };
+      await cacheManager.write("attendance", [reopened as any]).catch(() => {});
+      await cacheManager
+        .enqueue({
+          entity_type: "attendance_check_in",
+          operation: "create",
+          payload,
+        })
+        .catch(() => {});
+      logger.activity("PUNCH_IN", "ATTENDANCE", "User continued their day OFFLINE", {
+        site_code: siteCode,
+        attendance_id: reopened.id,
+        offline: true,
+        resumed: true,
+      });
+      return { success: true, data: reopened, queued: true };
+    }
+
     if (result.isNetworkError) {
       const optimistic: AttendanceLog = {
         id: `opt-${payload.client_request_id}`,

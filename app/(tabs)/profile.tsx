@@ -45,6 +45,7 @@ import { makeJoStyles, useJoTheme } from "@/hooks/useJoTheme";
 import { useNavInsets } from "@/components/jo/navInsets";
 import { SETTINGS_MODULES } from "@/components/jo/modules";
 import { usePermissions } from "@/contexts/PermissionsContext";
+import { useSelectedPageOn } from "@/components/jo/useSelectedPageOn";
 
 function formatRelativeTime(isoTimestamp: string | null): string {
   if (!isoTimestamp) return "Never synced";
@@ -66,8 +67,12 @@ export default function Profile() {
   const t = useJoTheme();
   const { clearance } = useNavInsets();
   const { canView } = usePermissions();
-  // Screens without a bottom tab of their own live here.
-  const moduleLinks = SETTINGS_MODULES.filter((m) => !m.perm || canView(m.perm));
+  const pageOn = useSelectedPageOn();
+  // Screens without a bottom tab of their own live here, unless the selected
+  // site's project type has the page turned off (Pages by Project Type).
+  const moduleLinks = SETTINGS_MODULES.filter(
+    (m) => !m.perm || (canView(m.perm) && pageOn(m.perm)),
+  );
   const { user, signOut } = useAuth();
   const { theme, accent } = useTheme();
   const { lastSyncedAt, pendingQueueCount } = useSyncStatus();

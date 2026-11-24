@@ -27,7 +27,14 @@ enableFreeze(true);
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { AttendanceGateProvider } from "@/contexts/AttendanceGateContext";
 import { PermissionsProvider, usePermissions } from "@/contexts/PermissionsContext";
-import { permForPath } from "@/components/jo/modules";
+import {
+  permForPath,
+  SUB_TABS,
+  visibleSubTabs,
+  type SubTabContext,
+  type SubTabGroup,
+} from "@/components/jo/modules";
+import { useSubTabContext } from "@/components/jo/useSubTabContext";
 import { ThemeProvider, useTheme } from "@/contexts/ThemeContext";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
@@ -257,16 +264,41 @@ function PresenceTracker() {
  * A module the role can't view is hidden everywhere; this catches the ways in
  * that bypass the bar (deep links, notifications, back stack) and returns the
  * user to Home.
+ *
+ * The same goes for a page turned off for the selected site's project type
+ * (Pages by Project Type), except on a sub-tab screen while its group still
+ * has a visible sub-tab: OpsTabs moves that one to the next sub-tab instead.
  */
 function ModuleRouteGuard() {
   const pathname = usePathname();
   const { canView } = usePermissions();
+  const subTabContext = useSubTabContext();
   const perm = pathname ? permForPath(pathname) : null;
-  const denied = !!perm && !canView(perm);
+  const offForSite =
+    !!perm &&
+    !(subTabContext.pageOn?.(perm) ?? true) &&
+    !subTabHasFallback(pathname, canView, subTabContext);
+  const denied = !!perm && (!canView(perm) || offForSite);
   useEffect(() => {
     if (denied) router.replace("/(tabs)/dashboard");
   }, [denied]);
   return null;
+}
+
+/** The open screen is a sub-tab whose group still shows another sub-tab. */
+function subTabHasFallback(
+  pathname: string | null,
+  canView: Parameters<typeof visibleSubTabs>[1],
+  ctx: SubTabContext,
+): boolean {
+  if (!pathname) return false;
+  for (const group of Object.keys(SUB_TABS) as SubTabGroup[]) {
+    const open = SUB_TABS[group].find(
+      (o) => pathname === o.path || pathname.startsWith(`${o.path}/`),
+    );
+    if (open) return visibleSubTabs(group, canView, ctx).some((o) => o.key !== open.key);
+  }
+  return false;
 }
 
 export default function RootLayout() {

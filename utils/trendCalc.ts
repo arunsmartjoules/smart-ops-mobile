@@ -85,6 +85,21 @@ export function pct(part: number | null | undefined, whole: number | null | unde
   return round2((part / whole) * 100);
 }
 
+/** Zoho's floor: a figure below zero shows as 0. Null stays null. */
+export function floorZero(value: number | null | undefined): number | null {
+  if (!isNum(value)) return null;
+  return value < 0 ? 0 : value;
+}
+
+/**
+ * One day's saving % (a category's, or the day's all energy Mcal one), as
+ * Zoho shows it: 0 when the saving is zero or below. Still null (a dash) when
+ * there is no baseline. Period totals (month, financial year) are not floored.
+ */
+export function dayPct(part: number | null | undefined, whole: number | null | undefined): number | null {
+  return floorZero(pct(part, whole));
+}
+
 /**
  * Consumption of one metered block: (closing - opening) x multiplying factor.
  * Null when anything is missing, the closing reading is below the opening one,
@@ -393,10 +408,15 @@ export function computeCategory(
   }
 
   const { saving } = result;
-  result.saving_pct = pct(saving, baseline);
+  // Zoho floors, followed by the user's decision of 24 Nov 2026: a day's
+  // saving % and revenue never go below zero; the saving itself stays
+  // negative. The target is NOT floored (user, 25 Nov 2026): a site sets a
+  // negative Electricity target % on purpose so that its all energy Mcal
+  // target comes to the contracted figure (APLINDR: -2.9 % gives 20 %).
+  result.saving_pct = dayPct(saving, baseline);
   if (baseline != null && targetPct != null) result.target = round2((baseline * targetPct) / 100);
   if (saving != null && unitRate != null && share != null) {
-    result.revenue = round2((saving * unitRate * share) / 100);
+    result.revenue = floorZero(round2((saving * unitRate * share) / 100));
   }
   if (baseline != null && share != null && (!usesTarget || targetPct != null) && (!usesRate || unitRate != null)) {
     const targetPart = usesTarget ? (targetPct as number) / 100 : 1;

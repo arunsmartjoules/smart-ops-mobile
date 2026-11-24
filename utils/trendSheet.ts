@@ -12,9 +12,9 @@
 
 import {
   computeDay,
+  dayPct,
   isElectricityAddon,
   isSavingCategory,
-  pct,
   round2,
   round3,
   type BlockInput,
@@ -690,7 +690,8 @@ export function savingSummary(
     };
   }
   const saving = c.saving;
-  const savingPct = c.saving_pct ?? pct(saving, baseline);
+  // A day's saving % never shows below zero, as in Zoho (trendCalc.ts); the target may.
+  const savingPct = c.saving_pct ?? dayPct(saving, baseline);
   const tone = toneOf(saving, savingPct, targetPct);
   let note = "";
   if (saving != null && saving < 0) {

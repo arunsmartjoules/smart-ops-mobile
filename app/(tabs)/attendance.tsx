@@ -44,6 +44,7 @@ import {
   logDateKey,
   safeTime,
 } from "@/components/attendance/lib";
+import { askContinueDay, hasEndedSessionToday } from "@/components/attendance/continueDayPrompt";
 
 export default function AttendancePage() {
   const t = useJoTheme();
@@ -560,6 +561,8 @@ export default function AttendancePage() {
     async (
       siteCode: string | null,
       coords?: { latitude: number; longitude: number } | null,
+      /** Today's ended session, when the operator chose to continue it. */
+      resumeSession?: AttendanceLog | null,
     ) => {
       if (!userId) {
         Alert.alert(
@@ -579,14 +582,16 @@ export default function AttendancePage() {
       }
 
       try {
-        const optimisticLog: AttendanceLog = {
-          id: `opt-${Date.now()}`,
-          user_id: userId,
-          site_code: siteCode ?? "",
-          date: getISTDateString(),
-          check_in_time: new Date().toISOString(),
-          status: "Present",
-        };
+        const optimisticLog: AttendanceLog = resumeSession
+          ? { ...resumeSession, check_out_time: undefined }
+          : {
+              id: `opt-${Date.now()}`,
+              user_id: userId,
+              site_code: siteCode ?? "",
+              date: getISTDateString(),
+              check_in_time: new Date().toISOString(),
+              status: "Present",
+            };
         setTodayAttendance(optimisticLog);
 
         const res = await AttendanceService.checkIn(
@@ -594,12 +599,14 @@ export default function AttendancePage() {
           siteCode,
           c.latitude,
           c.longitude,
+          undefined,
+          resumeSession,
         );
         if (res.success && res.queued) {
           // Saved locally + queued — silently confirm without alarming the user.
           Alert.alert(
             "Saved",
-            "Checked in. It will sync automatically when your connection is stable.",
+            `${resumeSession ? "Day continued" : "Checked in"}. It will sync automatically when your connection is stable.`,
           );
           setIsSiteModalVisible(false);
           pendingPunchCoordsRef.current = null;
@@ -608,7 +615,7 @@ export default function AttendancePage() {
           refreshAttendanceGate();
           router.replace("/(tabs)/dashboard");
         } else if (res.success) {
-          Alert.alert("Success", "Checked in successfully!");
+          Alert.alert("Success", res.message || "Checked in successfully!");
           setIsSiteModalVisible(false);
           pendingPunchCoordsRef.current = null;
           fetchData();
@@ -616,7 +623,7 @@ export default function AttendancePage() {
           refreshAttendanceGate();
           router.replace("/(tabs)/dashboard");
         } else {
-          setTodayAttendance(null);
+          setTodayAttendance(resumeSession ?? null);
 
           if ((res as any).requiresCheckout) {
             Alert.alert(
@@ -647,7 +654,7 @@ export default function AttendancePage() {
           }
         }
       } catch (error: any) {
-        setTodayAttendance(null);
+        setTodayAttendance(resumeSession ?? null);
         Alert.alert("Error", error.message);
       }
     },
@@ -660,6 +667,14 @@ export default function AttendancePage() {
       return;
     }
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+
+    // Already ended today (often by mistake): continue that day or start new.
+    let resumeSession: AttendanceLog | null = null;
+    if (todayAttendance && hasEndedSessionToday(todayAttendance)) {
+      const choice = await askContinueDay(todayAttendance);
+      if (!choice) return;
+      if (choice === "continue") resumeSession = todayAttendance;
+    }
 
     setValidatingLocation(true);
     try {
@@ -683,7 +698,11 @@ export default function AttendancePage() {
       );
 
       if (validation.isValid) {
-        if (validation.isWFH) {
+        if (resumeSession) {
+          // Already confirmed; the continued session keeps its original site,
+          // so no WFH confirm or site picker.
+          performCheckIn(validation.resolvedSiteCode ?? null, punchCoords, resumeSession);
+        } else if (validation.isWFH) {
           Alert.alert(
             "Work From Home",
             validation.resolvedSiteCode
@@ -724,7 +743,7 @@ export default function AttendancePage() {
     } finally {
       setValidatingLocation(false);
     }
-  }, [userId, ensureLocationForPunch, performCheckIn]);
+  }, [userId, todayAttendance, ensureLocationForPunch, performCheckIn]);
 
 
 
