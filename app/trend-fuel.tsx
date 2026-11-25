@@ -14,9 +14,9 @@
 import React, { useEffect, useState } from "react";
 import { Text } from "react-native";
 import { Card, f, useJoTheme } from "@/components/jo/ui";
-import { NumberField, ReadOnlyEntry } from "@/components/sitelogs/LogsKit";
+import { ReadOnlyEntry } from "@/components/sitelogs/LogsKit";
+import { ReadingInput } from "@/components/trend/ReadingField";
 import {
-  ChoiceToggle,
   EntryActions,
   EntryFrame,
   FieldError,
@@ -24,9 +24,10 @@ import {
   MissingSite,
   SavingReadout,
   StatGrid,
+  TwoWayChoice,
   backToHub,
-  baselineLabel,
   confirmLeave,
+  num,
   dayStateScreen,
   openCategory,
   routeForCategory,
@@ -136,9 +137,12 @@ function FuelForm({
 
   const [form, setForm] = useEntryForm(category, isDirty, initialForm);
   const [touched, setTouched] = useState(false);
+  // "Yes" was tapped before anything was typed.
+  const [usedChosen, setUsedChosen] = useState(false);
 
   const parsed = category.blocks.map((b) => ({ block: b, value: parseTyped(form.blocks[b.block_id]) }));
   const hours = parseTyped(form.runHours);
+  const anyTyped = form.runHours.trim() !== "" || Object.values(form.blocks).some((v) => v.trim() !== "");
   const hoursMissing = hourly && !form.notUsed && hours.state !== "ok";
   const missing = form.notUsed ? 0 : parsed.filter((p) => p.value.state !== "ok").length + (hoursMissing ? 1 : 0);
   const fixing =
@@ -212,112 +216,129 @@ function FuelForm({
       onPick={pick}
       onBack={() => confirmLeave(dirty.current, backToHub)}
       footer={
-        <FooterPanel>
-          {summary ? (
-            <SavingReadout
-              label={
-                generation
-                  ? ready
-                    ? `Electricity saved after ${name}`
-                    : `Electricity saved, before ${name}`
-                  : `${category.label} saved today`
-              }
-              summary={summary}
-              unit={generation ? (electricity?.unit ?? category.unit) : category.unit}
-              barOf={generation ? undefined : `the ${name} baseline`}
+        <FooterPanel
+          readout={
+            summary ? (
+              <SavingReadout
+                label={
+                  generation
+                    ? ready
+                      ? `Electricity saved after ${name}`
+                      : `Electricity saved, before ${name}`
+                    : `${category.label} saved today`
+                }
+                summary={summary}
+                unit={generation ? (electricity?.unit ?? category.unit) : category.unit}
+                barOf={generation ? undefined : `the ${name} baseline`}
+                compact={keyboardOpen}
+              />
+            ) : (
+              <Text style={[f.t(keyboardOpen ? 12 : 13), { color: t.muted, lineHeight: keyboardOpen ? 16 : 18 }]} numberOfLines={keyboardOpen ? 2 : undefined}>
+                Electricity is not entered yet. {category.label} units are added to its consumption once it is.
+              </Text>
+            )
+          }
+          actions={
+            <EntryActions
+              view={view}
+              category={category}
+              siteCode={siteCode}
+              saved={saved}
+              busy={busy}
+              onSave={onSave}
+              onOpen={open}
               compact={keyboardOpen}
             />
-          ) : (
-            <Text style={[f.t(13), { color: t.muted, lineHeight: 18 }]}>
-              Electricity is not entered yet. {category.label} units are added to its consumption once it is.
-            </Text>
-          )}
-          {keyboardOpen ? null : (
-            <>
-              {generation ? null : (
-                <StatGrid
-                  items={[
-                    {
-                      label: baselineLabel(own ?? category),
-                      value:
-                        (own ?? category).baseline != null
-                          ? `${formatIndian((own ?? category).baseline as number)} ${category.unit}`
-                          : "—",
-                    },
-                    { label: "Used", value: ready ? `${formatIndian(used)} ${category.unit}` : "—" },
-                  ]}
-                />
-              )}
-              <EntryActions
-                view={view}
-                category={category}
-                siteCode={siteCode}
-                saved={saved}
-                busy={busy}
-                onSave={onSave}
-                onOpen={open}
-              />
-            </>
+          }
+        >
+          {/* The baseline sits in the day bar at the top. */}
+          {keyboardOpen || generation || !ready ? null : (
+            <StatGrid items={[{ label: "Used", value: `${formatIndian(used)} ${category.unit}` }]} />
           )}
         </FooterPanel>
       }
     >
-      {hourly ? (
-        <Card radius={24} style={{ padding: 16, gap: 8 }}>
-          <NumberField
-            label="Run hours today"
-            value={form.notUsed ? "0" : form.runHours}
-            onChangeText={(v) => {
-              markDirty();
-              setTouched(false);
-              setForm((prev) => ({ ...prev, notUsed: false, runHours: v }));
-            }}
-            onBlur={() => setTouched(true)}
-            unit="h"
-            placeholder="0.0"
-            size="sm"
-            editable={!form.notUsed}
-            error={touched && hoursMissing}
-          />
-          {touched && hoursMissing ? (
-            <FieldError>
-              {hours.state === "invalid" ? "Use numbers only, like 6.5." : "Enter today’s run hours."}
-            </FieldError>
-          ) : null}
-          <Text style={[f.t(12), { color: t.muted, lineHeight: 16, paddingHorizontal: 4 }]}>
-            {category.baseline_per_hour != null
-              ? `Today’s baseline is ${formatIndian(category.baseline_per_hour)} ${category.unit} for each hour run.`
-              : "Today’s baseline is worked out from the hours run."}
-          </Text>
-        </Card>
-      ) : null}
+      {/* The question first: "none today" is an answer the user gives, never a blank field. */}
+      <TwoWayChoice
+        question={generation ? `Any ${name} units today?` : `Used ${name} today?`}
+        yes="Yes"
+        no={generation ? "No units" : "None used"}
+        noLabel={generation ? `No ${name} units today` : `No ${name} used today`}
+        value={form.notUsed ? "no" : usedChosen || anyTyped ? "yes" : null}
+        onYes={() => {
+          setUsedChosen(true);
+          if (form.notUsed) {
+            markDirty();
+            setForm((prev) => ({ ...prev, notUsed: false }));
+          }
+        }}
+        onNo={() => {
+          markDirty();
+          setTouched(false);
+          setForm((prev) => ({ ...prev, notUsed: true }));
+        }}
+      />
 
-      {parsed.map(({ block, value }) => {
-        const error = touched && !form.notUsed ? blockError(value.state) : null;
-        return (
-          <Card key={block.block_id} radius={24} style={{ padding: 16, gap: 10 }}>
-            <Text accessibilityRole="header" style={[f.t(16, 600), { color: t.ink }]} numberOfLines={2}>
-              {block.name}
-            </Text>
-            <NumberField
-              label={generation ? "Units generated" : `${category.label} used`}
-              value={form.notUsed ? "0" : (form.blocks[block.block_id] ?? "")}
-              onChangeText={(v) => {
-                markDirty();
-                setTouched(false);
-                setForm((prev) => ({ ...prev, notUsed: false, blocks: { ...prev.blocks, [block.block_id]: v } }));
-              }}
-              onBlur={() => setTouched(true)}
-              unit={category.unit}
-              placeholder="0.00"
-              size="sm"
-              editable={!form.notUsed}
-              error={!!error}
-            />
-            {error ? <FieldError>{error}</FieldError> : null}
-          </Card>
-        );
-      })}
+      {form.notUsed ? (
+        <Text style={[f.t(13), { color: t.muted, lineHeight: 19, paddingHorizontal: 2 }]}>
+          Saved as zero {generation ? "units" : category.unit} for this day.
+        </Text>
+      ) : (
+        <>
+          {hourly ? (
+            <Card radius={24} style={{ padding: 16, gap: 8 }}>
+              <ReadingInput
+                label="Run hours today"
+                unit="h"
+                value={form.runHours}
+                onChangeText={(v) => {
+                  markDirty();
+                  setTouched(false);
+                  setForm((prev) => ({ ...prev, notUsed: false, runHours: v }));
+                }}
+                onBlur={() => setTouched(true)}
+                error={touched && hoursMissing}
+              />
+              {touched && hoursMissing ? (
+                <FieldError>
+                  {hours.state === "invalid" ? "Use numbers only, like 6.5." : "Enter today’s run hours."}
+                </FieldError>
+              ) : (
+                <Text style={[f.t(12.5), num, { color: t.muted, lineHeight: 17, paddingHorizontal: 2 }]}>
+                  {category.baseline_per_hour != null
+                    ? `Today’s baseline is ${formatIndian(category.baseline_per_hour)} ${category.unit} for each hour run.`
+                    : "Today’s baseline is worked out from the hours run."}
+                </Text>
+              )}
+            </Card>
+          ) : null}
+
+          {parsed.map(({ block, value }) => {
+            const error = touched ? blockError(value.state) : null;
+            return (
+              <Card key={block.block_id} radius={24} style={{ padding: 16, gap: 12 }}>
+                <Text accessibilityRole="header" style={[f.t(16, 600), { color: t.ink }]} numberOfLines={2}>
+                  {block.name}
+                </Text>
+                <ReadingInput
+                  label={generation ? "Units generated" : `${category.label} used`}
+                  hint={`${block.name}, ${generation ? "units generated" : `${name} used`}`}
+                  unit={category.unit}
+                  value={form.blocks[block.block_id] ?? ""}
+                  onChangeText={(v) => {
+                    markDirty();
+                    setTouched(false);
+                    setForm((prev) => ({ ...prev, notUsed: false, blocks: { ...prev.blocks, [block.block_id]: v } }));
+                  }}
+                  onBlur={() => setTouched(true)}
+                  error={!!error}
+                />
+                {error ? <FieldError>{error}</FieldError> : null}
+              </Card>
+            );
+          })}
+        </>
+      )}
 
       {category.blocks.length === 0 ? (
         <Card radius={24} style={{ padding: 16 }}>
@@ -326,16 +347,6 @@ function FuelForm({
           </Text>
         </Card>
       ) : null}
-
-      <ChoiceToggle
-        label={generation ? `No ${name} units today` : `No ${name} used today`}
-        on={form.notUsed}
-        onPress={() => {
-          markDirty();
-          setTouched(false);
-          setForm((prev) => ({ ...prev, notUsed: !prev.notUsed }));
-        }}
-      />
     </EntryFrame>
   );
 }

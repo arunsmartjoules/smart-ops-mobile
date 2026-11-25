@@ -3,6 +3,7 @@
 // answered yet. These are the pure rules behind that (utils/trendSheet).
 
 import {
+  gaugeScale,
   addDaysYmd,
   addMonthsYm,
   carryFromPhone,
@@ -15,8 +16,10 @@ import {
   lastSevenDays,
   lowerThanOpeningMessage,
   mergeDay,
+  firstSkippedDay,
   monthLabel,
   openingLabel,
+  relativeDayLabel,
   parseTyped,
   previewSave,
   savingSummary,
@@ -550,5 +553,70 @@ describe("dates", () => {
 
   it("names a month", () => {
     expect(monthLabel("2026-11")).toBe("November 2026");
+  });
+});
+
+describe("firstSkippedDay", () => {
+  const none = new Set<string>();
+
+  it("finds the day after the last one entered", () => {
+    expect(firstSkippedDay("2026-11-22", "2026-11-25", none)).toBe("2026-11-23");
+  });
+
+  it("finds nothing when the day before was the last one entered", () => {
+    expect(firstSkippedDay("2026-11-24", "2026-11-25", none)).toBeNull();
+  });
+
+  it("skips over days this phone holds", () => {
+    expect(firstSkippedDay("2026-11-22", "2026-11-25", new Set(["2026-11-23"]))).toBe("2026-11-24");
+  });
+
+  it("finds nothing when the phone holds every day between", () => {
+    expect(firstSkippedDay("2026-11-22", "2026-11-25", new Set(["2026-11-23", "2026-11-24"]))).toBeNull();
+  });
+
+  it("finds nothing on a category's first day", () => {
+    expect(firstSkippedDay(null, "2026-11-25", none)).toBeNull();
+  });
+
+  it("finds nothing when the server did not say", () => {
+    expect(firstSkippedDay(undefined, "2026-11-25", none)).toBeNull();
+  });
+
+  it("crosses a month end", () => {
+    expect(firstSkippedDay("2026-10-30", "2026-11-02", none)).toBe("2026-10-31");
+  });
+});
+
+describe("relativeDayLabel", () => {
+  it.each([
+    ["2026-11-25", "Today"],
+    ["2026-11-24", "Yesterday"],
+    ["2026-11-23", "2 days ago"],
+    ["2026-10-31", "25 days ago"],
+  ])("calls %s %s on 25 Nov", (date, label) => {
+    expect(relativeDayLabel(date, "2026-11-25")).toBe(label);
+  });
+});
+
+describe("gaugeScale", () => {
+  it("never goes below 5 % so a tiny saving still has room", () => {
+    expect(gaugeScale(0.19, -2.9)).toBe(5);
+  });
+
+  it("rounds up to the next step with headroom over the larger figure", () => {
+    expect(gaugeScale(2.38, 8)).toBe(10);
+  });
+
+  it("keeps the target on the scale when it is above the saving", () => {
+    expect(gaugeScale(4, 20)).toBe(25);
+  });
+
+  it("ignores a loss and a missing figure", () => {
+    expect(gaugeScale(-10.9, null)).toBe(5);
+  });
+
+  it("caps at 100 %", () => {
+    expect(gaugeScale(100, 100)).toBe(100);
   });
 });

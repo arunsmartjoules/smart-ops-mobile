@@ -19,6 +19,8 @@ import {
   SavingBar,
   backToHub,
   goTrend,
+  num,
+  readable,
   toneColor,
   useTrendParams,
 } from "@/components/trend/TrendKit";
@@ -100,19 +102,25 @@ export default function TrendMonth() {
 
   return (
     <JoPage glow={false}>
-      <View style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingTop: 8, paddingHorizontal: 16, paddingBottom: 12 }}>
-        <IconButton icon="bx-chevron-left" iconSize={24} label="Back to trend sheet" onPress={backToHub} />
-        <View style={{ flex: 1, minWidth: 0, marginLeft: 6 }}>
+      <View style={[readable, { flexDirection: "row", alignItems: "center", gap: 12, paddingTop: 8, paddingHorizontal: 16, paddingBottom: 10 }]}>
+        <IconButton icon="bx-chevron-left" iconSize={24} label="Back" onPress={backToHub} />
+        <Text accessibilityRole="header" style={[f.d(19, -0.02, 1.2), { color: t.ink, flex: 1 }]} numberOfLines={1}>
+          Month
+        </Text>
+      </View>
+      {/* The month stepper sits on its own row: beside the back button its chevrons read as a second back. */}
+      <View style={[readable, { flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 16, paddingBottom: 12 }]}>
+        <IconButton icon="bx-chevron-left" label="Previous month" onPress={() => setMonth((m) => addMonthsYm(m, -1))} />
+        <View style={{ flex: 1, minWidth: 0, alignItems: "center" }}>
           <Text accessibilityRole="header" style={[f.d(20, -0.02, 1.25), { color: t.ink }]} numberOfLines={1}>
             {monthLabel(month)}
           </Text>
           {data && !isCalendarMonth(data, month) ? (
-            <Text style={[f.t(12), { color: t.muted, marginTop: 2 }]} numberOfLines={1}>
+            <Text style={[f.t(12.5), num, { color: t.muted, marginTop: 2 }]} numberOfLines={1}>
               {dayMonthLabel(data.from)} to {dayMonthLabel(data.to)}
             </Text>
           ) : null}
         </View>
-        <IconButton icon="bx-chevron-left" label="Previous month" onPress={() => setMonth((m) => addMonthsYm(m, -1))} />
         <View style={{ opacity: canGoNext ? 1 : 0.4 }}>
           <IconButton
             icon="bx-chevron-right"
@@ -123,11 +131,11 @@ export default function TrendMonth() {
       </View>
 
       <ScrollView
-        contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 4, paddingBottom: 32, gap: 12 }}
+        contentContainerStyle={[readable, { paddingHorizontal: 16, paddingTop: 4, paddingBottom: 32, gap: 12 }]}
         showsVerticalScrollIndicator={false}
       >
         {status === "loading" ? (
-          <View style={{ gap: 12 }} accessibilityLabel="Loading the month">
+          <View style={{ gap: 12 }} accessibilityLabel="Loading the month…">
             <Shimmer height={170} radius={28} />
             <Shimmer height={360} radius={28} />
           </View>
@@ -167,36 +175,40 @@ function MonthBody({ data, today, siteCode }: { data: TrendDayList; today: strin
   const missed = Math.max(0, summary.days_expected - summary.days_entered);
   const started = data.from <= today;
   const lead = weekdayOfYmd(data.from);
-  const mark = summary.target_pct != null && summary.target_pct > 0 && summary.target_pct <= 100 ? summary.target_pct : null;
   const targetText = summary.target_pct != null ? formatTargetPct(summary.target_pct) : null;
 
   return (
     <>
       <Card radius={28} style={{ paddingTop: 18, paddingHorizontal: 20, paddingBottom: 20, gap: 14 }}>
         <Text style={[f.t(13), { color: t.muted }]}>Electricity saved this month</Text>
-        <View style={{ flexDirection: "row", alignItems: "baseline", justifyContent: "space-between", gap: 12 }}>
-          <Text style={[f.d(36, -0.02), { color: summary.saving != null ? color : t.ink }]}>
-            {summary.saving == null ? "—" : formatPct(summary.saving_pct)}
-          </Text>
-          <Text style={[f.t(16, 500), { color: t.ink, flexShrink: 1 }]} numberOfLines={1}>
-            {summary.saving != null ? `${formatIndian(summary.saving)} kWh` : ""}
-          </Text>
-        </View>
-        <SavingBar
-          pct={summary.saving_pct ?? 0}
-          markPct={mark}
-          color={color}
-          label={
-            summary.saving_pct != null
-              ? `Saved ${formatPct(summary.saving_pct)} of the baseline so far this month.${targetText ? ` Target is ${targetText}.` : ""}`
-              : "No saving recorded for this month yet"
-          }
-        />
+        {summary.saving == null ? (
+          <Text style={[f.d(24, -0.02, 1.2), { color: t.ink3 }]}>Nothing saved yet</Text>
+        ) : (
+          <View style={{ flexDirection: "row", alignItems: "baseline", justifyContent: "space-between", gap: 12 }}>
+            <Text style={[f.d(36, -0.02), num, { color }]}>{formatPct(summary.saving_pct)}</Text>
+            <Text style={[f.t(16, 500), num, { color: t.ink, flexShrink: 1 }]} numberOfLines={1}>
+              {`${formatIndian(summary.saving)} kWh`}
+            </Text>
+          </View>
+        )}
+        {/* A loss has nothing to fill: the red figures say it, an empty gauge would only add noise. */}
+        {summary.saving != null && summary.saving < 0 ? null : (
+          <SavingBar
+            savingPct={summary.saving_pct}
+            targetPct={summary.target_pct}
+            color={color}
+            label={
+              summary.saving_pct != null
+                ? `Saved ${formatPct(summary.saving_pct)} of the baseline so far this month.${targetText ? ` Target is ${targetText}.` : ""}`
+                : "No saving recorded for this month yet"
+            }
+          />
+        )}
         <View style={{ flexDirection: "row", justifyContent: "space-between", gap: 12 }}>
-          <Text style={[f.t(12), { color: t.muted, flexShrink: 1 }]} numberOfLines={1}>
+          <Text style={[f.t(12.5), num, { color: t.muted, flexShrink: 1 }]} numberOfLines={1}>
             {started ? `${summary.days_entered} of ${summary.days_expected} days entered` : "This month has not started"}
           </Text>
-          <Text style={[f.t(12), { color: t.muted }]}>{targetText ? `Target ${targetText}` : "No target set"}</Text>
+          <Text style={[f.t(12.5), num, { color: t.muted }]}>{targetText ? `Target ${targetText}` : "No target set"}</Text>
         </View>
       </Card>
 
@@ -204,14 +216,14 @@ function MonthBody({ data, today, siteCode }: { data: TrendDayList; today: strin
       <Card radius={28} style={{ paddingVertical: 16, paddingHorizontal: 12, gap: 8 }}>
         <View style={{ flexDirection: "row" }} importantForAccessibility="no-hide-descendants" accessibilityElementsHidden>
           {WEEKDAYS.map((w) => (
-            <Text key={w} style={[f.t(11), { color: t.muted, width: CELL_WIDTH, textAlign: "center" }]}>
+            <Text key={w} style={[f.t(12), { color: t.muted, width: CELL_WIDTH, textAlign: "center" }]}>
               {w}
             </Text>
           ))}
         </View>
         <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
           {Array.from({ length: lead }, (_, i) => (
-            <View key={`lead-${i}`} style={{ width: CELL_WIDTH, height: 58 }} />
+            <View key={`lead-${i}`} style={{ width: CELL_WIDTH, height: 60 }} />
           ))}
           {data.days.map((d) => (
             <DayCell
@@ -222,13 +234,14 @@ function MonthBody({ data, today, siteCode }: { data: TrendDayList; today: strin
             />
           ))}
         </View>
-        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 16, paddingTop: 6, paddingHorizontal: 8 }}>
-          <Legend label="On target" swatch={{ backgroundColor: t.ok, borderColor: t.ok, borderRadius: 4 }} />
+        <View style={{ flexDirection: "row", flexWrap: "wrap", columnGap: 16, rowGap: 8, paddingTop: 6, paddingHorizontal: 8 }}>
+          <Legend label="On target" swatch={{ backgroundColor: t.okTint, borderColor: t.ok }} />
           <Legend
             label={targetText ? `Below ${targetText}` : "Below target"}
-            swatch={{ backgroundColor: "transparent", borderColor: t.warn, borderRadius: 3 }}
+            swatch={{ backgroundColor: t.raised, borderColor: t.warn }}
           />
-          <Legend label="Not entered" swatch={{ backgroundColor: "transparent", borderColor: t.bad, borderRadius: 4, borderStyle: "dashed" }} />
+          <Legend label="No saving" swatch={{ backgroundColor: t.track, borderColor: t.track }} />
+          <Legend label="Not entered" swatch={{ backgroundColor: "transparent", borderColor: t.bad, borderStyle: "dashed" }} />
         </View>
       </Card>
 
@@ -259,10 +272,23 @@ function Legend({ label, swatch }: { label: string; swatch: object }) {
   const t = useJoTheme();
   return (
     <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-      <View style={[{ width: 9, height: 9, borderWidth: 1.5 }, swatch]} />
-      <Text style={[f.t(12), { color: t.muted }]}>{label}</Text>
+      <View style={[{ width: 12, height: 12, borderRadius: 4, borderWidth: 1.5 }, swatch]} />
+      <Text style={[f.t(12.5), { color: t.muted }]}>{label}</Text>
     </View>
   );
+}
+
+/** How a day reads on the calendar. */
+type CellTone = "missing" | "ok" | "below" | "zero" | "plain";
+
+function cellTone(d: TrendDayListItem): CellTone {
+  if (d.status === "missing") return "missing";
+  const pct = d.electricity_saving_pct;
+  if (pct == null) return "plain";
+  // The server floors a day's saving % at zero, so 0 % may be a loss: it makes no "on target" claim.
+  if (pct <= 0) return "zero";
+  const target = d.electricity_target_pct;
+  return target != null && pct < target ? "below" : "ok";
 }
 
 function DayCell({ d, today, onPress }: { d: TrendDayListItem; today: string; onPress: () => void }) {
@@ -271,30 +297,37 @@ function DayCell({ d, today, onPress }: { d: TrendDayListItem; today: string; on
   const upcoming = d.date > today;
   if (upcoming) {
     return (
-      <View style={{ width: CELL_WIDTH, height: 58, alignItems: "center", justifyContent: "center" }}>
-        <Text style={[f.t(14), { color: t.faint }]}>{n}</Text>
+      <View style={{ width: CELL_WIDTH, height: 60, alignItems: "center", justifyContent: "center" }}>
+        <Text style={[f.t(14), num, { color: t.faint }]}>{n}</Text>
       </View>
     );
   }
 
   const isToday = d.date === today;
   const pct = d.electricity_saving_pct;
-  const target = d.electricity_target_pct;
-  const missing = d.status === "missing";
-  // On target when the saved % is at or above the target %, negative targets included.
-  const below = pct != null && (pct < 0 || (target != null && pct < target));
-  const fg = isToday ? t.selFg : t.ink;
-  const pctColor = isToday ? t.selFg : below ? t.warn : t.ok;
-  const words = missing
-    ? "not entered"
-    : pct != null
-      ? `saved ${formatPct(pct)}, ${below ? "below target" : "on target"}`
-      : d.status === "partial"
-        ? "partly entered"
-        : "entered";
+  const tone = cellTone(d);
+  const words =
+    tone === "missing"
+      ? "not entered"
+      : tone === "ok"
+        ? `saved ${formatPct(pct)}, on target`
+        : tone === "below"
+          ? `saved ${formatPct(pct)}, below target`
+          : tone === "zero"
+            ? "no saving"
+            : d.status === "partial"
+              ? "partly entered"
+              : "entered";
+  const look = {
+    missing: { bg: "transparent", border: t.bad, fg: t.muted },
+    ok: { bg: t.okTint, border: t.okTint, fg: t.ok },
+    below: { bg: t.raised, border: t.warn, fg: t.warn },
+    zero: { bg: t.raised, border: t.raised, fg: t.ink3 },
+    plain: { bg: t.raised, border: t.raised, fg: t.ink3 },
+  }[tone];
 
   return (
-    <View style={{ width: CELL_WIDTH, height: 58, padding: 1 }}>
+    <View style={{ width: CELL_WIDTH, height: 60, padding: 1.5 }}>
       <TouchableOpacity
         onPress={onPress}
         activeOpacity={0.8}
@@ -306,15 +339,20 @@ function DayCell({ d, today, onPress }: { d: TrendDayListItem; today: string; on
           alignItems: "center",
           justifyContent: "center",
           gap: 2,
-          backgroundColor: isToday ? t.selBg : t.raised,
-          borderWidth: 1,
-          borderStyle: missing && !isToday ? "dashed" : "solid",
-          borderColor: isToday ? t.selBg : missing ? t.bad : below ? t.warn : t.raised,
+          backgroundColor: isToday ? t.selBg : look.bg,
+          borderWidth: 1.5,
+          borderStyle: tone === "missing" && !isToday ? "dashed" : "solid",
+          borderColor: isToday ? t.selBg : look.border,
         }}
       >
-        <Text style={[f.t(14, 600), { color: fg }]}>{n}</Text>
-        <Text style={[f.t(11, 500), { color: missing ? (isToday ? t.selFg : t.muted) : pctColor }]} numberOfLines={1}>
-          {missing ? "—" : pct != null ? `${pct.toFixed(1)}%` : d.status === "partial" ? "Part" : "Done"}
+        <Text style={[f.t(14, 600), num, { color: isToday ? t.selFg : t.ink }]}>{n}</Text>
+        <Text
+          style={[f.t(12, 500), num, { color: isToday ? t.selFg : look.fg }]}
+          numberOfLines={1}
+          adjustsFontSizeToFit
+          minimumFontScale={0.8}
+        >
+          {tone === "missing" ? "—" : pct != null ? `${pct.toFixed(1)}%` : d.status === "partial" ? "Part" : "Done"}
         </Text>
         {d.has_mismatch ? (
           <View style={{ position: "absolute", top: 5, right: 6, width: 6, height: 6, borderRadius: 3, backgroundColor: t.warn }} />

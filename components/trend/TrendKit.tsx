@@ -10,6 +10,7 @@
  */
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
+  BackHandler,
   Keyboard,
   Platform,
   ScrollView,
@@ -23,8 +24,7 @@ import { router } from "expo-router";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Bx, type BxName } from "@/components/jo/Bx";
-import { Card, JoPage, PrimaryButton, f, useJoTheme, type JoTheme } from "@/components/jo/ui";
-import { EntryHeader } from "@/components/sitelogs/LogsKit";
+import { Card, IconButton, JoPage, PrimaryButton, f, useJoTheme, type JoTheme } from "@/components/jo/ui";
 import * as Haptics from "expo-haptics";
 import { usePermissions } from "@/contexts/PermissionsContext";
 import { useNetworkStatus } from "@/hooks/useNetworkStatus";
@@ -39,13 +39,18 @@ import StoreUpdateService from "@/services/StoreUpdateService";
 import { showAlert } from "@/utils/alert";
 import { consumeRouteParams, setRouteParams } from "@/utils/routeParams";
 import { istTodayString } from "@/utils/istDate";
-import type { TrendCategory } from "@/utils/trendCalc";
+import { isElectricityAddon, type TrendCategory } from "@/utils/trendCalc";
 import {
+  addDaysYmd,
   dateLabel,
+  dayMonthLabel,
+  firstSkippedDay,
   formatIndian,
   formatPct,
   formatTargetPct,
+  gaugeScale,
   inSentence,
+  relativeDayLabel,
   type SavingSummary,
   type TrendDayView,
   type TrendTone,
@@ -258,6 +263,12 @@ export function baselineLabel(c: Pick<TrendViewCategory, "baseline_kind">): stri
   return "Baseline";
 }
 
+/** The pill naming the baseline, shown only when it is not the everyday one. */
+export function BaselineKindPill({ c }: { c: Pick<TrendViewCategory, "baseline_kind"> }) {
+  if (c.baseline_kind !== "sunday" && c.baseline_kind !== "hourly") return null;
+  return <TrendPill label={baselineLabel(c)} />;
+}
+
 /** True while the software keyboard is up, so a tall footer can fold away. */
 export function useKeyboardOpen(): boolean {
   const [open, setOpen] = useState(false);
@@ -276,61 +287,89 @@ export function useKeyboardOpen(): boolean {
   return open;
 }
 
-/* ── Saving bar ────────────────────────────────────────────────────────── */
+/* ── Numbers ───────────────────────────────────────────────────────────── */
 
 /**
- * The baseline as the full bar, the saved share filled from the right, and
- * the target as a tick (as drawn). The tick is left out when there is no
- * target above zero to place.
+ * Tabular figures: every digit the same width, so a reading does not shift
+ * while it is typed and figures in a column line up.
+ */
+export const num = { fontVariant: ["tabular-nums" as const] };
+
+/**
+ * A column no wider than a large phone, centred. On a tablet the screens
+ * otherwise stretch edge to edge and a row's action ends up far from its
+ * label. Phones are narrower than this, so it changes nothing there.
+ */
+export const readable: ViewStyle = { width: "100%", maxWidth: 672, alignSelf: "center" };
+
+/* ── Saving gauge ──────────────────────────────────────────────────────── */
+
+/**
+ * The saving as a gauge filled from 0 %, the target as an ink tick, and the
+ * scale printed under it. A loss leaves the track empty: the red figure and
+ * the note beside it say why. The tick is left out for a target at or below
+ * zero, which has no place on a saving scale.
  */
 export function SavingBar({
-  pct,
-  markPct,
+  savingPct,
+  targetPct,
   color,
   label,
   style,
 }: {
-  pct: number;
-  markPct: number | null;
+  savingPct: number | null;
+  targetPct: number | null;
   color: string;
   label: string;
   style?: StyleProp<ViewStyle>;
 }) {
   const t = useJoTheme();
-  const width = Math.max(0, Math.min(100, Number.isFinite(pct) ? pct : 0));
+  const scale = gaugeScale(savingPct, targetPct);
+  const share = (v: number) => Math.max(0, Math.min(100, (v / scale) * 100));
+  const width = savingPct != null && Number.isFinite(savingPct) ? share(savingPct) : 0;
+  const mark = targetPct != null && targetPct > 0 ? share(targetPct) : null;
   return (
-    <View
-      accessible
-      accessibilityRole="image"
-      accessibilityLabel={label}
-      style={[{ height: 20, justifyContent: "center" }, style]}
-    >
-      <View style={{ height: 12, borderRadius: 6, backgroundColor: t.track }}>
-        <View
-          style={{
-            position: "absolute",
-            right: 0,
-            top: 0,
-            bottom: 0,
-            width: `${width}%`,
-            borderRadius: 6,
-            backgroundColor: color,
-          }}
-        />
+    <View accessible accessibilityRole="image" accessibilityLabel={label} style={[{ gap: 6 }, style]}>
+      <View style={{ height: 18, justifyContent: "center" }}>
+        <View style={{ height: 10, borderRadius: 5, backgroundColor: t.track, overflow: "hidden" }}>
+          <View style={{ width: `${width}%`, height: "100%", borderRadius: 5, backgroundColor: color }} />
+        </View>
+        {mark != null ? (
+          <View
+            style={{
+              position: "absolute",
+              left: `${mark}%`,
+              marginLeft: -1.5,
+              top: 0,
+              width: 3,
+              height: 18,
+              borderRadius: 1.5,
+              backgroundColor: t.ink,
+            }}
+          />
+        ) : null}
       </View>
-      {markPct != null ? (
-        <View
-          style={{
-            position: "absolute",
-            right: `${Math.max(0, Math.min(100, markPct))}%`,
-            top: 0,
-            width: 2,
-            height: 20,
-            borderRadius: 1,
-            backgroundColor: t.ink,
-          }}
-        />
-      ) : null}
+      {/* The scale's ends, and "Target" under the tick so the tick explains itself. An end
+          label the target label would sit on is left out. */}
+      <View style={{ height: 16 }}>
+        {mark == null || mark > 22 ? (
+          <Text style={[f.t(12), num, { color: t.muted, position: "absolute", left: 0 }]}>0%</Text>
+        ) : null}
+        {mark == null || mark < 78 ? (
+          <Text style={[f.t(12), num, { color: t.muted, position: "absolute", right: 0 }]}>{scale}%</Text>
+        ) : null}
+        {mark != null ? (
+          <Text
+            style={[
+              f.t(12, 600),
+              { color: t.ink2, position: "absolute", width: 64, textAlign: mark > 90 ? "right" : mark < 10 ? "left" : "center" },
+              mark > 90 ? { right: 0 } : mark < 10 ? { left: 0 } : { left: `${mark}%`, marginLeft: -32 },
+            ]}
+          >
+            Target
+          </Text>
+        ) : null}
+      </View>
     </View>
   );
 }
@@ -393,7 +432,7 @@ export function FigureRow({ label, value, first }: { label: string; value: strin
       }}
     >
       <Text style={[f.t(14), { color: t.muted }]}>{label}</Text>
-      <Text style={[f.t(14, 500), { color: t.ink, flexShrink: 1, textAlign: "right" }]} numberOfLines={1}>
+      <Text style={[f.t(14, 500), num, { color: t.ink, flexShrink: 1, textAlign: "right" }]} numberOfLines={1}>
         {value}
       </Text>
     </View>
@@ -423,6 +462,7 @@ export function CategoryTabs({
         horizontal
         showsHorizontalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
+        style={readable}
         contentContainerStyle={{ paddingHorizontal: 16, gap: 8, paddingBottom: 10 }}
       >
         {view.categories.map((c) => {
@@ -463,8 +503,12 @@ export function CategoryTabs({
 }
 
 /**
- * An entry screen: header, category switcher, the scrolling form, and the
- * saving footer docked under it (lifted with the keyboard, never over a field).
+ * An entry screen: header, category switcher, the day bar pinned under them
+ * (which day, its baseline and target), the scrolling form, and the saving
+ * footer docked under it (lifted with the keyboard, never over a field).
+ *
+ * While the keyboard is up the category switcher folds away so a small phone
+ * keeps room for the field being typed in; the day bar stays.
  */
 export function EntryFrame({
   title,
@@ -484,19 +528,40 @@ export function EntryFrame({
   children: React.ReactNode;
   footer: React.ReactNode;
 }) {
+  const keyboardOpen = useKeyboardOpen();
+  const category = view.categories.find((c) => c.category === current) ?? null;
+  // With the category tabs on screen the header would repeat the open tab's name.
+  const tabs = view.categories.length > 1;
+  // Android's back key takes the same way out as the header's back button, so
+  // typed readings are never dropped without the "Leave without saving?" ask.
+  const backRef = useRef(onBack);
+  useEffect(() => {
+    backRef.current = onBack;
+  }, [onBack]);
+  useEffect(() => {
+    const sub = BackHandler.addEventListener("hardwareBackPress", () => {
+      backRef.current();
+      return true;
+    });
+    return () => sub.remove();
+  }, []);
   return (
     <JoPage glow={false}>
-      <EntryHeader title={title} sub={dateLabel(view.date)} onBack={onBack} />
-      <CategoryTabs view={view} current={current} onPick={onPick} />
+      {/* The day is the title: typing a reading into the wrong day is the costly mistake here. */}
+      <DayHeader date={view.date} what={tabs ? undefined : title} onBack={onBack} />
+      {keyboardOpen ? null : <CategoryTabs view={view} current={current} onPick={onPick} />}
+      {category ? <BaselineLine view={view} category={category} /> : null}
       <KeyboardAvoidingView behavior="padding" style={{ flex: 1 }}>
         <ScrollView
           style={{ flex: 1 }}
-          contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 4, paddingBottom: 16, gap: 10 }}
+          contentContainerStyle={[readable, { paddingHorizontal: 16, paddingTop: 4, paddingBottom: 16, gap: 10 }]}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="on-drag"
           showsVerticalScrollIndicator={false}
         >
+          {category ? <SkippedDayNotice view={view} category={category} /> : null}
           {children}
+          {category ? <DeleteCategoryButton view={view} category={category} /> : null}
         </ScrollView>
         {footer}
       </KeyboardAvoidingView>
@@ -504,12 +569,327 @@ export function EntryFrame({
   );
 }
 
+/* ── Day bar (pinned) ──────────────────────────────────────────────────── */
+
 /**
- * The docked footer panel of an entry screen. While the keyboard is up the
- * screens pass only a one line saving, and the panel adds a "Done" button:
- * a number pad has no key of its own to close it, and Save sits under it.
+ * The baseline an entry screen is measured against: the category's own, or
+ * for DG, Solar and Wind (which only move Electricity) Electricity's.
  */
-export function FooterPanel({ children }: { children: React.ReactNode }) {
+function baselineFor(view: TrendDayView, category: TrendViewCategory) {
+  if (isElectricityAddon(category.category)) {
+    const e = view.categories.find((c) => c.category === "electricity") ?? null;
+    return {
+      label: e ? `Electricity ${baselineLabel(e).toLowerCase()}` : "Electricity baseline",
+      value: e?.baseline ?? null,
+      unit: e?.unit ?? category.unit,
+      target: e?.target_pct ?? null,
+    };
+  }
+  return {
+    label: baselineLabel(category),
+    value: category.baseline ?? null,
+    unit: category.unit,
+    target: category.target_pct ?? null,
+  };
+}
+
+/**
+ * An entry screen's header: back, the day being entered as the title, and how
+ * far back it is. A day other than today carries a warning pill, so a reading
+ * typed into an old day is hard to miss.
+ */
+export function DayHeader({
+  date,
+  what,
+  onBack,
+  right,
+}: {
+  date: string;
+  /** The category, when no tabs below name it. */
+  what?: string;
+  onBack: () => void;
+  right?: React.ReactNode;
+}) {
+  const t = useJoTheme();
+  const today = istTodayString();
+  const past = date !== today;
+  const when = relativeDayLabel(date, today);
+  return (
+    <View style={[readable, { flexDirection: "row", alignItems: "center", gap: 12, paddingTop: 8, paddingHorizontal: 16, paddingBottom: 10 }]}>
+      <IconButton icon="bx-chevron-left" iconSize={24} label="Back" onPress={onBack} />
+      <View style={{ flex: 1, minWidth: 0, gap: 3 }} accessible accessibilityRole="header" accessibilityLabel={`${what ? `${what}, ` : ""}${dateLabel(date)}, ${when}`}>
+        <Text style={[f.d(19, -0.02, 1.2), { color: t.ink }]} numberOfLines={1}>
+          {what ? `${what} · ${dateLabel(date)}` : dateLabel(date)}
+        </Text>
+        {past ? (
+          <View
+            style={{
+              alignSelf: "flex-start",
+              flexDirection: "row",
+              alignItems: "center",
+              gap: 4,
+              paddingVertical: 2,
+              paddingHorizontal: 8,
+              borderRadius: 999,
+              backgroundColor: t.warnTint,
+            }}
+          >
+            <Bx name="bx-history" size={13} color={t.warn} />
+            <Text style={[f.t(12.5, 600), { color: t.warn }]}>{when}</Text>
+          </View>
+        ) : (
+          <Text style={[f.t(12.5), { color: t.muted }]}>{when}</Text>
+        )}
+      </View>
+      {right}
+    </View>
+  );
+}
+
+/**
+ * What the day is measured against, as one quiet line under the tabs: the
+ * baseline (Electricity's for DG, Solar and Wind) and the target.
+ */
+export function BaselineLine({ view, category }: { view: TrendDayView; category: TrendViewCategory }) {
+  const t = useJoTheme();
+  const b = baselineFor(view, category);
+  const baselineText = b.value != null ? `${formatIndian(b.value)} ${b.unit}` : "Not set";
+  return (
+    <View
+      accessible
+      accessibilityLabel={`${b.label} ${b.value != null ? baselineText : "not set"}. Target ${b.target != null ? formatTargetPct(b.target) : "not set"}.`}
+      style={[readable, { flexDirection: "row", alignItems: "flex-end", gap: 16, paddingHorizontal: 20, paddingBottom: 12 }]}
+    >
+      <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
+        <Text style={[f.t(12.5), { color: t.muted }]} numberOfLines={1}>
+          {b.label}
+        </Text>
+        <Text style={[f.t(16, 600), num, { color: b.value != null ? t.ink : t.muted }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75}>
+          {baselineText}
+        </Text>
+      </View>
+      <View style={{ alignItems: "flex-end", gap: 2 }}>
+        <Text style={[f.t(12.5), { color: t.muted }]}>Target</Text>
+        <Text style={[f.t(16, 600), num, { color: b.target != null ? t.ink : t.muted }]}>
+          {b.target != null ? formatTargetPct(b.target) : "Not set"}
+        </Text>
+      </View>
+    </View>
+  );
+}
+
+/* ── Skipped days ──────────────────────────────────────────────────────── */
+
+/**
+ * The first earlier day still to enter for this category, or null. Counts
+ * the server's last entry and every entry on this phone (sent or not), so it
+ * works offline. Null until the phone's entries are read.
+ */
+export function useSkippedDay(view: TrendDayView, category: TrendViewCategory): string | null {
+  const siteCode = view.site_code;
+  const id = category.category;
+  const key = `${siteCode}|${id}`;
+  const [onPhone, setOnPhone] = useState<{ key: string; dates: Set<string> } | null>(null);
+  useEffect(() => {
+    let live = true;
+    const load = () =>
+      TrendSheetService.enteredDatesOnPhone(siteCode, id)
+        .then((dates) => {
+          if (live) setOnPhone({ key, dates });
+        })
+        .catch(() => {});
+    void load();
+    const unsubscribe = subscribeTrendSheet(() => void load());
+    return () => {
+      live = false;
+      unsubscribe();
+    };
+  }, [siteCode, id, key]);
+  if (!onPhone || onPhone.key !== key) return null;
+  return firstSkippedDay(category.last_entry_date, view.date, onPhone.dates);
+}
+
+/** Open the skipped day of the same category in place of this one. */
+function openSkipped(view: TrendDayView, category: TrendViewCategory, skipped: string) {
+  openCategory(view.site_code, skipped, category, true);
+}
+
+/** Save was pressed with a day skipped: say which day comes first and offer to open it. */
+function askSkipped(view: TrendDayView, category: TrendViewCategory, skipped: string) {
+  const last = category.last_entry_date;
+  showAlert(
+    `Enter ${dayMonthLabel(skipped)} first`,
+    `${category.label} was last entered for ${last ? dayMonthLabel(last) : "an earlier day"}. Readings carry forward day by day, so ${dayMonthLabel(view.date)} can be saved once every day before it is entered. What you typed here is not saved.`,
+    [
+      { text: "Cancel", style: "cancel" },
+      { text: `Open ${dayMonthLabel(skipped)}`, onPress: () => openSkipped(view, category, skipped) },
+    ],
+  );
+}
+
+/** Shown at the top of the form when an earlier day of this category was skipped. */
+function SkippedDayNotice({ view, category }: { view: TrendDayView; category: TrendViewCategory }) {
+  const t = useJoTheme();
+  const skipped = useSkippedDay(view, category);
+  if (!skipped) return null;
+  const last = category.last_entry_date;
+  const dayBefore = addDaysYmd(view.date, -1);
+  const single = skipped === dayBefore;
+  const gap = single ? dayMonthLabel(skipped) : `${dayMonthLabel(skipped)} to ${dayMonthLabel(dayBefore)}`;
+  return (
+    <View
+      accessibilityRole="alert"
+      style={{
+        borderRadius: 20,
+        borderWidth: 1,
+        borderColor: t.warn,
+        backgroundColor: t.warnTint,
+        paddingTop: 12,
+        paddingHorizontal: 14,
+        paddingBottom: 4,
+        gap: 4,
+      }}
+    >
+      <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 8 }}>
+        <Bx name="bx-calendar-exclamation" size={18} color={t.warn} />
+        <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
+          <Text style={[f.t(14, 600), { color: t.ink }]}>{dateLabel(skipped)} is not entered</Text>
+          <Text style={[f.t(12.5), { color: t.ink3, lineHeight: 18 }]}>
+            {category.label} was last entered for {last ? dayMonthLabel(last) : "an earlier day"}. Readings carry
+            forward, so this day can be saved once {gap} {single ? "is" : "are"} entered.
+          </Text>
+        </View>
+      </View>
+      <TextLink label={`Open ${dateLabel(skipped)}`} onPress={() => openSkipped(view, category, skipped)} />
+    </View>
+  );
+}
+
+/* ── Deleting ──────────────────────────────────────────────────────────── */
+
+/** "Not deleted" with the reason, or nothing when it worked. */
+function reportDeleteFailure(result: Awaited<ReturnType<typeof TrendSheetService.deleteEntry>>): boolean {
+  if (result.ok) return false;
+  showAlert(
+    "Not deleted",
+    result.offline
+      ? "There is no connection. Deleting needs the server: connect and try again."
+      : `The server refused it: ${result.error}`,
+  );
+  return true;
+}
+
+/** Ask, then delete one category of a day. Resolves true once it is gone. */
+export function confirmDeleteCategory(view: TrendDayView, category: TrendViewCategory): Promise<boolean> {
+  return new Promise((resolve) => {
+    showAlert(
+      `Delete ${inSentence(category.label)} for ${dateLabel(view.date)}?`,
+      `The ${inSentence(category.label)} entry for this day is removed. Other categories and other days keep their readings.`,
+      [
+        { text: "Cancel", style: "cancel", onPress: () => resolve(false) },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: () => {
+            void TrendSheetService.deleteEntry(view.site_code, view.date, category.category).then((result) => {
+              const failed = reportDeleteFailure(result);
+              if (!failed) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+              resolve(!failed);
+            });
+          },
+        },
+      ],
+    );
+  });
+}
+
+/** Ask, then delete every category of a day. Resolves true once it is gone. */
+export function confirmDeleteDay(view: TrendDayView): Promise<boolean> {
+  const entered = view.categories.filter((c) => c.entered || c.sync != null).map((c) => inSentence(c.label));
+  const list = entered.length <= 1 ? (entered[0] ?? "every entry") : `${entered.slice(0, -1).join(", ")} and ${entered[entered.length - 1]}`;
+  return new Promise((resolve) => {
+    showAlert(
+      `Delete every entry for ${dateLabel(view.date)}?`,
+      `${list.charAt(0).toUpperCase()}${list.slice(1)} for this day ${entered.length === 1 ? "is" : "are"} removed. Other days keep their readings.`,
+      [
+        { text: "Cancel", style: "cancel", onPress: () => resolve(false) },
+        {
+          text: "Delete day",
+          style: "destructive",
+          onPress: () => {
+            void TrendSheetService.deleteEntry(view.site_code, view.date, null).then((result) => {
+              const failed = reportDeleteFailure(result);
+              if (!failed) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+              resolve(!failed);
+            });
+          },
+        },
+      ],
+    );
+  });
+}
+
+/** True when a role may delete and the day holds something to delete. */
+export function useCanDelete(): boolean {
+  const { can } = usePermissions();
+  return can("trend_sheet_entry", "delete");
+}
+
+/** The quiet destructive line at the end of an entry form, once the category holds an entry. */
+function DeleteCategoryButton({ view, category }: { view: TrendDayView; category: TrendViewCategory }) {
+  const t = useJoTheme();
+  const allowed = useCanDelete();
+  const [busy, setBusy] = useState(false);
+  if (!allowed || !(category.entered || category.sync != null)) return null;
+  return (
+    <TouchableOpacity
+      onPress={async () => {
+        if (busy) return;
+        setBusy(true);
+        const gone = await confirmDeleteCategory(view, category);
+        setBusy(false);
+        if (gone) backToHub();
+      }}
+      disabled={busy}
+      accessibilityRole="button"
+      accessibilityState={{ busy }}
+      accessibilityLabel={`Delete ${category.label} for ${dateLabel(view.date)}`}
+      style={{
+        marginTop: 8,
+        minHeight: 48,
+        borderRadius: 24,
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 6,
+        opacity: busy ? 0.5 : 1,
+      }}
+    >
+      <Bx name="bx-trash" size={17} color={t.bad} />
+      <Text style={[f.t(14, 600), { color: t.bad }]}>
+        Delete {inSentence(category.label)} for {dayMonthLabel(view.date)}
+      </Text>
+    </TouchableOpacity>
+  );
+}
+
+/**
+ * The docked footer panel of an entry screen: the saving (`readout`), any
+ * figures under it (`children`) and the Save button (`actions`).
+ *
+ * While the keyboard is up it folds to one row that sits right on top of the
+ * keyboard: the saving, "Done" (a number pad has no key of its own to close
+ * it) and a compact Save, so saving never needs the keyboard closed first.
+ */
+export function FooterPanel({
+  readout,
+  actions,
+  children,
+}: {
+  readout: React.ReactNode;
+  actions: React.ReactNode;
+  children?: React.ReactNode;
+}) {
   const t = useJoTheme();
   const insets = useSafeAreaInsets();
   const keyboardOpen = useKeyboardOpen();
@@ -523,22 +903,20 @@ export function FooterPanel({ children }: { children: React.ReactNode }) {
           paddingTop: 8,
           // With a hardware keyboard nothing lifts the panel, so it must clear the gesture bar itself.
           paddingBottom: Math.max(insets.bottom, 8),
-          paddingLeft: 20,
-          paddingRight: 8,
-          flexDirection: "row",
-          alignItems: "center",
-          gap: 8,
         }}
       >
-        <View style={{ flex: 1, minWidth: 0 }}>{children}</View>
-        <TouchableOpacity
-          onPress={() => Keyboard.dismiss()}
-          accessibilityRole="button"
-          accessibilityLabel="Done typing"
-          style={{ minHeight: 44, minWidth: 56, alignItems: "center", justifyContent: "center", paddingHorizontal: 8 }}
-        >
-          <Text style={[f.t(15, 600), { color: t.accentInk }]}>Done</Text>
-        </TouchableOpacity>
+        <View style={[readable, { paddingLeft: 20, paddingRight: 12, flexDirection: "row", alignItems: "center", gap: 4 }]}>
+          <View style={{ flex: 1, minWidth: 0 }}>{readout}</View>
+          <TouchableOpacity
+            onPress={() => Keyboard.dismiss()}
+            accessibilityRole="button"
+            accessibilityLabel="Done typing"
+            style={{ minHeight: 44, minWidth: 56, alignItems: "center", justifyContent: "center", paddingHorizontal: 8 }}
+          >
+            <Text style={[f.t(15, 600), { color: t.accentInk }]}>Done</Text>
+          </TouchableOpacity>
+          {actions}
+        </View>
       </View>
     );
   }
@@ -553,12 +931,14 @@ export function FooterPanel({ children }: { children: React.ReactNode }) {
         borderTopLeftRadius: 28,
         borderTopRightRadius: 28,
         paddingTop: 16,
-        paddingHorizontal: 20,
         paddingBottom: Math.max(insets.bottom, 12) + 12,
-        gap: 12,
       }}
     >
-      {children}
+      <View style={[readable, { paddingHorizontal: 20, gap: 12 }]}>
+        {readout}
+        {children}
+        {actions}
+      </View>
     </View>
   );
 }
@@ -583,25 +963,35 @@ export function SavingReadout({
 }) {
   const t = useJoTheme();
   const color = toneColor(t, summary.tone);
-  // A day over baseline shows its saving and saving % below zero (AC-14, AC-42).
-  const figure = summary.saving == null ? "—" : `${formatIndian(summary.saving)} ${unit}`;
-  if (compact) {
+  // Nothing worked out yet: only the line saying what is still needed. A lone
+  // dash and an empty bar read as a minus sign and a broken chart.
+  if (summary.saving == null) {
     return (
-      <View style={{ gap: 4 }} accessibilityLiveRegion="polite">
-        <View style={{ flexDirection: "row", alignItems: "baseline", justifyContent: "space-between", gap: 12 }}>
-          <Text style={[f.t(12), { color: t.muted, flexShrink: 1 }]} numberOfLines={1}>
-            {label}
-          </Text>
-          <Text style={[f.t(16, 600), { color }]} numberOfLines={1}>
-            {figure}
-            {summary.saving_pct != null ? `  ·  ${formatPct(summary.saving_pct)}` : ""}
-          </Text>
-        </View>
-        {summary.note ? (
-          <Text style={[f.t(12), { color: t.muted }]} numberOfLines={1}>
-            {summary.note}
-          </Text>
-        ) : null}
+      <View style={{ gap: 2 }} accessibilityLiveRegion="polite">
+        <Text style={[f.t(compact ? 12 : 12.5), { color: t.muted }]} numberOfLines={1}>
+          {label}
+        </Text>
+        <Text
+          style={[f.t(compact ? 13 : 14, 500), { color: t.ink3, lineHeight: compact ? 17 : 19 }]}
+          numberOfLines={compact ? 2 : undefined}
+        >
+          {summary.note || "Not worked out yet"}
+        </Text>
+      </View>
+    );
+  }
+  const figure = `${formatIndian(summary.saving)} ${unit}`;
+  if (compact) {
+    // Shares a row with Done and Save above the keyboard: label over figure, no note.
+    return (
+      <View style={{ gap: 1 }} accessibilityLiveRegion="polite">
+        <Text style={[f.t(12), { color: t.muted }]} numberOfLines={1}>
+          {label}
+        </Text>
+        <Text style={[f.t(16, 600), num, { color }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>
+          {figure}
+          {summary.saving_pct != null ? `  ${formatPct(summary.saving_pct)}` : ""}
+        </Text>
       </View>
     );
   }
@@ -609,22 +999,25 @@ export function SavingReadout({
     <View style={{ gap: 10 }} accessibilityLiveRegion="polite">
       <View style={{ flexDirection: "row", alignItems: "flex-end", justifyContent: "space-between", gap: 12 }}>
         <View style={{ flexShrink: 1, gap: 2 }}>
-          <Text style={[f.t(12), { color: t.muted }]}>{label}</Text>
-          <Text style={[f.d(24, -0.02), { color }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>
+          <Text style={[f.t(12.5), { color: t.muted }]}>{label}</Text>
+          <Text style={[f.d(24, -0.02), num, { color }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>
             {figure}
           </Text>
         </View>
         {summary.saving_pct != null ? (
-          <Text style={[f.d(24, -0.02), { color }]}>{formatPct(summary.saving_pct)}</Text>
+          <Text style={[f.d(24, -0.02), num, { color }]}>{formatPct(summary.saving_pct)}</Text>
         ) : null}
       </View>
-      <SavingBar
-        pct={summary.bar_pct}
-        markPct={summary.target_mark_pct}
-        color={color}
-        label={savingBarLabel(summary, barOf)}
-      />
-      {summary.note ? <Text style={[f.t(12), { color: t.muted, lineHeight: 16 }]}>{summary.note}</Text> : null}
+      {/* A loss has nothing to fill: the red figure and the note say it. */}
+      {summary.saving < 0 ? null : (
+        <SavingBar
+          savingPct={summary.saving_pct}
+          targetPct={summary.target_pct}
+          color={color}
+          label={savingBarLabel(summary, barOf)}
+        />
+      )}
+      {summary.note ? <Text style={[f.t(12.5), { color: t.ink3, lineHeight: 17 }]}>{summary.note}</Text> : null}
     </View>
   );
 }
@@ -636,10 +1029,10 @@ export function StatGrid({ items }: { items: { label: string; value: string }[] 
     <View style={{ flexDirection: "row", gap: 8 }}>
       {items.map((it) => (
         <View key={it.label} style={{ flex: 1, minWidth: 0, gap: 2 }}>
-          <Text style={[f.t(11), { color: t.muted }]} numberOfLines={1}>
+          <Text style={[f.t(12), { color: t.muted }]} numberOfLines={1}>
             {it.label}
           </Text>
-          <Text style={[f.t(14, 500), { color: t.ink }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75}>
+          <Text style={[f.t(14, 500), num, { color: t.ink }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75}>
             {it.value}
           </Text>
         </View>
@@ -677,43 +1070,108 @@ export function SavedButton({ label, onPress }: { label: string; onPress: () => 
   );
 }
 
-/** "DG did not run today": zero is a choice the user makes, never a blank field. */
-export function ChoiceToggle({
-  label,
-  on,
-  onPress,
+/**
+ * The question a DG or fuel screen opens with ("Did the DG run today?"):
+ * zero is an answer the user gives, never a blank field. Neither option is
+ * picked until the user answers or types a quantity.
+ */
+export function TwoWayChoice({
+  question,
+  yes,
+  no,
+  noLabel,
+  value,
+  onYes,
+  onNo,
   disabled,
 }: {
-  label: string;
-  on: boolean;
-  onPress: () => void;
+  question: string;
+  yes: string;
+  no: string;
+  /** The "none" option's spoken name, a full sentence ("DG did not run today"). */
+  noLabel: string;
+  value: "yes" | "no" | null;
+  onYes: () => void;
+  onNo: () => void;
   disabled?: boolean;
 }) {
   const t = useJoTheme();
-  return (
+  const option = (label: string, a11y: string, on: boolean, onPress: () => void) => (
     <TouchableOpacity
       onPress={onPress}
       disabled={disabled}
       activeOpacity={0.8}
-      accessibilityRole="switch"
-      accessibilityState={{ checked: on, disabled: !!disabled }}
-      accessibilityLabel={label}
+      accessibilityRole="radio"
+      accessibilityState={{ selected: on, disabled: !!disabled }}
+      accessibilityLabel={a11y}
       style={{
-        height: 52,
-        borderRadius: 26,
+        flex: 1,
+        minHeight: 48,
+        borderRadius: 999,
         borderWidth: 1,
-        borderColor: on ? t.ok : t.lineMid,
-        backgroundColor: on ? t.okTint : t.input,
+        borderColor: on ? t.selBg : t.lineMid,
+        backgroundColor: on ? t.selBg : "transparent",
         flexDirection: "row",
         alignItems: "center",
         justifyContent: "center",
-        gap: 8,
+        gap: 6,
+        paddingHorizontal: 12,
         opacity: disabled ? 0.5 : 1,
       }}
     >
-      {on ? <Bx name="bx-check" size={18} color={t.ok} /> : null}
-      <Text style={[f.t(15, 600), { color: on ? t.ok : t.ink }]}>{label}</Text>
+      {on ? <Bx name="bx-check" size={17} color={t.selFg} /> : null}
+      <Text style={[f.t(15, 600), { color: on ? t.selFg : t.ink }]}>{label}</Text>
     </TouchableOpacity>
+  );
+  return (
+    <View style={{ gap: 10 }} accessibilityRole="radiogroup" accessibilityLabel={question}>
+      <Text style={[f.t(15, 600), { color: t.ink }]}>{question}</Text>
+      <View style={{ flexDirection: "row", gap: 8 }}>
+        {option(yes, yes, value === "yes", onYes)}
+        {option(no, noLabel, value === "no", onNo)}
+      </View>
+    </View>
+  );
+}
+
+/**
+ * One line of a day's ledger: an operator, what it is, and the figure,
+ * right-aligned in tabular digits so the column adds up by eye.
+ */
+export function LedgerRow({
+  op,
+  label,
+  value,
+  result,
+  first,
+}: {
+  op?: "+" | "−" | "=" | "±";
+  label: string;
+  value: string;
+  /** The total line: heavier, with a rule above it. */
+  result?: boolean;
+  first?: boolean;
+}) {
+  const t = useJoTheme();
+  return (
+    <View
+      style={{
+        minHeight: result ? 48 : 38,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 10,
+        borderTopWidth: first ? 0 : result ? 1.5 : 1,
+        borderTopColor: result ? t.lineStrong : t.line,
+      }}
+    >
+      <Text style={[f.m(15, 500), { color: t.muted, width: 16, textAlign: "center" }]}>{op ?? ""}</Text>
+      <Text style={[f.t(result ? 15 : 14, result ? 600 : 400), { color: result ? t.ink : t.ink3, flex: 1 }]} numberOfLines={1}>
+        {label}
+      </Text>
+      <Text style={[f.t(result ? 16 : 14.5, result ? 600 : 500), num, { color: t.ink, textAlign: "right", flexShrink: 1 }]} numberOfLines={1}>
+        {value}
+      </Text>
+    </View>
   );
 }
 
@@ -852,6 +1310,7 @@ export function EntryActions({
   busy,
   onSave,
   onOpen,
+  compact,
 }: {
   view: TrendDayView;
   category: TrendViewCategory;
@@ -861,12 +1320,39 @@ export function EntryActions({
   onSave: () => void;
   /** How to move to the next category; a screen that serves several categories switches in place. */
   onOpen?: (c: TrendViewCategory) => void;
+  /** The keyboard is up: only a small Save, for the footer's single row. */
+  compact?: boolean;
 }) {
   const t = useJoTheme();
   const { can } = usePermissions();
   const outdated = useTrendOutdated(view);
+  const skipped = useSkippedDay(view, category);
   const next = nextToEnter(view, category.category);
   const name = inSentence(category.label);
+  // A skipped earlier day blocks the save: the units of the skipped days would
+  // otherwise land on this one. The keyboard goes so any field error shows.
+  const press = () => {
+    Keyboard.dismiss();
+    if (skipped) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
+      askSkipped(view, category, skipped);
+      return;
+    }
+    onSave();
+  };
+  if (compact) {
+    const canSave = !outdated && can("trend_sheet_entry", "edit") && !(saved && category.sync !== "failed");
+    if (!canSave) return null;
+    return (
+      <PrimaryButton
+        label="Save"
+        onPress={press}
+        busy={busy}
+        height={44}
+        style={{ minWidth: 88, paddingHorizontal: 20 }}
+      />
+    );
+  }
   const goNext = () => {
     if (!next) goTrend("/trend-summary", { siteCode, date: view.date }, true);
     else if (onOpen) onOpen(next);
@@ -887,7 +1373,7 @@ export function EntryActions({
           onPress={goNext}
         />
       ) : (
-        <PrimaryButton label={`Save ${name}`} onPress={onSave} busy={busy} />
+        <PrimaryButton label={`Save ${name}`} onPress={press} busy={busy} />
       )}
       <SyncLine c={category} outdated={outdated} />
     </>
@@ -972,8 +1458,16 @@ export function TrendStateScreen({
   const t = useJoTheme();
   return (
     <JoPage glow={false}>
-      <EntryHeader title={title} sub={sub} onBack={backToHub} />
-      <View style={{ paddingHorizontal: 16, paddingTop: 8 }}>
+      <View style={[readable, { flexDirection: "row", alignItems: "center", gap: 12, paddingTop: 8, paddingHorizontal: 16, paddingBottom: 10 }]}>
+        <IconButton icon="bx-chevron-left" iconSize={24} label="Back" onPress={backToHub} />
+        <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
+          <Text accessibilityRole="header" style={[f.d(19, -0.02, 1.2), { color: t.ink }]} numberOfLines={1}>
+            {title}
+          </Text>
+          {sub ? <Text style={[f.t(12.5), { color: t.muted }]}>{sub}</Text> : null}
+        </View>
+      </View>
+      <View style={[readable, { paddingHorizontal: 16, paddingTop: 8 }]}>
         <Card style={{ padding: 24, alignItems: "center", gap: 8 }}>
           <View
             style={{
@@ -1018,8 +1512,8 @@ export function dayStateScreen(
         title={title}
         sub={sub}
         icon="bx-time-five"
-        heading="Loading the day"
-        body="Getting yesterday’s readings and today’s baseline."
+        heading="Loading the day…"
+        body="Getting yesterday’s readings and today’s baseline…"
       />
     );
   }

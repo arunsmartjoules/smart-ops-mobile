@@ -198,6 +198,8 @@ export interface Site {
   inRange?: boolean;
   isWithinRange?: boolean;
   radius?: number;
+  /** sites.project_type; null/empty = JouleCool (AC-54). */
+  project_type?: string | null;
 }
 
 export interface AttendanceLog {
@@ -400,6 +402,7 @@ export const AttendanceService = {
           distance: site?.distance,
           inRange: site?.inRange,
           radius: site?.radius,
+          project_type: site?.project_type ?? null,
         });
       }
 

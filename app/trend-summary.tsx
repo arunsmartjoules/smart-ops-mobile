@@ -12,15 +12,18 @@ import { ScrollView, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Bx } from "@/components/jo/Bx";
 import { Card, JoPage, PrimaryButton, SecondaryButton, f, useJoTheme } from "@/components/jo/ui";
-import { EntryHeader } from "@/components/sitelogs/LogsKit";
 import {
-  FigureRow,
+  DayHeader,
+  LedgerRow,
   MissingSite,
   SavingBar,
   SyncLine,
   TrendPill,
+  BaselineKindPill,
   backToHub,
   baselineLabel,
+  num,
+  readable,
   dayStateScreen,
   nextToEnter,
   openCategory,
@@ -33,11 +36,11 @@ import {
 } from "@/components/trend/TrendKit";
 import { isElectricityAddon } from "@/utils/trendCalc";
 import {
-  dateLabel,
   formatIndian,
   formatPct,
   formatSigned,
   savingSummary,
+  type SavingSummary,
   type TrendDayView,
   type TrendViewCategory,
 } from "@/utils/trendSheet";
@@ -68,10 +71,10 @@ function Summary({ view, siteCode }: { view: TrendDayView; siteCode: string }) {
 
   return (
     <JoPage glow={false}>
-      <EntryHeader title="Day summary" sub={dateLabel(view.date)} onBack={backToHub} />
+      <DayHeader date={view.date} what="Day summary" onBack={backToHub} />
       <ScrollView
         style={{ flex: 1 }}
-        contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 4, paddingBottom: 16, gap: 12 }}
+        contentContainerStyle={[readable, { paddingHorizontal: 16, paddingTop: 4, paddingBottom: 16, gap: 12 }]}
         showsVerticalScrollIndicator={false}
       >
         <View style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 4 }}>
@@ -87,7 +90,7 @@ function Summary({ view, siteCode }: { view: TrendDayView; siteCode: string }) {
           >
             <Bx name={complete ? "bx-check" : "bx-time-five"} size={14} color={complete ? t.ok : t.warn} />
           </View>
-          <Text style={[f.t(14, 500), { color: complete ? t.ok : t.ink }]}>
+          <Text style={[f.t(14, 500), num, { color: complete ? t.ok : t.ink }]}>
             {total === 0 ? "Nothing to enter on this day" : complete ? `All ${total} entered` : `${done} of ${total} entered`}
           </Text>
         </View>
@@ -97,7 +100,7 @@ function Summary({ view, siteCode }: { view: TrendDayView; siteCode: string }) {
         {!electricity && addons.length ? (
           <Card radius={28} style={{ paddingTop: 10, paddingHorizontal: 20, paddingBottom: 8 }}>
             {addons.map((a, i) => (
-              <FigureRow key={a.category} label={a.label} value={quantityText(a)} first={i === 0} />
+              <LedgerRow key={a.category} label={a.label} value={quantityText(a)} first={i === 0} />
             ))}
           </Card>
         ) : null}
@@ -108,6 +111,7 @@ function Summary({ view, siteCode }: { view: TrendDayView; siteCode: string }) {
 
       <View
         style={{
+          ...readable,
           flexDirection: "row",
           gap: 10,
           paddingTop: 8,
@@ -136,6 +140,70 @@ function quantityText(c: TrendViewCategory): string {
   return c.consumption != null ? `${formatIndian(c.consumption)} ${c.unit}` : "—";
 }
 
+/** The figure a category adds to Electricity's consumption, or null when it is not known. */
+const addonUnits = (a: TrendViewCategory): number | null =>
+  !a.entered || a.sync === "failed" ? null : a.not_used ? 0 : a.consumption;
+
+/** True when the figures shown really make the stored saving, to the paisa of rounding. */
+const closes = (sum: number, saving: number | null | undefined) => saving != null && Math.abs(sum - saving) < 0.011;
+
+/** The saving in the tone's colour, the gauge and what the colour means. */
+function SavingFoot({ c, summary, reason }: { c: TrendViewCategory; summary: SavingSummary; reason?: string }) {
+  const t = useJoTheme();
+  const color = toneColor(t, summary.tone);
+  const shown = c.entered && c.sync !== "failed";
+  if (!summary.ready) return null;
+  const loss = summary.saving != null && summary.saving < 0;
+  return (
+    <View style={{ gap: 12 }}>
+      {loss ? null : (
+        <SavingBar
+          savingPct={summary.saving_pct}
+          targetPct={summary.target_pct}
+          color={color}
+          label={savingBarLabel(summary, c.baseline != null ? `the ${formatIndian(c.baseline)} ${c.unit} baseline` : "baseline")}
+        />
+      )}
+      {shown && summary.note ? (
+        <TrendPill
+          label={summary.note}
+          tone={summary.tone === "idle" || (summary.tone === "ok" && c.target_pct == null) ? "mute" : summary.tone}
+        />
+      ) : null}
+      {shown && c.provisional && reason ? (
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <TrendPill label="Provisional" tone="warn" />
+          <Text style={[f.t(12.5), { color: t.ink3, flexShrink: 1 }]}>{reason}</Text>
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+/** The ledger's heading: the category, and the saving as a percentage in the tone's colour. */
+function LedgerHead({ label, c, summary }: { label: string; c: TrendViewCategory; summary: SavingSummary }) {
+  const t = useJoTheme();
+  return (
+    <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexShrink: 1 }}>
+        <Text accessibilityRole="header" style={[f.t(16, 600), { color: t.ink }]}>
+          {label}
+        </Text>
+        <BaselineKindPill c={c} />
+      </View>
+      <Text style={[f.d(24, -0.02), num, { color: summary.ready ? toneColor(t, summary.tone) : t.ink3 }]}>
+        {summary.ready ? formatPct(summary.saving_pct) : ""}
+      </Text>
+    </View>
+  );
+}
+
+/**
+ * Electricity as a ledger: baseline, less what the meters and DG, Solar and
+ * Wind used, plus the adjustment, equals the saving. The operators are drawn
+ * only when those figures really add up to the stored saving; a typed saving
+ * or a missing figure gets the same rows without them.
+ */
 function ElectricityCard({
   c,
   addons,
@@ -149,95 +217,80 @@ function ElectricityCard({
   const t = useJoTheme();
   const shown = c.entered && c.sync !== "failed";
   const summary = savingSummary(c, { missing: shown ? 0 : 1 });
-  const color = toneColor(t, summary.tone);
   const meters = c.blocks.length;
+  const addonFigures = addons.map(addonUnits);
+  const sum =
+    c.baseline != null && c.consumption != null && addonFigures.every((v) => v != null)
+      ? c.baseline - c.consumption - addonFigures.reduce((a: number, v) => a + (v as number), 0) + (c.adjustment ?? 0)
+      : null;
+  const ledger = shown && !c.saving_is_manual && sum != null && closes(sum, c.saving);
+  const op = <T extends "+" | "−" | "=">(o: T) => (ledger ? o : undefined);
   return (
-    <Card radius={28} style={{ paddingTop: 18, paddingHorizontal: 20, paddingBottom: 8, gap: 14 }}>
-      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-        <Text accessibilityRole="header" style={[f.t(13), { color: t.muted }]}>
-          Electricity saved
-        </Text>
-        <TrendPill label={baselineLabel(c)} />
-      </View>
-      <View style={{ flexDirection: "row", alignItems: "baseline", justifyContent: "space-between", gap: 12 }}>
-        <Text style={[f.d(36, -0.02), { color: summary.ready ? color : t.ink }]}>
-          {!summary.ready ? "—" : formatPct(summary.saving_pct)}
-        </Text>
-        <Text style={[f.t(16, 500), { color: t.ink, flexShrink: 1 }]} numberOfLines={1}>
-          {summary.saving != null ? `${formatIndian(summary.saving)} ${c.unit}` : ""}
-        </Text>
-      </View>
-      <SavingBar
-        pct={summary.bar_pct}
-        markPct={summary.target_mark_pct}
-        color={color}
-        label={savingBarLabel(summary, c.baseline != null ? `the ${formatIndian(c.baseline)} ${c.unit} baseline` : "baseline")}
-      />
-      {!shown ? (
-        <Text style={[f.t(13), { color: t.ink3 }]}>Electricity is not entered for this day.</Text>
-      ) : summary.note ? (
-        <TrendPill
-          label={summary.note}
-          tone={summary.tone === "idle" || (summary.tone === "ok" && c.target_pct == null) ? "mute" : summary.tone}
-        />
-      ) : null}
-      {shown && c.provisional ? (
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-          <TrendPill label="Provisional" tone="warn" />
-          <Text style={[f.t(12.5), { color: t.ink3, flexShrink: 1 }]}>{reason}</Text>
-        </View>
-      ) : null}
-      <SyncLine c={c} />
+    <Card radius={24} style={{ paddingTop: 18, paddingHorizontal: 18, paddingBottom: 16, gap: 12 }}>
+      <LedgerHead label="Electricity" c={c} summary={summary} />
+      {!shown ? <Text style={[f.t(13), { color: t.ink3 }]}>Electricity is not entered for this day.</Text> : null}
       <View>
-        <FigureRow
-          label="Baseline"
-          value={c.baseline != null ? `${formatIndian(c.baseline)} ${c.unit}` : "Not set yet"}
-        />
-        <FigureRow
-          label={`Meters, ${meters}`}
+        <LedgerRow first label="Baseline" value={c.baseline != null ? `${formatIndian(c.baseline)} ${c.unit}` : "Not set yet"} />
+        <LedgerRow
+          op={op("−")}
+          label={`Meters (${meters})`}
           value={shown && c.consumption != null ? `${formatIndian(c.consumption)} ${c.unit}` : shown ? "No readings" : "Not entered"}
         />
         {addons.map((a) => (
-          <FigureRow key={a.category} label={a.label} value={quantityText(a)} />
+          <LedgerRow key={a.category} op={op("−")} label={a.label} value={quantityText(a)} />
         ))}
-        <FigureRow
+        <LedgerRow
+          op={op("+")}
           label="Adjustment"
-          value={!shown ? "—" : c.saving_is_manual ? "Not applied, saving typed" : `${formatSigned(c.adjustment)} ${c.unit}`}
+          value={!shown ? "—" : c.saving_is_manual ? "Not applied" : `${formatSigned(c.adjustment)} ${c.unit}`}
         />
+        {shown ? (
+          <LedgerRow
+            result
+            op={op("=")}
+            label={c.saving_is_manual ? "Saved, typed" : "Saved"}
+            value={c.saving != null ? `${formatIndian(c.saving)} ${c.unit}` : "Not worked out yet"}
+          />
+        ) : null}
       </View>
+      <SavingFoot c={c} summary={summary} reason={reason} />
+      <SyncLine c={c} />
     </Card>
   );
 }
 
+/** A fuel as a ledger: baseline, less what was used, equals the saving. */
 function FuelCard({ c }: { c: TrendViewCategory }) {
   const t = useJoTheme();
   const shown = c.entered && c.sync !== "failed";
   const summary = savingSummary(c, { missing: shown ? 0 : 1 });
-  const color = toneColor(t, summary.tone);
+  const used = shown ? (c.not_used ? 0 : c.consumption) : null;
+  const ledger = shown && c.baseline != null && used != null && closes(c.baseline - used, c.saving);
   return (
-    <Card radius={28} style={{ paddingTop: 18, paddingHorizontal: 20, paddingBottom: 8, gap: 12 }}>
-      <Text accessibilityRole="header" style={[f.t(13), { color: t.muted }]}>
-        {c.label} saved
-      </Text>
-      <View style={{ flexDirection: "row", alignItems: "baseline", justifyContent: "space-between", gap: 12 }}>
-        <Text style={[f.d(24, -0.02), { color: summary.ready ? color : t.ink }]}>
-          {!summary.ready ? "—" : formatPct(summary.saving_pct)}
-        </Text>
-        <Text style={[f.t(16, 500), { color: t.ink, flexShrink: 1 }]} numberOfLines={1}>
-          {summary.saving != null ? `${formatIndian(summary.saving)} ${c.unit}` : ""}
-        </Text>
-      </View>
-      <SyncLine c={c} />
+    <Card radius={24} style={{ paddingTop: 18, paddingHorizontal: 18, paddingBottom: 16, gap: 12 }}>
+      <LedgerHead label={c.label} c={c} summary={summary} />
+      {!shown ? <Text style={[f.t(13), { color: t.ink3 }]}>{c.label} is not entered for this day.</Text> : null}
       <View>
-        <FigureRow
+        {c.hourly ? (
+          <LedgerRow first label="Run hours" value={shown && c.run_hours != null ? `${formatIndian(c.run_hours, 0, 2)} h` : "—"} />
+        ) : null}
+        <LedgerRow
+          first={!c.hourly}
           label={baselineLabel(c)}
           value={c.baseline != null ? `${formatIndian(c.baseline)} ${c.unit}` : "Not set yet"}
         />
-        {c.hourly ? (
-          <FigureRow label="Run hours" value={shown && c.run_hours != null ? formatIndian(c.run_hours, 0, 2) : "—"} />
+        <LedgerRow op={ledger ? "−" : undefined} label="Used" value={quantityText(c)} />
+        {shown ? (
+          <LedgerRow
+            result
+            op={ledger ? "=" : undefined}
+            label="Saved"
+            value={c.saving != null ? `${formatIndian(c.saving)} ${c.unit}` : "Not worked out yet"}
+          />
         ) : null}
-        <FigureRow label="Used" value={quantityText(c)} />
       </View>
+      <SavingFoot c={c} summary={summary} />
+      <SyncLine c={c} />
     </Card>
   );
 }

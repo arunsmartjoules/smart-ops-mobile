@@ -75,6 +75,7 @@ import { makeJoStyles, useJoTheme, type JoTheme } from "@/hooks/useJoTheme";
 import { usePermissions } from "@/contexts/PermissionsContext";
 import { useNavInsets } from "@/components/jo/navInsets";
 import { RatingPromptCard } from "@/components/home/RatingPromptCard";
+import { JoulePaysHome } from "@/components/home/JoulePaysHome";
 import { clampToFloor, useOpsDateFloor } from "@/services/OpsDateRange";
 
 function formatLocationFailureMessage(
@@ -284,15 +285,19 @@ export default function Dashboard() {
     [sites, selectedSiteCode],
   );
   const activeSiteCode = activeSite?.site_code ?? null;
+  /** A JoulePays site: Home shows its trend sheet instead of tickets, SLA and efficiency. */
+  const isJoulePays = !!activeSite && !isJouleCoolSite(activeSite);
 
   const range = useMemo(
     () => clampToFloor(periodRange(period, todayIso, customRange), dateFloor),
     [period, todayIso, customRange, dateFloor],
   );
 
-  const summaryKey = activeSiteCode ? `${activeSiteCode}|${range.from}|${range.to}` : null;
-  const slaKey = activeSiteCode ? `${activeSiteCode}|${slaMonth}` : null;
-  const teamKey = activeSiteCode && !isOperator ? `${activeSiteCode}|${todayIso}` : null;
+  // None of these apply at a JoulePays site, so they are not asked for there.
+  const jouleCoolCode = isJoulePays ? null : activeSiteCode;
+  const summaryKey = jouleCoolCode ? `${jouleCoolCode}|${range.from}|${range.to}` : null;
+  const slaKey = jouleCoolCode ? `${jouleCoolCode}|${slaMonth}` : null;
+  const teamKey = jouleCoolCode && !isOperator ? `${jouleCoolCode}|${todayIso}` : null;
   const summary = summaryState && summaryState.key === summaryKey ? summaryState.data : null;
   const summaryFromCache = !!summary && !!summaryState?.fromCache;
   const summaryLoading = !!summaryKey && summaryState?.key !== summaryKey;
@@ -349,11 +354,12 @@ export default function Dashboard() {
         .from(userSites)
         .where(eq(userSites.user_id, userId))
         .catch(() => [] as { site_code: string; site_name: string; project_type: string | null }[]);
-      // user_sites holds JoulePays sites too; Home lists JouleCool only (AC-53).
-      const cachedSites: Site[] = localSiteRows.filter(isJouleCoolSite).map(
-        (row: { site_code: string; site_name: string }) => ({
+      // Every mapped site: a JoulePays site gets its own Home (JoulePaysHome).
+      const cachedSites: Site[] = localSiteRows.map(
+        (row: { site_code: string; site_name: string; project_type: string | null }) => ({
           site_code: row.site_code,
           name: row.site_name,
+          project_type: row.project_type,
         }),
       );
       if (cachedSites.length > 0) setSites(cachedSites);
@@ -366,7 +372,8 @@ export default function Dashboard() {
       if (net.isConnected === true) {
         const [attData, freshSites] = await Promise.all([
           AttendanceService.getTodayAttendance(userId, true).catch(() => null),
-          AttendanceService.getUserSites(userId, "JouleCool").catch(() => [] as Site[]),
+          // "" = every project type.
+          AttendanceService.getUserSites(userId, "").catch(() => [] as Site[]),
         ]);
         if (attData) setTodayAttendance(attData);
         if (freshSites.length > 0) setSites(freshSites);
@@ -886,7 +893,7 @@ export default function Dashboard() {
           the cards scroll underneath. */}
       <View style={styles.top}>
         {header}
-        {showDashboard ? (
+        {showDashboard && !isJoulePays ? (
           <DateButton
             label={periodLabel}
             meta={periodMeta}
@@ -908,7 +915,28 @@ export default function Dashboard() {
           }
         >
 
-        {isOperator ? (
+        {isJoulePays && activeSiteCode ? (
+          <>
+            {isOperator ? (
+              <ShiftHero
+                label={techHero.label}
+                big={techHero.big}
+                sub={techHero.sub}
+                slaTag={null}
+                slaTagColor={slaCol}
+                cta={techHero.cta}
+                onPress={!isLocked && canView("attendance") ? navigateToAttendance : undefined}
+              />
+            ) : null}
+            <JoulePaysHome
+              userId={userId}
+              siteCode={activeSiteCode}
+              today={todayIso}
+              refreshTick={refreshTick}
+              locked={isLocked}
+            />
+          </>
+        ) : isOperator ? (
           <>
             <ShiftHero
               label={techHero.label}

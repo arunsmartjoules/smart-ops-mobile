@@ -19,17 +19,21 @@ import { Bx } from "@/components/jo/Bx";
 import { Card, EmptyState, IconButton, JoPage, Shimmer, f, useJoTheme } from "@/components/jo/ui";
 import { useNavInsets } from "@/components/jo/navInsets";
 import {
+  BaselineKindPill,
   SavingBar,
   TrendPill,
   UpdateBlock,
-  baselineLabel,
   categoryIcon,
+  confirmDeleteDay,
   goTrend,
   nextToEnter,
+  num,
+  readable,
   openCategory,
   provisionalReason,
   savingBarLabel,
   toneColor,
+  useCanDelete,
   useTrendDay,
   useTrendOutdated,
 } from "@/components/trend/TrendKit";
@@ -45,8 +49,8 @@ import {
   formatIndian,
   formatPct,
   formatTargetPct,
-  inSentence,
   lastSevenDays,
+  relativeDayLabel,
   savingSummary,
   weekdayShort,
   type TrendDayListItem,
@@ -80,15 +84,20 @@ export default function TrendSheetHub() {
   const enabled = !!site && site.categories.length > 0;
 
   const [today, setToday] = useState(() => istTodayString());
-  const [date, setDate] = useState(today);
   const week = useMemo(() => lastSevenDays(today), [today]);
 
-  // A new site, or a new day since the tab was last looked at: back to today.
-  const [shownFor, setShownFor] = useState({ siteCode, today });
-  if (shownFor.siteCode !== siteCode || shownFor.today !== today) {
-    setShownFor({ siteCode, today });
-    if (date !== today) setDate(today);
-  }
+  // The day shown is worked out, not reset: the day picked for a site stays
+  // picked while it is still on the strip, even when the site list reloads
+  // and the site is briefly unknown. It used to be reset to today on any
+  // site change, which could silently move the hub back to today between
+  // picking a day and opening a category. Another site, or a picked day that
+  // has left the strip, shows today.
+  const [picked, setPicked] = useState<{ siteCode: string; date: string } | null>(null);
+  const date =
+    picked && picked.siteCode === siteCode && week.includes(picked.date) ? picked.date : today;
+  const setDate = (d: string) => {
+    if (siteCode) setPicked({ siteCode, date: d });
+  };
 
   const day = useTrendDay(enabled ? siteCode : null, enabled ? date : null);
   const outdated = useTrendOutdated(day.view);
@@ -184,26 +193,33 @@ export default function TrendSheetHub() {
     <JoPage>
       <OpsTabs showDate={false} />
       <ScrollView
-        contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: clearance, gap: 16 }}
+        contentContainerStyle={[readable, { paddingHorizontal: 16, paddingBottom: clearance, gap: 16 }]}
         showsVerticalScrollIndicator={false}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={t.muted} colors={[t.accent]} />
         }
       >
-        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12, paddingTop: 14, paddingHorizontal: 4 }}>
-          <Text accessibilityRole="header" style={[f.d(24, -0.02, 1.2), { color: t.ink, flexShrink: 1 }]}>
-            Consumption trend sheet
-          </Text>
-          {enabled && siteCode ? (
+        {/* No page title: the day being entered is what this screen is about, so it heads it. */}
+        {enabled && siteCode ? (
+          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12, paddingTop: 14, paddingHorizontal: 4 }}>
+            <View accessibilityRole="header" style={{ flexShrink: 1, gap: 2 }}>
+              <Text style={[f.d(22, -0.02, 1.2), { color: t.ink }]} numberOfLines={1}>
+                {dateLabel(date)}
+              </Text>
+              {/* An earlier day reads in the warning colour: typing into the wrong day is the costly slip here. */}
+              <Text style={[f.t(12.5, date === today ? 400 : 600), { color: date === today ? t.muted : t.warn }]}>
+                {relativeDayLabel(date, today)}
+              </Text>
+            </View>
             <IconButton
               icon="bx-calendar"
               label="Open month view"
-              onPress={() =>
-                goTrend("/trend-month", { siteCode, ...(view ? { month: view.cycle_month } : {}) })
-              }
+              onPress={() => goTrend("/trend-month", { siteCode, ...(view ? { month: view.cycle_month } : {}) })}
             />
-          ) : null}
-        </View>
+          </View>
+        ) : (
+          <View style={{ height: 14 }} />
+        )}
 
         {!siteCode ? (
           <EmptyState icon="bx-buildings" title="Select a site" sub="Pick a site above to see its trend sheet." />
@@ -273,8 +289,16 @@ export default function TrendSheetHub() {
                     </Text>
                   </View>
                 ) : null}
-                <DayCard view={view} />
-                <Readings view={view} siteCode={siteCode} date={date} today={today} />
+                <DaySheet
+                  view={view}
+                  siteCode={siteCode}
+                  date={date}
+                  today={today}
+                  onDeleted={() => {
+                    void reloadDay();
+                    void loadWeek();
+                  }}
+                />
               </>
             )}
           </>
@@ -328,16 +352,16 @@ function DayCell({
         borderColor: selected ? t.selBg : today ? t.lineStrong : t.cardBorder,
       }}
     >
-      <Text style={[f.t(11), { color: sub }]}>{weekdayShort(date)}</Text>
-      <Text style={[f.t(16, 600), { color: fg }]}>{Number(date.slice(8, 10))}</Text>
-      <View style={[{ width: 7, height: 7, borderRadius: 4, borderWidth: 1.5 }, mark]} />
+      <Text style={[f.t(12), { color: sub }]}>{weekdayShort(date)}</Text>
+      <Text style={[f.t(16, 600), num, { color: fg }]}>{Number(date.slice(8, 10))}</Text>
+      <View style={[{ width: 8, height: 8, borderRadius: 4, borderWidth: 1.5 }, mark]} />
     </TouchableOpacity>
   );
 }
 
-/* ── The day so far ────────────────────────────────────────────────────── */
+/* ── The day page ──────────────────────────────────────────────────────── */
 
-/** Electricity when the site has it, else its first category with a baseline. */
+/** Electricity when the site has it, else its first fuel. */
 function headlineOf(view: TrendDayView): TrendViewCategory | null {
   return (
     view.categories.find((c) => c.category === "electricity") ??
@@ -346,67 +370,28 @@ function headlineOf(view: TrendDayView): TrendViewCategory | null {
   );
 }
 
-function DayCard({ view }: { view: TrendDayView }) {
-  const t = useJoTheme();
-  const c = headlineOf(view);
-  if (!c) return null;
-  const summary = savingSummary(c, { missing: c.entered ? 0 : 1, noun: "reading" });
-  const color = toneColor(t, summary.tone);
-  const shown = c.entered && summary.saving != null;
-  return (
-    <Card radius={28} style={{ paddingTop: 18, paddingHorizontal: 20, paddingBottom: 20, gap: 14 }}>
-      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-        <Text style={[f.t(13), { color: t.muted, flexShrink: 1 }]}>{c.label} saved so far</Text>
-        <TrendPill label={baselineLabel(c)} />
-      </View>
-      <View style={{ flexDirection: "row", alignItems: "baseline", justifyContent: "space-between", gap: 12 }}>
-        <Text style={[f.d(36, -0.02), { color: shown ? color : t.ink }]}>
-          {shown ? formatPct(summary.saving_pct) : "—"}
-        </Text>
-        <Text style={[f.t(16, 500), { color: t.ink, flexShrink: 1 }]} numberOfLines={1}>
-          {shown ? `${formatIndian(summary.saving as number)} ${c.unit}` : ""}
-        </Text>
-      </View>
-      <SavingBar
-        pct={shown ? summary.bar_pct : 0}
-        markPct={summary.target_mark_pct}
-        color={color}
-        label={shown ? savingBarLabel(summary, `the ${formatIndian(c.baseline ?? 0)} ${c.unit} baseline`) : "Not entered yet"}
-      />
-      <View style={{ flexDirection: "row", justifyContent: "space-between", gap: 12 }}>
-        <Text style={[f.t(12), { color: t.muted, flexShrink: 1 }]} numberOfLines={1}>
-          {c.baseline != null ? `Baseline ${formatIndian(c.baseline)} ${c.unit}` : "No baseline yet"}
-        </Text>
-        <Text style={[f.t(12), { color: t.muted }]}>
-          {c.target_pct != null ? `Target ${formatTargetPct(c.target_pct)}` : "No target set"}
-        </Text>
-      </View>
-      {!c.entered ? (
-        <Text style={[f.t(12.5), { color: t.ink3 }]}>Enter {inSentence(c.label)} to see the saving.</Text>
-      ) : c.provisional ? (
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-          <TrendPill label="Provisional" tone="warn" />
-          <Text style={[f.t(12.5), { color: t.ink3, flexShrink: 1 }]}>{provisionalReason(view)}</Text>
-        </View>
-      ) : null}
-    </Card>
-  );
-}
-
-/* ── Readings ──────────────────────────────────────────────────────────── */
-
-function Readings({
+/**
+ * The day as one page of the meter book: what is saved so far at the top,
+ * then today's round, the categories in the order they are entered
+ * (Electricity, then DG, Solar and Wind, which change it, then the fuels).
+ */
+function DaySheet({
   view,
   siteCode,
   date,
   today,
+  onDeleted,
 }: {
   view: TrendDayView;
   siteCode: string;
   date: string;
   today: string;
+  onDeleted: () => void;
 }) {
   const t = useJoTheme();
+  const canDelete = useCanDelete();
+  const [deleting, setDeleting] = useState(false);
+  const anything = view.categories.some((c) => c.entered || c.sync != null);
   const next = nextToEnter(view);
   const total = view.categories.length;
   const done = view.categories.filter((c) => c.entered && c.sync !== "failed").length;
@@ -423,28 +408,50 @@ function Readings({
   }
 
   return (
-    <View style={{ gap: 10 }}>
-      <View style={{ flexDirection: "row", alignItems: "baseline", justifyContent: "space-between", paddingHorizontal: 4 }}>
-        <Text accessibilityRole="header" style={[f.t(15, 600), { color: t.ink }]}>
-          Readings{date === today ? "" : `, ${dayMonthLabel(date)}`}
-        </Text>
-        <Text style={[f.t(13), { color: t.muted }]}>
-          {done} of {total} entered
-        </Text>
-      </View>
-
-      {view.categories.map((c) => (
-        <CategoryRow
-          key={c.category}
-          c={c}
-          isNext={next?.category === c.category}
-          onPress={() => {
-            // The notice has been seen once the row is opened.
-            if (c.sync === "replaced") void TrendSheetService.acknowledgeReplaced(siteCode, date);
-            openCategory(siteCode, date, c);
-          }}
-        />
-      ))}
+    <View style={{ gap: 4 }}>
+      <Card radius={24} style={{ overflow: "hidden" }}>
+        <DayResult view={view} />
+        <View style={{ borderTopWidth: 1, borderTopColor: t.line, paddingTop: 16, paddingHorizontal: 18, paddingBottom: 4, gap: 12 }}>
+          <View style={{ flexDirection: "row", alignItems: "baseline", justifyContent: "space-between", gap: 12 }}>
+            <Text accessibilityRole="header" style={[f.t(15, 600), { color: t.ink }]}>
+              {date === today ? "Today’s round" : `Round for ${dayMonthLabel(date)}`}
+            </Text>
+            <Text style={[f.t(13), num, { color: complete ? t.ok : t.muted }]}>
+              {done} of {total} entered
+            </Text>
+          </View>
+          {/* One segment per category, in round order: filled once entered. */}
+          <View style={{ flexDirection: "row", gap: 4 }} importantForAccessibility="no-hide-descendants" accessibilityElementsHidden>
+            {view.categories.map((c) => (
+              <View
+                key={c.category}
+                style={{
+                  flex: 1,
+                  height: 4,
+                  borderRadius: 2,
+                  backgroundColor: c.sync === "failed" ? t.bad : c.entered ? t.ok : t.track,
+                }}
+              />
+            ))}
+          </View>
+          <View>
+            {view.categories.map((c, i) => (
+              <RoundRow
+                key={c.category}
+                index={i + 1}
+                c={c}
+                first={i === 0}
+                isNext={next?.category === c.category}
+                onPress={() => {
+                  // The notice has been seen once the row is opened.
+                  if (c.sync === "replaced") void TrendSheetService.acknowledgeReplaced(siteCode, date);
+                  openCategory(siteCode, date, c);
+                }}
+              />
+            ))}
+          </View>
+        </View>
+      </Card>
 
       {complete ? (
         <TouchableOpacity
@@ -456,11 +463,113 @@ function Readings({
           <Bx name="bx-chevron-right" size={18} color={t.accentInk} />
         </TouchableOpacity>
       ) : null}
+
+      {canDelete && anything ? (
+        <TouchableOpacity
+          onPress={async () => {
+            if (deleting) return;
+            setDeleting(true);
+            const gone = await confirmDeleteDay(view);
+            setDeleting(false);
+            if (gone) onDeleted();
+          }}
+          disabled={deleting}
+          accessibilityRole="button"
+          accessibilityState={{ busy: deleting }}
+          accessibilityLabel={`Delete every entry for ${dateLabel(date)}`}
+          style={{
+            minHeight: 48,
+            flexDirection: "row",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 6,
+            opacity: deleting ? 0.5 : 1,
+          }}
+        >
+          <Bx name="bx-trash" size={17} color={t.bad} />
+          <Text style={[f.t(14, 600), { color: t.bad }]}>Delete all entries for {dayMonthLabel(date)}</Text>
+        </TouchableOpacity>
+      ) : null}
     </View>
   );
 }
 
-function CategoryRow({ c, isNext, onPress }: { c: TrendViewCategory; isNext: boolean; onPress: () => void }) {
+/** The top of the day page: the headline category's saving so far. */
+function DayResult({ view }: { view: TrendDayView }) {
+  const t = useJoTheme();
+  const c = headlineOf(view);
+  if (!c) return null;
+  const summary = savingSummary(c, { missing: c.entered ? 0 : 1, noun: "reading" });
+  const color = toneColor(t, summary.tone);
+  const shown = c.entered && summary.saving != null;
+  return (
+    <View style={{ paddingTop: 18, paddingHorizontal: 18, paddingBottom: 18, gap: 12 }}>
+      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+        <Text style={[f.t(13), { color: t.muted, flexShrink: 1 }]}>{c.label} saved so far</Text>
+        <BaselineKindPill c={c} />
+      </View>
+      {shown ? (
+        <>
+          <View style={{ flexDirection: "row", alignItems: "baseline", justifyContent: "space-between", gap: 12 }}>
+            <Text style={[f.d(36, -0.02), num, { color }]}>{formatPct(summary.saving_pct)}</Text>
+            <Text style={[f.t(16, 500), num, { color: t.ink, flexShrink: 1 }]} numberOfLines={1}>
+              {`${formatIndian(summary.saving as number)} ${c.unit}`}
+            </Text>
+          </View>
+          {(summary.saving as number) < 0 ? (
+            <Text style={[f.t(12.5), num, { color: t.ink3 }]}>{summary.note}</Text>
+          ) : (
+            <SavingBar
+              savingPct={summary.saving_pct}
+              targetPct={summary.target_pct}
+              color={color}
+              label={savingBarLabel(summary, `the ${formatIndian(c.baseline ?? 0)} ${c.unit} baseline`)}
+            />
+          )}
+        </>
+      ) : (
+        // Not entered: say so in words. A giant dash over an empty bar read as a broken chart.
+        <Text style={[f.d(24, -0.02, 1.2), { color: t.ink3 }]}>{c.entered ? "Not worked out yet" : "Not entered yet"}</Text>
+      )}
+      <View style={{ flexDirection: "row", justifyContent: "space-between", gap: 12 }}>
+        <Text style={[f.t(12.5), num, { color: t.muted, flexShrink: 1 }]} numberOfLines={1}>
+          {c.baseline != null ? `Baseline ${formatIndian(c.baseline)} ${c.unit}` : "No baseline yet"}
+        </Text>
+        <Text style={[f.t(12.5), num, { color: t.muted }]}>
+          {c.target_pct != null ? `Target ${formatTargetPct(c.target_pct)}` : "No target set"}
+        </Text>
+      </View>
+      {c.entered && summary.saving == null && summary.note ? (
+        <Text style={[f.t(12.5), { color: t.ink3, lineHeight: 18 }]}>{summary.note}</Text>
+      ) : c.entered && c.provisional ? (
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <TrendPill label="Provisional" tone="warn" />
+          <Text style={[f.t(12.5), { color: t.ink3, flexShrink: 1 }]}>{provisionalReason(view)}</Text>
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+/**
+ * One step of the round. The number is the step's place in the round (the
+ * order is real: DG, Solar and Wind change Electricity's figure). A done step
+ * swaps its number for a tick and says what was entered; the next step
+ * carries the accent.
+ */
+function RoundRow({
+  index,
+  c,
+  first,
+  isNext,
+  onPress,
+}: {
+  index: number;
+  c: TrendViewCategory;
+  first: boolean;
+  isNext: boolean;
+  onPress: () => void;
+}) {
   const t = useJoTheme();
   const failed = c.sync === "failed";
   const done = c.entered && !failed;
@@ -470,30 +579,57 @@ function CategoryRow({ c, isNext, onPress }: { c: TrendViewCategory; isNext: boo
       ? c.sync_error || "Replaced by a newer save"
       : categorySubtitle(c);
   const state = failed ? "needs attention" : done ? (c.sync === "pending" ? "entered, not sent yet" : "entered") : "not entered";
+  const badge = failed
+    ? { bg: t.badTint, border: t.badTint }
+    : done
+      ? { bg: t.okTint, border: t.okTint }
+      : isNext
+        ? { bg: t.accent, border: t.accent }
+        : { bg: "transparent", border: t.lineStrong };
   return (
-    <Card
-      radius={22}
+    <TouchableOpacity
       onPress={onPress}
+      activeOpacity={0.7}
+      accessibilityRole="button"
       accessibilityLabel={`${c.label}, ${state}. ${sub}`}
-      style={{ minHeight: 72, paddingVertical: 12, paddingHorizontal: 14, flexDirection: "row", alignItems: "center", gap: 12 }}
+      style={{
+        minHeight: 68,
+        paddingVertical: 12,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 14,
+        borderTopWidth: first ? 0 : 1,
+        borderTopColor: t.line,
+      }}
     >
       <View
         style={{
-          width: 44,
-          height: 44,
-          borderRadius: 14,
-          backgroundColor: t.raised,
+          width: 32,
+          height: 32,
+          borderRadius: 16,
+          borderWidth: 1.5,
+          borderColor: badge.border,
+          backgroundColor: badge.bg,
           alignItems: "center",
           justifyContent: "center",
         }}
       >
-        <Bx name={categoryIcon(c.category)} size={20} color={t.ink} />
+        {failed ? (
+          <Bx name="bx-error" size={16} color={t.bad} />
+        ) : done ? (
+          <Bx name="bx-check" size={18} color={t.ok} />
+        ) : (
+          <Text style={[f.t(14, 600), num, { color: isNext ? t.onAccent : t.muted }]}>{index}</Text>
+        )}
       </View>
       <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
-        <Text style={[f.t(16, 600), { color: t.ink }]} numberOfLines={1}>
-          {c.label}
-        </Text>
-        <Text style={[f.t(13), { color: failed ? t.bad : t.muted }]} numberOfLines={2}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+          <Bx name={categoryIcon(c.category)} size={16} color={t.muted} />
+          <Text style={[f.t(16, 600), { color: t.ink, flexShrink: 1 }]} numberOfLines={1}>
+            {c.label}
+          </Text>
+        </View>
+        <Text style={[f.t(13), num, { color: failed ? t.bad : t.muted }]} numberOfLines={2}>
           {sub}
         </Text>
         {c.sync === "pending" ? (
@@ -502,28 +638,20 @@ function CategoryRow({ c, isNext, onPress }: { c: TrendViewCategory; isNext: boo
           </View>
         ) : null}
       </View>
-      {failed ? (
-        <View style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: t.badTint, alignItems: "center", justifyContent: "center" }}>
-          <Bx name="bx-error-circle" size={17} color={t.bad} />
-        </View>
-      ) : done ? (
-        <View style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: t.okTint, alignItems: "center", justifyContent: "center" }}>
-          <Bx name="bx-check" size={18} color={t.ok} />
-        </View>
-      ) : isNext ? (
+      {isNext && !done && !failed ? (
         <View style={{ height: 36, paddingHorizontal: 16, borderRadius: 18, backgroundColor: t.accent, alignItems: "center", justifyContent: "center" }}>
           <Text style={[f.t(14, 600), { color: t.onAccent }]}>Enter</Text>
         </View>
       ) : (
         <Bx name="bx-chevron-right" size={20} color={t.muted} />
       )}
-    </Card>
+    </TouchableOpacity>
   );
 }
 
 function HubSkeleton() {
   return (
-    <View style={{ gap: 12 }} accessibilityLabel="Loading the trend sheet">
+    <View style={{ gap: 12 }} accessibilityLabel="Loading the trend sheet…">
       <Shimmer height={68} radius={18} />
       <Shimmer height={170} radius={28} />
       <Shimmer height={72} radius={22} />

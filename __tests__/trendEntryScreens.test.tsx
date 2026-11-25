@@ -6,7 +6,7 @@
  * to the service on Save.
  */
 import React from "react";
-import { Text, TextInput } from "react-native";
+import { Keyboard, Text, TextInput } from "react-native";
 import renderer, { act } from "react-test-renderer";
 
 jest.mock("expo-router", () => ({
@@ -85,7 +85,9 @@ jest.mock("@/hooks/useNetworkStatus", () => ({
 }));
 
 let mockView: any = null;
+let mockOnPhone = new Set<string>();
 const mockSaveCategory = jest.fn(async (..._args: any[]) => ({}));
+const mockDeleteEntry = jest.fn(async (..._args: any[]): Promise<any> => ({ ok: true, deleted: true }));
 const mockFetchDay = jest.fn(async (..._args: any[]): Promise<any> => ({ ok: true, data: {} }));
 // What a sync answer or a pull does: the cache changed, the screens re-read it.
 let mockListeners: Array<() => void> = [];
@@ -95,6 +97,8 @@ jest.mock("@/services/TrendSheetService", () => ({
     viewFromCache: jest.fn(async () => mockView),
     fetchDay: (...args: any[]) => mockFetchDay(...args),
     saveCategory: (...args: any[]) => mockSaveCategory(...args),
+    enteredDatesOnPhone: jest.fn(async () => mockOnPhone),
+    deleteEntry: (...args: any[]) => mockDeleteEntry(...args),
   },
   subscribeTrendSheet: (listener: () => void) => {
     mockListeners.push(listener);
@@ -261,7 +265,36 @@ const press = async (tree: renderer.ReactTestRenderer, label: string) => {
 const hasButton = (tree: renderer.ReactTestRenderer, label: string) =>
   tree.root.findAll((n) => n.props.accessibilityLabel === label && typeof n.props.onPress === "function").length > 0;
 
+const { showAlert: mockShowAlert } = jest.requireMock("@/utils/alert") as { showAlert: jest.Mock };
+
+/** Press a button of the last alert shown. */
+const answerAlert = async (text: string) => {
+  const buttons = mockShowAlert.mock.calls.at(-1)?.[2] ?? [];
+  await act(async () => {
+    buttons.find((b: any) => b.text === text)?.onPress?.();
+    await settle();
+  });
+};
+
+/** Raise or drop the software keyboard as the screens hear it. */
+let keyboardListeners: Record<string, (() => void)[]> = {};
+const setKeyboard = async (open: boolean) => {
+  const events = open ? ["keyboardWillShow", "keyboardDidShow"] : ["keyboardWillHide", "keyboardDidHide"];
+  await act(async () => {
+    for (const e of events) for (const l of keyboardListeners[e] ?? []) l();
+    await settle();
+  });
+};
+
 beforeEach(() => {
+  keyboardListeners = {};
+  jest.spyOn(Keyboard, "addListener").mockImplementation(((event: string, listener: () => void) => {
+    (keyboardListeners[event] ??= []).push(listener);
+    return { remove: () => {} } as any;
+  }) as any);
+  mockShowAlert.mockClear();
+  mockOnPhone = new Set();
+  mockDeleteEntry.mockClear();
   mockCanEdit = true;
   mockCanSave = true;
   mockConnected = true;
@@ -422,7 +455,8 @@ describe("Electricity entry", () => {
     const view = previewSave(viewOfContext(apolloMain()), "electricity", ELECTRICITY_SAVED);
     view.categories[0] = { ...view.categories[0], sync: "pending", draft: ELECTRICITY_SAVED };
     const tree = await openElectricity(view);
-    expect([field(tree, "Today", 0).props.value, field(tree, "Today", 1).props.value]).toEqual(["53073.41", "37422.66"]);
+    // A field that is not being typed in shows its figure grouped.
+    expect([field(tree, "Today", 0).props.value, field(tree, "Today", 1).props.value]).toEqual(["53,073.41", "37,422.66"]);
   });
 
   it("shows one units field for a block that takes typed units", async () => {
@@ -473,7 +507,7 @@ describe("Electricity entry", () => {
   it("keeps what was typed when the update block is showing", async () => {
     const tree = await openElectricity(viewOfContext({ ...apolloMain(), calc_version: 2 }));
     await type(tree, "Today", "53073.41", 0);
-    expect(field(tree, "Today", 0).props.value).toBe("53073.41");
+    expect(field(tree, "Today", 0).props.value).toBe("53,073.41");
   });
 
   it("offers no Save to a role that cannot edit daily entry", async () => {
@@ -618,5 +652,130 @@ describe("Day summary", () => {
   it("says how many categories are still open", async () => {
     const view = previewSave(viewOfContext(apolloMain()), "electricity", ELECTRICITY_SAVED);
     expect(screenText(await open(TrendSummary, "/trend-summary", view))).toContain("1 of 3 entered");
+  });
+});
+
+describe("day bar", () => {
+  it("shows the day's baseline at the top of the entry screen", async () => {
+    const tree = await open(TrendElectricity, "/trend-electricity", viewOfContext(apolloMain()));
+    expect(screenText(tree)).toContain("35,988.88");
+  });
+
+  it("keeps the baseline on screen while the keyboard is up", async () => {
+    const tree = await open(TrendElectricity, "/trend-electricity", viewOfContext(apolloMain()));
+    await setKeyboard(true);
+    expect(screenText(tree)).toContain("35,988.88");
+  });
+
+  it("shows Electricity's baseline on the DG screen", async () => {
+    const tree = await open(TrendDg, "/trend-dg", viewOfContext(apolloMain()));
+    expect(screenText(tree)).toContain("Electricity sunday baseline");
+  });
+
+  it("says when the day being entered is not today", async () => {
+    const day = { ...apolloMain(), date: "2026-11-13" };
+    const tree = await open(TrendElectricity, "/trend-electricity", viewOfContext(day), { date: "2026-11-13" });
+    expect(screenText(tree)).toContain("2 days ago");
+  });
+});
+
+describe("Save with the keyboard up", () => {
+  it("still offers Save", async () => {
+    const tree = await open(TrendElectricity, "/trend-electricity", viewOfContext(apolloMain()));
+    await setKeyboard(true);
+    expect(hasButton(tree, "Save")).toBe(true);
+  });
+
+  it("saves from the keyboard row", async () => {
+    const tree = await open(TrendElectricity, "/trend-electricity", viewOfContext(apolloMain()));
+    await setKeyboard(true);
+    await type(tree, "Today", "53073.41", 0);
+    await type(tree, "Today", "37422.66", 1);
+    await press(tree, "Save");
+    expect(mockSaveCategory).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("skipped days", () => {
+  const skippedSince = (last: string) => {
+    const day = apolloMain();
+    day.categories = day.categories.map((c) => (c.category === "electricity" ? { ...c, last_entry_date: last } : c));
+    return viewOfContext(day);
+  };
+  const typeBoth = async (tree: renderer.ReactTestRenderer) => {
+    await type(tree, "Today", "53073.41", 0);
+    await type(tree, "Today", "37422.66", 1);
+  };
+
+  it("says which earlier day is not entered", async () => {
+    const tree = await open(TrendElectricity, "/trend-electricity", skippedSince("2026-11-12"));
+    expect(screenText(tree)).toContain("Fri, 13 Nov is not entered");
+  });
+
+  it("refuses to save while an earlier day is skipped", async () => {
+    const tree = await open(TrendElectricity, "/trend-electricity", skippedSince("2026-11-12"));
+    await typeBoth(tree);
+    await press(tree, "Save electricity");
+    expect(mockSaveCategory).not.toHaveBeenCalled();
+  });
+
+  it("asks for the first skipped day", async () => {
+    const tree = await open(TrendElectricity, "/trend-electricity", skippedSince("2026-11-12"));
+    await typeBoth(tree);
+    await press(tree, "Save electricity");
+    expect(mockShowAlert.mock.calls.at(-1)?.[0]).toBe("Enter 13 Nov first");
+  });
+
+  it("counts days this phone entered but has not sent", async () => {
+    mockOnPhone = new Set(["2026-11-13", "2026-11-14"]);
+    const tree = await open(TrendElectricity, "/trend-electricity", skippedSince("2026-11-12"));
+    await typeBoth(tree);
+    await press(tree, "Save electricity");
+    expect(mockSaveCategory).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not ask on a category's first day", async () => {
+    const tree = await open(TrendElectricity, "/trend-electricity", skippedSince(null as any));
+    await typeBoth(tree);
+    await press(tree, "Save electricity");
+    expect(mockSaveCategory).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("deleting a category", () => {
+  const entered = () => {
+    const day = apolloMain();
+    day.categories = day.categories.map((c) => (c.category === "electricity" ? { ...c, entered: true } : c));
+    return viewOfContext(day);
+  };
+  const label = "Delete Electricity for Sun, 15 Nov";
+
+  it("is offered once the category is entered", async () => {
+    const tree = await open(TrendElectricity, "/trend-electricity", entered());
+    expect(hasButton(tree, label)).toBe(true);
+  });
+
+  it("is not offered before anything is entered", async () => {
+    const tree = await open(TrendElectricity, "/trend-electricity", viewOfContext(apolloMain()));
+    expect(hasButton(tree, label)).toBe(false);
+  });
+
+  it("is not offered to a role without delete", async () => {
+    mockCanSave = false;
+    const tree = await open(TrendElectricity, "/trend-electricity", entered());
+    expect(hasButton(tree, label)).toBe(false);
+  });
+
+  it("deletes nothing until it is confirmed", async () => {
+    const tree = await open(TrendElectricity, "/trend-electricity", entered());
+    await press(tree, label);
+    expect(mockDeleteEntry).not.toHaveBeenCalled();
+  });
+
+  it("deletes only this category of this day once confirmed", async () => {
+    const tree = await open(TrendElectricity, "/trend-electricity", entered());
+    await press(tree, label);
+    await answerAlert("Delete");
+    expect(mockDeleteEntry).toHaveBeenCalledWith(SITE, DAY, "electricity");
   });
 });

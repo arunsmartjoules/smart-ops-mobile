@@ -414,6 +414,61 @@ async function acknowledgeReplaced(siteCode: string, date: string): Promise<void
     );
 }
 
+// --- Deleting --------------------------------------------------------------------------------
+
+export type TrendDeleteResult =
+  | { ok: true; deleted: boolean }
+  /** `offline`: the request never reached the server. */
+  | { ok: false; error: string; offline: boolean };
+
+/**
+ * Delete one category of a day, or the whole day (`category` null), on the
+ * server. Needs a connection: a delete is not queued.
+ *
+ * This phone's own entries for it (and their queue items) go first, so a
+ * save still waiting in the queue cannot put the entry back after the
+ * server removed it. They are what the user asked to delete either way, so
+ * they stay gone even when the server cannot be reached.
+ */
+async function deleteEntry(
+  siteCode: string,
+  date: string,
+  category: TrendCategory | null,
+): Promise<TrendDeleteResult> {
+  ensureDatabaseConnection();
+  const entries = (await readEntries(siteCode)).filter(
+    (e) => e.entry_date === date && (category === null || e.category === category),
+  );
+  for (const e of entries) await discardEntry(siteCode, date, e.category);
+
+  const url = category ? `${dayUrl(siteCode, date)}/categories/${category}` : dayUrl(siteCode, date);
+  try {
+    const res = await apiFetch(url, { method: "DELETE" });
+    const body = await res.json().catch(() => null);
+    if (!res.ok || !body?.success || !body.data?.day) {
+      return { ok: false, error: body?.error || `HTTP ${res.status}`, offline: false };
+    }
+    await writeContext(body.data.day as TrendDayContext);
+    notify();
+    return { ok: true, deleted: body.data.deleted === true };
+  } catch (error) {
+    logger.warn("TrendSheetService: delete failed", { module: MODULE, siteCode, date, category, error });
+    notify();
+    return { ok: false, error: "No connection", offline: true };
+  }
+}
+
+/**
+ * The dates this phone holds an entry for in one category, sent or not. A
+ * refused entry does not count: that day is not entered.
+ */
+async function enteredDatesOnPhone(siteCode: string, category: TrendCategory): Promise<Set<string>> {
+  const entries = await readEntries(siteCode);
+  return new Set(
+    entries.filter((e) => e.category === category && e.sync_status !== "failed").map((e) => e.entry_date),
+  );
+}
+
 // --- Day list (week strip, month screen) ---------------------------------------------------
 
 async function listDays(
@@ -521,6 +576,8 @@ const TrendSheetService = {
   replaySave,
   giveUpSave,
   discardEntry,
+  deleteEntry,
+  enteredDatesOnPhone,
   acknowledgeReplaced,
   listDays,
   unsentEntries,

@@ -432,9 +432,11 @@ export default function RootLayout() {
                   <Stack.Screen name="history/site-history" />
                   <Stack.Screen name="pm-execution" />
                   <Stack.Screen name="shift-signoff" />
-                  <Stack.Screen name="trend-electricity" />
-                  <Stack.Screen name="trend-dg" />
-                  <Stack.Screen name="trend-fuel" />
+                  {/* No iOS swipe-back on the entry screens: it would drop typed readings without the
+                      "Leave without saving?" ask the back button and Android's back key go through. */}
+                  <Stack.Screen name="trend-electricity" options={{ gestureEnabled: false }} />
+                  <Stack.Screen name="trend-dg" options={{ gestureEnabled: false }} />
+                  <Stack.Screen name="trend-fuel" options={{ gestureEnabled: false }} />
                   <Stack.Screen name="trend-summary" />
                   <Stack.Screen name="trend-month" />
                 </Stack>

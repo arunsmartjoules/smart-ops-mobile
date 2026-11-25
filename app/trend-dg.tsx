@@ -12,17 +12,19 @@
 import React, { useEffect, useState } from "react";
 import { Text, View } from "react-native";
 import { Card, f, useJoTheme } from "@/components/jo/ui";
-import { NumberField, ReadOnlyEntry } from "@/components/sitelogs/LogsKit";
+import { ReadOnlyEntry } from "@/components/sitelogs/LogsKit";
+import { ReadingInput } from "@/components/trend/ReadingField";
 import {
-  ChoiceToggle,
   EntryActions,
   EntryFrame,
   FieldError,
   FooterPanel,
   MissingSite,
   SavingReadout,
+  TwoWayChoice,
   backToHub,
   confirmLeave,
+  num,
   dayStateScreen,
   openCategory,
   safeDate,
@@ -155,9 +157,12 @@ function DgForm({ view, category, siteCode }: { view: TrendDayView; category: Tr
 
   const [form, setForm] = useEntryForm(category, isDirty, initialForm);
   const [touched, setTouched] = useState(false);
+  // "Ran" was tapped before anything was typed.
+  const [ranChosen, setRanChosen] = useState(false);
 
   const states = category.blocks.map((b) => blockState(b, form.blocks[b.block_id] ?? EMPTY, factor));
   const missing = form.notUsed ? 0 : states.filter((s) => s.error).length;
+  const anyTyped = states.some((s) => s.form.litres.trim() !== "" || s.form.units.trim() !== "");
   const ready = missing === 0 && (form.notUsed || states.length > 0);
 
   const fields: TrendSaveFields = {
@@ -222,72 +227,106 @@ function DgForm({ view, category, siteCode }: { view: TrendDayView; category: Tr
       onPick={(c) => confirmLeave(dirty.current, () => openCategory(siteCode, date, c, true))}
       onBack={() => confirmLeave(dirty.current, backToHub)}
       footer={
-        <FooterPanel>
-          {summary ? (
-            <SavingReadout
-              label={ready ? "Electricity saved after DG" : "Electricity saved, before DG"}
-              summary={summary}
-              unit={electricity?.unit ?? category.unit}
+        <FooterPanel
+          readout={
+            summary ? (
+              <SavingReadout
+                label={ready ? "Electricity saved after DG" : "Electricity saved, before DG"}
+                summary={summary}
+                unit={electricity?.unit ?? category.unit}
+                compact={keyboardOpen}
+              />
+            ) : (
+              <Text style={[f.t(keyboardOpen ? 12 : 13), { color: t.muted, lineHeight: keyboardOpen ? 16 : 18 }]} numberOfLines={keyboardOpen ? 2 : undefined}>
+                Electricity is not entered yet. DG units are added to its consumption once it is.
+              </Text>
+            )
+          }
+          actions={
+            <EntryActions
+              view={view}
+              category={category}
+              siteCode={siteCode}
+              saved={saved}
+              busy={busy}
+              onSave={onSave}
               compact={keyboardOpen}
             />
-          ) : (
-            <Text style={[f.t(13), { color: t.muted, lineHeight: 18 }]}>
-              Electricity is not entered yet. DG units are added to its consumption once it is.
-            </Text>
-          )}
-          {keyboardOpen ? null : (
-            <EntryActions view={view} category={category} siteCode={siteCode} saved={saved} busy={busy} onSave={onSave} />
-          )}
-        </FooterPanel>
+          }
+        />
       }
     >
-      {states.map((s) => {
-        const idle = form.notUsed;
-        const error = touched && !idle ? s.error : null;
-        return (
-          <Card key={s.block.block_id} radius={24} style={{ padding: 16, gap: 12 }}>
-            <View style={{ flexDirection: "row", alignItems: "baseline", justifyContent: "space-between", gap: 12 }}>
-              <Text accessibilityRole="header" style={[f.t(16, 600), { color: t.ink, flexShrink: 1 }]} numberOfLines={1}>
-                {s.block.name}
-              </Text>
-              <Text style={[f.t(13), { color: t.muted }]}>
-                {factor != null && factor > 0 ? `1 L = ${formatIndian(factor, 0, 3)} ${category.unit}` : "No DG factor set"}
-              </Text>
-            </View>
+      {/* The question first: on most days the DG does not run, and that is an answer, not a blank. */}
+      <TwoWayChoice
+        question="Did the DG run today?"
+        yes="Ran"
+        no="Did not run"
+        noLabel="DG did not run today"
+        value={form.notUsed ? "no" : ranChosen || anyTyped ? "yes" : null}
+        onYes={() => {
+          setRanChosen(true);
+          if (form.notUsed) {
+            markDirty();
+            setForm((prev) => ({ ...prev, notUsed: false }));
+          }
+        }}
+        onNo={() => {
+          markDirty();
+          setTouched(false);
+          setForm((prev) => ({ ...prev, notUsed: true }));
+        }}
+      />
 
-            <NumberField
-              label={s.litresAuto != null && !idle ? "Diesel used, calculated" : "Diesel used"}
-              value={idle ? "0" : s.form.litres || (s.litresAuto != null ? String(s.litresAuto) : "")}
-              onChangeText={(v) => edit(s.block.block_id, { litres: v })}
-              onBlur={() => setTouched(true)}
-              unit="L"
-              placeholder="0.00"
-              size="sm"
-              editable={!idle}
-              error={!!error}
-            />
-            {error ? <FieldError>{error}</FieldError> : null}
+      {form.notUsed ? (
+        <Text style={[f.t(13), { color: t.muted, lineHeight: 19, paddingHorizontal: 2 }]}>
+          Saved as zero litres and zero units for {category.blocks.length === 1 ? "the DG" : "every DG"}.
+        </Text>
+      ) : (
+        states.map((s) => {
+          const error = touched ? s.error : null;
+          return (
+            <Card key={s.block.block_id} radius={24} style={{ padding: 16, gap: 14 }}>
+              <View style={{ flexDirection: "row", alignItems: "baseline", justifyContent: "space-between", gap: 12 }}>
+                <Text accessibilityRole="header" style={[f.t(16, 600), { color: t.ink, flexShrink: 1 }]} numberOfLines={2}>
+                  {s.block.name}
+                </Text>
+                <Text style={[f.t(13), num, { color: t.muted }]}>
+                  {factor != null && factor > 0 ? `1 L = ${formatIndian(factor, 0, 3)} ${category.unit}` : "No DG factor set"}
+                </Text>
+              </View>
 
-            <View style={{ gap: 6 }}>
-              <NumberField
-                label={s.unitsAuto != null && !idle ? "Units generated, calculated" : "Units generated"}
-                value={idle ? "0" : s.form.units || (s.unitsAuto != null ? String(s.unitsAuto) : "")}
+              <ReadingInput
+                label={s.litresAuto != null ? "Diesel used, calculated" : "Diesel used"}
+                hint={`${s.block.name}, diesel used in litres`}
+                unit="L"
+                value={s.form.litres || (s.litresAuto != null ? String(s.litresAuto) : "")}
+                onChangeText={(v) => edit(s.block.block_id, { litres: v })}
+                onBlur={() => setTouched(true)}
+                muted={!s.form.litres && s.litresAuto != null}
+                error={!!error}
+              />
+              <ReadingInput
+                label={s.unitsAuto != null ? "Units generated, calculated" : "Units generated"}
+                hint={`${s.block.name}, units generated`}
+                unit={category.unit}
+                value={s.form.units || (s.unitsAuto != null ? String(s.unitsAuto) : "")}
                 onChangeText={(v) => edit(s.block.block_id, { units: v })}
                 onBlur={() => setTouched(true)}
-                unit={category.unit}
-                placeholder="0.00"
-                size="sm"
-                editable={!idle}
+                muted={!s.form.units && s.unitsAuto != null}
               />
-              <Text style={[f.t(12), { color: t.muted, lineHeight: 16, paddingHorizontal: 4 }]}>
-                {factor != null && factor > 0
-                  ? "Enter either one. The other fills in."
-                  : "Enter the units. Litres cannot be converted until an admin sets the DG factor."}
-              </Text>
-            </View>
-          </Card>
-        );
-      })}
+              {error ? (
+                <FieldError>{error}</FieldError>
+              ) : (
+                <Text style={[f.t(12.5), { color: t.muted, lineHeight: 17, paddingHorizontal: 2 }]}>
+                  {factor != null && factor > 0
+                    ? "Enter either one. The other fills in."
+                    : "Enter the units. Litres cannot be converted until an admin sets the DG factor."}
+                </Text>
+              )}
+            </Card>
+          );
+        })
+      )}
 
       {category.blocks.length === 0 ? (
         <Card radius={24} style={{ padding: 16 }}>
@@ -296,16 +335,6 @@ function DgForm({ view, category, siteCode }: { view: TrendDayView; category: Tr
           </Text>
         </Card>
       ) : null}
-
-      <ChoiceToggle
-        label="DG did not run today"
-        on={form.notUsed}
-        onPress={() => {
-          markDirty();
-          setTouched(false);
-          setForm((prev) => ({ ...prev, notUsed: !prev.notUsed }));
-        }}
-      />
     </EntryFrame>
   );
 }

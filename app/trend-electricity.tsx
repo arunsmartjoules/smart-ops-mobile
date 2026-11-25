@@ -20,6 +20,7 @@ import { Text, TouchableOpacity, View } from "react-native";
 import { Bx } from "@/components/jo/Bx";
 import { Card, PrimaryButton, f, useJoTheme } from "@/components/jo/ui";
 import { FormSheet, NumberField, ReadOnlyEntry } from "@/components/sitelogs/LogsKit";
+import { ReadingInput, ReadingPair } from "@/components/trend/ReadingField";
 import {
   EntryActions,
   EntryFrame,
@@ -30,7 +31,7 @@ import {
   StatGrid,
   TextLink,
   backToHub,
-  baselineLabel,
+  num,
   confirmLeave,
   dayStateScreen,
   openCategory,
@@ -347,34 +348,35 @@ function ElectricityForm({
         onPick={(c) => confirmLeave(dirty.current, () => openCategory(siteCode, date, c, true))}
         onBack={() => confirmLeave(dirty.current, backToHub)}
         footer={
-          <FooterPanel>
-            <SavingReadout
-              label={manual != null ? "Saved today, typed" : "Saved today"}
-              summary={summary}
-              unit={category.unit}
-              compact={keyboardOpen}
-            />
-            {keyboardOpen ? null : (
-              <>
-                <StatGrid
-                  items={[
-                    {
-                      label: baselineLabel(category),
-                      value: category.baseline != null ? formatIndian(category.baseline) : "—",
-                    },
-                    { label: "Used", value: preview?.used != null ? formatIndian(preview.used) : "—" },
-                    { label: "Adjustment", value: manual != null ? "Not applied" : formatSigned(adjustment) },
-                  ]}
-                />
-                <EntryActions
-                  view={view}
-                  category={category}
-                  siteCode={siteCode}
-                  saved={saved}
-                  busy={busy}
-                  onSave={onSave}
-                />
-              </>
+          <FooterPanel
+            readout={
+              <SavingReadout
+                label={manual != null ? "Saved today, typed" : "Saved today"}
+                summary={summary}
+                unit={category.unit}
+                compact={keyboardOpen}
+              />
+            }
+            actions={
+              <EntryActions
+                view={view}
+                category={category}
+                siteCode={siteCode}
+                saved={saved}
+                busy={busy}
+                onSave={onSave}
+                compact={keyboardOpen}
+              />
+            }
+          >
+            {/* The baseline sits in the day bar at the top; these two follow the typing, once there is a figure. */}
+            {keyboardOpen || !preview ? null : (
+              <StatGrid
+                items={[
+                  { label: "Used", value: preview.used != null ? `${formatIndian(preview.used)} ${category.unit}` : "Not worked out" },
+                  { label: "Adjustment", value: manual != null ? "Not applied" : `${formatSigned(adjustment)} ${category.unit}` },
+                ]}
+              />
             )}
           </FooterPanel>
         }
@@ -389,7 +391,7 @@ function ElectricityForm({
                 setForm((prev) => ({ ...prev, manual: v }));
               }}
               unit={category.unit}
-              placeholder="0.00"
+              placeholder=""
               size="sm"
               keyboardType="numbers-and-punctuation"
               error={manualInvalid}
@@ -408,6 +410,7 @@ function ElectricityForm({
             s={s}
             date={date}
             unit={category.unit}
+            dayBaseline={category.baseline ?? null}
             optional={optional(s)}
             showError={!!touched[s.block.block_id]}
             onChange={(v) => {
@@ -450,6 +453,7 @@ function BlockCard({
   s,
   date,
   unit,
+  dayBaseline,
   optional,
   showError,
   onChange,
@@ -459,6 +463,8 @@ function BlockCard({
   s: BlockState;
   date: string;
   unit: string;
+  /** The whole day's Electricity baseline, to catch a reading typed without its decimal point. */
+  dayBaseline: number | null;
   /** The site types its saving and this block was left empty: nothing to complain about. */
   optional: boolean;
   showError: boolean;
@@ -471,6 +477,10 @@ function BlockCard({
   const typedOpening = s.openingTyped;
   // A block that cannot take a reading yet says why straight away, not only after a blur.
   const error = optional ? null : s.needsSetup ? s.error : showError ? s.error : null;
+  // One meter using more than twice the whole site's daily baseline is almost
+  // always a slipped decimal point (times the factor it is huge). It is a
+  // warning only: the reading can still be saved.
+  const outsized = !error && s.kwh != null && dayBaseline != null && dayBaseline > 0 && s.kwh > dayBaseline * 2;
   const line = factorLine({
     mf: s.mf,
     add_adjustment: s.add,
@@ -478,59 +488,77 @@ function BlockCard({
     entry_mode: block.entry_mode,
   });
 
+  const readingError = !!error && !s.needsSetup;
+  // The meter's own movement and what it comes to: the arithmetic in one line, numbers and operators only.
+  const worked =
+    !s.units && !error && s.value != null && s.opening != null && s.mf != null && s.kwh != null && s.value >= s.opening
+      ? `+${formatIndian(round2(s.value - s.opening), 0, 3)} × ${formatIndian(s.mf, 0, 3)} = ${formatIndian(s.kwh, 0, 2)} ${unit}`
+      : s.units && s.kwh != null
+        ? `= ${formatIndian(s.kwh, 0, 2)} ${unit}`
+        : null;
+
   return (
-    <Card radius={24} style={{ paddingTop: 14, paddingHorizontal: 16, paddingBottom: 2, gap: 10 }}>
-      <View style={{ flexDirection: "row", alignItems: "baseline", justifyContent: "space-between", gap: 12 }}>
-        <Text accessibilityRole="header" style={[f.t(16, 600), { color: t.ink, flexShrink: 1 }]} numberOfLines={1}>
-          {block.name}
-        </Text>
-        <Text accessibilityLiveRegion="polite" style={[f.t(15, 600), { color: s.kwh != null ? t.ink : t.muted }]}>
-          {s.kwh != null ? `${formatIndian(s.kwh, 0, 2)} ${unit}` : "—"}
-        </Text>
-      </View>
+    <Card radius={24} style={{ paddingTop: 14, paddingHorizontal: 16, paddingBottom: 2, gap: 12 }}>
+      <Text accessibilityRole="header" style={[f.t(16, 600), { color: t.ink }]} numberOfLines={2}>
+        {block.name}
+      </Text>
 
       {s.units ? (
-        <NumberField
+        <ReadingInput
           label="Units today"
+          hint={`${block.name}, units used today`}
+          unit={unit}
           value={s.form.reading}
           onChangeText={onChange}
           onBlur={onBlur}
-          unit={unit}
-          placeholder="0.00"
-          size="sm"
           error={!!error}
         />
       ) : (
-        <View style={{ flexDirection: "row", gap: 12 }}>
-          <View style={{ flex: 1, minWidth: 0, gap: 7 }}>
-            <Text style={[f.t(12.5, 500), { color: t.ink3, paddingHorizontal: 4 }]} numberOfLines={1}>
-              {typedOpening ? "Opening, typed" : openingLabel(block.opening_date, date)}
-            </Text>
-            <View style={{ height: 54, justifyContent: "center", paddingHorizontal: 4 }}>
-              <Text style={[f.t(18, 500), { color: t.muted }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>
-                {s.opening != null ? formatIndian(s.opening) : "Not set"}
-              </Text>
-            </View>
-          </View>
-          <NumberField
+        // Yesterday's reading directly above today's, same size and right edge, so they compare by eye.
+        <ReadingPair
+          refLabel={typedOpening ? "Opening, typed" : openingLabel(block.opening_date, date)}
+          refValue={s.opening}
+          unit={unit}
+        >
+          <ReadingInput
             label="Today"
+            hint={`${block.name}, today’s closing reading`}
+            unit={unit}
             value={s.form.reading}
             onChangeText={onChange}
             onBlur={onBlur}
-            placeholder="0.00"
-            size="sm"
-            error={!!error && !s.needsSetup}
             editable={!s.needsSetup}
-            style={{ flex: 1, minWidth: 0 }}
+            error={readingError}
           />
-        </View>
+        </ReadingPair>
       )}
+
+      {worked ? (
+        <Text
+          accessibilityLiveRegion="polite"
+          style={[f.t(14, 600), num, { color: outsized ? t.warn : t.ink, textAlign: "right" }]}
+          numberOfLines={1}
+          adjustsFontSizeToFit
+          minimumFontScale={0.75}
+        >
+          {worked}
+        </Text>
+      ) : null}
 
       {error ? (
         <View style={{ gap: 2 }}>
           <FieldError>{error}</FieldError>
           {s.low ? <TextLink label="Meter changed? Set opening reading" onPress={onOpenSheet} /> : null}
           {s.needsSetup ? <TextLink label="Set opening reading and factor" onPress={onOpenSheet} /> : null}
+        </View>
+      ) : null}
+
+      {outsized ? (
+        <View accessibilityRole="alert" style={{ flexDirection: "row", alignItems: "flex-start", gap: 6 }}>
+          <Bx name="bx-error" size={15} color={t.warn} />
+          <Text style={[f.t(12.5), { color: t.ink3, flex: 1, lineHeight: 18 }]}>
+            That is more than twice the whole day’s baseline. Check the decimal point.
+          </Text>
         </View>
       ) : null}
 

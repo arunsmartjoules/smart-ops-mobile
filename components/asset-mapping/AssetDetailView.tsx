@@ -20,7 +20,8 @@ import {
   useJoTheme,
 } from "@/components/jo/ui";
 import { formatISTDateTime } from "@/utils/istDate";
-import type { MappedAsset } from "@/services/AssetMappingService";
+import type { MappedAsset, MappingField, MappingFieldValue } from "@/services/AssetMappingService";
+import ExtraFieldsCard from "./ExtraFieldsCard";
 import {
   ActionPill,
   BottomBar,
@@ -64,6 +65,10 @@ interface Props {
     onOpen: (equipmentId: string) => void;
     onAdd: (name: string) => void;
   };
+  /** Admin-defined extra fields (visible ones, in order). */
+  extraFields: MappingField[];
+  /** Save changed extra-field values; resolves true when saved. */
+  onSaveExtraFields: (changes: Record<string, MappingFieldValue | null>) => Promise<boolean>;
   canApprove: boolean;
   approving: boolean;
   onApprove: () => void;
@@ -82,6 +87,8 @@ export default function AssetDetailView({
   onPreview,
   onEditSpecs,
   equipment,
+  extraFields,
+  onSaveExtraFields,
   canApprove,
   approving,
   onApprove,
@@ -266,6 +273,8 @@ export default function AssetDetailView({
             </View>
           </SectionCard>
         ) : null}
+
+        <ExtraFieldsCard asset={asset} fields={extraFields} onSave={onSaveExtraFields} />
 
         <EquipmentCard asset={asset} onOpen={equipment.onOpen} onAdd={equipment.onAdd} />
 

@@ -56,6 +56,11 @@ export interface TrendContextCategory {
   kind: CategoryKind;
   entered: boolean;
   entered_by_name: string | null;
+  /**
+   * The latest earlier date the category was entered on (null: never). Absent
+   * from a server that predates it, which turns the skipped day check off.
+   */
+  last_entry_date?: string | null;
   entered_at: string | null;
   pending_inputs: MissingInput[];
   baseline?: number | null;
@@ -246,6 +251,50 @@ export const dateLabel = (date: string): string => `${weekdayShort(date)}, ${day
 export function monthLabel(month: string): string {
   const [y, m] = month.split("-").map(Number);
   return `${MONTHS_LONG[m - 1]} ${y}`;
+}
+
+/** Whole days from `from` to `to` (negative when `to` is earlier). */
+export function daysBetweenYmd(from: string, to: string): number {
+  const [y1, m1, d1] = from.split("-").map(Number);
+  const [y2, m2, d2] = to.split("-").map(Number);
+  return Math.round((Date.UTC(y2, m2 - 1, d2) - Date.UTC(y1, m1 - 1, d1)) / 86_400_000);
+}
+
+/** "Today", "Yesterday", "3 days ago": how far back a day is. */
+export function relativeDayLabel(date: string, today: string): string {
+  const n = daysBetweenYmd(date, today);
+  if (n === 0) return "Today";
+  if (n === 1) return "Yesterday";
+  if (n < 0) return n === -1 ? "Tomorrow" : `In ${-n} days`;
+  return `${n} days ago`;
+}
+
+/** At most this many days are walked looking for a skipped day. */
+const SKIP_SCAN_DAYS = 400;
+
+/**
+ * The first day after the category was last entered, and before `date`,
+ * that is still not entered: the day to enter before `date` can be saved.
+ * Readings carry forward from the last day entered, so a skipped day would
+ * land its units on the next day saved.
+ *
+ * `lastEntry` is the server's latest earlier entry; `onPhone` holds the
+ * dates this phone has an entry for that the server may not have yet. Null
+ * when nothing is skipped, when the category was never entered before
+ * (a site's first day), or when the server did not say (`undefined`).
+ */
+export function firstSkippedDay(
+  lastEntry: string | null | undefined,
+  date: string,
+  onPhone: ReadonlySet<string>,
+): string | null {
+  if (!lastEntry || lastEntry >= date) return null;
+  let day = addDaysYmd(lastEntry, 1);
+  for (let i = 0; day < date && i < SKIP_SCAN_DAYS; i += 1) {
+    if (!onPhone.has(day)) return day;
+    day = addDaysYmd(day, 1);
+  }
+  return null;
 }
 
 /** The seven dates ending on `today`, oldest first. */
@@ -647,6 +696,21 @@ export function toneOf(saving: number | null, savingPct: number | null, targetPc
 }
 
 const clampPct = (v: number) => Math.max(0, Math.min(100, v));
+
+const GAUGE_STEPS = [5, 10, 15, 20, 25, 30, 40, 50, 75, 100];
+
+/**
+ * The top of a saving gauge, in percent of baseline. Savings here run from
+ * about 0 to 25 %, so a bar as wide as the whole baseline showed a 0.2 %
+ * saving as a sliver. The scale is the next round step above the largest
+ * figure shown (saving or target, at least 5 %), with a little headroom.
+ */
+export function gaugeScale(...pcts: (number | null | undefined)[]): number {
+  const shown = pcts.filter((p): p is number => p != null && Number.isFinite(p) && p > 0);
+  // Headroom over the figures shown; the 5 % floor itself needs none.
+  const want = Math.max(5, Math.max(0, ...shown) * 1.15);
+  return GAUGE_STEPS.find((s) => s >= want) ?? 100;
+}
 
 /**
  * The saving line of a saving category: figures, colour and the message under
