@@ -89,6 +89,11 @@ const PM_START_CAPTURE_OWNER = "pm_start_before";
  * Overdue + Due states, so it is the default view. "All" is last and is the
  * only chip that also shows Skipped PMs.
  */
+/** Which site and range a server stats answer is for. */
+function pmStatsKey(siteCode: string, from: string, to: string): string {
+  return `${siteCode}|${from}|${to}`;
+}
+
 type PmChipKey = "Due" | "In progress" | "Completed" | "All";
 
 const CHIP_ORDER: PmChipKey[] = ["Due", "In progress", "Completed", "All"];
@@ -161,7 +166,9 @@ export default function PreventiveMaintenance() {
   const [slide, setSlide] = useState({ seq: 0, dir: 1 });
   const listSlideStyle = useListSlide(slide.seq, slide.dir);
   const [filterSheetOpen, setFilterSheetOpen] = useState(false);
-  const [serverStats, setServerStats] = useState<any>(null);
+  // Server stats with the site and range they were asked for (`pmStatsKey`):
+  // see `keepStats` below.
+  const [serverStats, setServerStats] = useState<{ key: string; data: any } | null>(null);
 
   // Safety net: never let the skeleton outlive a slow/stalled fetch.
   useEffect(() => {
@@ -187,6 +194,24 @@ export default function PreventiveMaintenance() {
   // reconcile and the local filter below all read these unchanged, and a new
   // range re-runs loadPMData exactly as the old local window did.
   const { from: currentDate, to: toDate } = useOpsDateRange();
+
+  // The counts come from the server stats only while they belong to the open
+  // site and range. Untagged, the last site's answer stayed on screen after a
+  // site switch (Kondapur's "409 PMs" over Indraprastha's empty list) until a
+  // new answer came, which a null answer, an error, offline or a late reply
+  // for the old site never did. A reply for a site or range that is no longer
+  // open is dropped; a null one keeps an earlier good answer for the same key,
+  // else the counts fall back to the local cache like the list.
+  const statsKey = pmStatsKey(siteCode, currentDate, toDate);
+  const statsKeyRef = useRef(statsKey);
+  useEffect(() => {
+    statsKeyRef.current = statsKey;
+  }, [statsKey]);
+  const keepStats = useCallback((key: string, data: any) => {
+    if (statsKeyRef.current !== key) return;
+    setServerStats((prev) => (data ? { key, data } : prev?.key === key ? prev : { key, data: null }));
+  }, []);
+  const currentServerStats = serverStats?.key === statsKey ? serverStats.data : null;
 
   const [searchQuery, setSearchQuery] = useState("");
   // Deferred copy for the expensive per-row filter below. The TextInput stays
@@ -251,10 +276,9 @@ export default function PreventiveMaintenance() {
 
         // Fetch Global Stats for the date range
         if (isConnected) {
+          const key = pmStatsKey(siteCode, currentDate, toDate);
           PMService.getStats(siteCode, currentDate, toDate)
-            .then((data) => {
-              if (data) setServerStats(data);
-            })
+            .then((data) => keepStats(key, data))
             .catch(() => {});
         }
         setLoading(false);
@@ -347,7 +371,7 @@ export default function PreventiveMaintenance() {
     },
     // PAGE_SIZE is a stable in-component const (200); allInstances.length is
     // tracked via allInstancesRef so it doesn't churn the callback identity.
-    [siteCode, currentDate, toDate, isConnected],
+    [siteCode, currentDate, toDate, isConnected, keepStats],
   );
 
   /* ── Live updates (pm_changed) ─────────────────────────────────────────
@@ -418,13 +442,11 @@ export default function PreventiveMaintenance() {
         const f = liveSiteRef.current;
         if (!f.siteCode) return;
         PMService.getStats(f.siteCode, f.currentDate, f.toDate)
-          .then((data) => {
-            if (data && liveSiteRef.current.siteCode === f.siteCode) setServerStats(data);
-          })
+          .then((data) => keepStats(pmStatsKey(f.siteCode, f.currentDate, f.toDate), data))
           .catch(() => {});
       }, 300);
     },
-    [silentReloadSoon],
+    [silentReloadSoon, keepStats],
   );
 
   useFocusEffect(
@@ -595,6 +617,7 @@ export default function PreventiveMaintenance() {
     // offline, before stats arrive, or when filtering by completed date (the
     // server stat is due-date-only). The local fallback still reflects
     // optimistic pending updates, and the list below always renders from local.
+    const serverStats = currentServerStats;
     if (serverStats && dateField !== "completed_date") {
       const inProgress =
         (serverStats.byStatus?.["In-progress"] || 0) +
@@ -612,7 +635,7 @@ export default function PreventiveMaintenance() {
     }
 
     return localCount;
-  }, [allInstances, currentDate, toDate, serverStats, dateField, todayStartMs]);
+  }, [allInstances, currentDate, toDate, currentServerStats, dateField, todayStartMs]);
 
   const handlePMCardPress = useCallback((instance: PMInstanceRow) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});

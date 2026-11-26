@@ -169,13 +169,24 @@ interface PermissionsValue {
    * services/ProjectTypePages `isModuleOnFor` and the selected site's type.
    */
   projectTypePages: ProjectTypePageMatrix;
+  /**
+   * True once `projectTypePages` is the saved answer rather than the defaults:
+   * the cache had one, the fetch answered or failed, or PAGES_READY_TIMEOUT_MS
+   * passed. A "page off" redirect waits for it, so a launch never moves a
+   * screen on the defaults when the saved settings keep it on.
+   */
+  projectTypePagesReady: boolean;
 }
+
+/** How long a "page off" verdict waits for the saved settings before using the defaults. */
+const PAGES_READY_TIMEOUT_MS = 4000;
 
 const PermissionsContext = createContext<PermissionsValue>({
   canView: () => true,
   can: () => true,
   resolved: false,
   projectTypePages: DEFAULT_PROJECT_TYPE_PAGES,
+  projectTypePagesReady: false,
 });
 
 export const usePermissions = () => useContext(PermissionsContext);
@@ -189,6 +200,8 @@ export function PermissionsProvider({ children }: { children: React.ReactNode })
   const [tick, setTick] = useState(0);
   const [projectTypePages, setProjectTypePages] =
     useState<ProjectTypePageMatrix>(DEFAULT_PROJECT_TYPE_PAGES);
+  // The user the saved settings are known for (see `projectTypePagesReady`).
+  const [pagesSettledFor, setPagesSettledFor] = useState<string | null>(null);
 
   // Re-check when the app returns to the foreground (an admin may have
   // changed the matrix).
@@ -251,9 +264,15 @@ export function PermissionsProvider({ children }: { children: React.ReactNode })
   useEffect(() => {
     if (!token || !userId) return;
     let cancelled = false;
+    const settle = () => {
+      if (!cancelled) setPagesSettledFor(userId);
+    };
     AsyncStorage.getItem(PAGES_CACHE_KEY)
       .then((raw) => {
-        if (!cancelled && raw) setProjectTypePages(parseProjectTypePages(JSON.parse(raw)));
+        if (!cancelled && raw) {
+          setProjectTypePages(parseProjectTypePages(JSON.parse(raw)));
+          settle();
+        }
       })
       .catch(() => {});
     apiFetch(`${API_BASE_URL}/api/project-type-pages`)
@@ -270,11 +289,16 @@ export function PermissionsProvider({ children }: { children: React.ReactNode })
       })
       .catch((error) => {
         logger.warn("Project type pages fetch failed", { error: String(error) });
-      });
+      })
+      .finally(settle);
+    // Offline with no cache: go on with the defaults rather than wait forever.
+    const timer = setTimeout(settle, PAGES_READY_TIMEOUT_MS);
     return () => {
       cancelled = true;
+      clearTimeout(timer);
     };
   }, [token, userId, tick]);
+  const projectTypePagesReady = !!userId && pagesSettledFor === userId;
 
   const map = bypass || !state || state.userId !== userId ? ALL_VISIBLE : state.map;
   const resolved = bypass || (!!state && state.userId === userId);
@@ -303,8 +327,8 @@ export function PermissionsProvider({ children }: { children: React.ReactNode })
     [map],
   );
   const value = useMemo(
-    () => ({ canView, can, resolved, projectTypePages }),
-    [canView, can, resolved, projectTypePages],
+    () => ({ canView, can, resolved, projectTypePages, projectTypePagesReady }),
+    [canView, can, resolved, projectTypePages, projectTypePagesReady],
   );
 
   return <PermissionsContext.Provider value={value}>{children}</PermissionsContext.Provider>;
