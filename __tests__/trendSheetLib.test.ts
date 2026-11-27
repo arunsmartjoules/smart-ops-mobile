@@ -469,9 +469,9 @@ describe("words on the screens", () => {
     expect(categorySubtitle(of(view, "electricity"))).toBe("29,394 kWh from 2 meters");
   });
 
-  it("describes a DG that did not run", () => {
+  it("shows a DG that did not run as zero", () => {
     const view = previewSave(viewOfContext(apolloMain()), "dg", body({ not_used: true }));
-    expect(categorySubtitle(of(view, "dg"))).toBe("Did not run");
+    expect(categorySubtitle(of(view, "dg"))).toBe(`0 ${of(view, "dg").unit}`);
   });
 
   it("keeps short capital labels as they are inside a sentence", () => {

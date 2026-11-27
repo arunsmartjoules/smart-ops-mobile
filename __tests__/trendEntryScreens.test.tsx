@@ -639,14 +639,17 @@ describe("Day summary", () => {
     view = previewSave(view, "dg", { ...ELECTRICITY_SAVED, not_used: true, blocks: [] });
     view = previewSave(view, "diesel", { ...ELECTRICITY_SAVED, not_used: true, blocks: [] });
     const text = screenText(await open(TrendSummary, "/trend-summary", view));
+    const unitOf = (id: string) => view.categories.find((c) => c.category === id)!.unit;
+    // A DG that did not run and a fuel with none used read 0, never a phrase.
     expect([
       text.includes("All 3 entered"),
       text.includes("25.97%"),
       text.includes("1,788.52 kWh above the 21% target"),
-      text.includes("Did not run"),
-      text.includes("None today"),
+      text.includes(`0.00 ${unitOf("dg")}`),
+      text.includes(`0.00 ${unitOf("diesel")}`),
+      text.includes("Did not run") || text.includes("None today"),
       text.includes("+2,751.30 kWh"),
-    ]).toEqual([true, true, true, true, true, true]);
+    ]).toEqual([true, true, true, true, true, false, true]);
   });
 
   it("says how many categories are still open", async () => {

@@ -136,7 +136,8 @@ function Summary({ view, siteCode }: { view: TrendDayView; siteCode: string }) {
 /** What a DG, Solar, Wind or fuel category used or generated that day, in words. */
 function quantityText(c: TrendViewCategory): string {
   if (!c.entered || c.sync === "failed") return "Not entered";
-  if (c.not_used) return c.kind === "dg" ? "Did not run" : "None today";
+  // Did not run / none used: stored as zero, shown as 0.
+  if (c.not_used) return `${formatIndian(0)} ${c.unit}`;
   return c.consumption != null ? `${formatIndian(c.consumption)} ${c.unit}` : "—";
 }
 

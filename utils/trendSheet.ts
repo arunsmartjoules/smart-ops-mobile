@@ -812,6 +812,7 @@ export function categorySubtitle(c: TrendViewCategory): string {
     const n = c.blocks.length;
     return `${formatIndian(c.consumption ?? 0, 0, 2)} ${c.unit} from ${n} meter${n === 1 ? "" : "s"}`;
   }
-  if (c.not_used) return c.kind === "dg" ? "Did not run" : "None today";
+  // A DG that did not run, or a fuel with none used, stored zero: it reads 0 like any other amount.
+  if (c.not_used) return `${formatIndian(0, 0, 2)} ${c.unit}`;
   return `${formatIndian(c.consumption ?? 0, 0, 2)} ${c.unit}`;
 }
