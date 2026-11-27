@@ -91,7 +91,26 @@ export interface MappedAsset {
   mapping_updated_at: string | null;
   /** Equipment line items under this asset, oldest first. */
   equipment: MappingEquipment[];
+  /** Admin-defined extra fields: { [field id]: value }. Absent from older backends. */
+  custom_fields?: Record<string, MappingFieldValue>;
 }
+
+/**
+ * An extra field an admin added on the web (Settings › Assets → Extra fields).
+ * One list for every site; staff fill a value per asset. Mirrors
+ * backend services/rbac/src/lib/mappingCustomFields.ts.
+ */
+export interface MappingField {
+  id: string;
+  label: string;
+  field_type: "text" | "number" | "select" | "yes_no";
+  /** Dropdown choices; empty for other types. */
+  options: string[];
+  position: number;
+  is_active: boolean;
+}
+
+export type MappingFieldValue = string | number | boolean;
 
 export type PhotoKind = "nameplate" | "location" | "no-access" | "equipment";
 
@@ -108,7 +127,7 @@ const equipmentPath = (assetId: string, equipmentId: string) =>
   `/asset-mapping/${encodeURIComponent(assetId)}/equipment/${encodeURIComponent(equipmentId)}`;
 
 async function send<T>(
-  method: "POST" | "PATCH" | "DELETE",
+  method: "POST" | "PUT" | "PATCH" | "DELETE",
   path: string,
   body: unknown,
   fallback: string,
@@ -146,6 +165,24 @@ export const AssetMappingService = {
     if (!res.ok) throw new Error(await readError(res, "Couldn't load assets."));
     const body = await res.json();
     return Array.isArray(body?.data) ? body.data : [];
+  },
+
+  /** The extra fields to show and fill, in order. */
+  async getFields(): Promise<MappingField[]> {
+    const res = await apiFetch(`${API_URL}/asset-mapping/fields`);
+    if (!res.ok) throw new Error(await readError(res, "Couldn't load the extra fields."));
+    const body = await res.json();
+    return Array.isArray(body?.data) ? body.data : [];
+  },
+
+  /** Save extra-field values; only the fields sent change, null clears one. */
+  saveExtraFields(assetId: string, values: Record<string, MappingFieldValue | null>) {
+    return send<MappedAsset>(
+      "PUT",
+      `/asset-mapping/${encodeURIComponent(assetId)}/custom-fields`,
+      { values },
+      "Couldn't save the details.",
+    );
   },
 
   /** Upload a captured photo to S3 and return its public URL. */

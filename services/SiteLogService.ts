@@ -892,8 +892,13 @@ export type SiteLogSubmitOutcome =
    * The server refused it (kept queued for retry; message for the operator).
    * `forbidden`: refused because the role lost this log type — not queued,
    * since a retry can't succeed.
+   * `duplicate`: another reading already holds this chiller + reading time;
+   * not queued, the operator has to change the time.
    */
-  | { state: "rejected"; message: string; forbidden?: boolean };
+  | { state: "rejected"; message: string; forbidden?: boolean; duplicate?: boolean };
+
+const DUPLICATE_CHILLER_READING_MESSAGE =
+  "This chiller already has a reading at this exact date and time, so it was not saved again. Change the reading date & time, then submit again.";
 
 /** How long "Complete & sign" waits for the server before reporting "queued". */
 const SUBMIT_TIMEOUT_MS = 20_000;
@@ -1228,6 +1233,22 @@ async function submitChillerReadingOnce(
     const body = await response.json().catch(() => null);
     const serverId = body?.data?.id;
     if (typeof serverId === "string" && serverId && serverId !== id) {
+      // The server keys a reading on (site, chiller, reading_time) and
+      // answered with a reading it already had at that time, keeping its
+      // values, not ours. When the phone already holds that reading (pulled,
+      // or entered earlier), ours is a second reading at a taken time: renaming
+      // onto its id would break the primary key, and every retry would too.
+      const [taken] = await db
+        .select({ id: chillerReadings.id })
+        .from(chillerReadings)
+        .where(eq(chillerReadings.id, serverId))
+        .limit(1);
+      if (taken) {
+        // A new reading the server never took must not linger as "Completed";
+        // the screen's draft still holds the values. An edited reading stays.
+        if (!input.existingId) await db.delete(chillerReadings).where(eq(chillerReadings.id, id));
+        return { state: "rejected", message: DUPLICATE_CHILLER_READING_MESSAGE, duplicate: true, id };
+      }
       await db.update(chillerReadings).set({ id: serverId, updated_at: Date.now() }).where(eq(chillerReadings.id, id));
       return { ...outcome, id: serverId };
     }

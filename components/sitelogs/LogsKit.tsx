@@ -281,12 +281,17 @@ export function NumberField({
   surface = "raised",
   keyboardType = "numeric",
   editable = true,
+  muted,
+  a11yLabel,
+  onBlur,
   style,
 }: {
   label?: string;
   required?: boolean;
   value: string;
   onChangeText: (v: string) => void;
+  /** Called when the field loses focus (validate on blur). */
+  onBlur?: () => void;
   unit?: string;
   placeholder?: string;
   size?: keyof typeof NUM_SIZE;
@@ -296,6 +301,10 @@ export function NumberField({
   surface?: "raised" | "sheet";
   keyboardType?: KeyboardTypeOptions;
   editable?: boolean;
+  /** The value was worked out by the app, not typed: shown quieter than typed values. */
+  muted?: boolean;
+  /** Spoken name when the visible label repeats across cards ("Today" on every meter). */
+  a11yLabel?: string;
   style?: StyleProp<ViewStyle>;
 }) {
   const t = useJoTheme();
@@ -326,14 +335,17 @@ export function NumberField({
           keyboardType={keyboardType}
           editable={editable}
           onFocus={() => setFocused(true)}
-          onBlur={() => setFocused(false)}
-          accessibilityLabel={label ? `${label}${unit ? ` (${unit})` : ""}` : unit}
+          onBlur={() => {
+            setFocused(false);
+            onBlur?.();
+          }}
+          accessibilityLabel={a11yLabel ?? (label ? `${label}${unit ? ` (${unit})` : ""}` : unit)}
           style={{
             flex: 1,
             minWidth: 0,
             padding: 0,
             margin: 0,
-            color: t.ink,
+            color: muted ? t.ink3 : t.ink,
             fontFamily: f.d(sz.font).fontFamily,
             fontSize: sz.font,
             letterSpacing: -0.04 * sz.font,

@@ -3,6 +3,8 @@ import { Alert, Platform } from "react-native";
 interface AlertButton {
   text: string;
   onPress?: () => void;
+  /** iOS shows a destructive button in red and a cancel button bold; Android ignores it. */
+  style?: "default" | "cancel" | "destructive";
 }
 
 export const showAlert = (

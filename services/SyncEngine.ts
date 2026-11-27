@@ -32,6 +32,10 @@ import {
   replayError,
 } from "./SiteLogCategoryAccess";
 import PMService from "./PMService";
+import TrendSheetService, { type TrendQueuePayload } from "./TrendSheetService";
+import { isTrendSite, resetTrendSites } from "./TrendSheetSites";
+import { normalizeSiteIdentity, subscribeSelectedSite } from "./SiteSelection";
+import { isJouleCoolSite } from "./SiteResolver";
 import logger from "../utils/logger";
 import { getValidAuthToken } from "./AuthTokenManager";
 import { db, attendanceLogs, pmInstances } from "../database";
@@ -141,6 +145,7 @@ const TTL = {
   chiller_readings: 15 * 60 * 1000,
   sites: 60 * 60 * 1000,
   reference: 120 * 60 * 1000,
+  trend_sheet: 15 * 60 * 1000,
 } as const;
 
 // ─── Queue give-up thresholds ─────────────────────────────────────────────────
@@ -187,6 +192,9 @@ class SyncEngineImpl implements SyncEngine {
   // Lifecycle handles
   private netUnsubscribe: (() => void) | null = null;
   private appStateSubscription: { remove: () => void } | null = null;
+  private siteSelectionUnsubscribe: (() => void) | null = null;
+  /** A trend sheet prefetch started by a site switch; cleanup() waits for it. */
+  private trendPrefetchPromise: Promise<void> | null = null;
   /** What the running sync is doing — see `diagnostics`. */
   private currentSyncStep: string | null = null;
   private intervalHandle: ReturnType<typeof setInterval> | null = null;
@@ -229,6 +237,9 @@ class SyncEngineImpl implements SyncEngine {
           site_id: r.site_id || null,
           site_code: r.site_code,
           site_name: r.site_name || r.name || r.site_code,
+          // JoulePays sites are in this list too (spec 0002, AC-52); screens
+          // kept to JouleCool read this to leave them out, offline as well.
+          project_type: r.project_type ?? null,
         }));
         await cacheManager.write("sites", records);
       },
@@ -569,13 +580,15 @@ class SyncEngineImpl implements SyncEngine {
       domain: "chiller_readings",
       ttlMs: TTL.chiller_readings,
       sync: async (_userId: string) => {
-        const sites = await cacheManager.read<{ site_code: string }>("sites");
-        const siteCodes = [...new Set(sites.map((s) => s.site_code))].filter(
-          (c) => typeof c === "string" && c.length > 0,
-        );
+        const sites = await cacheManager.read<{ site_code: string; project_type?: string | null }>("sites");
+        // Chiller is not used at JoulePays sites (spec 0002, AC-57), and the
+        // server refuses readings there, so don't pull for them.
+        const siteCodes = [
+          ...new Set(sites.filter((s) => isJouleCoolSite(s)).map((s) => s.site_code)),
+        ].filter((c) => typeof c === "string" && c.length > 0);
         if (siteCodes.length === 0) {
           logger.debug(
-            "SyncEngine.chiller_readings: skipped — user has no sites",
+            "SyncEngine.chiller_readings: skipped — user has no JouleCool sites",
             { module: "SYNC_ENGINE" },
           );
           return;
@@ -706,6 +719,18 @@ class SyncEngineImpl implements SyncEngine {
         await cacheManager.stampSyncedAt("areas");
       },
     },
+
+    // Priority 7: Consumption Trend Sheet (JoulePays sites). The site list,
+    // then yesterday, today and tomorrow for the selected site. Throws on a
+    // partial pull, so the stamp below is skipped and the next tick retries.
+    {
+      domain: "trend_sheet",
+      ttlMs: TTL.trend_sheet,
+      sync: async (userId: string) => {
+        await TrendSheetService.pull(userId, () => this.throwIfCancelled());
+        await cacheManager.stampSyncedAt("trend_sheet");
+      },
+    },
   ];
 
   // ── Status helpers ────────────────────────────────────────────────────────
@@ -808,6 +833,11 @@ class SyncEngineImpl implements SyncEngine {
       (nextState: AppStateStatus) => this.onAppStateChange(nextState),
     );
 
+    // A switch to a trend sheet site caches its days at once (see onSelectedSiteChange).
+    this.siteSelectionUnsubscribe = subscribeSelectedSite((identity, siteCode) =>
+      this.onSelectedSiteChange(identity, siteCode),
+    );
+
     // 15-minute foreground interval (Req 2.3)
     this.startForegroundInterval();
 
@@ -839,6 +869,9 @@ class SyncEngineImpl implements SyncEngine {
     this.appStateSubscription?.remove();
     this.appStateSubscription = null;
 
+    this.siteSelectionUnsubscribe?.();
+    this.siteSelectionUnsubscribe = null;
+
     if (this.intervalHandle !== null) {
       clearInterval(this.intervalHandle);
       this.intervalHandle = null;
@@ -858,11 +891,19 @@ class SyncEngineImpl implements SyncEngine {
         });
       }
     }
+    // Same for a site switch prefetch: its writes must land before the wipe.
+    if (this.trendPrefetchPromise) {
+      this.cancelRequested = true;
+      await this.trendPrefetchPromise;
+    }
 
     this.cancelRequested = false;
     this.userId = null;
     this.syncPromise = null;
     this.wasConnected = false;
+    // The trend sheet site list is held in memory for the tab bar; drop it so
+    // the next user on this phone never reads the previous user's sites.
+    resetTrendSites();
 
     this.setStatus({
       connected: false,
@@ -1023,6 +1064,30 @@ class SyncEngineImpl implements SyncEngine {
     if (this.cancelRequested) throw new SyncCancelledError();
   }
 
+  /**
+   * The trend sheet pull caches days for the selected site only, and its TTL
+   * is 15 minutes, so a switch to another trend sheet site would leave that
+   * site with nothing on the phone until the next pull. Cache its days now,
+   * while there is a network. Skipped while an entry screen holds pulls.
+   */
+  private onSelectedSiteChange(identity: string, siteCode: string): void {
+    if (!this.userId || normalizeSiteIdentity(this.userId) !== identity) return;
+    if (!this._status.connected || this.pullHolds.size > 0) return;
+    if (this.trendPrefetchPromise || !isTrendSite(siteCode)) return;
+    this.trendPrefetchPromise = TrendSheetService.prefetchSite(siteCode, () => this.throwIfCancelled())
+      .catch((error) => {
+        if (error instanceof SyncCancelledError) return;
+        logger.warn("SyncEngine: trend sheet prefetch failed", {
+          module: "SYNC_ENGINE",
+          siteCode,
+          error,
+        });
+      })
+      .finally(() => {
+        this.trendPrefetchPromise = null;
+      });
+  }
+
   private async runHealthCheck(): Promise<void> {
     try {
       const response = await apiFetch("/api/health");
@@ -1120,6 +1185,16 @@ class SyncEngineImpl implements SyncEngine {
         item.transient_retry_count > MAX_5XX_RETRIES
       ) {
         await cacheManager.deadLetterQueueItem(item.id);
+        if (item.entity_type === "trend_category_save") {
+          // The entry would otherwise stay "Not sent yet" with no queue item.
+          await TrendSheetService.giveUpSave(item.payload as TrendQueuePayload).catch((error) =>
+            logger.warn("SyncEngine: could not mark the given up trend save", {
+              module: "SYNC_ENGINE",
+              id: item.id,
+              error,
+            }),
+          );
+        }
         logger.warn("SyncEngine: item moved to dead_letter", {
           module: "SYNC_ENGINE",
           id: item.id,
@@ -1333,6 +1408,15 @@ class SyncEngineImpl implements SyncEngine {
     } else if (entity_type === "lam_event") {
       endpoint = "/api/log-activity-master/event";
       method = "POST";
+
+    // ── Trend sheet category save ─────────────────────────────────────────
+    // The service sends the PUT and takes the answer: the returned day
+    // replaces the cached one and the local entry becomes synced, replaced or
+    // failed. It throws with a statusCode on a refusal, so the retry and
+    // dead letter rules above apply unchanged.
+    } else if (entity_type === "trend_category_save") {
+      await TrendSheetService.replaySave(payload as TrendQueuePayload);
+      return;
 
     // ── Attachment upload (delegated to AttachmentQueueService) ────────────
     } else if (entity_type === "attachment_upload") {

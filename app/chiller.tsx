@@ -20,7 +20,10 @@ import { SiteLogService, submitChillerReading } from "@/services/SiteLogService"
 import { formatAssignee, operatorLabel } from "@/utils/assignee";
 import AssetService from "@/services/AssetService";
 import AttendanceService from "@/services/AttendanceService";
+import { siteResolver } from "@/services/SiteResolver";
+import { chillerInitialSite } from "@/utils/siteLogTypes";
 import { useAuth } from "@/contexts/AuthContext";
+import { usePermissions } from "@/contexts/PermissionsContext";
 import { useAttendanceGate } from "@/contexts/AttendanceGateContext";
 import { LogImagePicker } from "@/components/sitelogs/LogImagePicker";
 import { SignatureSheet } from "@/components/sitelogs/SignatureSheet";
@@ -129,7 +132,12 @@ function ChillerEntryContent() {
     attachment: "",
     signature: "",
   });
-  const [selectedSite, setSelectedSite] = useState(initialSiteCode);
+  // Opened with a site whose project type has the Chiller log off (by
+  // default JoulePays, spec 0002 AC-57), the screen starts with no site picked.
+  const { projectTypePages } = usePermissions();
+  const [selectedSite, setSelectedSite] = useState(() =>
+    chillerInitialSite(initialSiteCode, siteResolver.getSites(), projectTypePages),
+  );
   const [sites, setSites] = useState<SelectOption[]>([]);
   const [loadingSites, setLoadingSites] = useState(false);
 
@@ -622,6 +630,10 @@ function ChillerEntryContent() {
         signature,
       });
 
+      if (outcome.state === "rejected" && outcome.duplicate) {
+        Alert.alert("Reading time already used", outcome.message);
+        return;
+      }
       if (outcome.state === "rejected") {
         Alert.alert(
           outcome.forbidden ? "No access to this log type" : "Couldn't upload",

@@ -4,7 +4,7 @@ import { authEvents } from "../utils/authEvents";
 import { apiFetch as centralApiFetch } from "../utils/apiHelper";
 import { API_BASE_URL } from "../constants/api";
 import { cacheManager } from "./CacheManager";
-import { siteResolver } from "./SiteResolver";
+import { isJouleCoolSite, siteResolver } from "./SiteResolver";
 import { db, attendanceLogs } from "../database";
 import { and, eq, desc } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
@@ -198,6 +198,8 @@ export interface Site {
   inRange?: boolean;
   isWithinRange?: boolean;
   radius?: number;
+  /** sites.project_type; null/empty = JouleCool (AC-54). */
+  project_type?: string | null;
 }
 
 export interface AttendanceLog {
@@ -400,17 +402,27 @@ export const AttendanceService = {
           distance: site?.distance,
           inRange: site?.inRange,
           radius: site?.radius,
+          project_type: site?.project_type ?? null,
         });
       }
 
       return Array.from(uniqueSites.values());
     };
 
+    // The phone's site list now holds JoulePays sites too (spec 0002, AC-52),
+    // so the cached list is filtered here like the online one. A site cached
+    // with no project_type counts as JouleCool (AC-54).
+    const matchesProjectType = (site: { project_type?: string | null }) => {
+      if (!projectType) return true;
+      if (projectType === "JouleCool") return isJouleCoolSite(site);
+      return site.project_type === projectType;
+    };
+
     // OFFLINE FAST PATH: skip all API calls when offline, return from siteResolver immediately
     try {
       const netState = await NetInfo.fetch();
       if (netState.isConnected === false) {
-        const resolvedSites = siteResolver.getSites();
+        const resolvedSites = siteResolver.getSites().filter(matchesProjectType);
         if (resolvedSites.length > 0) {
           const mapped = normalizeSites(resolvedSites);
           logger.debug("Offline — returning siteResolver sites immediately", {
@@ -468,7 +480,7 @@ export const AttendanceService = {
 
     // Offline fallback: return from siteResolver if both network calls failed
     try {
-      const resolvedSites = siteResolver.getSites();
+      const resolvedSites = siteResolver.getSites().filter(matchesProjectType);
       if (resolvedSites.length > 0) {
         const mapped = normalizeSites(resolvedSites);
         logger.debug("Returning siteResolver sites (offline fallback)", {
@@ -511,10 +523,18 @@ export const AttendanceService = {
     latitude?: number,
     longitude?: number,
     address?: string,
+    /**
+     * The operator confirmed today's End Day was a mistake: continue that
+     * session (`resumeSession`) instead of starting a new one. The server
+     * reopens it; offline, the cached row is reopened until the queue syncs.
+     */
+    resumeSession?: AttendanceLog | null,
   ): Promise<{
     success: boolean;
     data?: AttendanceLog;
     error?: string;
+    /** Server message ("Day continued." when a session was resumed). */
+    message?: string;
     queued?: boolean;
     nearestSite?: Site;
     userLocation?: { latitude: number; longitude: number };
@@ -527,6 +547,7 @@ export const AttendanceService = {
       address,
       client_request_id: uuidv4(),
       punched_at: new Date().toISOString(),
+      ...(resumeSession ? { resume: true } : {}),
     };
 
     const result = await apiFetch("/api/attendance/check-in", {
@@ -552,6 +573,35 @@ export const AttendanceService = {
     // Network failure → queue and write an optimistic local record so the user
     // is not blocked. Server validation errors (e.g. out of geofence) are
     // surfaced as-is and not queued.
+    if (result.isNetworkError && resumeSession?.id) {
+      // Offline resume: reopen the cached session so the day carries on from
+      // its first check-in. The queued check-in (resume: true) reopens it on
+      // the server; SyncEngine then writes the server row over this one.
+      const reopened: AttendanceLog = {
+        ...resumeSession,
+        check_out_time: undefined,
+        check_out_latitude: undefined,
+        check_out_longitude: undefined,
+        check_out_address: undefined,
+        remarks: undefined,
+      };
+      await cacheManager.write("attendance", [reopened as any]).catch(() => {});
+      await cacheManager
+        .enqueue({
+          entity_type: "attendance_check_in",
+          operation: "create",
+          payload,
+        })
+        .catch(() => {});
+      logger.activity("PUNCH_IN", "ATTENDANCE", "User continued their day OFFLINE", {
+        site_code: siteCode,
+        attendance_id: reopened.id,
+        offline: true,
+        resumed: true,
+      });
+      return { success: true, data: reopened, queued: true };
+    }
+
     if (result.isNetworkError) {
       const optimistic: AttendanceLog = {
         id: `opt-${payload.client_request_id}`,

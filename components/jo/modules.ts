@@ -2,23 +2,40 @@
  * App navigation map.
  *
  *  Bottom bar:  Home · Ops · Resources · Settings
- *  Ops:         top sub-tabs — Tickets · PM · Site Logs · Incidents · Assets
+ *  Ops:         top sub-tabs — Tickets · PM · Site Logs · Incidents · Assets ·
+ *               Trend Sheet (JoulePays sites only)
  *  Resources:   top sub-tabs — SLA · Efficiency · Reports · Client comms
  *  Settings:    the Profile screen, plus a "Modules" group linking the screens
  *               that have no tab of their own (Attendance, Alerts)
  *
  * Every entry carries the role-permission module that gates VIEW
- * (contexts/PermissionsContext); entries without one are always shown.
+ * (contexts/PermissionsContext); entries without one are always shown. A
+ * sub-tab also follows the selected site: Pages by Project Type (`pageOn`)
+ * and its own site rule (`visible`).
  */
 import type { BxName } from "@/components/jo/Bx";
 import type { PermissionModule } from "@/contexts/PermissionsContext";
 
 /* ── Sub-tabs (Ops, Resources) ─────────────────────────────────────────── */
 
-export type OpsTabKey = "tickets" | "pm" | "logs" | "incidents" | "assets";
+export type OpsTabKey = "tickets" | "pm" | "logs" | "incidents" | "assets" | "trend";
 export type ResourceTabKey = "sla" | "efficiency" | "reports" | "comms";
 export type SubTabKey = OpsTabKey | ResourceTabKey;
 export type SubTabGroup = "ops" | "resources";
+
+/** What a sub-tab may look at, besides the role, to decide whether it shows. */
+export interface SubTabContext {
+  /** The app-wide selected site. */
+  siteCode: string | null;
+  /** The selected site is a JoulePays site this user enters trend sheet readings for. */
+  trendSite: boolean;
+  /**
+   * Whether a module's page is on for the selected site's project type (web
+   * Settings › Pages by Project Type; by default SLA and Efficiency are off at
+   * JoulePays sites, spec 0002 AC-56). Absent, or no site yet, means all on.
+   */
+  pageOn?: (module: PermissionModule) => boolean;
+}
 
 export interface OpsTabDef {
   key: SubTabKey;
@@ -29,6 +46,11 @@ export interface OpsTabDef {
   /** Pathname as usePathname() reports it (groups dropped). */
   path: string;
   perm: PermissionModule;
+  /**
+   * A second condition on top of the role's view grant, for a module that
+   * exists only at some sites. Absent means the grant alone decides.
+   */
+  visible?: (ctx: SubTabContext) => boolean;
   /** Shows a "New" badge on the sub-tab — drop the flag once it's no longer new. */
   isNew?: boolean;
 }
@@ -39,9 +61,12 @@ export const OPS_TABS: OpsTabDef[] = [
   { key: "logs", label: "Site Logs", tab: "site-logs", href: "/(tabs)/site-logs", path: "/site-logs", perm: "site_logs" },
   { key: "incidents", label: "Incidents", tab: "incidents", href: "/(tabs)/incidents", path: "/incidents", perm: "incidents" },
   { key: "assets", label: "Assets", tab: "asset-mapping", href: "/(tabs)/asset-mapping", path: "/asset-mapping", perm: "asset" },
+  // Only at JoulePays sites the user enters readings for (services/TrendSheetSites).
+  { key: "trend", label: "Trend Sheet", tab: "trend-sheet", href: "/(tabs)/trend-sheet", path: "/trend-sheet", perm: "trend_sheet_entry", visible: (ctx) => ctx.trendSite },
 ];
 
 export const RESOURCE_TABS: OpsTabDef[] = [
+  // Off at JoulePays sites by default (Pages by Project Type, `pageOn`).
   { key: "sla", label: "SLA", tab: "sla", href: "/(tabs)/sla", path: "/sla", perm: "sla", isNew: true },
   { key: "efficiency", label: "Efficiency", tab: "efficiency", href: "/(tabs)/efficiency", path: "/efficiency", perm: "efficiency", isNew: true },
   { key: "reports", label: "Reports", tab: "reports", href: "/(tabs)/reports", path: "/reports", perm: "reports", isNew: true },
@@ -49,6 +74,17 @@ export const RESOURCE_TABS: OpsTabDef[] = [
 ];
 
 export const SUB_TABS: Record<SubTabGroup, OpsTabDef[]> = { ops: OPS_TABS, resources: RESOURCE_TABS };
+
+/** The sub-tabs of a group this role sees at the selected site, in order. */
+export function visibleSubTabs(
+  group: SubTabGroup,
+  canView: (module: PermissionModule) => boolean,
+  ctx: SubTabContext,
+): OpsTabDef[] {
+  return SUB_TABS[group].filter(
+    (o) => canView(o.perm) && (ctx.pageOn?.(o.perm) ?? true) && (o.visible ? o.visible(ctx) : true),
+  );
+}
 
 /** The sub-tab last opened per group — the bottom bar item returns to it. */
 const lastSubTab: Record<SubTabGroup, SubTabKey> = { ops: "tickets", resources: "sla" };
@@ -59,6 +95,41 @@ export function rememberSubTab(group: SubTabGroup, key: SubTabKey) {
 
 export function getLastSubTab(group: SubTabGroup): SubTabKey {
   return lastSubTab[group];
+}
+
+/**
+ * The sub-tab the bottom bar item opens: the last one used when it is still
+ * visible, else the first visible one, so a sub-tab hidden since (SLA at a
+ * JoulePays site) is never opened.
+ */
+export function subTabToOpen(group: SubTabGroup, visible: OpsTabDef[]): OpsTabDef | undefined {
+  return visible.find((o) => o.key === getLastSubTab(group)) ?? visible[0];
+}
+
+/**
+ * Where a sub-tab screen moves to when the site changes under it and its own
+ * sub-tab is now hidden by the site: the first visible sub-tab. Null when the
+ * open screen is still visible, is not a sub-tab of the group, or nothing is
+ * visible (the route guard then sends the user Home).
+ *
+ * Two site rules hide a sub-tab. Pages by Project Type (`pageOn`) applies to
+ * both groups: it is only bound once the site is known, so a cold start never
+ * bounces. The sub-tab's own `visible` rule applies to Resources only: the Ops
+ * Trend Sheet tab depends on a site list that loads after the screen, so
+ * applying it there would bounce a cold start away.
+ */
+export function hiddenSubTabRedirect(
+  group: SubTabGroup,
+  pathname: string,
+  canView: (module: PermissionModule) => boolean,
+  ctx: SubTabContext,
+): OpsTabDef | null {
+  const open = SUB_TABS[group].find((o) => pathname === o.path || pathname.startsWith(`${o.path}/`));
+  if (!open) return null;
+  const offByPage = ctx.pageOn ? !ctx.pageOn(open.perm) : false;
+  const offBySite = group === "resources" && !!open.visible && !open.visible(ctx);
+  if (!offByPage && !offBySite) return null;
+  return visibleSubTabs(group, canView, ctx)[0] ?? null;
 }
 
 /* ── Bottom bar ────────────────────────────────────────────────────────── */
@@ -127,6 +198,9 @@ export const ROUTE_PERMS: ReadonlyArray<readonly [string, PermissionModule]> = [
   ["/reports", "reports"],
   ["/customer-communication", "customer_communication"],
   ["/attendance", "attendance"],
+  // The tab (/trend-sheet) and its entry screens (/trend-electricity, /trend-dg,
+  // /trend-fuel, /trend-summary, /trend-month): the "-" rule below covers them all.
+  ["/trend", "trend_sheet_entry"],
 ];
 
 export function permForPath(pathname: string): PermissionModule | null {

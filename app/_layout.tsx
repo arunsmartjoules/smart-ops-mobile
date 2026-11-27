@@ -27,13 +27,21 @@ enableFreeze(true);
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { AttendanceGateProvider } from "@/contexts/AttendanceGateContext";
 import { PermissionsProvider, usePermissions } from "@/contexts/PermissionsContext";
-import { permForPath } from "@/components/jo/modules";
+import {
+  permForPath,
+  SUB_TABS,
+  visibleSubTabs,
+  type SubTabContext,
+  type SubTabGroup,
+} from "@/components/jo/modules";
+import { useSubTabContext } from "@/components/jo/useSubTabContext";
 import { ThemeProvider, useTheme } from "@/contexts/ThemeContext";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useJoTheme } from "@/hooks/useJoTheme";
-import { AppState } from "react-native";
+import { AppState, StyleSheet, View } from "react-native";
+import LogoLoader from "@/components/LogoLoader";
 import syncEngine, { registerBackgroundSyncAsync } from "@/services/SyncEngine";
 import { startJsStallMonitor } from "@/utils/jsStallMonitor";
 import { syncManager } from "@/services/SyncManager";
@@ -257,16 +265,73 @@ function PresenceTracker() {
  * A module the role can't view is hidden everywhere; this catches the ways in
  * that bypass the bar (deep links, notifications, back stack) and returns the
  * user to Home.
+ *
+ * The same goes for a page turned off for the selected site's project type
+ * (Pages by Project Type), except on a sub-tab screen while its group still
+ * has a visible sub-tab: OpsTabs moves that one to the next sub-tab instead.
  */
 function ModuleRouteGuard() {
   const pathname = usePathname();
   const { canView } = usePermissions();
+  const subTabContext = useSubTabContext();
   const perm = pathname ? permForPath(pathname) : null;
-  const denied = !!perm && !canView(perm);
+  const offForSite =
+    !!perm &&
+    !(subTabContext.pageOn?.(perm) ?? true) &&
+    !subTabHasFallback(pathname, canView, subTabContext);
+  const denied = !!perm && (!canView(perm) || offForSite);
   useEffect(() => {
     if (denied) router.replace("/(tabs)/dashboard");
   }, [denied]);
   return null;
+}
+
+/**
+ * Pages by Project Type, while a screen that is off for the selected site's
+ * project type is still open (a site of the other type was just picked, or a
+ * link landed here): the logo loader covers it until the redirect above (or
+ * OpsTabs' move to the next sub-tab) has opened the next page, so the old
+ * screen's "not for this site" box never shows. A screen that is on for both
+ * types never gets here. If nothing has moved after a moment (a sub-tab screen
+ * that has not drawn its header), it sends the user Home itself.
+ */
+function ProjectTypeSwitchOverlay() {
+  const pathname = usePathname();
+  const { canView } = usePermissions();
+  const { pageOn } = useSubTabContext();
+  const perm = pathname ? permForPath(pathname) : null;
+  // A screen the role can't view is ModuleRouteGuard's alone.
+  const offForSite = !!perm && canView(perm) && !(pageOn?.(perm) ?? true);
+  useEffect(() => {
+    if (!offForSite) return;
+    const timer = setTimeout(() => router.replace("/(tabs)/dashboard"), STUCK_REDIRECT_MS);
+    return () => clearTimeout(timer);
+  }, [offForSite, pathname]);
+  if (!offForSite) return null;
+  return (
+    <View style={StyleSheet.absoluteFill}>
+      <LogoLoader label="Opening the next page" />
+    </View>
+  );
+}
+
+/** How long the overlay waits for a redirect before sending the user Home. */
+const STUCK_REDIRECT_MS = 2000;
+
+/** The open screen is a sub-tab whose group still shows another sub-tab. */
+function subTabHasFallback(
+  pathname: string | null,
+  canView: Parameters<typeof visibleSubTabs>[1],
+  ctx: SubTabContext,
+): boolean {
+  if (!pathname) return false;
+  for (const group of Object.keys(SUB_TABS) as SubTabGroup[]) {
+    const open = SUB_TABS[group].find(
+      (o) => pathname === o.path || pathname.startsWith(`${o.path}/`),
+    );
+    if (open) return visibleSubTabs(group, canView, ctx).some((o) => o.key !== open.key);
+  }
+  return false;
 }
 
 export default function RootLayout() {
@@ -400,7 +465,16 @@ export default function RootLayout() {
                   <Stack.Screen name="history/site-history" />
                   <Stack.Screen name="pm-execution" />
                   <Stack.Screen name="shift-signoff" />
+                  {/* No iOS swipe-back on the entry screens: it would drop typed readings without the
+                      "Leave without saving?" ask the back button and Android's back key go through. */}
+                  <Stack.Screen name="trend-electricity" options={{ gestureEnabled: false }} />
+                  <Stack.Screen name="trend-dg" options={{ gestureEnabled: false }} />
+                  <Stack.Screen name="trend-fuel" options={{ gestureEnabled: false }} />
+                  <Stack.Screen name="trend-summary" />
+                  <Stack.Screen name="trend-month" />
                 </Stack>
+                {/* Above the screens, so a screen off for the picked site never shows. */}
+                <ProjectTypeSwitchOverlay />
                 </NavigationTheme>
               </ThemeProvider>
             </AuthGuard>

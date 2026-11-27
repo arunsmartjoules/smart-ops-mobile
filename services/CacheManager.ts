@@ -53,7 +53,10 @@ export type DataDomain =
   | "sites"
   | "areas"
   | "categories"
-  | "log_master";
+  | "log_master"
+  // Freshness stamp only: its rows live in trend_day_context / trend_entries
+  // and are read and written by TrendSheetService, not through this manager.
+  | "trend_sheet";
 
 export const ALL_DOMAINS: DataDomain[] = [
   "tickets",
@@ -99,7 +102,8 @@ export interface OfflineQueueItem {
     | "pm_response_upsert"
     | "pm_instance_update"
     | "attachment_upload"
-    | "lam_event";
+    | "lam_event"
+    | "trend_category_save";
   operation: "create" | "update" | "delete";
   payload: Record<string, any>;
 }

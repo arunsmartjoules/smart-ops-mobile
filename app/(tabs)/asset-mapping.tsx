@@ -39,7 +39,10 @@ import {
   canApproveMapping,
   type MappedAsset,
   type MappingEquipment,
+  type MappingField,
+  type MappingFieldValue,
 } from "@/services/AssetMappingService";
+import logger from "@/utils/logger";
 import AssetListView from "@/components/asset-mapping/AssetListView";
 import AssetDetailView, { type PhotoSource } from "@/components/asset-mapping/AssetDetailView";
 import AssetQrView from "@/components/asset-mapping/AssetQrView";
@@ -149,16 +152,34 @@ export default function AssetMappingTab() {
     }
   }, []);
 
+  // Admin-defined extra fields (same for every site). A failed load keeps the
+  // last list — the card simply doesn't show until one loads.
+  const [extraFields, setExtraFields] = useState<MappingField[]>([]);
+  const fetchFields = useCallback(async () => {
+    try {
+      setExtraFields(await AssetMappingService.getFields());
+    } catch (error: any) {
+      logger.warn("Asset mapping extra fields load failed", {
+        module: "ASSET_MAPPING",
+        error: error?.message,
+      });
+    }
+  }, []);
+
   useEffect(() => {
     if (siteCode) void fetchSite(siteCode);
   }, [siteCode, fetchSite]);
 
+  useEffect(() => {
+    void fetchFields();
+  }, [fetchFields]);
+
   const refresh = useCallback(async () => {
     if (!siteCode) return;
     setRefreshing(true);
-    await fetchSite(siteCode);
+    await Promise.all([fetchSite(siteCode), fetchFields()]);
     setRefreshing(false);
-  }, [siteCode, fetchSite]);
+  }, [siteCode, fetchSite, fetchFields]);
 
   // A background read finished (push arrived while the app is open): reload
   // this site so the asset leaves "Reading…" / lands in Failed right away.
@@ -330,6 +351,22 @@ export default function AssetMappingTab() {
       Alert.alert("Something went wrong", error?.message || "Please try again.");
     } finally {
       setLibraryUpload(false);
+    }
+  };
+
+  /** Extra details: resolves true when saved; shows the error itself otherwise. */
+  const saveExtraFields = async (changes: Record<string, MappingFieldValue | null>) => {
+    if (!asset || !requireOnline()) return false;
+    try {
+      replaceAsset(await AssetMappingService.saveExtraFields(asset.asset_id, changes));
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+      return true;
+    } catch (error: any) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
+      Alert.alert("Couldn't save", error?.message || "Please try again.");
+      // A field may have been hidden or changed on the web meanwhile.
+      void fetchFields();
+      return false;
     }
   };
 
@@ -635,6 +672,8 @@ export default function AssetMappingTab() {
               onAdd: (name) => void runEquipment(() => AssetMappingService.addEquipment(asset.asset_id, name)),
             }}
             onPreview={(url, title) => setPreview({ url, title })}
+            extraFields={extraFields}
+            onSaveExtraFields={saveExtraFields}
             canApprove={canApprove}
             approving={approvingId === asset.asset_id}
             onApprove={approve}

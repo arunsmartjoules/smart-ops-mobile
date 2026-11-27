@@ -40,7 +40,9 @@ import {
 } from "@/utils/istDate";
 import { useNetworkStatus } from "@/hooks/useNetworkStatus";
 import { useSites } from "@/hooks/useSites";
+import { useSelectedPageOn } from "@/components/jo/useSelectedPageOn";
 import { setRouteParams } from "@/utils/routeParams";
+import { visibleLogTypes } from "@/utils/siteLogTypes";
 import { uiShiftToLabel } from "@/services/LogActivityMasterService";
 import { startOfDay, endOfDay, addDays } from "date-fns";
 import loggerUtil from "@/utils/logger";
@@ -217,11 +219,6 @@ export default function SiteLogs() {
   const { user } = useAuth();
   const { canEdit } = useAttendanceGate();
   const { canView } = usePermissions();
-  // Only the log types this role can view are shown or loaded.
-  const visibleTabs = useMemo(
-    () => LOG_TABS.filter((tab) => canView(tab.permission)),
-    [canView],
-  );
   const { isConnected } = useNetworkStatus();
   const insets = useSafeAreaInsets();
 
@@ -263,6 +260,16 @@ export default function SiteLogs() {
   const siteCode = selectedSite?.site_code ?? null;
   const siteName =
     selectedSite?.site_name ?? selectedSite?.site_code ?? "Select Site";
+  // Pages by Project Type for the selected site (no site yet: no rule).
+  const pageOn = useSelectedPageOn();
+
+  // Only the log types this role can view, and whose category is on for the
+  // site's project type, are shown or loaded (by default no Chiller at a
+  // JoulePays site).
+  const visibleTabs = useMemo(
+    () => visibleLogTypes(LOG_TABS, canView, pageOn),
+    [canView, pageOn],
+  );
 
   // Site switched (from the header): drop every cached bucket — they belong
   // to the old site — and close the history panel. Adjusted during render so

@@ -26,7 +26,8 @@ import DateTimePicker from "@expo/ui/community/datetime-picker";
 import { usePermissions } from "@/contexts/PermissionsContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { useSites } from "@/hooks/useSites";
-import { SUB_TABS, rememberSubTab, type SubTabGroup } from "@/components/jo/modules";
+import { hiddenSubTabRedirect, rememberSubTab, visibleSubTabs, type SubTabGroup } from "@/components/jo/modules";
+import { useSubTabContext } from "@/components/jo/useSubTabContext";
 import {
   DateButton,
   GlossFill,
@@ -79,12 +80,21 @@ function SubTabsHeader({ group, showDate }: { group: SubTabGroup; showDate: bool
   const [draft, setDraft] = useState({ from: range.from, to: range.to });
   const [pickerFor, setPickerFor] = useState<null | "from" | "to">(null);
 
-  const tabs = SUB_TABS[group].filter((o) => canView(o.perm));
+  const subTabContext = useSubTabContext();
+  const tabs = visibleSubTabs(group, canView, subTabContext);
   const active = tabs.find((o) => pathname === o.path || pathname.startsWith(`${o.path}/`))?.key;
 
   React.useEffect(() => {
     if (active) rememberSubTab(group, active);
   }, [group, active]);
+
+  // The site changed under an open sub-tab that its site rule now hides (SLA
+  // or Efficiency with a JoulePays site picked): move to the first visible one.
+  const redirect = hiddenSubTabRedirect(group, pathname, canView, subTabContext);
+  const redirectHref = redirect?.href ?? null;
+  React.useEffect(() => {
+    if (redirectHref) router.replace(redirectHref as any);
+  }, [redirectHref]);
 
   const siteName = selectedSite?.site_name || selectedSite?.site_code || "Select site";
   const canSwitchSite = sites.length > 1;
